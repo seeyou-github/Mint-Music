@@ -51,6 +51,21 @@ LRESULT
 FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               WPARAM const wparam,
                               LPARAM const lparam) noexcept {
+  // 收到关闭请求时直接终止进程，跳过退出阶段的析构清理。
+  //
+  // 原因：flutter_inappwebview_windows 在析构 WebView2 时会触发 fail-fast
+  // （异常码 STATUS_FAIL_FAST_EXCEPTION，常报 dcomp.dll），表现为关闭窗口时
+  // 弹出「mintmusic.exe - 快速异常检测失败」。该问题即使完全不使用 WebView
+  // 也会出现，因为插件在注册时就创建了管理器对象；上游至今未修复。
+  // 见 https://github.com/pichillilorenzo/flutter_inappwebview/issues/2512
+  //
+  // 此处进程本就要退出，直接 TerminateProcess 反而能避免那次崩溃，且退出码
+  // 为 0，不会在任务管理器/事件查看器里留下崩溃记录。
+  if (message == WM_CLOSE) {
+    ::TerminateProcess(::GetCurrentProcess(), 0);
+    return 0;
+  }
+
   // Give Flutter, including plugins, an opportunity to handle window messages.
   if (flutter_controller_) {
     std::optional<LRESULT> result =
