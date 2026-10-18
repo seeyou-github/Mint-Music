@@ -3,7 +3,6 @@
 #include <optional>
 
 #include "flutter/generated_plugin_registrant.h"
-#include "utils.h"
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
     : project_(project) {}
@@ -11,9 +10,6 @@ FlutterWindow::FlutterWindow(const flutter::DartProject& project)
 FlutterWindow::~FlutterWindow() {}
 
 bool FlutterWindow::OnCreate() {
-  // 启动耗时诊断：这几行日志用于区分「引擎/图形初始化慢」和「Dart 侧慢」。
-  LogStartupEvent("FlutterWindow::OnCreate: begin");
-
   if (!Win32Window::OnCreate()) {
     return false;
   }
@@ -22,22 +18,16 @@ bool FlutterWindow::OnCreate() {
 
   // The size here must match the window dimensions to avoid unnecessary surface
   // creation / destruction in the startup path.
-  LogStartupEvent("FlutterWindow::OnCreate: creating FlutterViewController");
   flutter_controller_ = std::make_unique<flutter::FlutterViewController>(
       frame.right - frame.left, frame.bottom - frame.top, project_);
-  LogStartupEvent(
-      "FlutterWindow::OnCreate: FlutterViewController created (engine + GPU)");
   // Ensure that basic setup of the controller was successful.
   if (!flutter_controller_->engine() || !flutter_controller_->view()) {
     return false;
   }
-  LogStartupEvent("FlutterWindow::OnCreate: registering plugins");
   RegisterPlugins(flutter_controller_->engine());
-  LogStartupEvent("FlutterWindow::OnCreate: plugins registered");
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
-    LogStartupEvent("first frame rendered -> Show()");
     this->Show();
   });
 
