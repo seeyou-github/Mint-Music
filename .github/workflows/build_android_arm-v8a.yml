@@ -1,0 +1,33 @@
+name: Build Android (arm-v8a)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-android-arm-v8a:
+    name: Build Android arm-v8a APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Android APK (arm-v8a only)
+        run: flutter build apk --release --target-platform android-arm64
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mintmusic-android-arm64-v8a
+          path: build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 3
+          if-no-files-found: error
