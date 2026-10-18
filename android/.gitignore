@@ -13,3 +13,5 @@ GeneratedPluginRegistrant.java
 key.properties
 **/*.keystore
 **/*.jks
+# Hardcoded test keystore used by debug/release and CI builds.
+!app/Test.jks

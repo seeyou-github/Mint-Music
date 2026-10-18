@@ -39,9 +39,21 @@ android {
         }
     }
 
+    signingConfigs {
+        create("mintmusic") {
+            storeFile = rootProject.file("app/Test.jks")
+            storePassword = "123456"
+            keyAlias = "Test"
+            keyPassword = "123456"
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("mintmusic")
+        }
         release {
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("mintmusic")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
