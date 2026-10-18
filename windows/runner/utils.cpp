@@ -21,6 +21,60 @@ void CreateAndAttachConsole() {
   }
 }
 
+namespace {
+
+// Returns the process age in milliseconds, i.e. how long ago the process was
+// created. This includes the time Windows spent loading DLLs and any antivirus
+// pre-scan before `wWinMain` was reached.
+unsigned long long ProcessAgeInMilliseconds() {
+  FILETIME creation_time, exit_time, kernel_time, user_time;
+  if (!::GetProcessTimes(::GetCurrentProcess(), &creation_time, &exit_time,
+                         &kernel_time, &user_time)) {
+    return 0;
+  }
+
+  FILETIME now_time;
+  ::GetSystemTimeAsFileTime(&now_time);
+
+  ULARGE_INTEGER created;
+  created.LowPart = creation_time.dwLowDateTime;
+  created.HighPart = creation_time.dwHighDateTime;
+
+  ULARGE_INTEGER now;
+  now.LowPart = now_time.dwLowDateTime;
+  now.HighPart = now_time.dwHighDateTime;
+
+  // FILETIME ticks are 100 ns, so the difference is divided by 10000 for ms.
+  return (now.QuadPart - created.QuadPart) / 10000ULL;
+}
+
+}  // namespace
+
+void LogStartupEvent(const char* stage) {
+  wchar_t temp_path[MAX_PATH + 1];
+  const DWORD length = ::GetTempPathW(MAX_PATH, temp_path);
+  if (length == 0 || length > static_cast<DWORD>(MAX_PATH)) {
+    return;
+  }
+
+  std::wstring log_path(temp_path);
+  log_path += L"mintmusic_startup.log";
+
+  SYSTEMTIME now;
+  ::GetLocalTime(&now);
+
+  FILE* file = nullptr;
+  if (_wfopen_s(&file, log_path.c_str(), L"a") != 0 || file == nullptr) {
+    return;
+  }
+
+  ::fprintf(file,
+            "[runner] %04d-%02d-%02d %02d:%02d:%02d.%03d age=%llums %s\n",
+            now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute,
+            now.wSecond, now.wMilliseconds, ProcessAgeInMilliseconds(), stage);
+  ::fclose(file);
+}
+
 std::vector<std::string> GetCommandLineArguments() {
   // Convert the UTF-16 command line arguments to UTF-8 for the Engine to use.
   int argc;
