@@ -1,5 +1,6 @@
-# windows/flutter/ 目录整体由 Flutter 构建时生成，不入库
-flutter/
+# Flutter 构建产物/临时文件（windows/flutter/ 下的 CMakeLists.txt 是官方模板，
+# 必须入库；只有 ephemeral/ 和构建时生成的 generated_* 文件不入库）
+flutter/ephemeral/
 
 # Visual Studio user-specific files.
 *.suo
