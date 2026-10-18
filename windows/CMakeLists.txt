@@ -32,6 +32,12 @@ set(CMAKE_CXX_FLAGS_PROFILE "${CMAKE_CXX_FLAGS_RELEASE}")
 # Use Unicode for all projects.
 add_definitions(-DUNICODE -D_UNICODE)
 
+# 兼容性开关：新版 MSVC（VS 17.10+ / VS 18，MSVC 14.4x/14.5x）把
+# <experimental/coroutine>（C++/WinRT 及部分插件的旧写法，例如
+# flutter_inappwebview_windows / permission_handler_windows）从「弃用警告」
+# 升级成了硬错误（C2338 / STL1011）。这个宏把它降回警告，直到上游迁移到 C++20。
+add_compile_definitions(_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS)
+
 # Compilation settings that should be applied to most targets.
 #
 # Be cautious about adding new options here, as plugins use this function by
