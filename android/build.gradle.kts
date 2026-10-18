@@ -15,14 +15,14 @@ subprojects {
     }
 }
 
-subprojects {
-    project.evaluationDependsOn(":app")
-}
-
 // Workaround for Flutter plugins that still don't declare a `namespace`
 // (required by AGP 8+). Fill it from the plugin's AndroidManifest `package`,
 // falling back to the project group. e.g. on_audio_query_android 1.1.0.
+// Must be registered before any subproject is evaluated (i.e. before the
+// `evaluationDependsOn(":app")` block below), otherwise calling afterEvaluate
+// on an already-evaluated project fails.
 subprojects {
+    if (state.executed) return@subprojects
     afterEvaluate {
         val androidExtension = extensions.findByName("android") ?: return@afterEvaluate
         val getNamespace = androidExtension.javaClass.methods
@@ -43,6 +43,10 @@ subprojects {
             .firstOrNull { it.name == "setNamespace" && it.parameterTypes.size == 1 }
             ?.invoke(androidExtension, namespace)
     }
+}
+
+subprojects {
+    project.evaluationDependsOn(":app")
 }
 
 tasks.register<Delete>("clean") {
