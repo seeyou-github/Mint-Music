@@ -22,7 +22,7 @@ jobs:
         run: flutter pub get
 
       - name: Build Android APK (arm-v8a only)
-        run: flutter build apk --release --target-platform android-arm64 --android-skip-build-dependency-validation
+        run: flutter build apk --release --split-per-abi --target-platform android-arm64 --android-skip-build-dependency-validation
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
