@@ -16,6 +16,13 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+          # 钉死版本，避免 stable 漂移：
+          # Flutter 3.47 起 Windows 默认启用 Impeller（上游 flutter#191860，
+          # 启动时链接 70+ 个 shader program，慢 2~4 秒），我们在
+          # windows/runner/main.cpp 里用 set_impeller_switch 退回 Skia，
+          # 这条路径依赖 3.47.x 的引擎/SDK 行为，跨大版本需要重新验证。
+          # 3.47.7 = 当前 stable 最新，Dart 3.13.5（与已实测通过的包一致）。
+          flutter-version: 3.47.7
           cache: true
 
       - name: Install dependencies
