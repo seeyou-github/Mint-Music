@@ -271,7 +271,9 @@ function __mfMapMusicItem(item, sourceId) {
   if (!title) return null;
 
   var artist = __mfText(item.artist || item.singer || item.artists, '');
-  var pic = __mfText(item.artwork || item.picUrl || item.img || item.cover || item.artworkUrl, '');
+  var pic = __mfNormalizeCover(
+    item.artwork || item.picUrl || item.img || item.cover || item.artworkUrl
+  );
   var album = item.album;
   if (album && typeof album === 'object') album = album.name;
   album = __mfText(album || item.albumName, '');
@@ -480,10 +482,10 @@ function __mfGetPic(source, musicInfo) {
       var plugin = __mfPluginObject();
       var item = __mfUnwrapItem(musicInfo);
       var pic = __mfText(item.artwork || item.picUrl || item.img || item.cover, '');
-      if (pic && /^https?:/i.test(pic)) return pic;
+      if (pic && /^https?:/i.test(pic)) return __mfNormalizeCover(pic);
       if (item._info) {
         pic = __mfText(item._info.img || item._info.picUrl || item._info.pic || '', '');
-        if (pic && /^https?:/i.test(pic)) return pic;
+        if (pic && /^https?:/i.test(pic)) return __mfNormalizeCover(pic);
       }
       // 搜索结果里没有封面时（部分插件只在 getPic 里取封面）再调用插件方法。
       if (typeof plugin.getPic !== 'function') return null;
@@ -501,7 +503,7 @@ function __mfGetPic(source, musicInfo) {
               '';
           }
           url = __mfText(url, '');
-          return /^https?:/i.test(url) ? url : null;
+          return /^https?:/i.test(url) ? __mfNormalizeCover(url) : null;
         },
         function () {
           return null;
@@ -586,11 +588,32 @@ function __mfFirstArray(values) {
   return [];
 }
 
+/**
+ * 统一封面地址：
+ * - 补全协议（`//host/...` → `https://host/...`，`http://` → `https://`）；
+ * - 网易 CDN 的 `?param=NyN` 只是服务端缩略图（榜单页给的通常是 200x200），
+ *   卡片按 2 倍图解码时会被放大到发糊，这里与内置音源保持一致换成 400x400。
+ */
+function __mfNormalizeCover(value) {
+  var url = __mfText(value, '');
+  if (!url) return '';
+  if (url.indexOf('//') === 0) {
+    url = 'https:' + url;
+  } else if (/^http:\/\//i.test(url)) {
+    url = 'https://' + url.substring(7);
+  }
+  if (url.indexOf('music.126.net') !== -1) {
+    var queryIndex = url.indexOf('?');
+    if (queryIndex !== -1) url = url.substring(0, queryIndex);
+    url += '?param=400y400';
+  }
+  return url;
+}
+
 function __mfCoverOf(item) {
   if (!item || typeof item !== 'object') return '';
-  return __mfText(
-    item.coverImg || item.artwork || item.picUrl || item.img || item.cover,
-    ''
+  return __mfNormalizeCover(
+    item.coverImg || item.artwork || item.picUrl || item.img || item.cover
   );
 }
 

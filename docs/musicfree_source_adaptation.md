@@ -112,6 +112,11 @@ MusicFree 的发现接口接收的是「条目对象」而不是 id：
 `capabilities` 暴露插件是否实现了 `topList` / `sheets` / `sheetDetail`。宿主据此决定
 该音源是否出现在发现页音源选择器里（没有浏览能力的音源选进去只会是空页面）。
 
+封面统一走 `__mfNormalizeCover()`：补全协议，并把网易 CDN（`music.126.net`）的
+`?param=NyN` 缩略图参数换成 400x400。网易榜单页（`getTopLists` 用 cheerio 抓的
+`img[src]`）给的是 `?param=200y200`，卡片按 2 倍图解码会明显发糊；内置音源一直
+用的是 400x400，这里与它对齐。
+
 由于本项目的歌单详情页只有一个路由参数，插件来源的歌单 id 会带上音源前缀：
 
 ```
