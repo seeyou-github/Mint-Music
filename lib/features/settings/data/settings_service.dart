@@ -95,6 +95,11 @@ class SettingsService {
   Future<void> setRememberProgress(bool v) =>
       _prefs.setBool('remember_progress', v);
 
+  // -- auto switch source when the current source fails (default off) --
+  bool getAutoSwitchSource() => _prefs.getBool('auto_switch_source') ?? false;
+  Future<void> setAutoSwitchSource(bool v) =>
+      _prefs.setBool('auto_switch_source', v);
+
   // -- last playback state (JSON) --
   String? getLastPlaybackStateJson() => _prefs.getString('last_playback_state');
   Future<void> setLastPlaybackStateJson(String json) =>

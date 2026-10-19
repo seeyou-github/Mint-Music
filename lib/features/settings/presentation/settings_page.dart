@@ -1480,6 +1480,7 @@ class _PlaybackContent extends ConsumerWidget {
     ThemeColors colors,
   ) {
     final autoQualityDowngrade = ref.watch(autoQualityDowngradeProvider);
+    final autoSwitchSource = ref.watch(autoSwitchSourceProvider);
     final autoPlay = ref.watch(autoPlayProvider);
     final rememberProgress = ref.watch(rememberProgressProvider);
     final notificationEnabled = ref.watch(notificationEnabledProvider);
@@ -1491,7 +1492,7 @@ class _PlaybackContent extends ConsumerWidget {
         _SettingRow(
           icon: Icons.trending_down,
           title: '音质自动降级',
-          subtitle: '当前音质失败时依次尝试更低音质，再自动换源',
+          subtitle: '当前音质失败时依次尝试更低音质',
           trailing: Switch(
             value: autoQualityDowngrade,
             onChanged: (v) => _persistBool(
@@ -1499,6 +1500,24 @@ class _PlaybackContent extends ConsumerWidget {
               autoQualityDowngradeProvider,
               v,
               (s) => s.setAutoQualityDowngrade(v),
+            ),
+            activeTrackColor: colors.primary.withValues(alpha: 0.3),
+            activeThumbColor: colors.primary,
+          ),
+          colors: colors,
+        ),
+        _SettingDivider(colors: colors),
+        _SettingRow(
+          icon: Icons.swap_horiz,
+          title: '当前音源播放失败自动切换音源',
+          subtitle: '关闭后播放失败将停止，不切换音源、不自动播放下一首',
+          trailing: Switch(
+            value: autoSwitchSource,
+            onChanged: (v) => _persistBool(
+              context,
+              autoSwitchSourceProvider,
+              v,
+              (s) => s.setAutoSwitchSource(v),
             ),
             activeTrackColor: colors.primary.withValues(alpha: 0.3),
             activeThumbColor: colors.primary,

@@ -54,6 +54,7 @@ final playbackControllerProvider =
       controller.setAutoQualityDowngrade(
         ref.read(autoQualityDowngradeProvider),
       );
+      controller.setAutoSwitchSource(ref.read(autoSwitchSourceProvider));
       controller.onEnsureMusicSourcesReady = () =>
           ref.read(pluginInitializedProvider.future);
 
@@ -72,6 +73,10 @@ final playbackControllerProvider =
 
       ref.listen(autoQualityDowngradeProvider, (prev, next) {
         controller.setAutoQualityDowngrade(next);
+      });
+
+      ref.listen(autoSwitchSourceProvider, (prev, next) {
+        controller.setAutoSwitchSource(next);
       });
 
       void syncAudioEffects() {
@@ -108,6 +113,7 @@ final playbackControllerProvider =
           .then((svc) async {
             controller.setRememberProgress(svc.getRememberProgress());
             controller.setAutoQualityDowngrade(svc.getAutoQualityDowngrade());
+            controller.setAutoSwitchSource(svc.getAutoSwitchSource());
             unawaited(controller.setSpeed(svc.getPlaybackSpeed()));
             controller.onSavePlaybackState = (data) {
               svc.setLastPlaybackStateJson(jsonEncode(data));
@@ -213,7 +219,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
 
   int _currentPlayRequestId = 0;
   int? _qualitySwitchRequestId;
-  int _autoNextCount = 0;
   List<String> _activeSourceIds = [];
   bool _settingQueue = false;
   Duration _lastEmittedPosition = Duration.zero;
@@ -221,6 +226,10 @@ class PlaybackController extends StateNotifier<PlaybackState> {
 
   bool _rememberProgress = true;
   bool _autoQualityDowngrade = false;
+
+  /// 「当前音源播放失败自动切换音源」开关（默认关闭）。
+  /// 关闭时播放失败直接停止播放，不跨音源换源、不自动播放下一首。
+  bool _autoSwitchSource = false;
   bool _needsUrlRefresh = false;
   int? _pendingRestorePosition;
   String? _pendingRestoreSongId;
@@ -283,6 +292,10 @@ class PlaybackController extends StateNotifier<PlaybackState> {
 
   void setAutoQualityDowngrade(bool enabled) {
     _autoQualityDowngrade = enabled;
+  }
+
+  void setAutoSwitchSource(bool enabled) {
+    _autoSwitchSource = enabled;
   }
 
   void setAudioEffects(AudioEffectsConfig config) {
@@ -372,13 +385,11 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     }
 
     debugPrint(
-      '[PlaybackController] 加载超时（${_loadingTimeout.inSeconds}s）且无进度，尝试跳过',
+      '[PlaybackController] 加载超时（${_loadingTimeout.inSeconds}s）且无进度，停止播放',
     );
     _stallBaselinePosition = null;
-    // 只清 isLoading，不要顺手把 isPlaying 打成 false——那会让正在播放的
-    // 声音直接停住，交给 _tryAutoNext/next() 按播放模式决定跳过还是暂停。
-    state = state.copyWith(isLoading: false);
-    _tryAutoNext('播放加载超时');
+    // 播放卡死 → 停止播放，不自动跳歌。
+    unawaited(_stopPlaybackOnFailure(tr('播放加载超时')));
   }
 
   /// 启动时恢复上次播放会话（CeruMusic 风格：仅恢复队列+UI，不获取 URL）
@@ -549,12 +560,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     await _audioHandler.seek(resumePosition);
   }
 
-  int get _autoNextLimit {
-    if (state.queue.isEmpty) return 1;
-    final limit = (state.queue.length * 0.3).floor();
-    return limit < 1 ? 1 : limit;
-  }
-
   bool get hasQueue => state.queue.isNotEmpty;
 
   void _init() {
@@ -703,10 +708,12 @@ class PlaybackController extends StateNotifier<PlaybackState> {
 
   /// 播放指定索引的歌曲（照搬 CeruMusic playSong 逻辑）
   ///
-  /// CeruMusic 的三层容错：
+  /// 容错分层：
   /// 1. 原源 URL 获取成功 → 直接播放
-  /// 2. 原源 URL 获取失败 → getCandidateSongs 换源
-  /// 3. 播放器运行时 error → error listener 中 getCandidateSongs 换源
+  /// 2. 原源 URL 获取失败 → 依次尝试更低音质（需开启「音质自动降级」）
+  /// 3. 仍失败且开启「当前音源播放失败自动切换音源」→ getCandidateSongs 换源
+  /// 4. 播放器运行时 error → error listener 中同样按上述规则处理
+  /// 5. 关闭自动换源、或换源后所有音源都失败 → 停止播放，**不自动播放下一首**
   static const Duration _urlFetchTimeout = Duration(seconds: 12);
   static const Duration _audioSetTimeout = Duration(seconds: 10);
   static const Duration _musicSourceReadyTimeout = Duration(seconds: 12);
@@ -819,7 +826,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
           state = state.copyWith(isLoading: false, isPlaying: false);
           return;
         }
-        _autoNextCount = 0;
         // 遵循 CeruMusic：不乐观设 isPlaying=true。
         // 由 _playerStateSub 的 ready(playing=true) 或
         // finally 中的 Future.microtask 根据实际播放器状态同步。
@@ -921,7 +927,8 @@ class PlaybackController extends StateNotifier<PlaybackState> {
         } catch (_) {
           if (_currentPlayRequestId != requestId) return;
 
-          // 先尝试同一歌曲的其他洛雪脚本/音质 URL，再进入跨平台换源。
+          // 先尝试同一歌曲的其他洛雪脚本/音质 URL；
+          // 只有全部失败后才考虑跨平台换源（且需开启自动切换音源）。
           // 这能覆盖“接口返回 URL，但该 URL 的音频响应不可播放”的情况。
           final failedUrl = urlToPlay;
           final failedUrls = <String>{if (failedUrl.isNotEmpty) failedUrl};
@@ -955,7 +962,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
               final fallbackQuality = candidate.quality.isEmpty
                   ? state.currentQuality
                   : candidate.quality;
-              _autoNextCount = 0;
               state = state.copyWith(
                 isLoading: false,
                 currentSong: fallbackSong,
@@ -974,7 +980,8 @@ class PlaybackController extends StateNotifier<PlaybackState> {
             }
           }
 
-          // 原源与同源候选都失败，再按 CeruMusic 的方式跨平台换源。
+          // 原源与同源候选都失败：开启自动换源时跨平台换源，
+          // 否则按用户要求停止播放（绝不自动跳歌）。
           try {
             if (_autoQualityDowngrade && !isLocal) {
               final qualityFallbackSong = await _tryQualityFallbackAfterFailure(
@@ -993,6 +1000,14 @@ class PlaybackController extends StateNotifier<PlaybackState> {
                 );
                 return;
               }
+            }
+
+            // 未开启「当前音源播放失败自动切换音源」→ 停止播放，不跨源换源。
+            if (!_autoSwitchSource) {
+              await _stopPlaybackOnFailure(
+                tr('当前音源播放失败，自动切换音源已关闭'),
+              );
+              return;
             }
 
             final candidates = await _autoSwitchService.getCandidateSongs(
@@ -1036,7 +1051,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
                 onMessage?.call(
                   tr('已自动切换到 ${_getSourceName(candidate.source ?? '')} 源播放'),
                 );
-                _autoNextCount = 0;
                 playSuccess = true;
                 // CeruMusic: 不乐观设 isPlaying, 由播放器事件驱动
                 state = state.copyWith(
@@ -1058,16 +1072,15 @@ class PlaybackController extends StateNotifier<PlaybackState> {
             if (_currentPlayRequestId != requestId) return;
 
             if (!playSuccess) {
-              _tryAutoNext('自动换源失败：所有源均无法播放');
+              await _stopPlaybackOnFailure(tr('所有音源均无法播放'));
             }
           } catch (e) {
             if (_currentPlayRequestId != requestId) return;
-            _tryAutoNext('自动换源失败，原因: $e');
+            await _stopPlaybackOnFailure(tr('自动换源失败：$e'));
           }
           return;
         }
 
-        _autoNextCount = 0;
         // CeruMusic: 不乐观设 isPlaying
         state = state.copyWith(
           isLoading: false,
@@ -1082,6 +1095,13 @@ class PlaybackController extends StateNotifier<PlaybackState> {
         );
       } else {
         try {
+          if (!_autoSwitchSource) {
+            await _stopPlaybackOnFailure(
+              tr('当前音源播放失败，自动切换音源已关闭'),
+            );
+            return;
+          }
+
           final candidates = await _autoSwitchService.getCandidateSongs(
             song,
             activeSourceIds: _activeSourceIds,
@@ -1122,7 +1142,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
               onMessage?.call(
                 tr('已自动切换到 ${_getSourceName(candidate.source ?? '')} 源播放'),
               );
-              _autoNextCount = 0;
               playSuccess = true;
               // CeruMusic: 不乐观设 isPlaying
               state = state.copyWith(
@@ -1144,17 +1163,17 @@ class PlaybackController extends StateNotifier<PlaybackState> {
           if (_currentPlayRequestId != requestId) return;
 
           if (!playSuccess) {
-            _tryAutoNext('自动换源失败：所有源均无法播放');
+            await _stopPlaybackOnFailure(tr('所有音源均无法播放'));
           }
         } catch (e) {
           if (_currentPlayRequestId != requestId) return;
-          _tryAutoNext('自动换源失败，原因: $e');
+          await _stopPlaybackOnFailure(tr('自动换源失败：$e'));
         }
       }
     } catch (e) {
       debugPrint('[PlaybackController] playSongAt error: $e');
       if (_currentPlayRequestId != requestId) return;
-      _tryAutoNext('播放歌曲失败');
+      await _stopPlaybackOnFailure(tr('播放歌曲失败'));
     } finally {
       if (pendingCoverFuture != null && _currentPlayRequestId == requestId) {
         unawaited(
@@ -1660,17 +1679,24 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     }
   }
 
-  /// 照搬 CeruMusic tryAutoNext：
-  /// autoNextCount 超过限制则停止，否则自动切到下一首
+  /// 跨音源换源：遍历 `getCandidateSongs` 返回的候选并按顺序尝试播放。
   ///
-  /// CeruMusic 关键保护：如果原因包含"频率"或"限制"（如 API 限频），
-  /// 直接返回不触发自动下一首，防止无限循环。
+  /// 仅在开启「当前音源播放失败自动切换音源」时生效；未开启（默认）时
+  /// 直接停止播放。所有候选都失败同样停止播放，**不自动播放下一首**。
   Future<bool> _tryPlayFromAlternateSources({
     required Song originalSong,
     required int index,
     required int requestId,
     required String quality,
   }) async {
+    // 未开启「当前音源播放失败自动切换音源」→ 停止播放，不跨源换源。
+    if (!_autoSwitchSource) {
+      if (_currentPlayRequestId == requestId) {
+        await _stopPlaybackOnFailure(tr('当前音源播放失败，自动切换音源已关闭'));
+      }
+      return false;
+    }
+
     try {
       final candidates = await _autoSwitchService.getCandidateSongs(
         originalSong,
@@ -1723,49 +1749,41 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     }
 
     if (_currentPlayRequestId == requestId) {
-      _tryAutoNext('所有音质均不可用，自动换源失败');
+      await _stopPlaybackOnFailure(tr('所有音源均无法播放'));
     }
     return false;
   }
 
-  void _tryAutoNext(String reason) {
-    debugPrint(
-      '[PlaybackController] _tryAutoNext: $reason, count=$_autoNextCount',
+  /// 播放失败后的统一收尾：停止播放并提示，绝不自动播放下一首。
+  ///
+  /// 用户明确要求：不论是否开启「当前音源播放失败自动切换音源」，
+  /// 只要当前音源（或换源后所有音源）播放失败，就停止播放，
+  /// **不要自动播放下一首**。
+  Future<void> _stopPlaybackOnFailure(String reason) async {
+    debugPrint('[PlaybackController] 播放失败，停止播放：$reason');
+
+    _cancelPendingAutoNext();
+    _loadingTimer?.cancel();
+    _loadingTimer = null;
+    _stallBaselinePosition = null;
+    if (mounted) {
+      state = state.copyWith(isLoading: false);
+    }
+
+    try {
+      await _audioHandler.pause();
+    } catch (e) {
+      debugPrint('[PlaybackController] 停止播放失败: $e');
+    }
+    if (!mounted) return;
+    state = state.copyWith(isPlaying: false, isLoading: false);
+
+    // 限频/限流时给出更具体的提示。
+    final isRateLimited = reason.contains('频率') || reason.contains('限制');
+    onMessage?.call(
+      isRateLimited ? tr('播放失败：$reason，请稍后重试') : tr('播放失败：$reason，已停止播放'),
+      backgroundColor: Colors.red,
     );
-
-    // 照搬 CeruMusic：限频/限流时不自动跳转，防止无限循环
-    if (reason.contains('频率') || reason.contains('限制')) {
-      onMessage?.call(tr('播放失败：$reason，请稍后重试'), backgroundColor: Colors.red);
-      return;
-    }
-
-    final limit = _autoNextLimit;
-
-    onMessage?.call(tr('自动跳过当前歌曲：原因：$reason'), backgroundColor: Colors.red);
-
-    if ((_autoNextCount >= limit || _autoNextCount >= 10) &&
-        _autoNextCount > 2) {
-      onMessage?.call(
-        tr(
-          '自动下一首失败：$_autoNextCount/${limit > 10 ? 10 : limit}次。原因：$reason',
-        ),
-        backgroundColor: Colors.red,
-      );
-      _autoNextCount = 0;
-      return;
-    }
-
-    _autoNextCount++;
-    state = state.copyWith(isLoading: false);
-    Future.delayed(const Duration(milliseconds: 500), () {
-      if (mounted) {
-        next();
-      }
-    });
-  }
-
-  void resetAutoNextCount() {
-    _autoNextCount = 0;
   }
 
   Future<List<PluginMusicUrlResult>> _getLowerQualityCandidates(
@@ -1978,10 +1996,10 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   /// 2. 至少播放 minPlayDuration 后才激活（避免启动阶段的误判）
   /// 3. 一次性：触发一次后自动取消订阅
   ///
-  /// 换源逻辑（对齐 CeruMusic error handler）：
+  /// 失败处理逻辑（对齐 CeruMusic error handler，但失败后不自动跳歌）：
   /// - 先尝试原源重新获取 URL（可能只是 URL 过期）
-  /// - 原源失败则遍历候选源
-  /// - 全部失败 → tryAutoNext
+  /// - 原源失败则遍历候选源（仅在开启「自动切换音源」时）
+  /// - 全部失败 → 停止播放
   StreamSubscription _mountOneTimeErrorListener(
     int requestId,
     int index,
@@ -2086,7 +2104,11 @@ class PlaybackController extends StateNotifier<PlaybackState> {
           return;
         }
 
-        // 2) 原源重试失败 → 遍历候选源
+        // 2) 原源重试失败 → 按开关决定是否遍历候选源
+        if (!_autoSwitchSource) {
+          await _stopPlaybackOnFailure(tr('当前音源播放失败，自动切换音源已关闭'));
+          return;
+        }
         final candidates = await _autoSwitchService.getCandidateSongs(
           song,
           activeSourceIds: _activeSourceIds,
@@ -2132,24 +2154,13 @@ class PlaybackController extends StateNotifier<PlaybackState> {
           }
         }
 
-        // 3) 全部失败
+        // 3) 全部失败 → 停止播放（不自动跳歌）
         if (_currentPlayRequestId != requestId) return;
-        if (state.queue.length <= 1) {
-          await _audioHandler.pause();
-          state = state.copyWith(isPlaying: false, isLoading: false);
-          onMessage?.call(tr('播放中断，请手动重试'), backgroundColor: Colors.orange);
-        } else {
-          _tryAutoNext('所有自动换源尝试均失败');
-        }
+        await _stopPlaybackOnFailure(tr('所有音源均无法播放'));
       } catch (e) {
         debugPrint('[PlaybackController] 处理播放错误时出错: $e');
         if (_currentPlayRequestId != requestId) return;
-        if (state.queue.length <= 1) {
-          await _audioHandler.pause();
-          state = state.copyWith(isPlaying: false, isLoading: false);
-        } else {
-          _tryAutoNext('播放出错且自动换源失败');
-        }
+        await _stopPlaybackOnFailure(tr('播放出错且自动换源失败'));
       }
     });
 

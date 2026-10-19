@@ -25,6 +25,10 @@ final playbackSpeedProvider = StateProvider<double>((ref) => 1.0);
 final autoPlayProvider = StateProvider<bool>((ref) => false);
 final rememberProgressProvider = StateProvider<bool>((ref) => true);
 
+/// 当前音源播放失败时是否自动切换到其他音源（默认关闭）。
+/// 无论开关如何，播放失败都不会自动播放下一首。
+final autoSwitchSourceProvider = StateProvider<bool>((ref) => false);
+
 // -- download --
 final downloadDirProvider = StateProvider<String>(
   (ref) => '/storage/emulated/0/Music/MintMusic',
@@ -305,6 +309,7 @@ final settingsInitProvider = FutureProvider<void>((ref) async {
   ref.read(wifiOnlyDownloadProvider.notifier).state = svc.getWifiOnlyDownload();
   ref.read(autoPlayProvider.notifier).state = svc.getAutoPlay();
   ref.read(rememberProgressProvider.notifier).state = svc.getRememberProgress();
+  ref.read(autoSwitchSourceProvider.notifier).state = svc.getAutoSwitchSource();
   ref.read(notificationEnabledProvider.notifier).state = svc
       .getNotificationEnabled();
   ref.read(musicSourceProvider.notifier).state = svc.getMusicSource();
