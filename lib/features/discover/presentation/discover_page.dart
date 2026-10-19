@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -11,6 +13,7 @@ import '../../../shared/widgets/music_cover_image.dart';
 import '../application/discover_providers.dart';
 import '../domain/models/playlist.dart';
 import '../domain/models/leaderboard.dart';
+import '../../plugin/application/plugin_providers.dart';
 import '../../plugin/domain/plugin_types.dart';
 import '../../settings/application/settings_providers.dart';
 
@@ -102,15 +105,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
       _hasInitialized = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
-          final currentSourceId = ref.read(discoverSourceIdProvider);
-          ref
-              .read(categoryPlaylistsProvider.notifier)
-              .fetchPlaylists(
-                sortId: 'hot',
-                tagId: '',
-                sourceId: currentSourceId,
-                reset: true,
-              );
+          _loadPlaylists();
         }
       });
     }
@@ -122,7 +117,6 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
         child: Column(
           children: [
             _buildHeader(context, colors),
-            _buildTabBar(colors, tab),
             const SizedBox(height: AppSpacing.sm),
             Expanded(
               child: tab == DiscoverTab.playlists
@@ -135,8 +129,57 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
     );
   }
 
+  /// 加载歌单列表（带失败重试）。
+  ///
+  /// 插件音源（MusicFree 等）在插件系统加载完成前会返回空列表，表现为
+  /// 「暂无歌单数据」。这里先等插件系统就绪再请求，若仍为空再补一次重试，
+  /// 避免用户必须手动点「重试」才能看到内容。
+  Future<void> _loadPlaylists() async {
+    await _waitForPlugins();
+    if (!mounted) return;
+
+    await ref
+        .read(categoryPlaylistsProvider.notifier)
+        .fetchPlaylists(
+          sortId: 'hot',
+          tagId: ref.read(activeTagIdProvider),
+          sourceId: ref.read(discoverSourceIdProvider),
+          reset: true,
+        );
+    if (!mounted) return;
+
+    final playlists = ref.read(categoryPlaylistsProvider).valueOrNull;
+    if (playlists == null || playlists.isNotEmpty) return;
+
+    // 空结果：再等一次插件加载并重试。
+    await _waitForPlugins();
+    if (!mounted) return;
+    await ref
+        .read(categoryPlaylistsProvider.notifier)
+        .fetchPlaylists(
+          sortId: 'hot',
+          tagId: ref.read(activeTagIdProvider),
+          sourceId: ref.read(discoverSourceIdProvider),
+          reset: true,
+        );
+  }
+
+  /// 等待插件系统初始化完成（最多等待 8 秒）。
+  Future<void> _waitForPlugins() async {
+    try {
+      await ref
+          .read(pluginInitializedProvider.future)
+          .timeout(const Duration(seconds: 8));
+    } catch (_) {}
+  }
+
   Widget _buildHeader(BuildContext context, ThemeColors colors) {
     final isTablet = ResponsiveLayout.isTablet(context);
+    final tab = ref.watch(discoverTabProvider);
+    final sourceId = ref.watch(discoverSourceIdProvider);
+    final sources = ref.watch(discoverSupportedSourcesProvider);
+    final currentSource = sources.where((s) => s.id == sourceId).firstOrNull;
+
     return Padding(
       padding: EdgeInsets.symmetric(
         horizontal: ResponsiveLayout.horizontalPadding(context),
@@ -144,16 +187,24 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
       ),
       child: Row(
         children: [
-          Text(
-            context.tr('发现音乐'),
-            style: TextStyle(
-              fontSize: isTablet ? 26 : 22,
-              fontWeight: FontWeight.bold,
-              color: colors.textPrimary,
-            ),
+          // 「歌单 / 榜单」切换（原「发现音乐」标题的位置）
+          _buildTabChip(
+            label: context.tr('歌单'),
+            isActive: tab == DiscoverTab.playlists,
+            colors: colors,
+            onTap: () => ref.read(discoverTabProvider.notifier).state =
+                DiscoverTab.playlists,
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          _buildTabChip(
+            label: context.tr('排行榜'),
+            isActive: tab == DiscoverTab.leaderboards,
+            colors: colors,
+            onTap: () => ref.read(discoverTabProvider.notifier).state =
+                DiscoverTab.leaderboards,
           ),
           const SizedBox(width: AppSpacing.md),
-          // 搜索框在标题同一行靠右，宽度随窗口自适应，但限制最小/最大宽度。
+          // 搜索框
           Expanded(
             child: Align(
               alignment: Alignment.centerRight,
@@ -163,6 +214,34 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
                   maxWidth: isTablet ? 420 : 300,
                 ),
                 child: _buildSearchBar(context, colors),
+              ),
+            ),
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          // 切换音源（插件）按钮：放在搜索框右侧
+          GestureDetector(
+            key: _sourceButtonKey,
+            onTap: () => _showSourceMenu(context, colors, sources, sourceId),
+            child: Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: colors.surface,
+                shape: BoxShape.circle,
+              ),
+              child: Center(
+                child: currentSource != null
+                    ? _buildSourceIcon(
+                        // 同名插件的变体 id 需要还原成平台 id 才能取到对应图标。
+                        SourceInfo.baseIdOf(currentSource.id),
+                        size: 20,
+                        label: currentSource.name,
+                      )
+                    : Icon(
+                        Icons.music_note,
+                        size: 20,
+                        color: colors.textSecondary,
+                      ),
               ),
             ),
           ),
@@ -201,62 +280,6 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
     );
   }
 
-  Widget _buildTabBar(ThemeColors colors, DiscoverTab currentTab) {
-    final sourceId = ref.watch(discoverSourceIdProvider);
-    final sources = ref.watch(discoverSupportedSourcesProvider);
-    final currentSource = sources.where((s) => s.id == sourceId).firstOrNull;
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
-      child: Row(
-        children: [
-          _buildTabChip(
-            label: context.tr('歌单'),
-            isActive: currentTab == DiscoverTab.playlists,
-            colors: colors,
-            onTap: () => ref.read(discoverTabProvider.notifier).state =
-                DiscoverTab.playlists,
-          ),
-          const SizedBox(width: AppSpacing.sm),
-          _buildTabChip(
-            label: context.tr('排行榜'),
-            isActive: currentTab == DiscoverTab.leaderboards,
-            colors: colors,
-            onTap: () => ref.read(discoverTabProvider.notifier).state =
-                DiscoverTab.leaderboards,
-          ),
-          const SizedBox(width: AppSpacing.sm),
-          const Spacer(),
-          GestureDetector(
-            key: _sourceButtonKey,
-            onTap: () => _showSourceMenu(context, colors, sources, sourceId),
-            child: Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                color: colors.surface,
-                shape: BoxShape.circle,
-              ),
-              child: Center(
-                child: currentSource != null
-                    ? _buildSourceIcon(
-                        // 同名插件的变体 id 需要还原成平台 id 才能取到对应图标。
-                        SourceInfo.baseIdOf(currentSource.id),
-                        size: 20,
-                        label: currentSource.name,
-                      )
-                    : Icon(
-                        Icons.music_note,
-                        size: 20,
-                        color: colors.textSecondary,
-                      ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 
   void _showSourceMenu(
     BuildContext context,
@@ -324,6 +347,13 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
     ).then((selectedId) {
       if (selectedId != null && selectedId != currentSourceId) {
         ref.read(discoverSourceIdProvider.notifier).state = selectedId;
+        // 用户最后切换的音源即成为默认音源。
+        unawaited(
+          persistDefaultSourceId(
+            ProviderScope.containerOf(context),
+            selectedId,
+          ),
+        );
         ref.read(activeTagIdProvider.notifier).state = '';
         ref.read(activeCategoryNameProvider.notifier).state = '热门';
         ref
@@ -530,17 +560,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
                       Text(context.tr('暂无歌单数据'), style: TextStyle(color: colors.textHint)),
                       const SizedBox(height: AppSpacing.md),
                       TextButton(
-                        onPressed: () {
-                          final srcId = ref.read(discoverSourceIdProvider);
-                          ref
-                              .read(categoryPlaylistsProvider.notifier)
-                              .fetchPlaylists(
-                                sortId: 'hot',
-                                tagId: activeTagId,
-                                sourceId: srcId,
-                                reset: true,
-                              );
-                        },
+                        onPressed: () => _loadPlaylists(),
                         child: Text(context.tr('重试')),
                       ),
                     ],
@@ -559,17 +579,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
                   Text(context.tr('加载失败'), style: TextStyle(color: colors.textHint)),
                   const SizedBox(height: AppSpacing.md),
                   TextButton(
-                    onPressed: () {
-                      final srcId = ref.read(discoverSourceIdProvider);
-                      ref
-                          .read(categoryPlaylistsProvider.notifier)
-                          .fetchPlaylists(
-                            sortId: 'hot',
-                            tagId: activeTagId,
-                            sourceId: srcId,
-                            reset: true,
-                          );
-                    },
+                    onPressed: () => _loadPlaylists(),
                     child: Text(context.tr('重试')),
                   ),
                 ],
@@ -686,13 +696,17 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
     );
   }
 
+  /// 「更多分类」弹层：高度为窗口高度的 60%，分类按「语种 / 分类…」纵向平铺，
+  /// 内容超出时可上下滚动，右侧显示滚动条。
   void _showCategoryBottomSheet(
     ThemeColors colors,
     AsyncValue<List<PlaylistTagGroup>> tagsAsync,
     String activeTagId,
   ) {
+    final sheetHeight = MediaQuery.sizeOf(context).height * 0.6;
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       sheetAnimationStyle: const AnimationStyle(
         duration: Duration(milliseconds: 220),
         reverseDuration: Duration(milliseconds: 180),
@@ -706,81 +720,29 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
           data: (groups) {
             if (groups.isEmpty) {
               return SizedBox(
-                height: 200,
+                height: sheetHeight,
                 child: Center(child: Text(context.tr('暂无分类数据'))),
               );
             }
-            return DefaultTabController(
-              length: groups.length,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const SizedBox(height: AppSpacing.md),
-                  TabBar(
-                    isScrollable: true,
-                    tabAlignment: TabAlignment.start,
-                    labelColor: colors.primary,
-                    unselectedLabelColor: colors.textSecondary,
-                    indicatorColor: colors.primary,
-                    tabs: groups.map((g) => Tab(text: g.name)).toList(),
-                  ),
-                  SizedBox(
-                    height: 250,
-                    child: TabBarView(
-                      children: groups.map((group) {
-                        return Padding(
-                          padding: const EdgeInsets.all(AppSpacing.md),
-                          child: Wrap(
-                            spacing: AppSpacing.sm,
-                            runSpacing: AppSpacing.sm,
-                            children: group.tags.map((tag) {
-                              final isActive = activeTagId == tag.id;
-                              return GestureDetector(
-                                onTap: () {
-                                  _onSelectTag(tag.id, tag.name);
-                                  Navigator.pop(ctx);
-                                },
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 12,
-                                    vertical: 4,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: isActive
-                                        ? colors.primary.withValues(alpha: 0.15)
-                                        : Colors.transparent,
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  child: Text(
-                                    tag.name,
-                                    style: TextStyle(
-                                      fontSize: 13,
-                                      fontWeight: isActive
-                                          ? FontWeight.w600
-                                          : FontWeight.w400,
-                                      color: isActive
-                                          ? colors.primary
-                                          : colors.textSecondary,
-                                    ),
-                                  ),
-                                ),
-                              );
-                            }).toList(),
-                          ),
-                        );
-                      }).toList(),
-                    ),
-                  ),
-                ],
+            return SizedBox(
+              height: sheetHeight,
+              child: _CategorySheetContent(
+                groups: groups,
+                activeTagId: activeTagId,
+                colors: colors,
+                onSelect: (tagId, name) {
+                  _onSelectTag(tagId, name);
+                  Navigator.pop(ctx);
+                },
               ),
             );
           },
-          loading: () => const SizedBox(
-            height: 200,
-            child: Center(child: CircularProgressIndicator()),
+          loading: () => SizedBox(
+            height: sheetHeight,
+            child: const Center(child: CircularProgressIndicator()),
           ),
           error: (_, __) => SizedBox(
-            height: 200,
+            height: sheetHeight,
             child: Center(child: Text(context.tr('加载分类失败'))),
           ),
         );
@@ -1137,6 +1099,128 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// 「更多分类」弹层内容：分类纵向平铺，超出可滚动，右侧显示滚动条。
+class _CategorySheetContent extends StatefulWidget {
+  const _CategorySheetContent({
+    required this.groups,
+    required this.activeTagId,
+    required this.colors,
+    required this.onSelect,
+  });
+
+  final List<PlaylistTagGroup> groups;
+  final String activeTagId;
+  final ThemeColors colors;
+  final void Function(String tagId, String name) onSelect;
+
+  @override
+  State<_CategorySheetContent> createState() => _CategorySheetContentState();
+}
+
+class _CategorySheetContentState extends State<_CategorySheetContent> {
+  final ScrollController _scrollController = ScrollController();
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = widget.colors;
+    return Scrollbar(
+      controller: _scrollController,
+      thumbVisibility: true,
+      child: ListView(
+        controller: _scrollController,
+        padding: const EdgeInsets.fromLTRB(
+          AppSpacing.lg,
+          AppSpacing.md,
+          AppSpacing.lg,
+          AppSpacing.xl,
+        ),
+        children: [
+          for (var i = 0; i < widget.groups.length; i++) ...[
+            _buildGroupTitle(context, widget.groups[i].name),
+            const SizedBox(height: AppSpacing.sm),
+            _buildTagWrap(context, widget.groups[i]),
+            if (i != widget.groups.length - 1) ...[
+              const SizedBox(height: AppSpacing.md),
+              Divider(
+                height: 1,
+                color: colors.divider.withValues(alpha: 0.4),
+              ),
+              const SizedBox(height: AppSpacing.md),
+            ],
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// 分类标题（如「语种」「分类」）。
+  Widget _buildGroupTitle(BuildContext context, String name) {
+    final colors = widget.colors;
+    return Row(
+      children: [
+        Text(
+          context.tr(name),
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
+            color: colors.textPrimary,
+          ),
+        ),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Divider(
+            height: 1,
+            color: colors.divider.withValues(alpha: 0.35),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 分类下的标签平铺（自动换行）。
+  Widget _buildTagWrap(BuildContext context, PlaylistTagGroup group) {
+    final colors = widget.colors;
+    return Wrap(
+      spacing: AppSpacing.sm,
+      runSpacing: AppSpacing.sm,
+      children: group.tags.map((tag) {
+        final isActive = widget.activeTagId == tag.id;
+        return GestureDetector(
+          onTap: () => widget.onSelect(tag.id, tag.name),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+            decoration: BoxDecoration(
+              color: isActive
+                  ? colors.primary.withValues(alpha: 0.15)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(
+                color: isActive
+                    ? colors.primary.withValues(alpha: 0.5)
+                    : colors.divider.withValues(alpha: 0.4),
+              ),
+            ),
+            child: Text(
+              tag.name,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
+                color: isActive ? colors.primary : colors.textSecondary,
+              ),
+            ),
+          ),
+        );
+      }).toList(),
     );
   }
 }

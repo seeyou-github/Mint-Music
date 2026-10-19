@@ -51,6 +51,16 @@ final playbackControllerProvider =
         }
         return globalQuality;
       };
+      // 用户在播放页切换音质后，默认音质与全局音质都跟着更新。
+      controller.onQualityChanged = (quality, sourceId) {
+        unawaited(
+          persistUserQuality(
+            ref,
+            quality: quality,
+            sourceId: sourceId,
+          ),
+        );
+      };
       controller.setAutoQualityDowngrade(
         ref.read(autoQualityDowngradeProvider),
       );
@@ -212,6 +222,9 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   void Function(Song)? onSongUpdated;
   void Function(String message, {Color? backgroundColor})? onMessage;
   String Function(String sourceId)? getQualityForSource;
+
+  /// 用户手动切换音质后回调（用于同步「默认音质 / 全局音质」设置）。
+  void Function(String quality, String? sourceId)? onQualityChanged;
   void Function(Map<String, dynamic> data)? onSavePlaybackState;
   Map<String, dynamic>? Function()? onRestorePlaybackState;
   VoidCallback? onClearPlaybackState;
@@ -1586,6 +1599,8 @@ class PlaybackController extends StateNotifier<PlaybackState> {
       );
       _finishQualitySwitch(requestId);
       onMessage?.call(tr('已切换到 ${_getQualityDisplayName(quality)}'));
+      // 用户手动切换音质：同步「默认音质 / 全局音质」。
+      onQualityChanged?.call(quality, currentSong.source);
     } catch (e) {
       if (_currentPlayRequestId != requestId) return;
       // 恢复原音源

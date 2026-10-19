@@ -15,12 +15,8 @@ import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../../../shared/services/app_image_cache.dart';
 import '../../../shared/services/cache_paths.dart';
-import '../application/plugin_providers.dart';
 import '../application/settings_providers.dart';
-import '../application/update_providers.dart';
 import '../data/settings_service.dart';
-import '../data/update_service.dart';
-import 'update_dialog.dart';
 import '../../player/application/desktop_lyric_controller.dart';
 import '../../player/application/desktop_lyric_sync.dart';
 import '../../player/domain/models/desktop_lyric_settings.dart';
@@ -88,9 +84,7 @@ Future<void> _doPersist(
 enum SettingsCategory {
   appearance,
   playback,
-  musicSource,
   storage,
-  about,
 }
 
 class SettingsPage extends ConsumerStatefulWidget {
@@ -113,9 +107,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   static const _categoryConfig = {
     SettingsCategory.appearance: (icon: Icons.palette, label: '外观设置'),
     SettingsCategory.playback: (icon: Icons.play_circle, label: '播放设置'),
-    SettingsCategory.musicSource: (icon: Icons.music_note, label: '音乐源'),
     SettingsCategory.storage: (icon: Icons.storage, label: '存储管理'),
-    SettingsCategory.about: (icon: Icons.info, label: '关于'),
   };
 
   @override
@@ -309,12 +301,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
         return const _AppearanceContent();
       case SettingsCategory.playback:
         return const _PlaybackContent();
-      case SettingsCategory.musicSource:
-        return const _MusicSourceContent();
       case SettingsCategory.storage:
         return const _StorageContent();
-      case SettingsCategory.about:
-        return const _AboutContent();
     }
   }
 
@@ -1401,9 +1389,6 @@ class _PlaybackContent extends ConsumerWidget {
   ) {
     final autoQualityDowngrade = ref.watch(autoQualityDowngradeProvider);
     final autoSwitchSource = ref.watch(autoSwitchSourceProvider);
-    final autoPlay = ref.watch(autoPlayProvider);
-    final rememberProgress = ref.watch(rememberProgressProvider);
-    final notificationEnabled = ref.watch(notificationEnabledProvider);
     return _SettingGroup(
       title: '播放设置',
       subtitle: '播放行为和音频输出配置',
@@ -1439,59 +1424,6 @@ class _PlaybackContent extends ConsumerWidget {
               v,
               (s) => s.setAutoSwitchSource(v),
             ),
-            activeTrackColor: colors.primary.withValues(alpha: 0.3),
-            activeThumbColor: colors.primary,
-          ),
-          colors: colors,
-        ),
-        _SettingDivider(colors: colors),
-        _SettingRow(
-          icon: Icons.autorenew,
-          title: '自动播放',
-          subtitle: '启动时自动继续播放上次歌曲',
-          trailing: Switch(
-            value: autoPlay,
-            onChanged: (v) {
-              final container = ProviderScope.containerOf(context);
-              container.read(autoPlayProvider.notifier).state = v;
-              unawaited(_doPersist(container, (s) => s.setAutoPlay(v)));
-            },
-            activeTrackColor: colors.primary.withValues(alpha: 0.3),
-            activeThumbColor: colors.primary,
-          ),
-          colors: colors,
-        ),
-        _SettingDivider(colors: colors),
-        _SettingRow(
-          icon: Icons.restore,
-          title: '记住播放进度',
-          subtitle: '退出后再次打开时继续上次进度',
-          trailing: Switch(
-            value: rememberProgress,
-            onChanged: (v) {
-              final container = ProviderScope.containerOf(context);
-              container.read(rememberProgressProvider.notifier).state = v;
-              unawaited(_doPersist(container, (s) => s.setRememberProgress(v)));
-            },
-            activeTrackColor: colors.primary.withValues(alpha: 0.3),
-            activeThumbColor: colors.primary,
-          ),
-          colors: colors,
-        ),
-        _SettingDivider(colors: colors),
-        _SettingRow(
-          icon: Icons.notifications,
-          title: '播放通知',
-          subtitle: '显示播放状态通知',
-          trailing: Switch(
-            value: notificationEnabled,
-            onChanged: (v) {
-              final container = ProviderScope.containerOf(context);
-              container.read(notificationEnabledProvider.notifier).state = v;
-              unawaited(
-                _doPersist(container, (s) => s.setNotificationEnabled(v)),
-              );
-            },
             activeTrackColor: colors.primary.withValues(alpha: 0.3),
             activeThumbColor: colors.primary,
           ),
@@ -2342,363 +2274,44 @@ class _PlaybackContent extends ConsumerWidget {
   }
 }
 
-// ==================== Plugins ====================
-
-// ==================== Music Source ====================
-
-class _MusicSourceContent extends ConsumerWidget {
-  const _MusicSourceContent();
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final colors = ref.watch(themeColorsProvider);
-    final musicSource = ref.watch(musicSourceProvider);
-    final sourceQuality = ref.watch(sourceQualityProvider);
-    final globalQuality = ref.watch(globalQualityProvider);
-    // 与全屏播放页保持一致：音质列表动态取插件声明的音质，插件未声明时回退内置默认
-    final musicSourceManager = ref.watch(musicSourceManagerProvider);
-    final allSources = ['网易云', 'QQ音乐', '酷狗', '酷我', '咪咕'];
-    final currentQuality = sourceQuality[musicSource] ?? '320k';
-    final supportedQualities = musicSourceManager.getSupportedQualitiesForSourceId(
-      kSourceNameToId[musicSource] ?? 'wy',
-    );
-    final qualityDisplayNames = supportedQualities
-        .map((q) => getQualityDisplayName(q))
-        .toList();
-    final currentQualityDisplay = getQualityDisplayName(currentQuality);
-    final globalQualityDisplay = getQualityDisplayName(globalQuality);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _SettingGroup(
-          title: '音乐源选择',
-          subtitle: '选择音乐来源和音质配置',
-          colors: colors,
-          children: [
-            _SettingRow(
-              icon: Icons.source,
-              title: '默认音源',
-              subtitle: '选择默认音乐来源',
-              trailing: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    musicSource,
-                    style: TextStyle(fontSize: 13, color: colors.textHint),
-                  ),
-                  const SizedBox(width: 4),
-                  Icon(Icons.chevron_right, size: 18, color: colors.textHint),
-                ],
-              ),
-              colors: colors,
-              onTap: () => _showBottomPicker(
-                context,
-                colors,
-                '选择音源',
-                allSources,
-                musicSource,
-                (v) {
-                  final container = ProviderScope.containerOf(context);
-                  container.read(musicSourceProvider.notifier).state = v;
-                  unawaited(_doPersist(container, (s) => s.setMusicSource(v)));
-                },
-              ),
-            ),
-            _SettingDivider(colors: colors),
-            _SettingRow(
-              icon: Icons.high_quality,
-              title: '音质选择',
-              subtitle: '$musicSource: $currentQualityDisplay',
-              trailing: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    context.tr(currentQualityDisplay),
-                    style: TextStyle(fontSize: 13, color: colors.textHint),
-                  ),
-                  const SizedBox(width: 4),
-                  Icon(Icons.chevron_right, size: 18, color: colors.textHint),
-                ],
-              ),
-              colors: colors,
-              onTap: () => _showBottomPicker(
-                context,
-                colors,
-                '$musicSource 音质',
-                qualityDisplayNames,
-                currentQualityDisplay,
-                (v) {
-                  final idx = qualityDisplayNames.indexOf(v);
-                  if (idx < 0) return;
-                  final qualityId = supportedQualities[idx];
-                  final container = ProviderScope.containerOf(context);
-                  final updated = Map<String, String>.from(sourceQuality);
-                  updated[musicSource] = qualityId;
-                  container.read(sourceQualityProvider.notifier).state =
-                      updated;
-                  unawaited(
-                    _doPersist(container, (s) => s.setSourceQuality(updated)),
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
-        _SettingGroup(
-          title: '全局音质',
-          subtitle: '一键设置所有音源的音质等级',
-          colors: colors,
-          children: [
-            _SettingRow(
-              icon: Icons.tune,
-              title: '全局音质',
-              subtitle: '应用到所有音源的默认音质',
-              trailing: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    context.tr(globalQualityDisplay),
-                    style: TextStyle(fontSize: 13, color: colors.textHint),
-                  ),
-                  const SizedBox(width: 4),
-                  Icon(Icons.chevron_right, size: 18, color: colors.textHint),
-                ],
-              ),
-              colors: colors,
-              onTap: () {
-                final allQualityIds = <String>{};
-                for (final src in allSources) {
-                  allQualityIds.addAll(
-                    musicSourceManager.getSupportedQualitiesForSourceId(
-                      kSourceNameToId[src] ?? 'wy',
-                    ),
-                  );
-                }
-                final sortedIds = allQualityIds.toList();
-                final sortedNames = sortedIds
-                    .map((q) => getQualityDisplayName(q))
-                    .toList();
-                _showBottomPicker(
-                  context,
-                  colors,
-                  '全局音质',
-                  sortedNames,
-                  globalQualityDisplay,
-                  (v) {
-                    final idx = sortedNames.indexOf(v);
-                    if (idx < 0) return;
-                    final qualityId = sortedIds[idx];
-                    final container = ProviderScope.containerOf(context);
-                    container.read(globalQualityProvider.notifier).state =
-                        qualityId;
-                    unawaited(
-                      _doPersist(
-                        container,
-                        (s) => s.setGlobalQuality(qualityId),
-                      ),
-                    );
-                  },
-                );
-              },
-            ),
-            _SettingDivider(colors: colors),
-            _SettingRow(
-              icon: Icons.done_all,
-              title: '应用到所有音源',
-              subtitle: '将全局音质 "$globalQualityDisplay" 应用到所有音源',
-              trailing: OutlinedButton(
-                onPressed: () {
-                  final container = ProviderScope.containerOf(context);
-                  final updated = <String, String>{};
-                  for (final src in allSources) {
-                    final supported = musicSourceManager
-                        .getSupportedQualitiesForSourceId(
-                          kSourceNameToId[src] ?? 'wy',
-                        );
-                    if (supported.contains(globalQuality)) {
-                      updated[src] = globalQuality;
-                    } else {
-                      updated[src] = supported.isNotEmpty
-                          ? supported.last
-                          : '320k';
-                    }
-                  }
-                  container.read(sourceQualityProvider.notifier).state =
-                      updated;
-                  unawaited(
-                    _doPersist(container, (s) => s.setSourceQuality(updated)),
-                  );
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(context.tr('已将所有音源音质设置为 $globalQualityDisplay')),
-                      backgroundColor: colors.primary,
-                    ),
-                  );
-                },
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: colors.primary,
-                  side: BorderSide(color: colors.primary),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 4,
-                  ),
-                ),
-                child: Text(context.tr('应用')),
-              ),
-              colors: colors,
-            ),
-          ],
-        ),
-        _SettingGroup(
-          title: '配置状态',
-          subtitle: '当前音乐源和音质配置',
-          colors: colors,
-          children: [
-            _SettingRow(
-              icon: Icons.music_note,
-              title: '音乐源',
-              subtitle: musicSource,
-              trailing: Text(
-                musicSource,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: colors.textPrimary,
-                ),
-              ),
-              colors: colors,
-            ),
-            _SettingDivider(colors: colors),
-            _SettingRow(
-              icon: Icons.graphic_eq,
-              title: '音质',
-              subtitle: currentQualityDisplay,
-              trailing: Text(
-                context.tr(currentQualityDisplay),
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: colors.textPrimary,
-                ),
-              ),
-              colors: colors,
-            ),
-            _SettingDivider(colors: colors),
-            ...allSources.map(
-              (src) => Column(
-                children: [
-                  _SettingRow(
-                    icon: Icons.album,
-                    title: src,
-                    subtitle:
-                        '音质: ${getQualityDisplayName(sourceQuality[src] ?? "320k")}',
-                    trailing: Text(
-                      context.tr(getQualityDisplayName(sourceQuality[src] ?? '320k')),
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: colors.textSecondary,
-                      ),
-                    ),
-                    colors: colors,
-                  ),
-                  if (src != allSources.last) _SettingDivider(colors: colors),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-}
-
 // ==================== Storage ====================
-
 class _StorageContent extends ConsumerWidget {
   const _StorageContent();
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final colors = ref.watch(themeColorsProvider);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _buildDirectoryGroup(context, ref, colors),
         _buildCacheGroup(context, ref, colors),
+        _buildDownloadGroup(context, ref, colors),
       ],
     );
   }
 
-  Widget _buildDirectoryGroup(
+  /// 缓存目录：路径 + 选择 / 打开目录 + 最大缓存大小 + 清除缓存。
+  Widget _buildCacheGroup(
     BuildContext context,
     WidgetRef ref,
     ThemeColors colors,
   ) {
-    final downloadDir = ref.watch(downloadDirProvider);
     final cacheDir = ref.watch(cacheDirProvider);
-    final downloadDirSize = ref.watch(downloadDirSizeProvider);
     final cacheDirSize = ref.watch(cacheDirSizeProvider);
+    final maxMb = ref.watch(maxCacheSizeMbProvider);
+    final maxLabel = _formatCacheLimit(maxMb);
+
     return _SettingGroup(
-      title: '存储目录配置',
-      subtitle: '缓存和下载目录设置',
+      title: '缓存目录',
+      subtitle: '用于存储歌曲缓存文件，提高播放速度',
       colors: colors,
       children: [
-        Text(
-          context.tr('缓存目录'),
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-            color: colors.textPrimary,
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          context.tr('用于存储歌曲缓存文件，提高播放速度'),
-          style: TextStyle(fontSize: 12, color: colors.textHint),
-        ),
-        const SizedBox(height: 8),
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: colors.background,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: colors.divider.withValues(alpha: 0.3)),
-          ),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  cacheDir.isEmpty ? context.tr('未设置') : cacheDir,
-                  style: TextStyle(fontSize: 13, color: colors.textPrimary),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                decoration: BoxDecoration(
-                  color: colors.primary.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(
-                    color: colors.primary.withValues(alpha: 0.3),
-                  ),
-                ),
-                child: cacheDirSize.when(
-                  data: (s) => Text(
-                    s,
-                    style: TextStyle(fontSize: 11, color: colors.primary),
-                  ),
-                  loading: () => Text(
-                    '...',
-                    style: TextStyle(fontSize: 11, color: colors.textHint),
-                  ),
-                  error: (e, st) => Text(
-                    '0 B',
-                    style: TextStyle(fontSize: 11, color: colors.textHint),
-                  ),
-                ),
-              ),
-            ],
-          ),
+        _buildPathField(
+          context,
+          colors,
+          path: cacheDir.isEmpty ? context.tr('未设置') : cacheDir,
+          sizeAsync: cacheDirSize,
+          badgeColor: colors.primary,
         ),
         const SizedBox(height: 8),
         Row(
@@ -2738,231 +2351,6 @@ class _StorageContent extends ConsumerWidget {
                   side: BorderSide(color: colors.divider),
                 ),
                 child: Text(context.tr('打开目录')),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: AppSpacing.md),
-        Text(
-          context.tr('下载目录'),
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-            color: colors.textPrimary,
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          context.tr('用于存储下载的音乐文件'),
-          style: TextStyle(fontSize: 12, color: colors.textHint),
-        ),
-        const SizedBox(height: 8),
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: colors.background,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: colors.divider.withValues(alpha: 0.3)),
-          ),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  downloadDir,
-                  style: TextStyle(fontSize: 13, color: colors.textPrimary),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                decoration: BoxDecoration(
-                  color: Colors.green.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(
-                    color: Colors.green.withValues(alpha: 0.3),
-                  ),
-                ),
-                child: downloadDirSize.when(
-                  data: (s) => Text(
-                    s,
-                    style: TextStyle(fontSize: 11, color: Colors.green),
-                  ),
-                  loading: () => Text(
-                    '...',
-                    style: TextStyle(fontSize: 11, color: colors.textHint),
-                  ),
-                  error: (e, st) => Text(
-                    '0 B',
-                    style: TextStyle(fontSize: 11, color: colors.textHint),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(
-              child: OutlinedButton(
-                onPressed: () async {
-                  try {
-                    final result = await FilePicker.platform.getDirectoryPath();
-                    if (result != null && context.mounted) {
-                      final container = ProviderScope.containerOf(context);
-                      container.read(downloadDirProvider.notifier).state =
-                          result;
-                      unawaited(
-                        _doPersist(container, (s) => s.setDownloadDir(result)),
-                      );
-                    }
-                  } catch (_) {}
-                },
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: colors.primary,
-                  side: BorderSide(color: colors.primary),
-                ),
-                child: Text(context.tr('选择目录')),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: OutlinedButton(
-                onPressed: () => _openDirectory(downloadDir),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: colors.textSecondary,
-                  side: BorderSide(color: colors.divider),
-                ),
-                child: Text(context.tr('打开目录')),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: AppSpacing.md),
-        Row(
-          children: [
-            Expanded(
-              child: OutlinedButton(
-                onPressed: () => _resetDirectories(context),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: colors.textSecondary,
-                  side: BorderSide(color: colors.divider),
-                ),
-                child: Text(context.tr('重置为默认')),
-              ),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  void _openDirectory(String path) {
-    if (path.isEmpty) return;
-    try {
-      Process.run('explorer', [path]);
-    } catch (_) {}
-  }
-
-  void _resetDirectories(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: colors_surface(context).surface,
-        title: Text(context.tr('重置目录设置'), style: TextStyle(color: text_primary(context))),
-        content: Text(
-          context.tr('确定要重置为默认目录吗？这将清除当前的自定义目录设置。'),
-          style: TextStyle(color: text_secondary(context)),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text(context.tr('取消'), style: TextStyle(color: text_hint(context))),
-          ),
-          TextButton(
-            onPressed: () async {
-              Navigator.pop(ctx);
-              final container = ProviderScope.containerOf(context);
-              final defaultDownload = '/storage/emulated/0/Music/MintMusic';
-              // 默认缓存目录使用应用缓存目录，不再指向系统临时目录。
-              final appCacheDir = await getApplicationCacheDirectory();
-              container.read(downloadDirProvider.notifier).state =
-                  defaultDownload;
-              container.read(cacheDirProvider.notifier).state =
-                  appCacheDir.path;
-              CachePaths.configure(appCacheDir.path);
-              await AppImageCache.configure();
-              container.invalidate(cacheDirSizeProvider);
-              unawaited(
-                _doPersist(container, (s) async {
-                  await s.setDownloadDir(defaultDownload);
-                  await s.setCacheDir(appCacheDir.path);
-                }),
-              );
-              if (context.mounted)
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(context.tr('已重置为默认目录')),
-                    backgroundColor: Theme.of(context).primaryColor,
-                  ),
-                );
-            },
-            child: Text(
-              context.tr('确定重置'),
-              style: TextStyle(color: Theme.of(context).primaryColor),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  ThemeColors colors_surface(BuildContext context) => ref_watch_colors(context);
-  Color text_primary(BuildContext context) =>
-      ref_watch_colors(context).textPrimary;
-  Color text_secondary(BuildContext context) =>
-      ref_watch_colors(context).textSecondary;
-  Color text_hint(BuildContext context) => ref_watch_colors(context).textHint;
-  ThemeColors ref_watch_colors(BuildContext context) =>
-      ProviderScope.containerOf(context).read(themeColorsProvider);
-
-  Widget _buildCacheGroup(
-    BuildContext context,
-    WidgetRef ref,
-    ThemeColors colors,
-  ) {
-    final cacheDirSize = ref.watch(cacheDirSizeProvider);
-    final maxMb = ref.watch(maxCacheSizeMbProvider);
-    final maxLabel = _formatCacheLimit(maxMb);
-    return _SettingGroup(
-      title: '缓存管理',
-      subtitle: '缓存占用和最大缓存空间',
-      colors: colors,
-      children: [
-        Row(
-          children: [
-            Text(
-              context.tr('当前缓存占用：'),
-              style: TextStyle(fontSize: 13, color: colors.textSecondary),
-            ),
-            cacheDirSize.when(
-              data: (s) => Text(
-                s,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: colors.primary,
-                ),
-              ),
-              loading: () => Text(
-                '...',
-                style: TextStyle(fontSize: 13, color: colors.textHint),
-              ),
-              error: (e, st) => Text(
-                '0 B',
-                style: TextStyle(fontSize: 13, color: colors.textHint),
               ),
             ),
           ],
@@ -3032,6 +2420,212 @@ class _StorageContent extends ConsumerWidget {
     );
   }
 
+  /// 下载目录：路径 + 选择 / 打开目录 + 重置为默认。
+  Widget _buildDownloadGroup(
+    BuildContext context,
+    WidgetRef ref,
+    ThemeColors colors,
+  ) {
+    final downloadDir = ref.watch(downloadDirProvider);
+    final downloadDirSize = ref.watch(downloadDirSizeProvider);
+
+    return _SettingGroup(
+      title: '下载目录',
+      subtitle: '用于存储下载的音乐文件',
+      colors: colors,
+      children: [
+        _buildPathField(
+          context,
+          colors,
+          path: downloadDir,
+          sizeAsync: downloadDirSize,
+          badgeColor: Colors.green,
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                onPressed: () async {
+                  try {
+                    final result = await FilePicker.platform.getDirectoryPath();
+                    if (result != null && context.mounted) {
+                      final container = ProviderScope.containerOf(context);
+                      container.read(downloadDirProvider.notifier).state =
+                          result;
+                      unawaited(
+                        _doPersist(container, (s) => s.setDownloadDir(result)),
+                      );
+                    }
+                  } catch (_) {}
+                },
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: colors.primary,
+                  side: BorderSide(color: colors.primary),
+                ),
+                child: Text(context.tr('选择目录')),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: OutlinedButton(
+                onPressed: () => _openDirectory(downloadDir),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: colors.textSecondary,
+                  side: BorderSide(color: colors.divider),
+                ),
+                child: Text(context.tr('打开目录')),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: AppSpacing.md),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton(
+            onPressed: () => _resetDirectories(context),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: colors.textSecondary,
+              side: BorderSide(color: colors.divider),
+              padding: const EdgeInsets.symmetric(vertical: 12),
+            ),
+            child: Text(context.tr('重置为默认')),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 目录路径输入框（右侧显示目录占用大小）。
+  Widget _buildPathField(
+    BuildContext context,
+    ThemeColors colors, {
+    required String path,
+    required AsyncValue<String> sizeAsync,
+    required Color badgeColor,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: colors.background,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: colors.divider.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              path,
+              style: TextStyle(fontSize: 13, color: colors.textPrimary),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            decoration: BoxDecoration(
+              color: badgeColor.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: badgeColor.withValues(alpha: 0.3),
+              ),
+            ),
+            child: sizeAsync.when(
+              data: (s) => Text(
+                s,
+                style: TextStyle(fontSize: 11, color: badgeColor),
+              ),
+              loading: () => Text(
+                '...',
+                style: TextStyle(fontSize: 11, color: colors.textHint),
+              ),
+              error: (e, st) => Text(
+                '0 B',
+                style: TextStyle(fontSize: 11, color: colors.textHint),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _openDirectory(String path) {
+    if (path.isEmpty) return;
+    try {
+      Process.run('explorer', [path]);
+    } catch (_) {}
+  }
+
+  void _resetDirectories(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: colors_surface(context).surface,
+        title: Text(
+          context.tr('重置目录设置'),
+          style: TextStyle(color: text_primary(context)),
+        ),
+        content: Text(
+          context.tr('确定要重置为默认目录吗？这将清除当前的自定义目录设置。'),
+          style: TextStyle(color: text_secondary(context)),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(
+              context.tr('取消'),
+              style: TextStyle(color: text_hint(context)),
+            ),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              final container = ProviderScope.containerOf(context);
+              final defaultDownload = '/storage/emulated/0/Music/MintMusic';
+              // 默认缓存目录使用应用缓存目录，不再指向系统临时目录。
+              final appCacheDir = await getApplicationCacheDirectory();
+              container.read(downloadDirProvider.notifier).state =
+                  defaultDownload;
+              container.read(cacheDirProvider.notifier).state =
+                  appCacheDir.path;
+              CachePaths.configure(appCacheDir.path);
+              await AppImageCache.configure();
+              container.invalidate(cacheDirSizeProvider);
+              unawaited(
+                _doPersist(container, (s) async {
+                  await s.setDownloadDir(defaultDownload);
+                  await s.setCacheDir(appCacheDir.path);
+                }),
+              );
+              if (context.mounted)
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(context.tr('已重置为默认目录')),
+                    backgroundColor: Theme.of(context).primaryColor,
+                  ),
+                );
+            },
+            child: Text(
+              context.tr('确定重置'),
+              style: TextStyle(color: Theme.of(context).primaryColor),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  ThemeColors colors_surface(BuildContext context) => ref_watch_colors(context);
+  Color text_primary(BuildContext context) =>
+      ref_watch_colors(context).textPrimary;
+  Color text_secondary(BuildContext context) =>
+      ref_watch_colors(context).textSecondary;
+  Color text_hint(BuildContext context) => ref_watch_colors(context).textHint;
+  ThemeColors ref_watch_colors(BuildContext context) =>
+      ProviderScope.containerOf(context).read(themeColorsProvider);
+
   String _formatCacheLimit(int mb) {
     if (mb >= 1024) {
       final gb = mb / 1024;
@@ -3048,7 +2642,10 @@ class _StorageContent extends ConsumerWidget {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: colors.surface,
-        title: Text(context.tr('清除缓存'), style: TextStyle(color: colors.textPrimary)),
+        title: Text(
+          context.tr('清除缓存'),
+          style: TextStyle(color: colors.textPrimary),
+        ),
         content: Text(
           context.tr('确定要清除所有缓存吗？已缓存的封面等临时文件会被删除。'),
           style: TextStyle(color: colors.textSecondary),
@@ -3056,14 +2653,20 @@ class _StorageContent extends ConsumerWidget {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: Text(context.tr('取消'), style: TextStyle(color: colors.textHint)),
+            child: Text(
+              context.tr('取消'),
+              style: TextStyle(color: colors.textHint),
+            ),
           ),
           TextButton(
             onPressed: () {
               Navigator.pop(ctx);
               _clearCache(context);
             },
-            child: Text(context.tr('确定'), style: TextStyle(color: colors.primary)),
+            child: Text(
+              context.tr('确定'),
+              style: TextStyle(color: colors.primary),
+            ),
           ),
         ],
       ),
@@ -3079,405 +2682,5 @@ class _StorageContent extends ConsumerWidget {
       container.invalidate(cacheDirSizeProvider);
       container.invalidate(downloadDirSizeProvider);
     } catch (_) {}
-  }
-}
-
-// ==================== About ====================
-
-class _AboutContent extends ConsumerStatefulWidget {
-  const _AboutContent();
-
-  @override
-  ConsumerState<_AboutContent> createState() => _AboutContentState();
-}
-
-class _AboutContentState extends ConsumerState<_AboutContent> {
-  bool _checkingUpdate = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = ref.watch(themeColorsProvider);
-    final versionAsync = ref.watch(appVersionProvider);
-    final autoUpdate = ref.watch(autoUpdateProvider);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _buildAppHeader(context, ref, colors, versionAsync),
-        _buildVersionGroup(context, ref, colors, versionAsync, autoUpdate),
-        _buildTechStackGroup(colors),
-        _buildLegalGroup(colors),
-        _buildContactGroup(context, colors),
-      ],
-    );
-  }
-
-  /// 手动检查更新：拉取 GitHub 最新 release，有新版弹窗提示，否则提示已最新。
-  Future<void> _checkForUpdate(BuildContext context) async {
-    if (_checkingUpdate) return;
-    setState(() => _checkingUpdate = true);
-    final service = ref.read(updateServiceProvider);
-    final info = await service.fetchLatestRelease();
-    if (!context.mounted) return;
-    setState(() => _checkingUpdate = false);
-    final colors = ref.read(themeColorsProvider);
-
-    if (info == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(context.tr('检查更新失败，请稍后重试')),
-          backgroundColor: colors.error,
-        ),
-      );
-      return;
-    }
-    if (!UpdateService.isNewerVersion(info.version, AppConstants.appVersion)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(context.tr('已是最新版本')),
-          backgroundColor: colors.primary,
-        ),
-      );
-      return;
-    }
-    await showUpdateDialog(context, info);
-  }
-
-  Widget _buildAppHeader(
-    BuildContext context,
-    WidgetRef ref,
-    ThemeColors colors,
-    AsyncValue<String> versionAsync,
-  ) {
-    return _SettingGroup(
-      title: '应用信息',
-      colors: colors,
-      children: [
-        Row(
-          children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(16),
-              child: Image.asset(
-                'assets/images/MintMusicLogo.png',
-                width: 64,
-                height: 64,
-                fit: BoxFit.cover,
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Text(
-                        'Mint Music',
-                        style: TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.w700,
-                          color: colors.textPrimary,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: colors.primary.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(
-                            color: colors.primary.withValues(alpha: 0.3),
-                          ),
-                        ),
-                        child: versionAsync.when(
-                          data: (v) => Text(
-                            'v$v',
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                              color: colors.primary,
-                            ),
-                          ),
-                          loading: () => Text(
-                            '...',
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: colors.textHint,
-                            ),
-                          ),
-                          error: (e, st) => Text(
-                            'v1.0.0',
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: colors.textHint,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    context.tr('薄荷音乐'),
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: colors.primary,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    context.tr('Mint Music 是一个跨平台的音乐播放器应用，支持基于合规插件获取公开音乐信息与播放功能。'),
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: colors.textSecondary,
-                      height: 1.5,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _buildVersionGroup(
-    BuildContext context,
-    WidgetRef ref,
-    ThemeColors colors,
-    AsyncValue<String> versionAsync,
-    bool autoUpdate,
-  ) {
-    return _SettingGroup(
-      title: '版本信息',
-      subtitle: '应用版本和更新设置',
-      colors: colors,
-      children: [
-        _SettingRow(
-          icon: Icons.info_outline,
-          title: '应用版本',
-          subtitle: '当前安装的版本',
-          trailing: versionAsync.when(
-            data: (v) => Text(
-              'v$v',
-              style: TextStyle(fontSize: 13, color: colors.textHint),
-            ),
-            loading: () => const SizedBox(
-              width: 16,
-              height: 16,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-            error: (e, st) => Text(
-              'v1.0.0',
-              style: TextStyle(fontSize: 13, color: colors.textHint),
-            ),
-          ),
-          colors: colors,
-        ),
-        _SettingDivider(colors: colors),
-        _SettingRow(
-          icon: Icons.update,
-          title: '启动时检查更新',
-          subtitle: '应用启动时自动检查新版本',
-          trailing: Switch(
-            value: autoUpdate,
-            onChanged: (v) => _persistBool(
-              context,
-              autoUpdateProvider,
-              v,
-              (s) => s.setAutoUpdate(v),
-            ),
-            activeTrackColor: colors.primary.withValues(alpha: 0.3),
-            activeThumbColor: colors.primary,
-          ),
-          colors: colors,
-        ),
-        _SettingDivider(colors: colors),
-        _SettingRow(
-          icon: Icons.refresh,
-          title: '检查更新',
-          subtitle: '手动检查是否有新版本',
-          trailing: _checkingUpdate
-              ? const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : Icon(Icons.chevron_right, size: 18, color: colors.textHint),
-          colors: colors,
-          onTap: _checkingUpdate ? null : () => _checkForUpdate(context),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildTechStackGroup(ThemeColors colors) {
-    final techItems = [
-      ('Flutter', '跨平台UI框架'),
-      ('Dart', '高效编程语言'),
-      ('Riverpod', '状态管理工具'),
-      ('Just Audio', '音频播放引擎'),
-      ('Isar', '本地数据库'),
-      ('Go Router', '路由导航框架'),
-    ];
-    return _SettingGroup(
-      title: '技术栈',
-      subtitle: 'Mint Music 使用的核心技术',
-      colors: colors,
-      children: [
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: techItems.map((item) {
-            return Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: colors.background,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color: colors.divider.withValues(alpha: 0.5),
-                ),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    item.$1,
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: colors.textPrimary,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    context.tr(item.$2),
-                    style: TextStyle(fontSize: 12, color: colors.textSecondary),
-                  ),
-                ],
-              ),
-            );
-          }).toList(),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildLegalGroup(ThemeColors colors) {
-    return _SettingGroup(
-      title: '法律声明',
-      subtitle: '使用条款与免责声明',
-      colors: colors,
-      children: [
-        _buildLegalItem(
-          colors,
-          '数据与内容责任',
-          '本项目不直接获取、存储、传输任何音乐数据或版权内容，仅提供插件运行框架。用户通过插件获取的所有数据，其合法性由插件提供者及用户自行负责。',
-        ),
-        const SizedBox(height: 12),
-        _buildLegalItem(
-          colors,
-          '版权合规要求',
-          '用户承诺仅通过合规插件获取音乐相关信息，且获取、使用版权内容的行为符合相关法律法规，不侵犯任何第三方合法权益。',
-        ),
-        const SizedBox(height: 12),
-        _buildLegalItem(
-          colors,
-          '使用限制',
-          '本项目仅允许用于非商业、纯技术学习目的，禁止用于任何商业运营、盈利活动，禁止修改后用于侵犯第三方权益的场景。',
-        ),
-      ],
-    );
-  }
-
-  Widget _buildLegalItem(ThemeColors colors, String title, String content) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: colors.background,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: colors.divider.withValues(alpha: 0.3)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            context.tr(title),
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: colors.textPrimary,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            context.tr(content),
-            style: TextStyle(
-              fontSize: 12,
-              color: colors.textSecondary,
-              height: 1.5,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _openUrl(BuildContext context, String url) async {
-    final uri = Uri.parse(url);
-    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
-    if (!ok && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(context.tr('无法打开链接: $url')),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
-  }
-
-  Widget _buildContactGroup(BuildContext context, ThemeColors colors) {
-    return _SettingGroup(
-      title: '联系方式',
-      subtitle: '如有技术问题或合作意向，请通过以下方式联系',
-      colors: colors,
-      children: [
-        _SettingRow(
-          icon: Icons.forum,
-          title: '问题反馈',
-          subtitle: '提交 Bug 或功能建议',
-          trailing: Icon(Icons.open_in_new, size: 18, color: colors.textHint),
-          colors: colors,
-          onTap: () => _openUrl(
-            context,
-            'https://github.com/kingmuchen/Mint-Music/issues',
-          ),
-        ),
-        _SettingDivider(colors: colors),
-        _SettingRow(
-          icon: Icons.language,
-          title: '官方网站',
-          subtitle: '访问项目主页',
-          trailing: Icon(Icons.open_in_new, size: 18, color: colors.textHint),
-          colors: colors,
-          onTap: () => _openUrl(context, 'https://kingmc.mintmusic.ccwu.cc'),
-        ),
-        _SettingDivider(colors: colors),
-        _SettingRow(
-          icon: Icons.code,
-          title: '开源仓库',
-          subtitle: '查看源代码',
-          trailing: Icon(Icons.open_in_new, size: 18, color: colors.textHint),
-          colors: colors,
-          onTap: () => _openUrl(context, 'https://github.com/kingmuchen/Mint-Music'),
-        ),
-      ],
-    );
   }
 }

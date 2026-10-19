@@ -1,6 +1,10 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../../core/l10n/l10n.dart';
 import '../../core/theme/app_spacing.dart';
 import '../../core/theme/theme_provider.dart';
@@ -23,6 +27,9 @@ class AppShell extends ConsumerStatefulWidget {
 }
 
 class _AppShellState extends ConsumerState<AppShell> {
+  /// 通知权限提示每个会话只弹一次。
+  bool _notificationPromptShown = false;
+
   @override
   void initState() {
     super.initState();
@@ -37,6 +44,61 @@ class _AppShellState extends ConsumerState<AppShell> {
         await showUpdateDialog(context, info);
       }
     });
+    // Android：开始播放时检查通知权限，缺少权限则提示用户开启。
+    if (Platform.isAndroid) {
+      ref.listen<bool>(
+        playbackControllerProvider.select((state) => state.isPlaying),
+        (previous, next) {
+          if (previous == true || !next) return;
+          unawaited(_ensureNotificationPermission());
+        },
+      );
+    }
+  }
+
+  /// Android 播放通知依赖通知权限，缺少时弹框提醒用户开启。
+  Future<void> _ensureNotificationPermission() async {
+    if (_notificationPromptShown) return;
+    try {
+      final status = await Permission.notification.status;
+      if (status.isGranted) return;
+      if (!mounted) return;
+      _notificationPromptShown = true;
+      final colors = ref.read(themeColorsProvider);
+      final openSettings = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: colors.surface,
+          title: Text(
+            context.tr('开启通知权限'),
+            style: TextStyle(color: colors.textPrimary),
+          ),
+          content: Text(
+            context.tr('播放通知需要通知权限，开启后可以在通知栏看到播放状态。'),
+            style: TextStyle(color: colors.textSecondary),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(
+                context.tr('暂不开启'),
+                style: TextStyle(color: colors.textHint),
+              ),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(
+                context.tr('去开启'),
+                style: TextStyle(color: colors.primary),
+              ),
+            ),
+          ],
+        ),
+      );
+      if (openSettings == true) {
+        await openAppSettings();
+      }
+    } catch (_) {}
   }
 
   void _showPlaybackMessage(String message, {Color? backgroundColor}) {

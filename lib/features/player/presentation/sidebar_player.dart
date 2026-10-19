@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/constants/app_routes.dart';
 import '../../../core/router/app_router.dart';
+import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../shared/widgets/marquee_text.dart';
 import '../../../shared/widgets/music_cover_image.dart';
@@ -12,18 +13,25 @@ import 'widgets/play_queue_sheet.dart';
 
 /// 桌面端左侧导航栏底部的播放器。
 ///
-/// 布局（三行）：
-/// 1. 封面 + 歌曲名 / 歌手名（歌手名在歌曲名下方，曲名过长自动滚动，
-///    点击该区域打开播放页）
-/// 2. 剩余时间
-/// 3. 播放控件（上一首 / 播放暂停 / 下一首 / 播放队列）
+/// 布局（自上而下）：
+/// 1. 大封面（点击打开全屏播放页）
+/// 2. 曲名（居中显示）
+/// 3. 播放进度条（可点击 / 拖动调整进度）
+/// 4. 歌曲总时长
+/// 5. 播放控件（上一首 / 播放暂停 / 下一首 / 播放队列）
 ///
 /// 该组件渲染在 Router 之外（导航栏属于根布局），因此跳转与播放队列弹窗
 /// 都通过全局 [appRouter] / 根 Overlay 的 context 完成。
 class SidebarPlayer extends ConsumerWidget {
   const SidebarPlayer({super.key});
 
-  static const double _artSize = 44;
+  /// 封面边长：随侧边栏宽度与可用高度自适应，并限制最大值。
+  static double _coverSize(double availableWidth, double availableHeight) {
+    final byWidth = availableWidth - 56;
+    // 封面之外还要留出曲名、进度条、时长与控制按钮的高度。
+    final byHeight = availableHeight - 130;
+    return (byWidth < byHeight ? byWidth : byHeight).clamp(64.0, 168.0);
+  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -42,96 +50,156 @@ class SidebarPlayer extends ConsumerWidget {
     );
     final controller = ref.read(playbackControllerProvider.notifier);
 
-    // 侧边栏宽度固定，系统大字体时容易把三行撑破，这里限制文本缩放上限。
+    // 侧边栏宽度固定，系统大字体时容易把布局撑破，这里限制文本缩放上限。
     return MediaQuery.withClampedTextScaling(
       maxScaleFactor: 1.2,
       // 侧边栏背景由外层 Container 绘制，这里用透明 Material 承载
       // InkWell / IconButton 的水波纹，避免水波纹被背景色盖住。
       child: Material(
         type: MaterialType.transparency,
-        child: Container(
-          padding: const EdgeInsets.fromLTRB(10, 10, 10, 8),
-          decoration: BoxDecoration(
-            border: Border(
-              top: BorderSide(
-                color: colors.divider.withValues(alpha: 0.3),
-                width: 0.5,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final coverSize = _coverSize(
+              constraints.maxWidth,
+              constraints.maxHeight.isFinite ? constraints.maxHeight : 400,
+            );
+            return Container(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+              decoration: BoxDecoration(
+                border: Border(
+                  top: BorderSide(
+                    color: colors.divider.withValues(alpha: 0.3),
+                    width: 0.5,
+                  ),
+                ),
               ),
-            ),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _buildSongInfo(colors, song),
-              const SizedBox(height: 6),
-              _SidebarRemainingTime(colors: colors),
-              const SizedBox(height: 2),
-              _buildControls(ref, colors, controller,
-                  isPlaying: isPlaying, isLoading: isLoading),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// 第一行：封面 + 曲名 / 歌手，点击打开播放页。
-  Widget _buildSongInfo(ThemeColors colors, Song song) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(10),
-      onTap: () {
-        // 已经在播放页时不再重复 push，避免叠加多层播放页。
-        if (appRouter.routerDelegate.currentConfiguration.uri.path ==
-            AppRoutes.fullPlayer) {
-          return;
-        }
-        appRouter.push(AppRoutes.fullPlayer);
-      },
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 2),
-        child: Row(
-          children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: Container(
-                width: _artSize,
-                height: _artSize,
-                color: colors.surfaceVariant,
-                child: _buildCover(colors, song),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  MarqueeText(
-                    text: song.title,
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: colors.textPrimary,
-                    ),
-                  ),
+                  _buildCover(context, colors, song, coverSize),
+                  const SizedBox(height: AppSpacing.sm),
+                  _buildSongTitle(context, colors, song),
+                  const SizedBox(height: AppSpacing.xs),
+                  _buildProgress(context, colors, controller),
                   const SizedBox(height: 2),
-                  Text(
-                    song.artist,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 11, color: colors.textHint),
-                  ),
+                  _buildControls(ref, colors, controller,
+                      isPlaying: isPlaying, isLoading: isLoading),
                 ],
               ),
-            ),
-          ],
+            );
+          },
         ),
       ),
     );
   }
 
-  /// 第三行：播放控件。
+  /// 封面：点击打开全屏播放页。
+  Widget _buildCover(
+    BuildContext context,
+    ThemeColors colors,
+    Song song,
+    double size,
+  ) {
+    return Center(
+      child: GestureDetector(
+        onTap: () {
+          // 已经在播放页时不再重复 push，避免叠加多层播放页。
+          if (appRouter.routerDelegate.currentConfiguration.uri.path ==
+              AppRoutes.fullPlayer) {
+            return;
+          }
+          appRouter.push(AppRoutes.fullPlayer);
+        },
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: Container(
+            width: size,
+            height: size,
+            color: colors.surfaceVariant,
+            child: _buildCoverImage(colors, song),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCoverImage(ThemeColors colors, Song song) {
+    // 优先使用 coverUrl（精准匹配后的在线封面），再回退到设备本地封面
+    if (song.coverUrl != null && song.coverUrl!.isNotEmpty) {
+      return MusicCoverImage(
+        key: ValueKey('sidebar_cover_img_${song.id}'),
+        url: song.coverUrl,
+        fit: BoxFit.cover,
+        errorWidget: Icon(Icons.music_note, size: 32, color: colors.primary),
+      );
+    }
+    if (song.mediaStoreId != null) {
+      return MusicCoverImage(
+        key: ValueKey('sidebar_cover_img_${song.id}'),
+        songId: song.id,
+        mediaStoreId: song.mediaStoreId,
+        fit: BoxFit.cover,
+        errorWidget: Icon(Icons.music_note, size: 32, color: colors.primary),
+      );
+    }
+    return Icon(Icons.music_note, size: 32, color: colors.primary);
+  }
+
+  /// 曲名：居中显示，过长时滚动。
+  Widget _buildSongTitle(BuildContext context, ThemeColors colors, Song song) {
+    return SizedBox(
+      height: 22,
+      child: Align(
+        alignment: Alignment.center,
+        child: MarqueeText(
+          text: song.title,
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
+            color: colors.textPrimary,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 播放进度条：可点击 / 拖动调整进度；下方显示歌曲总时长。
+  Widget _buildProgress(
+    BuildContext context,
+    ThemeColors colors,
+    PlaybackController controller,
+  ) {
+    final duration = ref.watch(
+      playbackControllerProvider.select((s) => s.duration),
+    );
+    final position = ref.watch(
+      playbackControllerProvider.select((s) => s.position),
+    );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _SidebarProgressSlider(
+          duration: duration,
+          position: position,
+          colors: colors,
+          onSeek: (target) => controller.seek(target),
+        ),
+        // 歌曲总时长（不再显示剩余时间）
+        Padding(
+          padding: const EdgeInsets.only(right: 2),
+          child: Text(
+            _formatDuration(duration),
+            textAlign: TextAlign.right,
+            style: TextStyle(fontSize: 11, color: colors.textHint),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 播放控件。
   Widget _buildControls(
     WidgetRef ref,
     ThemeColors colors,
@@ -143,12 +211,12 @@ class SidebarPlayer extends ConsumerWidget {
       children: [
         _buildIconButton(
           icon: Icons.skip_previous,
-          size: 20,
+          size: 22,
           color: colors.textSecondary,
           onPressed: () => controller.previous(),
         ),
         _buildIconButton(
-          size: 24,
+          size: 26,
           color: colors.textPrimary,
           onPressed: isLoading ? null : () => controller.togglePlayPause(),
           iconWidget: isLoading
@@ -162,19 +230,19 @@ class SidebarPlayer extends ConsumerWidget {
                 )
               : Icon(
                   isPlaying ? Icons.pause : Icons.play_arrow,
-                  size: 24,
+                  size: 26,
                   color: colors.textPrimary,
                 ),
         ),
         _buildIconButton(
           icon: Icons.skip_next,
-          size: 20,
+          size: 22,
           color: colors.textSecondary,
           onPressed: () => controller.next(),
         ),
         _buildIconButton(
           icon: Icons.queue_music,
-          size: 20,
+          size: 22,
           color: colors.textSecondary,
           onPressed: () => _showQueue(ref, controller),
         ),
@@ -213,61 +281,73 @@ class SidebarPlayer extends ConsumerWidget {
     );
   }
 
-  Widget _buildCover(ThemeColors colors, Song song) {
-    // 优先使用 coverUrl（精准匹配后的在线封面），再回退到设备本地封面
-    if (song.coverUrl != null && song.coverUrl!.isNotEmpty) {
-      return MusicCoverImage(
-        key: ValueKey('sidebar_cover_img_${song.id}'),
-        url: song.coverUrl,
-        fit: BoxFit.cover,
-        errorWidget: Icon(Icons.music_note, size: 20, color: colors.primary),
-      );
-    }
-    if (song.mediaStoreId != null) {
-      return MusicCoverImage(
-        key: ValueKey('sidebar_cover_img_${song.id}'),
-        songId: song.id,
-        mediaStoreId: song.mediaStoreId,
-        fit: BoxFit.cover,
-        errorWidget: Icon(Icons.music_note, size: 20, color: colors.primary),
-      );
-    }
-    return Icon(Icons.music_note, size: 20, color: colors.primary);
+  /// 格式化时长：mm:ss（超过一小时显示 h:mm:ss）。
+  static String _formatDuration(Duration duration) {
+    if (duration <= Duration.zero) return '--:--';
+    final hours = duration.inHours;
+    final minutes = duration.inMinutes.remainder(60);
+    final seconds = duration.inSeconds.remainder(60);
+    final mm = minutes.toString().padLeft(2, '0');
+    final ss = seconds.toString().padLeft(2, '0');
+    if (hours > 0) return '$hours:$mm:$ss';
+    return '$mm:$ss';
   }
 }
 
-/// 第二行：剩余时间（`-mm:ss`）。
-class _SidebarRemainingTime extends ConsumerWidget {
-  const _SidebarRemainingTime({required this.colors});
+/// 侧边栏播放进度条：拖动时显示本地进度，松手后才真正跳转。
+class _SidebarProgressSlider extends StatefulWidget {
+  const _SidebarProgressSlider({
+    required this.duration,
+    required this.position,
+    required this.colors,
+    required this.onSeek,
+  });
 
+  final Duration duration;
+  final Duration position;
   final ThemeColors colors;
+  final void Function(Duration target) onSeek;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final duration = ref.watch(
-      playbackControllerProvider.select((s) => s.duration),
-    );
-    final position = ref.watch(
-      playbackControllerProvider.select((s) => s.position),
-    );
+  State<_SidebarProgressSlider> createState() => _SidebarProgressSliderState();
+}
 
-    final remaining = duration - position;
-    final text = duration == Duration.zero || remaining.isNegative
-        ? '--:--'
-        : '-${_format(remaining)}';
+class _SidebarProgressSliderState extends State<_SidebarProgressSlider> {
+  double? _dragValue;
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 2),
-      child: Text(
-        text,
-        style: TextStyle(fontSize: 12, color: colors.textHint),
+  @override
+  Widget build(BuildContext context) {
+    final totalMs = widget.duration.inMilliseconds;
+    final maxMs = totalMs > 0 ? totalMs.toDouble() : 1.0;
+    final currentMs = _dragValue ??
+        widget.position.inMilliseconds.clamp(0, totalMs).toDouble();
+
+    return SliderTheme(
+      data: SliderTheme.of(context).copyWith(
+        trackHeight: 3,
+        thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
+        overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
+        activeTrackColor: widget.colors.primary,
+        inactiveTrackColor: widget.colors.divider,
+        thumbColor: widget.colors.primary,
+        overlayColor: widget.colors.primary.withValues(alpha: 0.12),
+      ),
+      child: Slider(
+        value: currentMs.clamp(0, maxMs),
+        max: maxMs,
+        onChanged: totalMs <= 0
+            ? null
+            : (value) => setState(() => _dragValue = value),
+        onChangeEnd: totalMs <= 0
+            ? null
+            : (value) {
+                final target = Duration(
+                  milliseconds: value.round().clamp(0, totalMs),
+                );
+                setState(() => _dragValue = null);
+                widget.onSeek(target);
+              },
       ),
     );
-  }
-
-  String _format(Duration d) {
-    final minutes = d.inMinutes.toString().padLeft(2, '0');
-    final seconds = d.inSeconds.remainder(60).toString().padLeft(2, '0');
-    return '$minutes:$seconds';
   }
 }

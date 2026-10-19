@@ -19,26 +19,14 @@ class RecognizePage extends ConsumerStatefulWidget {
   ConsumerState<RecognizePage> createState() => _RecognizePageState();
 }
 
-class _RecognizePageState extends ConsumerState<RecognizePage>
-    with TickerProviderStateMixin {
+class _RecognizePageState extends ConsumerState<RecognizePage> {
   Timer? _timer;
-  late AnimationController _pulseController;
   bool _wasPlayingBefore = false;
   bool _starting = false;
 
   @override
-  void initState() {
-    super.initState();
-    _pulseController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 2000),
-    );
-  }
-
-  @override
   void dispose() {
     _timer?.cancel();
-    _pulseController.dispose();
     unawaited(ref.read(recognizeProvider.notifier).cancelRecording());
     _resumePlaybackIfNeeded(force: true);
     super.dispose();
@@ -66,10 +54,6 @@ class _RecognizePageState extends ConsumerState<RecognizePage>
         return;
       }
       await notifier.startRecording();
-      if (mounted &&
-          ref.read(recognizeProvider).status == RecognizeStatus.recording) {
-        _pulseController.repeat();
-      }
     } finally {
       _starting = false;
     }
@@ -77,12 +61,10 @@ class _RecognizePageState extends ConsumerState<RecognizePage>
 
   /// 对标 CeruMusic stopRecording(): 停止录音
   void _handleStop() {
-    _pulseController.stop();
     ref.read(recognizeProvider.notifier).stopAndRecognize();
   }
 
   void _handleCancel() {
-    _pulseController.stop();
     ref.read(recognizeProvider.notifier).cancelRecording();
     _resumePlaybackIfNeeded();
   }
@@ -151,7 +133,6 @@ class _RecognizePageState extends ConsumerState<RecognizePage>
       if ((next.status == RecognizeStatus.success ||
               next.status == RecognizeStatus.failed) &&
           _wasPlayingBefore) {
-        _pulseController.stop();
         _resumePlaybackIfNeeded();
       }
     });
@@ -209,20 +190,15 @@ class _RecognizePageState extends ConsumerState<RecognizePage>
   }
 
   Widget _buildRecordingState(RecognizeState state, ThemeColors colors) {
-    final isActive =
-        state.status == RecognizeStatus.recording ||
-        state.status == RecognizeStatus.processing ||
-        state.status == RecognizeStatus.uploading;
+    final isRecording = state.status == RecognizeStatus.recording;
 
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          _buildWaveAnimation(isActive, colors),
-          const SizedBox(height: AppSpacing.xxl + 4),
           _buildStatusText(state, colors),
-          const SizedBox(height: AppSpacing.lg),
-          if (state.status == RecognizeStatus.recording) ...[
+          if (isRecording) ...[
+            const SizedBox(height: AppSpacing.lg),
             _buildProgressBar(state, colors),
             const SizedBox(height: AppSpacing.sm),
             Text(
@@ -239,72 +215,14 @@ class _RecognizePageState extends ConsumerState<RecognizePage>
     );
   }
 
-  Widget _buildWaveAnimation(bool isActive, ThemeColors colors) {
-    return SizedBox(
-      width: 140,
-      height: 140,
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          if (isActive) ...[
-            ...List.generate(3, (i) => _buildWaveRing(colors, i)),
-          ],
-          _buildMicCircle(colors, isActive),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildWaveRing(ThemeColors colors, int index) {
-    return AnimatedBuilder(
-      animation: _pulseController,
-      builder: (context, _) {
-        final phase = (_pulseController.value * 2 + index * 0.66) % 2;
-        final scale = 1.0 + phase * 1.0;
-        final opacity = (1.0 - phase).clamp(0.0, 0.3);
-        return Container(
-          width: 140 * scale * 0.7,
-          height: 140 * scale * 0.7,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: colors.primary.withValues(alpha: opacity),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildMicCircle(ThemeColors colors, bool isActive) {
-    return Container(
-      width: 90,
-      height: 90,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        gradient: RadialGradient(colors: [colors.primary, colors.primaryDark]),
-        boxShadow: [
-          BoxShadow(
-            color: colors.primary.withValues(alpha: isActive ? 0.4 : 0.2),
-            blurRadius: isActive ? 25 : 15,
-            spreadRadius: isActive ? 3 : 1,
-          ),
-        ],
-      ),
-      child: Icon(
-        Icons.music_note_rounded,
-        size: 40,
-        color: colors.textOnPrimary,
-      ),
-    );
-  }
-
   Widget _buildStatusText(RecognizeState state, ThemeColors colors) {
     String text;
     Color color;
 
     switch (state.status) {
       case RecognizeStatus.idle:
-        text = context.tr('点击下方按钮开始');
-        color = colors.textSecondary;
+        // 空闲状态不显示提示文案（下方已经有「识别 / 上传文件」按钮）。
+        return const SizedBox.shrink();
       case RecognizeStatus.initializing:
         text = context.tr('正在初始化...');
         color = colors.textSecondary;
@@ -327,6 +245,7 @@ class _RecognizePageState extends ConsumerState<RecognizePage>
 
     return Text(
       text,
+      textAlign: TextAlign.center,
       style: TextStyle(fontSize: 15, color: color, fontWeight: FontWeight.w500),
     );
   }
@@ -349,46 +268,28 @@ class _RecognizePageState extends ConsumerState<RecognizePage>
 
   Widget _buildError(String? message, ThemeColors colors) {
     return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 90,
-            height: 90,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: colors.error.withValues(alpha: 0.1),
-            ),
-            child: Icon(Icons.error_outline, size: 40, color: colors.error),
-          ),
-          const SizedBox(height: AppSpacing.lg),
-          Text(
-            message ?? context.tr('未能识别到歌曲'),
-            style: TextStyle(fontSize: 15, color: colors.textSecondary),
-          ),
-          const SizedBox(height: AppSpacing.xl),
-          GestureDetector(
-            onTap: _handleStart,
-            child: Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: AppSpacing.xxl,
-                vertical: AppSpacing.sm + 2,
-              ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xl),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 90,
+              height: 90,
               decoration: BoxDecoration(
-                color: colors.primary,
-                borderRadius: BorderRadius.circular(AppRadius.full),
+                shape: BoxShape.circle,
+                color: colors.error.withValues(alpha: 0.1),
               ),
-              child: Text(
-                context.tr('重试'),
-                style: TextStyle(
-                  fontSize: 14,
-                  color: colors.textOnPrimary,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
+              child: Icon(Icons.error_outline, size: 40, color: colors.error),
             ),
-          ),
-        ],
+            const SizedBox(height: AppSpacing.lg),
+            Text(
+              message ?? context.tr('未能识别到歌曲'),
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 15, color: colors.textSecondary),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -547,7 +448,9 @@ class _RecognizePageState extends ConsumerState<RecognizePage>
     );
   }
 
-  /// 底部操作按钮（对标 CeruMusic 的 actions 区域）
+  /// 底部操作按钮：识别按钮与上传文件按钮并排居中。
+  ///
+  /// 识别失败时同样展示这两个按钮（不再单独显示「重试」按钮）。
   Widget _buildBottomActions(RecognizeState state, ThemeColors colors) {
     if (state.status == RecognizeStatus.success) {
       return const SizedBox.shrink();
@@ -555,10 +458,13 @@ class _RecognizePageState extends ConsumerState<RecognizePage>
 
     final isIdle = state.status == RecognizeStatus.idle;
     final isRecording = state.status == RecognizeStatus.recording;
+    final isFailed = state.status == RecognizeStatus.failed;
     final isBusy =
         state.status == RecognizeStatus.initializing ||
         state.status == RecognizeStatus.processing ||
         state.status == RecognizeStatus.uploading;
+    // 空闲 / 识别失败时都可以上传文件；录音中该按钮变为「取消」。
+    final canUpload = isIdle || isFailed;
 
     return SafeArea(
       child: Padding(
@@ -568,12 +474,14 @@ class _RecognizePageState extends ConsumerState<RecognizePage>
           AppSpacing.lg,
           AppSpacing.xxl,
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            // 主按钮：开始/停止
+            // 主按钮：开始 / 停止识别
             GestureDetector(
-              onTap: isBusy ? null : (isRecording ? _handleStop : _handleStart),
+              onTap:
+                  isBusy ? null : (isRecording ? _handleStop : _handleStart),
               child: Container(
                 width: 72,
                 height: 72,
@@ -611,24 +519,35 @@ class _RecognizePageState extends ConsumerState<RecognizePage>
                       ),
               ),
             ),
+            const SizedBox(width: AppSpacing.xl),
             // 辅助按钮：上传文件（对标 CeruMusic triggerUpload）
-            if (isIdle || isRecording) ...[
-              const SizedBox(height: AppSpacing.lg),
-              GestureDetector(
-                onTap: isIdle ? _handleFileUpload : _handleCancel,
-                child: Opacity(
-                  opacity: isIdle ? 1.0 : 0.6,
+            GestureDetector(
+              onTap: canUpload
+                  ? _handleFileUpload
+                  : (isRecording ? _handleCancel : null),
+              child: Opacity(
+                opacity: canUpload ? 1.0 : 0.6,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.lg,
+                    vertical: AppSpacing.sm + 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: colors.surface,
+                    borderRadius: BorderRadius.circular(AppRadius.full),
+                    border: Border.all(color: colors.divider),
+                  ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Icon(
-                        isIdle ? Icons.file_upload_outlined : Icons.close,
+                        canUpload ? Icons.file_upload_outlined : Icons.close,
                         size: 16,
                         color: colors.textSecondary,
                       ),
                       const SizedBox(width: AppSpacing.xs),
                       Text(
-                        context.tr(isIdle ? '上传文件' : '取消'),
+                        context.tr(canUpload ? '上传文件' : '取消'),
                         style: TextStyle(
                           fontSize: 13,
                           color: colors.textSecondary,
@@ -638,7 +557,7 @@ class _RecognizePageState extends ConsumerState<RecognizePage>
                   ),
                 ),
               ),
-            ],
+            ),
           ],
         ),
       ),

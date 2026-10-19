@@ -5,6 +5,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/l10n/app_locale.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/theme_provider.dart';
+import '../../plugin/application/plugin_providers.dart';
+import '../../plugin/domain/plugin_types.dart';
 import '../../player/domain/models/desktop_lyric_settings.dart';
 import '../data/settings_service.dart';
 
@@ -14,7 +16,7 @@ final settingsServiceProvider = FutureProvider<SettingsService>((ref) async {
 });
 
 // -- audio quality --
-final audioQualityProvider = StateProvider<String>((ref) => '320k');
+final audioQualityProvider = StateProvider<String>((ref) => '128k');
 final autoQualityDowngradeProvider = StateProvider<bool>((ref) => false);
 
 // -- equalizer --
@@ -23,7 +25,7 @@ final equalizerEnabledProvider = StateProvider<bool>((ref) => false);
 // -- playback --
 final playbackSpeedProvider = StateProvider<double>((ref) => 1.0);
 final autoPlayProvider = StateProvider<bool>((ref) => false);
-final rememberProgressProvider = StateProvider<bool>((ref) => true);
+final rememberProgressProvider = StateProvider<bool>((ref) => false);
 
 /// 当前音源播放失败时是否自动切换到其他音源（默认关闭）。
 /// 无论开关如何，播放失败都不会自动播放下一首。
@@ -36,10 +38,8 @@ final downloadDirProvider = StateProvider<String>(
 final wifiOnlyDownloadProvider = StateProvider<bool>((ref) => false);
 
 // -- notification --
+// 播放通知默认开启（不再提供开关；Android 端播放时缺少通知权限会提示用户）。
 final notificationEnabledProvider = StateProvider<bool>((ref) => true);
-
-// -- music source --
-final musicSourceProvider = StateProvider<String>((ref) => '网易云');
 
 const kSourceNameToId = <String, String>{
   '网易云': 'wy',
@@ -57,10 +57,58 @@ const kSourceIdToName = <String, String>{
   'mg': '咪咕',
 };
 
+/// 用户最后切换的音源 id（持久化）。
+///
+/// 为空时表示用户还没有手动切换过音源，默认音源取「插件管理里第一个
+/// 启用的音源」。
+final defaultSourceIdSettingProvider = StateProvider<String>((ref) => '');
+
+/// 当前生效的默认音源 id。
+///
+/// 优先使用用户最后切换过的音源；没有记录时使用插件管理里第一个启用的
+/// 音源（插件就绪后会自动切换过去）。
 final defaultSourceIdProvider = Provider<String>((ref) {
-  final name = ref.watch(musicSourceProvider);
-  return kSourceNameToId[name] ?? 'wy';
+  final persisted = ref.watch(defaultSourceIdSettingProvider);
+  if (persisted.isNotEmpty) return persisted;
+  return ref.watch(firstEnabledSourceIdProvider);
 });
+
+/// 记录用户最后切换的音源，作为默认音源。
+Future<void> persistDefaultSourceId(
+  ProviderContainer container,
+  String sourceId,
+) async {
+  container.read(defaultSourceIdSettingProvider.notifier).state = sourceId;
+  try {
+    final svc = await container.read(settingsServiceProvider.future);
+    await svc.setDefaultSourceId(sourceId);
+  } catch (_) {}
+}
+
+/// 记录用户最后切换的音质：同步「默认音质」与「全局音质」。
+Future<void> persistUserQuality(
+  Ref ref, {
+  required String quality,
+  String? sourceId,
+}) async {
+  ref.read(globalQualityProvider.notifier).state = quality;
+  final sourceQuality = Map<String, String>.from(ref.read(sourceQualityProvider));
+  // 同名插件的变体 id（'wy@插件id'）按平台部分匹配。
+  final name = sourceId == null
+      ? null
+      : kSourceIdToName[SourceInfo.baseIdOf(sourceId)];
+  if (name != null) {
+    sourceQuality[name] = quality;
+    ref.read(sourceQualityProvider.notifier).state = sourceQuality;
+  }
+  try {
+    final svc = await ref.read(settingsServiceProvider.future);
+    await svc.setGlobalQuality(quality);
+    if (name != null) {
+      await svc.setSourceQuality(sourceQuality);
+    }
+  } catch (_) {}
+}
 
 const kQualityDisplayName = <String, String>{
   '128k': '标准 128K',
@@ -104,15 +152,15 @@ String getQualityDisplayName(String qualityId) {
 
 final sourceQualityProvider = StateProvider<Map<String, String>>(
   (ref) => {
-    '网易云': '320k',
-    'QQ音乐': '320k',
-    '酷狗': '320k',
-    '酷我': '320k',
-    '咪咕': '320k',
+    '网易云': '128k',
+    'QQ音乐': '128k',
+    '酷狗': '128k',
+    '酷我': '128k',
+    '咪咕': '128k',
   },
 );
 
-final globalQualityProvider = StateProvider<String>((ref) => '320k');
+final globalQualityProvider = StateProvider<String>((ref) => '128k');
 
 // -- cache --
 final cacheSizeProvider = StateProvider<String>((ref) => '128 MB');
@@ -192,7 +240,8 @@ final autoCacheMusicProvider = StateProvider<bool>((ref) => true);
 // -- route preload --
 final routePreloadEnabledProvider = StateProvider<bool>((ref) => true);
 
-final autoUpdateProvider = StateProvider<bool>((ref) => true);
+// -- auto update（默认关闭） --
+final autoUpdateProvider = StateProvider<bool>((ref) => false);
 final closeToTrayProvider = StateProvider<bool>((ref) => true);
 final cacheDirProvider = StateProvider<String>((ref) => '');
 
@@ -321,7 +370,8 @@ final settingsInitProvider = FutureProvider<void>((ref) async {
   ref.read(autoSwitchSourceProvider.notifier).state = svc.getAutoSwitchSource();
   ref.read(notificationEnabledProvider.notifier).state = svc
       .getNotificationEnabled();
-  ref.read(musicSourceProvider.notifier).state = svc.getMusicSource();
+  ref.read(defaultSourceIdSettingProvider.notifier).state =
+      svc.getDefaultSourceId();
   ref.read(sourceQualityProvider.notifier).state = svc.getSourceQuality();
   ref.read(globalQualityProvider.notifier).state = svc.getGlobalQuality();
   ref.read(cacheSizeProvider.notifier).state = svc.getCacheSize();

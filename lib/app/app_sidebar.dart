@@ -143,29 +143,36 @@ class AppSidebar extends ConsumerWidget {
                 ),
               ),
 
-            // Navigation items
+            // 导航项 + 底部播放器（桌面端 MiniPlayer 的替代，只在展开态显示）
+            //
+            // 放在同一个 Expanded 里，播放器才能拿到受限的高度，
+            // 窗口太矮时封面会自动缩小而不会溢出。
             Expanded(
-              child: ListView.builder(
-                padding: EdgeInsets.symmetric(
-                  horizontal: isExpanded ? 8 : 6,
-                  vertical: 4,
-                ),
-                itemCount: appNavItems.length,
-                itemBuilder: (context, index) {
-                  final item = appNavItems[index];
-                  return _SidebarNavItem(
-                    item: item,
-                    isActive: index == currentIndex,
-                    isExpanded: isExpanded,
-                    colors: colors,
-                    onTap: () => onSelect(index),
-                  );
-                },
+              child: Column(
+                children: [
+                  Expanded(
+                    child: ListView.builder(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: isExpanded ? 8 : 6,
+                        vertical: 4,
+                      ),
+                      itemCount: appNavItems.length,
+                      itemBuilder: (context, index) {
+                        final item = appNavItems[index];
+                        return _SidebarNavItem(
+                          item: item,
+                          isActive: index == currentIndex,
+                          isExpanded: isExpanded,
+                          colors: colors,
+                          onTap: () => onSelect(index),
+                        );
+                      },
+                    ),
+                  ),
+                  if (isExpanded) const SidebarPlayer(),
+                ],
               ),
             ),
-
-            // 底部播放器（桌面端 MiniPlayer 的替代，只在展开态显示）
-            if (isExpanded) const SidebarPlayer(),
           ],
         ),
       ),

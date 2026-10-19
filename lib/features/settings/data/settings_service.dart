@@ -16,7 +16,7 @@ class SettingsService {
       _prefs.setString('theme_primary_color', v);
 
   // -- audio quality --
-  String getAudioQuality() => _prefs.getString('audio_quality') ?? '320k';
+  String getAudioQuality() => _prefs.getString('audio_quality') ?? '128k';
   Future<void> setAudioQuality(String v) =>
       _prefs.setString('audio_quality', v);
 
@@ -90,8 +90,8 @@ class SettingsService {
   bool getAutoPlay() => _prefs.getBool('auto_play') ?? false;
   Future<void> setAutoPlay(bool v) => _prefs.setBool('auto_play', v);
 
-  // -- remember progress --
-  bool getRememberProgress() => _prefs.getBool('remember_progress') ?? true;
+  // -- remember progress (default off) --
+  bool getRememberProgress() => _prefs.getBool('remember_progress') ?? false;
   Future<void> setRememberProgress(bool v) =>
       _prefs.setBool('remember_progress', v);
 
@@ -121,11 +121,11 @@ class SettingsService {
     final raw = _prefs.getString('source_quality');
     if (raw == null)
       return {
-        '网易云': '320k',
-        'QQ音乐': '320k',
-        '酷狗': '320k',
-        '酷我': '320k',
-        '咪咕': '320k',
+        '网易云': '128k',
+        'QQ音乐': '128k',
+        '酷狗': '128k',
+        '酷我': '128k',
+        '咪咕': '128k',
       };
     try {
       return Map<String, String>.fromEntries(
@@ -136,11 +136,11 @@ class SettingsService {
       );
     } catch (_) {
       return {
-        '网易云': '320k',
-        'QQ音乐': '320k',
-        '酷狗': '320k',
-        '酷我': '320k',
-        '咪咕': '320k',
+        '网易云': '128k',
+        'QQ音乐': '128k',
+        '酷狗': '128k',
+        '酷我': '128k',
+        '咪咕': '128k',
       };
     }
   }
@@ -150,7 +150,7 @@ class SettingsService {
     v.entries.map((e) => '${e.key}=${e.value}').join('|'),
   );
 
-  String getGlobalQuality() => _prefs.getString('global_quality') ?? '320k';
+  String getGlobalQuality() => _prefs.getString('global_quality') ?? '128k';
   Future<void> setGlobalQuality(String v) =>
       _prefs.setString('global_quality', v);
 
@@ -270,9 +270,14 @@ class SettingsService {
   Future<void> setRoutePreloadEnabled(bool v) =>
       _prefs.setBool('route_preload_enabled', v);
 
-  // -- auto update --
-  bool getAutoUpdate() => _prefs.getBool('auto_update') ?? true;
+  // -- auto update --（默认关闭，用户可在「关于」里手动开启）
+  bool getAutoUpdate() => _prefs.getBool('auto_update') ?? false;
   Future<void> setAutoUpdate(bool v) => _prefs.setBool('auto_update', v);
+
+  // -- default source id（用户最后切换的音源） --
+  String getDefaultSourceId() => _prefs.getString('default_source_id') ?? '';
+  Future<void> setDefaultSourceId(String v) =>
+      _prefs.setString('default_source_id', v);
 
   // -- plugin auto check update (default off) --
   bool getPluginAutoCheckUpdate() =>

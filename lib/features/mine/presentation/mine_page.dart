@@ -7,6 +7,7 @@ import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
+import '../../settings/application/settings_providers.dart';
 
 /// 「我的」一级页面。
 ///
@@ -52,6 +53,7 @@ class MinePage extends ConsumerWidget {
   }
 
   Widget _buildProfileCard(BuildContext context, ThemeColors colors) {
+    final versionAsync = ref.watch(appVersionProvider);
     return Container(
       padding: const EdgeInsets.all(AppSpacing.lg),
       decoration: BoxDecoration(
@@ -87,6 +89,20 @@ class MinePage extends ConsumerWidget {
                 Text(
                   context.tr('发现、收藏并播放你喜欢的音乐'),
                   style: TextStyle(fontSize: 12, color: colors.textHint),
+                ),
+                const SizedBox(height: 4),
+                // 应用版本号
+                versionAsync.when(
+                  data: (version) => Text(
+                    'v$version',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                      color: colors.primary,
+                    ),
+                  ),
+                  loading: () => const SizedBox.shrink(),
+                  error: (_, __) => const SizedBox.shrink(),
                 ),
               ],
             ),

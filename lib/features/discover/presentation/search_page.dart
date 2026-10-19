@@ -738,6 +738,15 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     ).then((selectedId) {
       if (selectedId != null) {
         ref.read(searchSourceIdProvider.notifier).state = selectedId;
+        // 用户最后切换的音源即成为默认音源。
+        if (selectedId != 'all') {
+          unawaited(
+            persistDefaultSourceId(
+              ProviderScope.containerOf(context),
+              selectedId,
+            ),
+          );
+        }
         ref.read(searchPageProvider.notifier).state = 1;
         final query = ref.read(searchQueryProvider);
         if (query.isNotEmpty) {
