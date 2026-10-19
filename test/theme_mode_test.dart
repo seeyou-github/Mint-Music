@@ -48,10 +48,12 @@ void main() {
       expect(themeModeToPref(ThemeMode.system), 'system');
     });
 
-    test('未知或空值回落为浅色（兼容旧版本数据）', () {
-      expect(themeModeFromPref(null), ThemeMode.light);
-      expect(themeModeFromPref(''), ThemeMode.light);
-      expect(themeModeFromPref('nonsense'), ThemeMode.light);
+    test('未知或空值回落为跟随系统（兼容旧版本数据）', () {
+      expect(themeModeFromPref(null), ThemeMode.system);
+      expect(themeModeFromPref(''), ThemeMode.system);
+      expect(themeModeFromPref('nonsense'), ThemeMode.system);
+      // 显式保存的浅色仍然生效
+      expect(themeModeFromPref('light'), ThemeMode.light);
     });
   });
 
