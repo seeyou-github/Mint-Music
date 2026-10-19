@@ -32,7 +32,8 @@ final downloadRepositoryProvider = Provider<DownloadRepository>((ref) {
       final svc = await ref.read(settingsServiceProvider.future);
       repo.init(
         downloadDir: await svc.getDownloadDir(),
-        wifiOnly: svc.getWifiOnlyDownload(),
+        // 仅 WiFi 下载设置项已移除，固定为任意网络。
+        wifiOnly: false,
         maxConcurrent: 3,
       );
     }

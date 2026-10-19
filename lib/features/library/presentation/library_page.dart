@@ -32,8 +32,7 @@ class LibraryPage extends ConsumerWidget {
         bottom: false,
         child: Column(
           children: [
-            _buildHeader(context, colors),
-            _buildActionButtons(context, colors, ref),
+            _buildHeader(context, colors, ref),
             const SizedBox(height: AppSpacing.md),
             Expanded(
               child: playlistsAsync.when(
@@ -52,7 +51,11 @@ class LibraryPage extends ConsumerWidget {
     );
   }
 
-  Widget _buildHeader(BuildContext context, ThemeColors colors) {
+  Widget _buildHeader(
+    BuildContext context,
+    ThemeColors colors,
+    WidgetRef ref,
+  ) {
     final isTablet = ResponsiveLayout.isTablet(context);
     return Padding(
       padding: EdgeInsets.symmetric(
@@ -61,19 +64,20 @@ class LibraryPage extends ConsumerWidget {
       ),
       child: Row(
         children: [
-          Text(
-            context.tr('我的歌单'),
-            style: TextStyle(
-              fontSize: isTablet ? 26 : 22,
-              fontWeight: FontWeight.bold,
-              color: colors.textPrimary,
+          Expanded(
+            child: Text(
+              context.tr('我的歌单'),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: isTablet ? 26 : 22,
+                fontWeight: FontWeight.bold,
+                color: colors.textPrimary,
+              ),
             ),
           ),
-          const Spacer(),
-          GestureDetector(
-            onTap: () => context.push('/recently-played'),
-            child: Icon(Icons.history, size: isTablet ? 26 : 22, color: colors.textSecondary),
-          ),
+          const SizedBox(width: AppSpacing.md),
+          _buildActionButtons(context, colors, ref),
         ],
       ),
     );
@@ -84,73 +88,71 @@ class LibraryPage extends ConsumerWidget {
     ThemeColors colors,
     WidgetRef ref,
   ) {
-    return Padding(
-      padding: EdgeInsets.symmetric(horizontal: ResponsiveLayout.horizontalPadding(context)),
-      child: Row(
-        children: [
-          GestureDetector(
-            onTap: () => _showCreateDialog(context, colors, ref),
-            child: Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: AppSpacing.lg,
-                vertical: AppSpacing.sm,
-              ),
-              decoration: BoxDecoration(
-                color: colors.primary,
-                borderRadius: BorderRadius.circular(AppRadius.full),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.add, size: 16, color: colors.textOnPrimary),
-                  const SizedBox(width: AppSpacing.xs),
-                  Text(
-                    context.tr('新建歌单'),
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w500,
-                      color: colors.textOnPrimary,
-                    ),
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        GestureDetector(
+          onTap: () => _showCreateDialog(context, colors, ref),
+          child: Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.md,
+              vertical: 6,
+            ),
+            decoration: BoxDecoration(
+              color: colors.primary,
+              borderRadius: BorderRadius.circular(AppRadius.full),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.add, size: 14, color: colors.textOnPrimary),
+                const SizedBox(width: AppSpacing.xs),
+                Text(
+                  context.tr('新建歌单'),
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                    color: colors.textOnPrimary,
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
-          const SizedBox(width: AppSpacing.md),
-          GestureDetector(
-            onTap: () => _showImportDialog(context, colors, ref),
-            child: Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: AppSpacing.lg,
-                vertical: AppSpacing.sm,
-              ),
-              decoration: BoxDecoration(
-                border: Border.all(color: colors.textHint),
-                borderRadius: BorderRadius.circular(AppRadius.full),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.file_download,
-                    size: 16,
+        ),
+        const SizedBox(width: AppSpacing.sm),
+        GestureDetector(
+          onTap: () => _showImportDialog(context, colors, ref),
+          child: Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.md,
+              vertical: 6,
+            ),
+            decoration: BoxDecoration(
+              border: Border.all(color: colors.divider),
+              borderRadius: BorderRadius.circular(AppRadius.full),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.file_download,
+                  size: 14,
+                  color: colors.textSecondary,
+                ),
+                const SizedBox(width: AppSpacing.xs),
+                Text(
+                  context.tr('导入'),
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
                     color: colors.textSecondary,
                   ),
-                  const SizedBox(width: AppSpacing.xs),
-                  Text(
-                    context.tr('导入'),
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w500,
-                      color: colors.textSecondary,
-                    ),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 

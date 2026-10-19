@@ -4,9 +4,9 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:on_audio_query/on_audio_query.dart';
-import 'package:path_provider/path_provider.dart';
 
 import '../../features/player/domain/models/song.dart';
+import 'cache_paths.dart';
 
 /// 统一的封面缓存服务，管理内存 LRU 缓存和磁盘持久化缓存。
 /// 解决 QueryArtworkWidget 每次独立查询 MediaStore 导致的加载缓慢问题。
@@ -28,16 +28,22 @@ class CoverCacheService {
   /// 正在进行的提取任务，防止重复提取
   final Map<String, Future<Uint8List?>> _pending = {};
 
-  /// 获取磁盘缓存目录
+  /// 获取磁盘缓存目录（跟随「设置 - 存储管理 - 缓存目录」）
   Future<Directory> _getCacheDir() async {
-    if (_cacheDir != null && await _cacheDir!.exists()) return _cacheDir!;
-    final appDir = await getApplicationCacheDirectory();
-    _cacheDir = Directory('${appDir.path}/artwork_cache');
-    if (!await _cacheDir!.exists()) {
-      await _cacheDir!.create(recursive: true);
+    final cached = _cacheDir;
+    if (cached != null &&
+        _cacheRoot == CachePaths.root &&
+        await cached.exists()) {
+      return cached;
     }
-    return _cacheDir!;
+    final dir = await CachePaths.subDirectory('artwork_cache');
+    _cacheDir = dir;
+    _cacheRoot = CachePaths.root;
+    return dir;
   }
+
+  /// 当前缓存目录对应的根目录，用于感知「缓存目录」设置变化。
+  String? _cacheRoot;
 
   /// 磁盘缓存文件路径
   Future<String> _diskPath(String songId) async {
@@ -139,10 +145,17 @@ class CoverCacheService {
     try {
       final path = await _diskPath(songId);
       await File(path).writeAsBytes(bytes, flush: false);
+      // 每写入 20 张封面检查一次缓存上限，避免频繁遍历目录。
+      _writeCount++;
+      if (_writeCount % 20 == 0 && CachePaths.maxBytes > 0) {
+        await CachePaths.enforceLimit();
+      }
     } catch (e) {
       debugPrint('[CoverCache] 磁盘写入失败 $songId: $e');
     }
   }
+
+  int _writeCount = 0;
 
   /// 批量预加载封面（在后台并发执行，带进度回调）。
   /// 用于本地音乐扫描完成后预热缓存。

@@ -5,6 +5,7 @@ abstract class AppRoutes {
   static const String discover = '/discover';
   static const String library = '/library';
   static const String local = '/local';
+  static const String mine = '/mine';
   static const String download = '/download';
   static const String settings = '/settings';
   static const String search = '/search';

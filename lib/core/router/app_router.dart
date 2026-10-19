@@ -11,11 +11,34 @@ import '../../features/discover/presentation/recognize_page.dart';
 import '../../features/local/presentation/tag_editor_page.dart';
 import '../../features/settings/presentation/plugin_management_page.dart';
 import '../../features/local/presentation/local_page.dart';
+import '../../features/mine/presentation/mine_page.dart';
 import '../../features/download/presentation/download_page.dart';
 import '../../features/settings/presentation/settings_page.dart';
 import '../../features/player/presentation/full_player_page.dart';
 import '../../features/player/presentation/lyric_page.dart';
 import '../constants/app_routes.dart';
+
+/// 右侧滑入的二级页面转场。
+CustomTransitionPage<void> _slidePage({
+  required LocalKey key,
+  required Widget child,
+}) {
+  return CustomTransitionPage<void>(
+    key: key,
+    child: child,
+    transitionDuration: const Duration(milliseconds: 220),
+    reverseTransitionDuration: const Duration(milliseconds: 180),
+    transitionsBuilder: (context, animation, secondaryAnimation, child) {
+      return SlideTransition(
+        position: Tween<Offset>(begin: const Offset(1, 0), end: Offset.zero)
+            .animate(
+              CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
+            ),
+        child: child,
+      );
+    },
+  );
+}
 
 final appRouter = GoRouter(
   initialLocation: AppRoutes.discover,
@@ -52,20 +75,27 @@ final appRouter = GoRouter(
         StatefulShellBranch(
           routes: [
             GoRoute(
-              path: AppRoutes.download,
-              builder: (context, state) => const DownloadPage(),
-            ),
-          ],
-        ),
-        StatefulShellBranch(
-          routes: [
-            GoRoute(
-              path: AppRoutes.settings,
-              builder: (context, state) => const SettingsPage(),
+              path: AppRoutes.mine,
+              builder: (context, state) => const MinePage(),
             ),
           ],
         ),
       ],
+    ),
+    // 「下载」与「设置」从一级导航移到「我的」里作为二级页面。
+    GoRoute(
+      path: AppRoutes.download,
+      pageBuilder: (context, state) => _slidePage(
+        key: state.pageKey,
+        child: const DownloadPage(),
+      ),
+    ),
+    GoRoute(
+      path: AppRoutes.settings,
+      pageBuilder: (context, state) => _slidePage(
+        key: state.pageKey,
+        child: const SettingsPage(),
+      ),
     ),
     GoRoute(
       path: AppRoutes.fullPlayer,

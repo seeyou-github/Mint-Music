@@ -18,7 +18,11 @@ import '../domain/models/plugin_info.dart';
 import 'plugin_test_dialog.dart';
 
 class PluginManagementPage extends ConsumerStatefulWidget {
-  const PluginManagementPage({super.key});
+  const PluginManagementPage({super.key, this.embedded = false});
+
+  /// 嵌入「设置 - 插件管理」标签时使用：不渲染自己的 Scaffold / 标题栏，
+  /// 直接铺满设置页的内容区域。
+  final bool embedded;
 
   /// 把插件加载/操作异常转成用户可读的提示，避免直接展示晦涩的
   /// "Stack Overflow" 原始错误文本（大型洛雪插件脚本递归过深时常见）。
@@ -46,7 +50,12 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
     _subscribeToUpdateNotices();
     // Auto-check for updates when the page loads
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _checkAllUpdates();
+      if (!mounted) return;
+      // 嵌入设置页时每次切标签都会重建本页，避免重复请求：
+      // 已有检查结果就不再自动检查，用户仍可点右上角刷新。
+      if (ref.read(pluginUpdateResultsProvider).isEmpty) {
+        _checkAllUpdates();
+      }
     });
   }
 
@@ -295,6 +304,94 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
       }
     }
 
+    final content = pluginsAsync.when(
+      data: (plugins) => ListView(
+        padding: const EdgeInsets.all(AppSpacing.lg),
+        children: [
+          _buildBuiltInSourcesSection(colors),
+          const SizedBox(height: AppSpacing.lg),
+          _buildPluginSectionHeader(colors, plugins.length),
+          const SizedBox(height: AppSpacing.sm),
+          if (plugins.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: AppSpacing.xxl),
+              child: _buildEmptyState(colors),
+            )
+          else
+            ...plugins.map(
+              (plugin) => _buildPluginCard(colors, plugin, mergedResults),
+            ),
+        ],
+      ),
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (e, _) => Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.error_outline, size: 48, color: colors.textHint),
+            const SizedBox(height: AppSpacing.md),
+            Text(context.tr('加载失败'), style: TextStyle(color: colors.textHint)),
+            const SizedBox(height: AppSpacing.sm),
+            TextButton(
+              onPressed: () => ref.invalidate(pluginsProvider),
+              child: Text(context.tr('重试'), style: TextStyle(color: colors.primary)),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (widget.embedded) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              AppSpacing.lg,
+              AppSpacing.sm,
+              AppSpacing.sm,
+              0,
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    context.tr('插件管理'),
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: colors.textPrimary,
+                    ),
+                  ),
+                ),
+                if (_isCheckingUpdates)
+                  const Padding(
+                    padding: EdgeInsets.all(12.0),
+                    child: SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  )
+                else
+                  IconButton(
+                    icon: Icon(Icons.refresh, color: colors.primary),
+                    onPressed: _checkAllUpdates,
+                    tooltip: context.tr('检查更新'),
+                  ),
+                IconButton(
+                  icon: Icon(Icons.add, color: colors.primary),
+                  onPressed: () => _showAddPluginSheet(colors),
+                  tooltip: context.tr('添加插件'),
+                ),
+              ],
+            ),
+          ),
+          Expanded(child: content),
+        ],
+      );
+    }
+
     return Scaffold(
       backgroundColor: colors.background,
       appBar: AppBar(
@@ -334,42 +431,7 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
           ),
         ],
       ),
-      body: pluginsAsync.when(
-        data: (plugins) => ListView(
-          padding: const EdgeInsets.all(AppSpacing.lg),
-          children: [
-            _buildBuiltInSourcesSection(colors),
-            const SizedBox(height: AppSpacing.lg),
-            _buildPluginSectionHeader(colors, plugins.length),
-            const SizedBox(height: AppSpacing.sm),
-            if (plugins.isEmpty)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: AppSpacing.xxl),
-                child: _buildEmptyState(colors),
-              )
-            else
-              ...plugins.map(
-                (plugin) => _buildPluginCard(colors, plugin, mergedResults),
-              ),
-          ],
-        ),
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.error_outline, size: 48, color: colors.textHint),
-              const SizedBox(height: AppSpacing.md),
-              Text(context.tr('加载失败'), style: TextStyle(color: colors.textHint)),
-              const SizedBox(height: AppSpacing.sm),
-              TextButton(
-                onPressed: () => ref.invalidate(pluginsProvider),
-                child: Text(context.tr('重试'), style: TextStyle(color: colors.primary)),
-              ),
-            ],
-          ),
-        ),
-      ),
+      body: content,
     );
   }
 

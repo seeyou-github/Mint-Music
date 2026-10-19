@@ -9,16 +9,17 @@ import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../core/constants/app_constants.dart';
-import '../../../core/l10n/app_locale.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
+import '../../../shared/services/app_image_cache.dart';
+import '../../../shared/services/cache_paths.dart';
 import '../application/settings_providers.dart';
-import '../application/plugin_providers.dart';
 import '../application/update_providers.dart';
 import '../data/settings_service.dart';
 import '../data/update_service.dart';
+import 'plugin_management_page.dart';
 import 'update_dialog.dart';
 import '../../player/application/desktop_lyric_controller.dart';
 import '../../player/application/desktop_lyric_sync.dart';
@@ -189,6 +190,15 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       ),
       child: Row(
         children: [
+          if (context.canPop()) ...[
+            IconButton(
+              icon: Icon(Icons.arrow_back, color: colors.textPrimary),
+              onPressed: () => context.pop(),
+              visualDensity: VisualDensity.compact,
+              tooltip: context.tr('返回'),
+            ),
+            const SizedBox(width: AppSpacing.xs),
+          ],
           Text(
             context.tr('设置'),
             style: TextStyle(
@@ -281,6 +291,11 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
 
 
   Widget _buildContent(ThemeColors colors) {
+    // 插件管理直接展示「管理插件」二级页面内容（含插件启用/停用），
+    // 不再先显示一个入口行。它自带列表，不能塞进 SingleChildScrollView。
+    if (_activeCategory == SettingsCategory.plugins) {
+      return const PluginManagementPage(embedded: true);
+    }
     // Only build the active category to avoid constructing all 6 categories
     // (and their heavy providers like plugins, directory scanning, etc.) on
     // first render, which causes a noticeable delay when navigating here.
@@ -302,7 +317,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       case SettingsCategory.playback:
         return const _PlaybackContent();
       case SettingsCategory.plugins:
-        return const _PluginsContent();
+        // 在 _buildContent 中已直接返回 PluginManagementPage。
+        return const SizedBox.shrink();
       case SettingsCategory.musicSource:
         return const _MusicSourceContent();
       case SettingsCategory.storage:
@@ -529,18 +545,6 @@ ThemeMode _themeModeFromLabel(String label) => switch (label) {
   _ => ThemeMode.light,
 };
 
-/// 歌词语言模式值(follow / zh-CN / zh-TW)对应的显示名。
-String _lyricLocaleModeLabel(String mode) {
-  switch (mode) {
-    case 'zh-CN':
-      return '简体中文';
-    case 'zh-TW':
-      return '繁體中文';
-    default:
-      return '跟随界面';
-  }
-}
-
 // ==================== Appearance ====================
 
 class _AppearanceContent extends ConsumerWidget {
@@ -571,8 +575,6 @@ class _AppearanceContent extends ConsumerWidget {
     final themeSubtitle = themeMode == ThemeMode.system
         ? '跟随系统，当前为${isThemeModeLight(themeMode, platformBrightness) ? '浅色' : '深色'}'
         : '选择应用的主题颜色';
-    final appLocale = ref.watch(appLocaleProvider);
-    final lyricLocaleMode = ref.watch(lyricLocaleModeProvider);
     final primaryHex = ref.watch(themePrimaryColorProvider);
     final presetColors = [
       ('#1DB954', 'Spotify 绿'),
@@ -644,78 +646,6 @@ class _AppearanceContent extends ConsumerWidget {
           colors: colors,
           onTap: () =>
               _showThemeColorPicker(context, colors, presetColors, primaryHex),
-        ),
-        _SettingDivider(colors: colors),
-        _SettingRow(
-          icon: Icons.language,
-          title: '界面语言',
-          subtitle: '选择界面显示语言',
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                context.tr(appLocale.label),
-                style: TextStyle(fontSize: 13, color: colors.textHint),
-              ),
-              const SizedBox(width: 4),
-              Icon(Icons.chevron_right, size: 18, color: colors.textHint),
-            ],
-          ),
-          colors: colors,
-          onTap: () => _showBottomPicker(
-            context,
-            colors,
-            '界面语言',
-            AppLocale.values.map((e) => e.label).toList(),
-            appLocale.label,
-            (v) {
-              final container = ProviderScope.containerOf(context);
-              final locale = AppLocale.values.firstWhere(
-                (e) => e.label == v,
-                orElse: () => AppLocale.zhCn,
-              );
-              container.read(appLocaleProvider.notifier).state = locale;
-              unawaited(
-                _doPersist(container, (s) => s.setAppLocale(locale.code)),
-              );
-            },
-          ),
-        ),
-        _SettingDivider(colors: colors),
-        _SettingRow(
-          icon: Icons.lyrics,
-          title: '歌词语言模式',
-          subtitle: '中文歌词的显示语言',
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                context.tr(_lyricLocaleModeLabel(lyricLocaleMode)),
-                style: TextStyle(fontSize: 13, color: colors.textHint),
-              ),
-              const SizedBox(width: 4),
-              Icon(Icons.chevron_right, size: 18, color: colors.textHint),
-            ],
-          ),
-          colors: colors,
-          onTap: () => _showBottomPicker(
-            context,
-            colors,
-            '歌词语言模式',
-            ['跟随界面', '简体中文', '繁體中文'],
-            _lyricLocaleModeLabel(lyricLocaleMode),
-            (v) {
-              final mode = v == '跟随界面'
-                  ? 'follow'
-                  : (v == '简体中文' ? 'zh-CN' : 'zh-TW');
-              _persistString(
-                context,
-                lyricLocaleModeProvider,
-                mode,
-                (s) => s.setLyricLocaleMode(mode),
-              );
-            },
-          ),
         ),
       ],
     );
@@ -2424,93 +2354,6 @@ class _PlaybackContent extends ConsumerWidget {
 
 // ==================== Plugins ====================
 
-class _PluginsContent extends ConsumerWidget {
-  const _PluginsContent();
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final colors = ref.watch(themeColorsProvider);
-    final pluginsAsync = ref.watch(pluginsProvider);
-    return _SettingGroup(
-      title: '插件管理',
-      subtitle: '管理和配置应用插件，扩展音乐播放器功能',
-      colors: colors,
-      children: [
-        _SettingRow(
-          icon: Icons.extension,
-          title: '管理插件',
-          subtitle: '查看和管理已安装的插件',
-          trailing: Icon(Icons.chevron_right, size: 18, color: colors.textHint),
-          colors: colors,
-          onTap: () => context.push('/plugin-management'),
-        ),
-        _SettingDivider(colors: colors),
-        pluginsAsync.when(
-          data: (plugins) {
-            if (plugins.isEmpty)
-              return _SettingRow(
-                icon: Icons.add_circle_outline,
-                title: '添加插件',
-                subtitle: '暂无已安装的插件',
-                trailing: Icon(
-                  Icons.chevron_right,
-                  size: 18,
-                  color: colors.textHint,
-                ),
-                colors: colors,
-                onTap: () => context.push('/plugin-management'),
-              );
-            return Column(
-              children: plugins
-                  .take(3)
-                  .map(
-                    (plugin) => Column(
-                      children: [
-                        _SettingRow(
-                          icon: Icons.extension,
-                          title: plugin.name,
-                          subtitle:
-                              'v${plugin.version} · ${plugin.isEnabled ? "已启用" : "已禁用"}',
-                          trailing: Icon(
-                            Icons.chevron_right,
-                            size: 18,
-                            color: colors.textHint,
-                          ),
-                          colors: colors,
-                          onTap: () => context.push('/plugin-management'),
-                        ),
-                        if (plugin != plugins.last)
-                          _SettingDivider(colors: colors),
-                      ],
-                    ),
-                  )
-                  .toList(),
-            );
-          },
-          loading: () => const Padding(
-            padding: EdgeInsets.all(AppSpacing.md),
-            child: Center(
-              child: SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-            ),
-          ),
-          error: (error, stack) => _SettingRow(
-            icon: Icons.error_outline,
-            title: '加载失败',
-            subtitle: '点击重试',
-            trailing: Icon(Icons.refresh, size: 18, color: colors.textHint),
-            colors: colors,
-            onTap: () =>
-                ProviderScope.containerOf(context).invalidate(pluginsProvider),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
 // ==================== Music Source ====================
 
 class _MusicSourceContent extends ConsumerWidget {
@@ -2790,8 +2633,6 @@ class _StorageContent extends ConsumerWidget {
       children: [
         _buildDirectoryGroup(context, ref, colors),
         _buildCacheGroup(context, ref, colors),
-        _buildFilenameGroup(context, ref, colors),
-        _buildTagWriteGroup(context, ref, colors),
       ],
     );
   }
@@ -2803,7 +2644,6 @@ class _StorageContent extends ConsumerWidget {
   ) {
     final downloadDir = ref.watch(downloadDirProvider);
     final cacheDir = ref.watch(cacheDirProvider);
-    final wifiOnly = ref.watch(wifiOnlyDownloadProvider);
     final downloadDirSize = ref.watch(downloadDirSizeProvider);
     final cacheDirSize = ref.watch(cacheDirSizeProvider);
     return _SettingGroup(
@@ -2881,6 +2721,11 @@ class _StorageContent extends ConsumerWidget {
                     if (result != null && context.mounted) {
                       final container = ProviderScope.containerOf(context);
                       container.read(cacheDirProvider.notifier).state = result;
+                      // 让后续的封面 / 图片缓存真正写入新目录。
+                      CachePaths.configure(result);
+                      await AppImageCache.configure();
+                      unawaited(CachePaths.enforceLimit());
+                      container.invalidate(cacheDirSizeProvider);
                       unawaited(
                         _doPersist(container, (s) => s.setCacheDir(result)),
                       );
@@ -3020,23 +2865,6 @@ class _StorageContent extends ConsumerWidget {
             ),
           ],
         ),
-        _SettingDivider(colors: colors),
-        _SettingRow(
-          icon: Icons.wifi,
-          title: '仅WiFi下载',
-          subtitle: '仅在WiFi网络下下载',
-          trailing: Switch(
-            value: wifiOnly,
-            onChanged: (v) {
-              final container = ProviderScope.containerOf(context);
-              container.read(wifiOnlyDownloadProvider.notifier).state = v;
-              unawaited(_doPersist(container, (s) => s.setWifiOnlyDownload(v)));
-            },
-            activeTrackColor: colors.primary.withValues(alpha: 0.3),
-            activeThumbColor: colors.primary,
-          ),
-          colors: colors,
-        ),
       ],
     );
   }
@@ -3067,16 +2895,20 @@ class _StorageContent extends ConsumerWidget {
             onPressed: () async {
               Navigator.pop(ctx);
               final container = ProviderScope.containerOf(context);
-              final svc = await container.read(settingsServiceProvider.future);
               final defaultDownload = '/storage/emulated/0/Music/MintMusic';
-              final tempDir = await getTemporaryDirectory();
+              // 默认缓存目录使用应用缓存目录，不再指向系统临时目录。
+              final appCacheDir = await getApplicationCacheDirectory();
               container.read(downloadDirProvider.notifier).state =
                   defaultDownload;
-              container.read(cacheDirProvider.notifier).state = tempDir.path;
+              container.read(cacheDirProvider.notifier).state =
+                  appCacheDir.path;
+              CachePaths.configure(appCacheDir.path);
+              await AppImageCache.configure();
+              container.invalidate(cacheDirSizeProvider);
               unawaited(
                 _doPersist(container, (s) async {
                   await s.setDownloadDir(defaultDownload);
-                  await s.setCacheDir(tempDir.path);
+                  await s.setCacheDir(appCacheDir.path);
                 }),
               );
               if (context.mounted)
@@ -3111,21 +2943,51 @@ class _StorageContent extends ConsumerWidget {
     WidgetRef ref,
     ThemeColors colors,
   ) {
-    final cacheSize = ref.watch(cacheSizeProvider);
-    final autoCache = ref.watch(autoCacheMusicProvider);
+    final cacheDirSize = ref.watch(cacheDirSizeProvider);
+    final maxMb = ref.watch(maxCacheSizeMbProvider);
+    final maxLabel = _formatCacheLimit(maxMb);
     return _SettingGroup(
-      title: '本地歌曲缓存配置',
-      subtitle: '缓存管理和存储设置',
+      title: '缓存管理',
+      subtitle: '缓存占用和最大缓存空间',
       colors: colors,
       children: [
         Row(
           children: [
             Text(
-              context.tr('已有歌曲缓存大小：'),
+              context.tr('当前缓存占用：'),
               style: TextStyle(fontSize: 13, color: colors.textSecondary),
             ),
+            cacheDirSize.when(
+              data: (s) => Text(
+                s,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: colors.primary,
+                ),
+              ),
+              loading: () => Text(
+                '...',
+                style: TextStyle(fontSize: 13, color: colors.textHint),
+              ),
+              error: (e, st) => Text(
+                '0 B',
+                style: TextStyle(fontSize: 13, color: colors.textHint),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: AppSpacing.lg),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                context.tr('最大缓存大小'),
+                style: TextStyle(fontSize: 14, color: colors.textPrimary),
+              ),
+            ),
             Text(
-              cacheSize,
+              maxLabel,
               style: TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
@@ -3133,6 +2995,34 @@ class _StorageContent extends ConsumerWidget {
               ),
             ),
           ],
+        ),
+        Slider(
+          value: maxMb.toDouble().clamp(100.0, 10240.0).toDouble(),
+          min: 100,
+          max: 10240,
+          divisions: 101,
+          activeColor: colors.primary,
+          inactiveColor: colors.divider,
+          onChanged: (v) {
+            final mb = ((v / 100).round() * 100).clamp(100, 10240).toInt();
+            final container = ProviderScope.containerOf(context);
+            container.read(maxCacheSizeMbProvider.notifier).state = mb;
+          },
+          onChangeEnd: (v) {
+            final mb = ((v / 100).round() * 100).clamp(100, 10240).toInt();
+            CachePaths.maxBytes = mb * 1024 * 1024;
+            unawaited(CachePaths.enforceLimit());
+            _persistInt(
+              context,
+              maxCacheSizeMbProvider,
+              mb,
+              (s) => s.setMaxCacheSizeMb(mb),
+            );
+          },
+        ),
+        Text(
+          context.tr('缓存超过上限时会自动清理最旧的缓存文件'),
+          style: TextStyle(fontSize: 12, color: colors.textHint),
         ),
         const SizedBox(height: AppSpacing.md),
         SizedBox(
@@ -3148,26 +3038,19 @@ class _StorageContent extends ConsumerWidget {
             child: Text(context.tr('清除本地缓存')),
           ),
         ),
-        _SettingDivider(colors: colors),
-        _SettingRow(
-          icon: Icons.cached,
-          title: '自动缓存音乐',
-          subtitle: '播放时自动读取/写入缓存，加速后续播放',
-          trailing: Switch(
-            value: autoCache,
-            onChanged: (v) => _persistBool(
-              context,
-              autoCacheMusicProvider,
-              v,
-              (s) => s.setAutoCacheMusic(v),
-            ),
-            activeTrackColor: colors.primary.withValues(alpha: 0.3),
-            activeThumbColor: colors.primary,
-          ),
-          colors: colors,
-        ),
       ],
     );
+  }
+
+  String _formatCacheLimit(int mb) {
+    if (mb >= 1024) {
+      final gb = mb / 1024;
+      final text = gb == gb.roundToDouble()
+          ? gb.toStringAsFixed(0)
+          : gb.toStringAsFixed(1);
+      return '$text GB';
+    }
+    return '$mb MB';
   }
 
   void _showClearCacheDialog(BuildContext context, ThemeColors colors) {
@@ -3177,7 +3060,7 @@ class _StorageContent extends ConsumerWidget {
         backgroundColor: colors.surface,
         title: Text(context.tr('清除缓存'), style: TextStyle(color: colors.textPrimary)),
         content: Text(
-          context.tr('确定要清除所有缓存吗？这将删除临时文件和播放历史。'),
+          context.tr('确定要清除所有缓存吗？已缓存的封面等临时文件会被删除。'),
           style: TextStyle(color: colors.textSecondary),
         ),
         actions: [
@@ -3203,326 +3086,9 @@ class _StorageContent extends ConsumerWidget {
       final svc = await container.read(settingsServiceProvider.future);
       await svc.clearCache();
       container.read(cacheSizeProvider.notifier).state = '0 MB';
+      container.invalidate(cacheDirSizeProvider);
+      container.invalidate(downloadDirSizeProvider);
     } catch (_) {}
-  }
-
-  Widget _buildFilenameGroup(
-    BuildContext context,
-    WidgetRef ref,
-    ThemeColors colors,
-  ) {
-    final filenameTemplate = ref.watch(filenameTemplateProvider);
-    final preview = filenameTemplate
-        .replaceAll('%t', '半岛铁盒')
-        .replaceAll('%s', '周杰伦')
-        .replaceAll('%a', '八度空间')
-        .replaceAll('%u', 'tx')
-        .replaceAll('%q', 'master')
-        .replaceAll('%d', '2026-01-01');
-    return _SettingGroup(
-      title: '下载文件名格式设置',
-      subtitle: '选择下载歌曲时要保存的文件名格式',
-      colors: colors,
-      children: [
-        Wrap(
-          spacing: 12,
-          runSpacing: 8,
-          children: [
-            _buildTemplateTag(colors, '%t', context.tr('歌曲名称')),
-            _buildTemplateTag(colors, '%s', context.tr('歌手')),
-            _buildTemplateTag(colors, '%a', context.tr('专辑')),
-            _buildTemplateTag(colors, '%u', context.tr('平台')),
-            _buildTemplateTag(colors, '%q', context.tr('音质')),
-            _buildTemplateTag(colors, '%d', context.tr('日期')),
-          ],
-        ),
-        const SizedBox(height: AppSpacing.md),
-        TextField(
-          controller: TextEditingController(text: filenameTemplate),
-          onChanged: (v) {
-            final container = ProviderScope.containerOf(context);
-            container.read(filenameTemplateProvider.notifier).state = v.isEmpty
-                ? '%t - %s'
-                : v;
-            unawaited(
-              _doPersist(
-                container,
-                (s) => s.setFilenameTemplate(v.isEmpty ? '%t - %s' : v),
-              ),
-            );
-          },
-          style: TextStyle(fontSize: 14, color: colors.textPrimary),
-          decoration: InputDecoration(
-            hintText: context.tr('文件名格式'),
-            hintStyle: TextStyle(color: colors.textHint),
-            filled: true,
-            fillColor: colors.background,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(8),
-              borderSide: BorderSide(color: colors.divider),
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(8),
-              borderSide: BorderSide(color: colors.divider),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(8),
-              borderSide: BorderSide(color: colors.primary),
-            ),
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 12,
-              vertical: 10,
-            ),
-          ),
-        ),
-        const SizedBox(height: AppSpacing.sm),
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: colors.background,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: colors.divider.withValues(alpha: 0.3)),
-          ),
-          child: Row(
-            children: [
-              Text(
-                context.tr('预览：'),
-                style: TextStyle(fontSize: 13, color: colors.textSecondary),
-              ),
-              Expanded(
-                child: Text(
-                  preview,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: colors.textPrimary,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildTemplateTag(ThemeColors colors, String tag, String label) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: colors.primary.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(4),
-        border: Border.all(color: colors.primary.withValues(alpha: 0.3)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            tag,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: colors.primary,
-            ),
-          ),
-          const SizedBox(width: 4),
-          Text(
-            label,
-            style: TextStyle(fontSize: 11, color: colors.textSecondary),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTagWriteGroup(
-    BuildContext context,
-    WidgetRef ref,
-    ThemeColors colors,
-  ) {
-    final basicInfo = ref.watch(tagWriteBasicInfoProvider);
-    final cover = ref.watch(tagWriteCoverProvider);
-    final lyrics = ref.watch(tagWriteLyricsProvider);
-    final downloadLyrics = ref.watch(tagWriteDownloadLyricsProvider);
-    final lyricFormat = ref.watch(tagWriteLyricFormatProvider);
-    final enabledList = <String>[
-      if (basicInfo) '基础信息',
-      if (cover) '封面',
-      if (lyrics) '歌词',
-      if (downloadLyrics) '单独下载歌词',
-    ];
-    final statusText = enabledList.isNotEmpty
-        ? enabledList.join('、')
-        : '未选择任何选项';
-    return _SettingGroup(
-      title: '下载标签写入设置',
-      subtitle: '选择下载歌曲时要写入的标签信息',
-      colors: colors,
-      children: [
-        _buildTagCheckbox(
-          context,
-          ref,
-          colors,
-          Icons.info_outline,
-          '基础信息',
-          '包括歌曲标题、艺术家、专辑名称等基本信息',
-          tagWriteBasicInfoProvider,
-          (s, v) => s.setTagWriteBasicInfo(v),
-        ),
-        _SettingDivider(colors: colors),
-        _buildTagCheckbox(
-          context,
-          ref,
-          colors,
-          Icons.image,
-          '封面',
-          '将专辑封面嵌入到音频文件中',
-          tagWriteCoverProvider,
-          (s, v) => s.setTagWriteCover(v),
-        ),
-        _SettingDivider(colors: colors),
-        _buildTagCheckbox(
-          context,
-          ref,
-          colors,
-          Icons.lyrics,
-          '歌词信息',
-          '将歌词信息写入音频文件的元信息中',
-          tagWriteLyricsProvider,
-          (s, v) => s.setTagWriteLyrics(v),
-        ),
-        _SettingDivider(colors: colors),
-        _buildTagCheckbox(
-          context,
-          ref,
-          colors,
-          Icons.download,
-          '单独下载歌词文件',
-          '在下载歌曲的同时，在相同目录下保存一个独立的LRC歌词文件',
-          tagWriteDownloadLyricsProvider,
-          (s, v) => s.setTagWriteDownloadLyrics(v),
-        ),
-        _SettingDivider(colors: colors),
-        _SettingRow(
-          icon: Icons.format_align_left,
-          title: '歌词格式',
-          subtitle: '选择写入或下载的歌词格式',
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _buildLyricFormatChip(
-                context,
-                colors,
-                '标准LRC',
-                'lrc',
-                lyricFormat,
-              ),
-              const SizedBox(width: 8),
-              _buildLyricFormatChip(
-                context,
-                colors,
-                '逐字歌词',
-                'word-by-word',
-                lyricFormat,
-              ),
-            ],
-          ),
-          colors: colors,
-        ),
-        const SizedBox(height: AppSpacing.sm),
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: colors.background,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: colors.divider.withValues(alpha: 0.3)),
-          ),
-          child: Row(
-            children: [
-              Text(
-                context.tr('当前配置：'),
-                style: TextStyle(fontSize: 13, color: colors.textSecondary),
-              ),
-              Expanded(
-                child: Text(
-                  context.tr(statusText),
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: colors.textPrimary,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildTagCheckbox(
-    BuildContext context,
-    WidgetRef ref,
-    ThemeColors colors,
-    IconData icon,
-    String title,
-    String desc,
-    StateProvider<bool> provider,
-    Future<void> Function(SettingsService, bool) saveFn,
-  ) {
-    final value = ref.watch(provider);
-    return _SettingRow(
-      icon: icon,
-      title: title,
-      subtitle: desc,
-      trailing: Checkbox(
-        value: value,
-        onChanged: (v) {
-          final newVal = v ?? false;
-          final container = ProviderScope.containerOf(context);
-          container.read(provider.notifier).state = newVal;
-          unawaited(_doPersist(container, (s) => saveFn(s, newVal)));
-        },
-        activeColor: colors.primary,
-      ),
-      colors: colors,
-    );
-  }
-
-  Widget _buildLyricFormatChip(
-    BuildContext context,
-    ThemeColors colors,
-    String label,
-    String value,
-    String currentValue,
-  ) {
-    final isActive = currentValue == value;
-    return GestureDetector(
-      onTap: () => _persistString(
-        context,
-        tagWriteLyricFormatProvider,
-        value,
-        (s) => s.setTagWriteLyricFormat(value),
-      ),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        decoration: BoxDecoration(
-          color: isActive ? colors.primary : colors.background,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: isActive ? colors.primary : colors.divider),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w500,
-            color: isActive ? Colors.white : colors.textSecondary,
-          ),
-        ),
-      ),
-    );
   }
 }
 

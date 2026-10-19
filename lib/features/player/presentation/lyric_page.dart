@@ -8,6 +8,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:palette_generator/palette_generator.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../shared/services/app_image_cache.dart';
 import '../../../shared/widgets/share_preview_dialog.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../application/playback_controller.dart';
@@ -127,7 +128,10 @@ class _LyricPageState extends ConsumerState<LyricPage> {
     try {
       ImageProvider imageProvider;
       if (song.coverUrl!.startsWith('http')) {
-        imageProvider = CachedNetworkImageProvider(song.coverUrl!);
+        imageProvider = CachedNetworkImageProvider(
+          song.coverUrl!,
+          cacheManager: AppImageCache.manager,
+        );
       } else {
         imageProvider = AssetImage(song.coverUrl!);
       }

@@ -33,7 +33,7 @@ final autoSwitchSourceProvider = StateProvider<bool>((ref) => false);
 final downloadDirProvider = StateProvider<String>(
   (ref) => '/storage/emulated/0/Music/MintMusic',
 );
-final wifiOnlyDownloadProvider = StateProvider<bool>((ref) => true);
+final wifiOnlyDownloadProvider = StateProvider<bool>((ref) => false);
 
 // -- notification --
 final notificationEnabledProvider = StateProvider<bool>((ref) => true);
@@ -117,8 +117,11 @@ final globalQualityProvider = StateProvider<String>((ref) => '320k');
 // -- cache --
 final cacheSizeProvider = StateProvider<String>((ref) => '128 MB');
 
-// -- filename template --
-final filenameTemplateProvider = StateProvider<String>((ref) => '%t - %s');
+/// 最大缓存大小（MB），范围 100 MB ~ 10 GB（10240 MB）。
+final maxCacheSizeMbProvider = StateProvider<int>((ref) => 2048);
+
+// -- filename template（固定为「歌手名 - 歌曲名」） --
+final filenameTemplateProvider = StateProvider<String>((ref) => '%s - %t');
 
 // -- tag write --
 final tagWriteBasicInfoProvider = StateProvider<bool>((ref) => true);
@@ -212,14 +215,14 @@ final effectiveLyricLocaleProvider = Provider<AppLocale>((ref) {
 });
 
 final downloadDirSizeProvider = FutureProvider<String>((ref) async {
-  final svc = await ref.read(settingsServiceProvider.future);
-  final dir = ref.read(downloadDirProvider);
+  final svc = await ref.watch(settingsServiceProvider.future);
+  final dir = ref.watch(downloadDirProvider);
   return svc.getDirectorySize(dir);
 });
 
 final cacheDirSizeProvider = FutureProvider<String>((ref) async {
-  final svc = await ref.read(settingsServiceProvider.future);
-  final dir = ref.read(cacheDirProvider);
+  final svc = await ref.watch(settingsServiceProvider.future);
+  final dir = ref.watch(cacheDirProvider);
   if (dir.isEmpty) return '0 B';
   return svc.getDirectorySize(dir);
 });
@@ -270,14 +273,13 @@ const kBuiltInPresets = <EqPreset>[
 final settingsInitProvider = FutureProvider<void>((ref) async {
   final svc = await ref.watch(settingsServiceProvider.future);
 
-  // 加载界面语言(默认简体中文)
-  final locale = AppLocale.fromCode(svc.getAppLocale());
+  // 界面语言固定简体中文、歌词语言固定简体中文（设置项已移除）。
+  const locale = AppLocale.zhCn;
   ref.read(appLocaleProvider.notifier).state = locale;
   currentLocale = locale;
-  // 加载歌词语言模式
-  ref.read(lyricLocaleModeProvider.notifier).state = svc.getLyricLocaleMode();
+  ref.read(lyricLocaleModeProvider.notifier).state = 'zh-CN';
 
-  // 'light' / 'dark' / 'system'，未知值回落为浅色
+  // 'light' / 'dark' / 'system'，未设置时默认跟随系统
   ref.read(themeModeProvider.notifier).state = themeModeFromPref(
     svc.getThemeMode(),
   );
@@ -306,7 +308,8 @@ final settingsInitProvider = FutureProvider<void>((ref) async {
   } catch (_) {}
   ref.read(playbackSpeedProvider.notifier).state = svc.getPlaybackSpeed();
   ref.read(downloadDirProvider.notifier).state = await svc.getDownloadDir();
-  ref.read(wifiOnlyDownloadProvider.notifier).state = svc.getWifiOnlyDownload();
+  // 下载网络不再受限制（仅WiFi下载设置项已移除）。
+  ref.read(wifiOnlyDownloadProvider.notifier).state = false;
   ref.read(autoPlayProvider.notifier).state = svc.getAutoPlay();
   ref.read(rememberProgressProvider.notifier).state = svc.getRememberProgress();
   ref.read(autoSwitchSourceProvider.notifier).state = svc.getAutoSwitchSource();
@@ -316,15 +319,15 @@ final settingsInitProvider = FutureProvider<void>((ref) async {
   ref.read(sourceQualityProvider.notifier).state = svc.getSourceQuality();
   ref.read(globalQualityProvider.notifier).state = svc.getGlobalQuality();
   ref.read(cacheSizeProvider.notifier).state = svc.getCacheSize();
+  ref.read(maxCacheSizeMbProvider.notifier).state = svc.getMaxCacheSizeMb();
+  // 文件名格式固定为「歌手名 - 歌曲名」。
   ref.read(filenameTemplateProvider.notifier).state = svc.getFilenameTemplate();
-  ref.read(tagWriteBasicInfoProvider.notifier).state = svc
-      .getTagWriteBasicInfo();
-  ref.read(tagWriteCoverProvider.notifier).state = svc.getTagWriteCover();
-  ref.read(tagWriteLyricsProvider.notifier).state = svc.getTagWriteLyrics();
-  ref.read(tagWriteDownloadLyricsProvider.notifier).state = svc
-      .getTagWriteDownloadLyrics();
-  ref.read(tagWriteLyricFormatProvider.notifier).state = svc
-      .getTagWriteLyricFormat();
+  // 下载标签写入固定为：基础信息 + 封面 + 歌词（优先逐字，其次标准 LRC）。
+  ref.read(tagWriteBasicInfoProvider.notifier).state = true;
+  ref.read(tagWriteCoverProvider.notifier).state = true;
+  ref.read(tagWriteLyricsProvider.notifier).state = true;
+  ref.read(tagWriteDownloadLyricsProvider.notifier).state = false;
+  ref.read(tagWriteLyricFormatProvider.notifier).state = 'word-by-word';
   ref.read(audioEffectEnabledProvider.notifier).state = svc
       .getAudioEffectEnabled();
   ref.read(audioVisualizerEnabledProvider.notifier).state = svc
@@ -356,7 +359,7 @@ final settingsInitProvider = FutureProvider<void>((ref) async {
       .getAppearanceBgAnimation();
   ref.read(desktopLyricSettingsProvider.notifier).state =
       DesktopLyricSettings.decode(svc.getDesktopLyricSettings());
-  ref.read(autoCacheMusicProvider.notifier).state = svc.getAutoCacheMusic();
+  ref.read(autoCacheMusicProvider.notifier).state = true;
   ref.read(routePreloadEnabledProvider.notifier).state = svc
       .getRoutePreloadEnabled();
   ref.read(autoUpdateProvider.notifier).state = svc.getAutoUpdate();

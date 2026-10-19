@@ -6,6 +6,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
+import '../../../shared/services/app_image_cache.dart';
 import '../../player/application/playback_controller.dart';
 import '../application/recognize_provider.dart';
 import '../application/search_providers.dart';
@@ -448,6 +449,7 @@ class _RecognizePageState extends ConsumerState<RecognizePage>
               child: song.img.isNotEmpty
                   ? CachedNetworkImage(
                       imageUrl: song.img,
+                      cacheManager: AppImageCache.manager,
                       fit: BoxFit.cover,
                       placeholder: (_, _) => _buildPlaceholderCover(colors),
                       errorWidget: (_, _, _) => _buildPlaceholderCover(colors),

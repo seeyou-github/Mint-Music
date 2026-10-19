@@ -6,9 +6,9 @@ import 'package:audio_service/audio_service.dart';
 import 'package:audio_session/audio_session.dart';
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
-import 'package:path_provider/path_provider.dart';
 
 import '../domain/models/song.dart';
+import '../../../shared/services/cache_paths.dart';
 import '../../../shared/services/cover_cache_service.dart';
 
 class MusicAudioHandler extends BaseAudioHandler
@@ -393,12 +393,7 @@ class MusicAudioHandler extends BaseAudioHandler
   }
 
   Future<Directory> _getCoverCacheDir() async {
-    final cacheDir = await getApplicationCacheDirectory();
-    final coverDir = Directory('${cacheDir.path}/covers');
-    if (!await coverDir.exists()) {
-      await coverDir.create(recursive: true);
-    }
-    return coverDir;
+    return CachePaths.subDirectory('covers');
   }
 
   Future<void> setSource(Song song) async {

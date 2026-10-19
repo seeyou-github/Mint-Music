@@ -8,7 +8,7 @@ class SettingsService {
   SettingsService(this._prefs);
 
   // -- theme --
-  String getThemeMode() => _prefs.getString('theme_mode') ?? 'light';
+  String getThemeMode() => _prefs.getString('theme_mode') ?? 'system';
   Future<void> setThemeMode(String v) => _prefs.setString('theme_mode', v);
   String getThemePrimaryColor() =>
       _prefs.getString('theme_primary_color') ?? '#1DB954';
@@ -82,7 +82,7 @@ class SettingsService {
   Future<void> setDownloadDir(String v) => _prefs.setString('download_dir', v);
 
   // -- wifi only --
-  bool getWifiOnlyDownload() => _prefs.getBool('wifi_only_download') ?? true;
+  bool getWifiOnlyDownload() => _prefs.getBool('wifi_only_download') ?? false;
   Future<void> setWifiOnlyDownload(bool v) =>
       _prefs.setBool('wifi_only_download', v);
 
@@ -158,11 +158,15 @@ class SettingsService {
   String getCacheSize() => _prefs.getString('cache_size') ?? '128 MB';
   Future<void> setCacheSize(String v) => _prefs.setString('cache_size', v);
 
-  // -- filename template --
-  String getFilenameTemplate() =>
-      _prefs.getString('filename_template') ?? '%t - %s';
+  /// 缓存目录的最大占用（MB）。默认 2 GB，范围 100 MB ~ 10 GB。
+  int getMaxCacheSizeMb() => _prefs.getInt('max_cache_size_mb') ?? 2048;
+  Future<void> setMaxCacheSizeMb(int v) =>
+      _prefs.setInt('max_cache_size_mb', v);
+
+  // -- filename template (已固定为「歌手名 - 歌曲名」，仅保留读写兼容旧数据) --
+  String getFilenameTemplate() => '%s - %t';
   Future<void> setFilenameTemplate(String v) =>
-      _prefs.setString('filename_template', v);
+      _prefs.setString('filename_template', '%s - %t');
 
   // -- tag write --
   bool getTagWriteBasicInfo() => _prefs.getBool('tag_write_basic_info') ?? true;
@@ -299,8 +303,9 @@ class SettingsService {
   Future<String> getCacheDir() async {
     final persisted = _prefs.getString('cache_dir');
     if (persisted != null && persisted.isNotEmpty) return persisted;
-    final temp = await getTemporaryDirectory();
-    return temp.path;
+    // 默认使用应用自己的缓存目录，避免把缓存写进系统共享临时目录。
+    final cache = await getApplicationCacheDirectory();
+    return cache.path;
   }
 
   Future<void> setCacheDir(String v) => _prefs.setString('cache_dir', v);
@@ -336,27 +341,32 @@ class SettingsService {
   }
 
   // -- cache clearing (non-persistent action) --
+  /// 清理应用缓存的子目录（不删除用户选择的目录本身）。
+  ///
+  /// 只清理应用自己创建的 `artwork_cache` / `covers` / `image_cache`，
+  /// 不会误删用户缓存目录里的其它文件，也不再动系统临时目录。
   Future<int> clearCache() async {
-    final tempDir = await getTemporaryDirectory();
-    final cacheDir = await getApplicationCacheDirectory();
     int total = 0;
-
-    if (tempDir.existsSync()) {
-      final files = tempDir.listSync(recursive: true);
-      for (final f in files) {
-        if (f is File) {
-          total += await f.length();
-          await f.delete();
-        }
-      }
+    final roots = <Directory>[];
+    final configured = _prefs.getString('cache_dir');
+    if (configured != null && configured.isNotEmpty) {
+      roots.add(Directory(configured));
     }
-    if (cacheDir.existsSync()) {
-      final files = cacheDir.listSync(recursive: true);
-      for (final f in files) {
-        if (f is File) {
-          total += await f.length();
-          await f.delete();
-        }
+    try {
+      roots.add(await getApplicationCacheDirectory());
+    } catch (_) {}
+
+    const subDirectories = ['artwork_cache', 'covers', 'image_cache'];
+    for (final root in roots) {
+      for (final name in subDirectories) {
+        final dir = Directory('${root.path}${Platform.pathSeparator}$name');
+        if (!dir.existsSync()) continue;
+        try {
+          await for (final entity in dir.list(recursive: true)) {
+            if (entity is File) total += await entity.length();
+          }
+          await dir.delete(recursive: true);
+        } catch (_) {}
       }
     }
     return total;

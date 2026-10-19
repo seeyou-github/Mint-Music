@@ -7,6 +7,8 @@ import 'app/app.dart';
 import 'core/services/audio_service_init.dart';
 import 'features/settings/application/settings_providers.dart';
 import 'shared/services/amll_toggle_service.dart';
+import 'shared/services/app_image_cache.dart';
+import 'shared/services/cache_paths.dart';
 import 'features/player/presentation/widgets/amll_lyric_player.dart';
 
 void main() async {
@@ -56,6 +58,18 @@ void main() async {
   // 初始化 AMLL 开关
   await AmllToggleService().loadFromPrefs();
   print('>>> main: AMLL toggle loaded: ${AmllToggleService().enabled}');
+
+  // 缓存目录：封面 / 网络图片等缓存统一写到「设置 - 存储管理」里指定的目录。
+  try {
+    CachePaths.configure(container.read(cacheDirProvider));
+    CachePaths.maxBytes =
+        container.read(maxCacheSizeMbProvider) * 1024 * 1024;
+    await AppImageCache.configure();
+    unawaited(CachePaths.enforceLimit());
+    print('>>> main: 缓存目录 -> ${CachePaths.root ?? "应用默认缓存目录"}');
+  } catch (e) {
+    print('>>> main: 缓存目录初始化失败: $e');
+  }
 
   // Route preload is an idle-time optimization controlled by settings. It
   // only prepares the cached AMLL document; no WebView or audio resource is

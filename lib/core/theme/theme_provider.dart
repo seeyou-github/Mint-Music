@@ -8,7 +8,7 @@ import 'theme_colors.dart';
 export 'theme_colors.dart';
 
 /// 应用主题模式：浅色 / 深色 / 跟随系统。
-final themeModeProvider = StateProvider<ThemeMode>((ref) => ThemeMode.light);
+final themeModeProvider = StateProvider<ThemeMode>((ref) => ThemeMode.system);
 
 final themePrimaryColorProvider = StateProvider<String>((ref) => '#1DB954');
 
@@ -29,11 +29,11 @@ String themeModeToPref(ThemeMode mode) => switch (mode) {
   ThemeMode.system => 'system',
 };
 
-/// 持久化值 -> 主题模式。未知值回落为浅色，保证旧版本数据可用。
+/// 持久化值 -> 主题模式。未知值回落为跟随系统，保证旧版本数据可用。
 ThemeMode themeModeFromPref(String? value) => switch (value) {
   'dark' => ThemeMode.dark,
-  'system' => ThemeMode.system,
-  _ => ThemeMode.light,
+  'light' => ThemeMode.light,
+  _ => ThemeMode.system,
 };
 
 /// 把主题模式解析成「是否亮色」：[ThemeMode.system] 按系统偏好展开。

@@ -5,6 +5,7 @@ import '../../core/l10n/l10n.dart';
 import '../../core/theme/app_spacing.dart';
 import '../../core/theme/theme_provider.dart';
 import '../../features/player/domain/models/song.dart';
+import '../../shared/services/app_image_cache.dart';
 import '../../features/plugin/application/music_source_manager.dart';
 import '../../features/plugin/application/plugin_providers.dart';
 import 'song_action_sheet.dart';
@@ -423,6 +424,7 @@ class _SongCoverState extends State<_SongCover> {
         borderRadius: BorderRadius.circular(AppRadius.sm),
         child: CachedNetworkImage(
           imageUrl: url,
+          cacheManager: AppImageCache.manager,
           width: 44,
           height: 44,
           fit: BoxFit.cover,

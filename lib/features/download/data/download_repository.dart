@@ -58,7 +58,7 @@ class DownloadRepository {
   final Map<String, bool> _fileLocks = {};
   bool _initialized = false;
   String _downloadDir = '/storage/emulated/0/Music/MintMusic';
-  bool _wifiOnly = true;
+  bool _wifiOnly = false;
   UrlFetcher? _urlFetcher;
   void Function(String dirPath)? onDirectoryChanged;
   final TagWriteService _tagWriteService = TagWriteService();

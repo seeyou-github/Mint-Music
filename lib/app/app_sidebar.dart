@@ -41,16 +41,10 @@ const List<AppNavItem> appNavItems = [
     route: AppRoutes.local,
   ),
   AppNavItem(
-    icon: Icons.download_outlined,
-    activeIcon: Icons.download,
-    label: '下载',
-    route: AppRoutes.download,
-  ),
-  AppNavItem(
-    icon: Icons.settings_outlined,
-    activeIcon: Icons.settings,
-    label: '设置',
-    route: AppRoutes.settings,
+    icon: Icons.person_outline,
+    activeIcon: Icons.person,
+    label: '我的',
+    route: AppRoutes.mine,
   ),
 ];
 

@@ -122,8 +122,6 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
         child: Column(
           children: [
             _buildHeader(context, colors),
-            _buildSearchBar(context, colors),
-            const SizedBox(height: AppSpacing.md),
             _buildTabBar(colors, tab),
             const SizedBox(height: AppSpacing.sm),
             Expanded(
@@ -154,13 +152,18 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
               color: colors.textPrimary,
             ),
           ),
-          const Spacer(),
-          GestureDetector(
-            onTap: () => context.push('/recognize'),
-            child: Icon(
-              Icons.mic_rounded,
-              size: isTablet ? 26 : 22,
-              color: colors.textSecondary,
+          const SizedBox(width: AppSpacing.md),
+          // 搜索框在标题同一行靠右，宽度随窗口自适应，但限制最小/最大宽度。
+          Expanded(
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  minWidth: 140,
+                  maxWidth: isTablet ? 420 : 300,
+                ),
+                child: _buildSearchBar(context, colors),
+              ),
             ),
           ),
         ],
@@ -169,37 +172,30 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
   }
 
   Widget _buildSearchBar(BuildContext context, ThemeColors colors) {
-    final isTablet = ResponsiveLayout.isTablet(context);
-    return Padding(
-      padding: EdgeInsets.symmetric(horizontal: ResponsiveLayout.horizontalPadding(context)),
-      child: Center(
-        child: ConstrainedBox(
-          constraints: BoxConstraints(maxWidth: isTablet ? 480 : double.infinity),
-          child: GestureDetector(
-            onTap: () => context.push('/search'),
-            child: Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: AppSpacing.md,
-                vertical: AppSpacing.sm,
-              ),
-              decoration: BoxDecoration(
-                color: colors.surface,
-                borderRadius: BorderRadius.circular(AppRadius.full),
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.search, size: 18, color: colors.textHint),
-                  const SizedBox(width: AppSpacing.sm),
-                  Expanded(
-                    child: Text(
-                      context.tr('搜索音乐、歌手...'),
-                      style: TextStyle(color: colors.textHint, fontSize: 14),
-                    ),
-                  ),
-                ],
+    return GestureDetector(
+      onTap: () => context.push('/search'),
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md,
+          vertical: AppSpacing.sm,
+        ),
+        decoration: BoxDecoration(
+          color: colors.surface,
+          borderRadius: BorderRadius.circular(AppRadius.full),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.search, size: 18, color: colors.textHint),
+            const SizedBox(width: AppSpacing.sm),
+            Expanded(
+              child: Text(
+                context.tr('搜索音乐、歌手...'),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: colors.textHint, fontSize: 14),
               ),
             ),
-          ),
+          ],
         ),
       ),
     );

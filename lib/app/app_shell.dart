@@ -70,17 +70,16 @@ class _AppShellState extends ConsumerState<AppShell> {
     // 用户再打开全屏播放页/歌词页时颜色已就绪，冷启动不出现
     // 「先默认色再换主题色」的跳变。
     ref.watch(currentCoverColorProvider);
-    final isSettingsPage = widget.navigationShell.currentIndex == 4;
     final showSidebar = ResponsiveLayout.shouldShowSidebar(context);
 
     if (showSidebar) {
       return _buildWideLayout(colors);
     }
-    return _buildPhoneLayout(colors, isSettingsPage);
+    return _buildPhoneLayout(colors);
   }
 
   /// Phone layout: bottom navigation bar (current behavior).
-  Widget _buildPhoneLayout(ThemeColors colors, bool isSettingsPage) {
+  Widget _buildPhoneLayout(ThemeColors colors) {
     return Scaffold(
       backgroundColor: colors.background,
       body: Stack(
@@ -88,15 +87,14 @@ class _AppShellState extends ConsumerState<AppShell> {
           RepaintBoundary(
             child: widget.navigationShell,
           ),
-          if (!isSettingsPage)
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 5,
-              child: RepaintBoundary(
-                child: const MiniPlayer(),
-              ),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 5,
+            child: RepaintBoundary(
+              child: const MiniPlayer(),
             ),
+          ),
         ],
       ),
       bottomNavigationBar: RepaintBoundary(

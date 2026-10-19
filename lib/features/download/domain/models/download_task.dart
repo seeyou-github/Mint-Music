@@ -140,7 +140,8 @@ class DownloadTask {
     }
 
     final ext = _extensionFromQuality(quality, extension);
-    final safeTitle = _sanitizeFilename('$title - $artist');
+    // 下载文件名固定为：歌手名 - 歌曲名
+    final safeTitle = _sanitizeFilename('$artist - $title');
     return '${dir.path}/$safeTitle.$ext';
   }
 

@@ -1,38 +1,25 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
+import '../../../core/utils/responsive_layout.dart';
 import '../application/download_providers.dart';
 import '../domain/models/download_task.dart';
 
-class DownloadPage extends ConsumerStatefulWidget {
+/// 下载管理页。
+///
+/// 不再按「进行中 / 已完成 / 失败」分类，所有任务按下载时间倒序放在同一个
+/// 列表里，用状态徽标区分；进行中可直接取消，已取消/失败可重试。
+class DownloadPage extends ConsumerWidget {
   const DownloadPage({super.key});
 
   @override
-  ConsumerState<DownloadPage> createState() => _DownloadPageState();
-}
-
-class _DownloadPageState extends ConsumerState<DownloadPage>
-    with SingleTickerProviderStateMixin {
-  late TabController _tabController;
-
-  @override
-  void initState() {
-    super.initState();
-    _tabController = TabController(length: 3, vsync: this);
-  }
-
-  @override
-  void dispose() {
-    _tabController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final colors = ref.watch(themeColorsProvider);
-    final stats = ref.watch(downloadStatsProvider);
+    final tasksAsync = ref.watch(downloadTasksProvider);
 
     return Scaffold(
       backgroundColor: colors.background,
@@ -40,16 +27,32 @@ class _DownloadPageState extends ConsumerState<DownloadPage>
         bottom: false,
         child: Column(
           children: [
-            _buildHeader(colors, stats),
-            _buildTabBar(colors, stats),
+            _buildHeader(context, ref, colors, tasksAsync.valueOrNull ?? const []),
             Expanded(
-              child: TabBarView(
-                controller: _tabController,
-                children: [
-                  _buildDownloadingTab(colors),
-                  _buildCompletedTab(colors),
-                  _buildFailedTab(colors),
-                ],
+              child: tasksAsync.when(
+                data: (tasks) {
+                  if (tasks.isEmpty) {
+                    return _buildEmptyState(context, colors);
+                  }
+                  // 所有任务按下载时间倒序（最新的在最上面）。
+                  final sorted = [...tasks]
+                    ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+                  return ListView.builder(
+                    padding: const EdgeInsets.fromLTRB(
+                      AppSpacing.lg,
+                      0,
+                      AppSpacing.lg,
+                      AppSpacing.xxxl,
+                    ),
+                    itemCount: sorted.length,
+                    addAutomaticKeepAlives: false,
+                    addRepaintBoundaries: true,
+                    itemBuilder: (context, index) =>
+                        _DownloadTaskItem(task: sorted[index]),
+                  );
+                },
+                loading: () => const Center(child: CircularProgressIndicator()),
+                error: (_, __) => _buildEmptyState(context, colors),
               ),
             ),
           ],
@@ -58,14 +61,30 @@ class _DownloadPageState extends ConsumerState<DownloadPage>
     );
   }
 
-  Widget _buildHeader(ThemeColors colors, dynamic stats) {
+  Widget _buildHeader(
+    BuildContext context,
+    WidgetRef ref,
+    ThemeColors colors,
+    List<DownloadTask> tasks,
+  ) {
     return Padding(
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.lg,
-        vertical: AppSpacing.md,
+      padding: EdgeInsets.fromLTRB(
+        ResponsiveLayout.horizontalPadding(context),
+        AppSpacing.md,
+        ResponsiveLayout.horizontalPadding(context),
+        AppSpacing.md,
       ),
       child: Row(
         children: [
+          if (context.canPop()) ...[
+            IconButton(
+              icon: Icon(Icons.arrow_back, color: colors.textPrimary),
+              onPressed: () => context.pop(),
+              visualDensity: VisualDensity.compact,
+              tooltip: context.tr('返回'),
+            ),
+            const SizedBox(width: AppSpacing.xs),
+          ],
           Expanded(
             child: Text(
               context.tr('下载管理'),
@@ -76,343 +95,335 @@ class _DownloadPageState extends ConsumerState<DownloadPage>
               ),
             ),
           ),
-          // 全部暂停
-          if (stats.downloading > 0)
-            _buildActionButton(
-              colors,
-              icon: Icons.pause_circle,
-              label: context.tr('全部暂停'),
-              onTap: () => ref.read(downloadRepositoryProvider).pauseAllTasks(),
-            ),
-          const SizedBox(width: AppSpacing.sm),
-          // 全部开始
-          if (stats.downloading == 0 && stats.failed == 0)
-            _buildActionButton(
-              colors,
-              icon: Icons.play_circle,
-              label: context.tr('全部开始'),
-              onTap: () => ref.read(downloadRepositoryProvider).resumeAllTasks(),
-            ),
+          _buildClearButton(context, ref, colors, tasks.isEmpty),
         ],
       ),
     );
   }
 
-  Widget _buildActionButton(ThemeColors colors, {
+  Widget _buildClearButton(
+    BuildContext context,
+    WidgetRef ref,
+    ThemeColors colors,
+    bool disabled,
+  ) {
+    return Opacity(
+      opacity: disabled ? 0.45 : 1,
+      child: GestureDetector(
+        onTap: disabled ? null : () => _confirmClear(context, ref, colors),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          decoration: BoxDecoration(
+            color: colors.surface,
+            borderRadius: BorderRadius.circular(AppRadius.full),
+            border: Border.all(color: colors.divider),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.delete_sweep_outlined, size: 16, color: colors.textSecondary),
+              const SizedBox(width: 4),
+              Text(
+                context.tr('清除下载列表'),
+                style: TextStyle(fontSize: 12, color: colors.textSecondary),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _confirmClear(BuildContext context, WidgetRef ref, ThemeColors colors) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: colors.surface,
+        title: Text(
+          context.tr('清除下载列表'),
+          style: TextStyle(color: colors.textPrimary),
+        ),
+        content: Text(
+          context.tr('确定要清除所有下载记录吗？已下载的文件不会被删除。'),
+          style: TextStyle(color: colors.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(
+              context.tr('取消'),
+              style: TextStyle(color: colors.textHint),
+            ),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              ref.read(downloadRepositoryProvider).clearTasks('all');
+            },
+            child: Text(
+              context.tr('清除'),
+              style: TextStyle(color: colors.error),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyState(BuildContext context, ThemeColors colors) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.download_outlined,
+            size: 48,
+            color: colors.textHint.withValues(alpha: 0.5),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          Text(
+            context.tr('暂无下载任务'),
+            style: TextStyle(fontSize: 14, color: colors.textHint),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 单条下载任务：标题 + 状态徽标 + 进度 + 操作按钮。
+class _DownloadTaskItem extends ConsumerWidget {
+  const _DownloadTaskItem({required this.task});
+
+  final DownloadTask task;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final colors = ref.watch(themeColorsProvider);
+    final repo = ref.read(downloadRepositoryProvider);
+    final status = _statusStyle(context, task.status, colors);
+    final showProgress = task.status == DownloadStatus.downloading ||
+        task.status == DownloadStatus.queued;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: AppSpacing.sm),
+      padding: const EdgeInsets.all(AppSpacing.md),
+      decoration: BoxDecoration(
+        color: colors.surface,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        border: Border.all(color: colors.divider.withValues(alpha: 0.4)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: status.color.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(AppRadius.sm),
+                ),
+                child: Icon(status.icon, size: 20, color: status.color),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      task.song.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: colors.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      task.song.artist,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 12, color: colors.textHint),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              _StatusBadge(label: status.label, color: status.color),
+            ],
+          ),
+          if (showProgress) ...[
+            const SizedBox(height: AppSpacing.sm),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(2),
+              child: LinearProgressIndicator(
+                value: task.status == DownloadStatus.queued ? null : task.progress,
+                backgroundColor: colors.disabled,
+                valueColor: AlwaysStoppedAnimation<Color>(colors.primary),
+                minHeight: 4,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  '${(task.progress * 100).toStringAsFixed(0)}%  ${_formatSpeed(task.speed)}',
+                  style: TextStyle(fontSize: 11, color: colors.textHint),
+                ),
+                Text(
+                  '${_formatSize(task.downloadedSize)}/${_formatSize(task.totalSize)}  ${_formatRemaining(context, task.remainingTime)}',
+                  style: TextStyle(fontSize: 11, color: colors.textHint),
+                ),
+              ],
+            ),
+          ],
+          if (task.error != null &&
+              task.status == DownloadStatus.error) ...[
+            const SizedBox(height: 4),
+            Text(
+              task.error!,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 11, color: colors.error),
+            ),
+          ],
+          if (_hasActions(task.status)) ...[
+            const SizedBox(height: 4),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                if (task.status == DownloadStatus.paused)
+                  _actionButton(
+                    context,
+                    colors,
+                    icon: Icons.play_arrow_rounded,
+                    label: '继续',
+                    color: colors.primary,
+                    onTap: () => repo.resumeTask(task.id),
+                  ),
+                if (task.status == DownloadStatus.error ||
+                    task.status == DownloadStatus.cancelled)
+                  _actionButton(
+                    context,
+                    colors,
+                    icon: Icons.refresh_rounded,
+                    label: '重试',
+                    color: colors.primary,
+                    onTap: () => repo.retryTask(task.id),
+                  ),
+                if (task.status == DownloadStatus.downloading ||
+                    task.status == DownloadStatus.queued ||
+                    task.status == DownloadStatus.paused) ...[
+                  if (task.status == DownloadStatus.paused)
+                    const SizedBox(width: AppSpacing.sm),
+                  _actionButton(
+                    context,
+                    colors,
+                    icon: Icons.close_rounded,
+                    label: '取消',
+                    color: colors.textSecondary,
+                    onTap: () => repo.cancelTask(task.id),
+                  ),
+                ],
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  bool _hasActions(DownloadStatus status) {
+    switch (status) {
+      case DownloadStatus.downloading:
+      case DownloadStatus.queued:
+      case DownloadStatus.paused:
+      case DownloadStatus.error:
+      case DownloadStatus.cancelled:
+        return true;
+      case DownloadStatus.completed:
+        return false;
+    }
+  }
+
+  Widget _actionButton(
+    BuildContext context,
+    ThemeColors colors, {
     required IconData icon,
     required String label,
+    required Color color,
     required VoidCallback onTap,
   }) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         decoration: BoxDecoration(
-          color: colors.surface,
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(AppRadius.full),
+          border: Border.all(color: color.withValues(alpha: 0.4)),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 16, color: colors.primary),
+            Icon(icon, size: 14, color: color),
             const SizedBox(width: 4),
-            Text(label, style: TextStyle(fontSize: 12, color: colors.primary)),
+            Text(
+              context.tr(label),
+              style: TextStyle(fontSize: 12, color: color),
+            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildTabBar(ThemeColors colors, dynamic stats) {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
-      decoration: BoxDecoration(
-        color: colors.surface,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: TabBar(
-        controller: _tabController,
-        indicator: BoxDecoration(
-          color: colors.primary,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        indicatorSize: TabBarIndicatorSize.tab,
-        labelColor: Colors.white,
-        unselectedLabelColor: colors.textSecondary,
-        labelStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-        unselectedLabelStyle: const TextStyle(fontSize: 13),
-        dividerColor: Colors.transparent,
-        tabs: [
-          Tab(text: context.tr('进行中 (${stats.downloading})')),
-          Tab(text: context.tr('已完成 (${stats.completed})')),
-          Tab(text: context.tr('失败 (${stats.failed})')),
-        ],
-      ),
-    );
-  }
-
-  // ==================== 进行中 Tab ====================
-
-  Widget _buildDownloadingTab(ThemeColors colors) {
-    final tasksAsync = ref.watch(downloadTasksProvider);
-    return tasksAsync.when(
-      data: (tasks) {
-        final activeTasks = tasks.where((t) =>
-            t.status == DownloadStatus.downloading ||
-            t.status == DownloadStatus.queued ||
-            t.status == DownloadStatus.paused).toList();
-        // 排序：下载中 > 等待中 > 暂停
-        activeTasks.sort((a, b) {
-          final aOrder = _statusOrder(a.status);
-          final bOrder = _statusOrder(b.status);
-          if (aOrder != bOrder) return aOrder.compareTo(bOrder);
-          return a.priority.compareTo(b.priority);
-        });
-
-        if (activeTasks.isEmpty) {
-          return _buildEmptyState(colors, Icons.download, context.tr('暂无进行中的下载'));
-        }
-        return _buildTaskList(colors, activeTasks, showProgress: true);
-      },
-      loading: () => const Center(child: CircularProgressIndicator()),
-      error: (_, __) => _buildEmptyState(colors, Icons.error, context.tr('加载失败')),
-    );
-  }
-
-  // ==================== 已完成 Tab ====================
-
-  Widget _buildCompletedTab(ThemeColors colors) {
-    final tasksAsync = ref.watch(downloadTasksProvider);
-    return tasksAsync.when(
-      data: (tasks) {
-        final completedTasks = tasks
-            .where((t) => t.status == DownloadStatus.completed)
-            .toList()
-          ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
-
-        if (completedTasks.isEmpty) {
-          return _buildEmptyState(colors, Icons.check_circle, context.tr('暂无已完成的下载'));
-        }
-        return _buildTaskList(colors, completedTasks);
-      },
-      loading: () => const Center(child: CircularProgressIndicator()),
-      error: (_, __) => _buildEmptyState(colors, Icons.error, context.tr('加载失败')),
-    );
-  }
-
-  // ==================== 失败 Tab ====================
-
-  Widget _buildFailedTab(ThemeColors colors) {
-    final tasksAsync = ref.watch(downloadTasksProvider);
-    return tasksAsync.when(
-      data: (tasks) {
-        final failedTasks = tasks
-            .where((t) =>
-                t.status == DownloadStatus.error ||
-                t.status == DownloadStatus.cancelled)
-            .toList()
-          ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
-
-        if (failedTasks.isEmpty) {
-          return _buildEmptyState(colors, Icons.cancel, context.tr('暂无失败的任务'));
-        }
-        return _buildTaskList(colors, failedTasks, showRetry: true);
-      },
-      loading: () => const Center(child: CircularProgressIndicator()),
-      error: (_, __) => _buildEmptyState(colors, Icons.error, context.tr('加载失败')),
-    );
-  }
-
-  // ==================== 共用组件 ====================
-
-  Widget _buildEmptyState(ThemeColors colors, IconData icon, String text) {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 48, color: colors.textHint),
-          const SizedBox(height: AppSpacing.md),
-          Text(text, style: TextStyle(fontSize: 14, color: colors.textHint)),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTaskList(ThemeColors colors, List<DownloadTask> tasks, {
-    bool showProgress = false,
-    bool showRetry = false,
-  }) {
-    return ListView.builder(
-      padding: const EdgeInsets.only(
-        left: AppSpacing.lg,
-        right: AppSpacing.lg,
-        top: AppSpacing.md,
-        bottom: AppSpacing.xxxl,
-      ),
-      itemCount: tasks.length,
-      addAutomaticKeepAlives: false,
-      addRepaintBoundaries: true,
-      itemBuilder: (context, index) {
-        final task = tasks[index];
-        return _buildTaskItem(colors, task,
-            showProgress: showProgress, showRetry: showRetry);
-      },
-    );
-  }
-
-  Widget _buildTaskItem(ThemeColors colors, DownloadTask task, {
-    bool showProgress = false,
-    bool showRetry = false,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-      child: Container(
-        padding: const EdgeInsets.all(AppSpacing.md),
-        decoration: BoxDecoration(
-          color: colors.surface,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.music_note, size: 20, color: colors.primary),
-                const SizedBox(width: AppSpacing.sm),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '${task.song.title} - ${task.song.artist}',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                          color: colors.textPrimary,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      if (task.error != null)
-                        Text(
-                          task.error!,
-                          style: TextStyle(fontSize: 11, color: colors.error),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                    ],
-                  ),
-                ),
-                _buildStatusWidget(task, colors, showRetry: showRetry),
-              ],
-            ),
-            if (showProgress && task.status == DownloadStatus.downloading) ...[
-              const SizedBox(height: AppSpacing.sm),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(2),
-                child: LinearProgressIndicator(
-                  value: task.progress,
-                  backgroundColor: colors.disabled,
-                  valueColor: AlwaysStoppedAnimation<Color>(colors.primary),
-                  minHeight: 4,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    '${(task.progress * 100).toStringAsFixed(0)}%  ${_formatSpeed(task.speed)}',
-                    style: TextStyle(fontSize: 11, color: colors.textHint),
-                  ),
-                  Text(
-                    '${_formatSize(task.downloadedSize)}/${_formatSize(task.totalSize)}  ${_formatRemaining(context, task.remainingTime)}',
-                    style: TextStyle(fontSize: 11, color: colors.textHint),
-                  ),
-                ],
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildStatusWidget(DownloadTask task, ThemeColors colors, {bool showRetry = false}) {
-    switch (task.status) {
-      case DownloadStatus.completed:
-        return Icon(Icons.check_circle, size: 20, color: colors.primary);
-      case DownloadStatus.downloading:
-        return Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            GestureDetector(
-              onTap: () => ref.read(downloadRepositoryProvider).pauseTask(task.id),
-              child: Icon(Icons.pause_circle, size: 22, color: colors.textSecondary),
-            ),
-            const SizedBox(width: 8),
-            GestureDetector(
-              onTap: () => ref.read(downloadRepositoryProvider).cancelTask(task.id),
-              child: Icon(Icons.close, size: 18, color: colors.textHint),
-            ),
-          ],
-        );
-      case DownloadStatus.queued:
-        return GestureDetector(
-          onTap: () => ref.read(downloadRepositoryProvider).cancelTask(task.id),
-          child: Icon(Icons.close, size: 18, color: colors.textHint),
-        );
-      case DownloadStatus.paused:
-        return Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            GestureDetector(
-              onTap: () => ref.read(downloadRepositoryProvider).resumeTask(task.id),
-              child: Icon(Icons.play_circle, size: 22, color: colors.primary),
-            ),
-            const SizedBox(width: 8),
-            GestureDetector(
-              onTap: () => ref.read(downloadRepositoryProvider).deleteTask(task.id),
-              child: Icon(Icons.delete, size: 18, color: colors.textHint),
-            ),
-          ],
-        );
-      case DownloadStatus.error:
-        if (showRetry) {
-          return Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              GestureDetector(
-                onTap: () => ref.read(downloadRepositoryProvider).retryTask(task.id),
-                child: Icon(Icons.refresh, size: 20, color: colors.primary),
-              ),
-              const SizedBox(width: 8),
-              GestureDetector(
-                onTap: () => ref.read(downloadRepositoryProvider).deleteTask(task.id),
-                child: Icon(Icons.delete, size: 18, color: colors.textHint),
-              ),
-            ],
-          );
-        }
-        return Icon(Icons.error, size: 20, color: colors.error);
-      case DownloadStatus.cancelled:
-        return GestureDetector(
-          onTap: () => ref.read(downloadRepositoryProvider).deleteTask(task.id),
-          child: Icon(Icons.delete, size: 18, color: colors.textHint),
-        );
-    }
-  }
-
-  int _statusOrder(DownloadStatus status) {
+  _StatusStyle _statusStyle(
+    BuildContext context,
+    DownloadStatus status,
+    ThemeColors colors,
+  ) {
     switch (status) {
       case DownloadStatus.downloading:
-        return 0;
+        return _StatusStyle(
+          label: context.tr('进行中'),
+          icon: Icons.downloading,
+          color: colors.primary,
+        );
       case DownloadStatus.queued:
-        return 1;
+        return _StatusStyle(
+          label: context.tr('等待中'),
+          icon: Icons.schedule,
+          color: colors.primary,
+        );
       case DownloadStatus.paused:
-        return 2;
-      default:
-        return 3;
+        return _StatusStyle(
+          label: context.tr('已暂停'),
+          icon: Icons.pause_circle_outline,
+          color: colors.textSecondary,
+        );
+      case DownloadStatus.completed:
+        return _StatusStyle(
+          label: context.tr('已完成'),
+          icon: Icons.check_circle,
+          color: const Color(0xFF34A853),
+        );
+      case DownloadStatus.error:
+        return _StatusStyle(
+          label: context.tr('失败'),
+          icon: Icons.error_outline,
+          color: colors.error,
+        );
+      case DownloadStatus.cancelled:
+        return _StatusStyle(
+          label: context.tr('已取消'),
+          icon: Icons.cancel_outlined,
+          color: colors.textHint,
+        );
     }
   }
 
@@ -438,7 +449,45 @@ class _DownloadPageState extends ConsumerState<DownloadPage>
     if (seconds == null || seconds <= 0) return '';
     final mins = seconds ~/ 60;
     final secs = seconds % 60;
-    if (mins > 0) return context.tr('剩余 ${mins}分${secs}秒');
-    return context.tr('剩余 ${secs}秒');
+    if (mins > 0) return context.tr('剩余 $mins分$secs秒');
+    return context.tr('剩余 $secs秒');
+  }
+}
+
+class _StatusStyle {
+  const _StatusStyle({
+    required this.label,
+    required this.icon,
+    required this.color,
+  });
+
+  final String label;
+  final IconData icon;
+  final Color color;
+}
+
+class _StatusBadge extends StatelessWidget {
+  const _StatusBadge({required this.label, required this.color});
+
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(AppRadius.full),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w500,
+          color: color,
+        ),
+      ),
+    );
   }
 }

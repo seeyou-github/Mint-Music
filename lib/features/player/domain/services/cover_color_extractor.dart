@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:on_audio_query/on_audio_query.dart';
+import '../../../../shared/services/app_image_cache.dart';
 import '../models/song.dart';
 import '../../application/playback_controller.dart';
 
@@ -121,7 +122,12 @@ class CoverColorExtractor {
     final coverUrl = song.coverUrl;
     if (coverUrl != null && coverUrl.isNotEmpty) {
       if (coverUrl.startsWith('http')) {
-        return extract(CachedNetworkImageProvider(coverUrl));
+        return extract(
+          CachedNetworkImageProvider(
+            coverUrl,
+            cacheManager: AppImageCache.manager,
+          ),
+        );
       }
       final file = File(coverUrl);
       if (await file.exists()) {
