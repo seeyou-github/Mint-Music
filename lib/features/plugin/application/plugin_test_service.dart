@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/services.dart';
 import 'package:just_audio/just_audio.dart';
 
 import '../../../core/l10n/l10n.dart';
@@ -518,6 +519,11 @@ class PluginTestService {
     } on TimeoutException {
       return (false, tr('加载超时'));
     } catch (e) {
+      if (_isMissingAudioBackend(e)) {
+        // 当前平台没有可用的音频后端（例如桌面端缺少 just_audio 的桌面实现）
+        // 时，插件已经成功给出了播放地址，不应记成插件失败。
+        return (true, tr('当前平台无法试听校验，仅验证播放地址'));
+      }
       return (false, tr('播放失败: ${_shortError(e)}'));
     }
 
@@ -589,5 +595,11 @@ class PluginTestService {
       text = '${text.substring(0, 40)}…';
     }
     return text.isEmpty ? tr('未知错误') : text;
+  }
+
+  /// 是否因为「当前平台没有音频后端」而失败。
+  static bool _isMissingAudioBackend(Object error) {
+    return error is MissingPluginException ||
+        error.toString().contains('MissingPluginException');
   }
 }

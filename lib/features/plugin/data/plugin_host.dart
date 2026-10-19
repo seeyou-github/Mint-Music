@@ -8,6 +8,7 @@ class PluginHost {
   PluginMetadata? _pluginInfo;
   List<PluginSourceInfo> _sources = [];
   Map<String, List<String>> _sourceActions = {};
+  Map<String, bool> _capabilities = const {};
   bool _loaded = false;
   bool _apiInjected = false;
 
@@ -18,6 +19,20 @@ class PluginHost {
   PluginMetadata? get pluginInfo => _pluginInfo;
   List<PluginSourceInfo> get sources => _sources;
   Map<String, List<String>> get sourceActions => _sourceActions;
+  Map<String, bool> get capabilities => _capabilities;
+
+  /// 插件是否提供榜单（getTopLists + getTopListDetail）。
+  bool get supportsTopLists => _capabilities['topList'] == true;
+
+  /// 插件是否提供推荐歌单分类与歌单列表（getRecommendSheetTags + ...ByTag）。
+  bool get supportsRecommendSheets => _capabilities['sheets'] == true;
+
+  /// 插件是否提供歌单详情（getMusicSheetInfo）。
+  bool get supportsSheetDetail => _capabilities['sheetDetail'] == true;
+
+  /// 插件是否能在发现页提供内容（榜单或推荐歌单）。
+  bool get supportsDiscover =>
+      supportsTopLists || supportsRecommendSheets || supportsSheetDetail;
 
   /// Stream of update notices emitted by this plugin's JS engine.
   /// Each event is the raw notice map from the engine (with `type` and `data`).
@@ -135,7 +150,8 @@ JSON.stringify((function() {
   return {
     pluginInfo: value.pluginInfo,
     sources: value.sources,
-    sourceActions: value.sourceActions
+    sourceActions: value.sourceActions,
+    capabilities: value.capabilities
   };
 })())
 ''');
@@ -159,6 +175,7 @@ JSON.stringify((function() {
         final sourcesResult = _parseSourcesWithActions(exports['sources']);
         _sources = sourcesResult['sources'] as List<PluginSourceInfo>;
         _sourceActions = sourcesResult['actions'] as Map<String, List<String>>;
+        _capabilities = _parseCapabilities(exports['capabilities']);
 
         if (_sources.isEmpty && _sourceActions.isNotEmpty) {
           for (final entry in _sourceActions.entries) {
@@ -304,6 +321,20 @@ JSON.stringify((function() {
       return value.map((e) => e.toString()).toList();
     }
     return null;
+  }
+
+  /// MusicFree 适配器暴露的能力开关（榜单 / 推荐歌单）。
+  static Map<String, bool> _parseCapabilities(dynamic data) {
+    if (data is! Map) return const {};
+    final result = <String, bool>{};
+    data.forEach((key, value) {
+      if (value is bool) {
+        result[key.toString()] = value;
+      } else if (value != null) {
+        result[key.toString()] = value.toString() == 'true';
+      }
+    });
+    return result;
   }
 
   bool supportsSearch(String sourceId) {
@@ -751,6 +782,52 @@ JSON.stringify((function() {
       }
     }
     return null;
+  }
+
+  /// 通用：调用适配器上一个「返回 JSON 字符串」的方法。
+  ///
+  /// [args] 是已经转义好的 JS 参数列表。方法不存在时返回 null。
+  Future<String?> _callBrowseMethod(
+    String method,
+    String args, {
+    Duration timeout = const Duration(seconds: 45),
+  }) async {
+    _ensureLoaded();
+    if (!hasMethod(method)) return null;
+    try {
+      return await _engine.callPluginMethod(
+        'module.exports.$method($args)',
+        timeout: timeout,
+      );
+    } catch (e) {
+      print('[PluginHost] $method 调用失败: $e');
+      return null;
+    }
+  }
+
+  /// 榜单列表；返回 `[{id,name,group,coverUrl,description}]`。
+  Future<String?> getTopLists() => _callBrowseMethod('getTopLists', '');
+
+  /// 榜单详情；返回 `{isEnd, songs}`。
+  Future<String?> getTopListDetail(String id, {int page = 1}) {
+    final escaped = _escapeForJs(id);
+    return _callBrowseMethod('getTopListDetail', "'$escaped', $page");
+  }
+
+  /// 推荐歌单分类；返回 `[{name,tags:[{id,name}]}]`。
+  Future<String?> getRecommendSheetTags() =>
+      _callBrowseMethod('getRecommendSheetTags', '');
+
+  /// 按分类取歌单；返回 `{isEnd, playlists}`。
+  Future<String?> getRecommendSheetsByTag(String tagId, {int page = 1}) {
+    final escaped = _escapeForJs(tagId);
+    return _callBrowseMethod('getRecommendSheetsByTag', "'$escaped', $page");
+  }
+
+  /// 歌单详情；返回 `{isEnd, songs}`。
+  Future<String?> getMusicSheetInfo(String sheetId, {int page = 1}) {
+    final escaped = _escapeForJs(sheetId);
+    return _callBrowseMethod('getMusicSheetInfo', "'$escaped', $page");
   }
 
   Future<String?> getPic(String source, MusicInfoForPlugin musicInfo) async {

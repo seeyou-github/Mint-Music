@@ -428,8 +428,7 @@ class SearchHistoryNotifier extends StateNotifier<List<String>> {
 }
 
 final allAvailableSourcesProvider = Provider<List<SourceInfo>>((ref) {
-  ref.watch(pluginInitializedProvider);
-
+  // searchSupportedSourcesProvider 已经包含「仍启用」的内置音源与插件音源。
   final searchSources = ref.watch(searchSupportedSourcesProvider);
 
   final allSources = <SourceInfo>[const SourceInfo(id: 'all', name: '聚合搜索')];
@@ -440,10 +439,6 @@ final allAvailableSourcesProvider = Provider<List<SourceInfo>>((ref) {
       allSources.add(source);
       seenIds.add(source.id);
     }
-  }
-
-  if (allSources.length == 1) {
-    allSources.addAll(SourceInfo.builtInSources);
   }
 
   return allSources;

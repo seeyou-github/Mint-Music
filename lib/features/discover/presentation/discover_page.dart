@@ -243,7 +243,11 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
               ),
               child: Center(
                 child: currentSource != null
-                    ? _buildSourceIcon(currentSource.id, size: 20)
+                    ? _buildSourceIcon(
+                        currentSource.id,
+                        size: 20,
+                        label: currentSource.name,
+                      )
                     : Icon(
                         Icons.music_note,
                         size: 20,
@@ -292,7 +296,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
           child: Row(
             children: [
               source.id != 'all'
-                  ? _buildSourceIcon(source.id, size: 18)
+                  ? _buildSourceIcon(source.id, size: 18, label: source.name)
                   : _buildSourceIcon('all', size: 18),
               const SizedBox(width: 8),
               Expanded(
@@ -332,7 +336,11 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
     });
   }
 
-  Widget _buildSourceIcon(String sourceId, {double size = 20}) {
+  Widget _buildSourceIcon(
+    String sourceId, {
+    double size = 20,
+    String? label,
+  }) {
     switch (sourceId) {
       case 'wy':
         return Container(
@@ -430,7 +438,30 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
           ),
         );
       default:
-        return Icon(Icons.music_note, size: size, color: Colors.grey);
+        // 插件音源（例如 MusicFree 的「bilibili」）没有内置图标，用名称首字
+        // 生成一个中性色圆标，避免和其它内置源混在一起看不出区别。
+        final glyph = (label ?? '').trim();
+        if (glyph.isEmpty) {
+          return Icon(Icons.music_note, size: size, color: Colors.grey);
+        }
+        return Container(
+          width: size,
+          height: size,
+          decoration: BoxDecoration(
+            color: Colors.blueGrey.shade500,
+            shape: BoxShape.circle,
+          ),
+          child: Center(
+            child: Text(
+              glyph.substring(0, 1).toUpperCase(),
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: size * 0.55,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        );
     }
   }
 

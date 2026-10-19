@@ -561,6 +561,380 @@ function __mfQualityKey(quality) {
 }
 
 /* ------------------------------------------------------------------ *
+ * 榜单 / 推荐歌单（发现页数据）
+ *
+ * MusicFree 的发现接口接收的是「条目对象」而不是 id：
+ *   getTopListDetail(topListItem, page)
+ *   getRecommendSheetsByTag(tagItem, page)
+ *   getMusicSheetInfo(sheetItem, page)
+ * 因此适配器把最近一次通过 getTopLists / getRecommendSheetTags /
+ * getRecommendSheetsByTag 拿到的原始对象缓存在内存里，按 id 反查；缓存缺失
+ * （例如 App 重启后用持久化的 id 打开）时退化为最小 `{ id }` 对象——示例插件
+ * 都只依赖 id。
+ * ------------------------------------------------------------------ */
+
+var __mfTopListCache = null; // 扁平化榜单 [{id,name,group,coverUrl,description}]
+var __mfTopListRawCache = null; // id -> 原始 topListItem
+var __mfSheetTagGroupCache = null; // [{name,tags:[{id,name}]}]
+var __mfSheetTagRawCache = null; // id -> 原始 tagItem
+var __mfSheetRawCache = null; // id -> 原始 sheetItem（含分页续传字段）
+
+function __mfFirstArray(values) {
+  for (var i = 0; i < values.length; i++) {
+    if (Array.isArray(values[i])) return values[i];
+  }
+  return [];
+}
+
+function __mfCoverOf(item) {
+  if (!item || typeof item !== 'object') return '';
+  return __mfText(
+    item.coverImg || item.artwork || item.picUrl || item.img || item.cover,
+    ''
+  );
+}
+
+function __mfIdOf(item) {
+  if (!item || typeof item !== 'object') return '';
+  var id = item.id;
+  if (id === null || id === undefined) return '';
+  return String(id);
+}
+
+/** 把 MusicFree 的分页结果（{isEnd, musicList}）展平成本项目可用的歌曲页。 */
+function __mfNormalizeSongPage(response) {
+  var list = [];
+  if (Array.isArray(response)) {
+    list = response;
+  } else if (response && typeof response === 'object') {
+    list = __mfFirstArray([
+      response.musicList,
+      response.data,
+      response.list,
+    ]);
+  }
+
+  var sourceId = __mfSourceId();
+  var songs = [];
+  for (var i = 0; i < list.length; i++) {
+    var mapped = __mfMapMusicItem(list[i], sourceId);
+    if (mapped) songs.push(mapped);
+  }
+
+  var isEnd = true;
+  if (response && typeof response === 'object' && response.isEnd === false) {
+    isEnd = false;
+  }
+  return { isEnd: isEnd, songs: songs };
+}
+
+/** 榜单 / 歌单条目的元信息，供宿主渲染详情页头部。 */
+function __mfSheetMeta(item) {
+  if (!item || typeof item !== 'object') return null;
+  return {
+    id: __mfIdOf(item),
+    title: __mfText(item.title || item.name, ''),
+    coverUrl: __mfCoverOf(item),
+    description: __mfText(item.description, ''),
+    author: __mfText(
+      item.artist || item.author || item.creator || item.nickName || item.nickname,
+      ''
+    ),
+  };
+}
+
+function __mfLoadTopLists() {
+  if (__mfTopListCache) return Promise.resolve(__mfTopListCache);
+
+  var plugin = __mfPluginObject();
+  if (typeof plugin.getTopLists !== 'function') return Promise.resolve([]);
+
+  return Promise.resolve(plugin.getTopLists())
+    .then(function (response) {
+      var groups = [];
+      if (Array.isArray(response)) groups = response;
+      else if (response && typeof response === 'object') {
+        groups = __mfFirstArray([response.data, response.list]);
+      }
+
+      var flat = [];
+      var raw = {};
+      for (var i = 0; i < groups.length; i++) {
+        var group = groups[i] || {};
+        var groupTitle = __mfText(group.title || group.name, '');
+        var items = Array.isArray(group.data)
+          ? group.data
+          : __mfFirstArray([group.list]);
+        for (var j = 0; j < items.length; j++) {
+          var item = items[j];
+          if (!item || typeof item !== 'object') continue;
+          var id = __mfIdOf(item);
+          if (!id || raw[id]) continue;
+          raw[id] = item;
+          flat.push({
+            id: id,
+            name: __mfText(item.title || item.name, id),
+            group: groupTitle,
+            coverUrl: __mfCoverOf(item),
+            description: __mfText(item.description, ''),
+          });
+        }
+      }
+
+      if (flat.length) {
+        __mfTopListRawCache = raw;
+        __mfTopListCache = flat;
+      }
+      return flat;
+    })
+    .then(null, function (error) {
+      if (typeof console !== 'undefined' && console.log) {
+        console.log(
+          '[MusicFree] getTopLists 失败: ' +
+            (error && error.message ? error.message : error)
+        );
+      }
+      return [];
+    });
+}
+
+function __mfLoadSheetTags() {
+  if (__mfSheetTagGroupCache) return Promise.resolve(__mfSheetTagGroupCache);
+
+  var plugin = __mfPluginObject();
+  if (typeof plugin.getRecommendSheetTags !== 'function') {
+    return Promise.resolve([]);
+  }
+
+  return Promise.resolve(plugin.getRecommendSheetTags())
+    .then(function (response) {
+      var pinned = [];
+      var groups = [];
+      if (Array.isArray(response)) {
+        groups = response;
+      } else if (response && typeof response === 'object') {
+        pinned = __mfFirstArray([response.pinned]);
+        groups = __mfFirstArray([response.data, response.list]);
+      }
+
+      var raw = {};
+      function convertTags(list) {
+        var tags = [];
+        for (var i = 0; i < list.length; i++) {
+          var tag = list[i];
+          if (!tag || typeof tag !== 'object') continue;
+          var id = __mfIdOf(tag);
+          if (!id) continue;
+          if (!raw[id]) raw[id] = tag;
+          tags.push({ id: id, name: __mfText(tag.title || tag.name, id) });
+        }
+        return tags;
+      }
+
+      var result = [];
+      var pinnedTags = convertTags(pinned);
+      if (pinnedTags.length) result.push({ name: '推荐', tags: pinnedTags });
+      for (var i = 0; i < groups.length; i++) {
+        var group = groups[i] || {};
+        var tags = convertTags(
+          Array.isArray(group.data) ? group.data : __mfFirstArray([group.list])
+        );
+        if (!tags.length) continue;
+        result.push({ name: __mfText(group.title || group.name, '分类'), tags: tags });
+      }
+
+      if (result.length) {
+        __mfSheetTagRawCache = raw;
+        __mfSheetTagGroupCache = result;
+      }
+      return result;
+    })
+    .then(null, function (error) {
+      if (typeof console !== 'undefined' && console.log) {
+        console.log(
+          '[MusicFree] getRecommendSheetTags 失败: ' +
+            (error && error.message ? error.message : error)
+        );
+      }
+      return [];
+    });
+}
+
+function __mfTopListDetail(id, page) {
+  var key = id === null || id === undefined ? '' : String(id);
+  return __mfLoadTopLists().then(function () {
+    var plugin = __mfPluginObject();
+    if (typeof plugin.getTopListDetail !== 'function') {
+      return { isEnd: true, songs: [] };
+    }
+    var item = (__mfTopListRawCache && __mfTopListRawCache[key]) || {
+      id: key,
+      title: '',
+    };
+    var pageNumber = typeof page === 'number' && page > 0 ? page : 1;
+    return Promise.resolve(plugin.getTopListDetail(item, pageNumber))
+      .then(function (response) {
+        var result = __mfNormalizeSongPage(response);
+        // 与歌单详情一样，把插件回传的续页状态合并回缓存的原始条目。
+        if (response && typeof response === 'object') {
+          var merged = {};
+          Object.keys(item).forEach(function (k) {
+            merged[k] = item[k];
+          });
+          Object.keys(response).forEach(function (k) {
+            if (k === 'musicList' || k === 'isEnd') return;
+            merged[k] = response[k];
+          });
+          if (!__mfTopListRawCache) __mfTopListRawCache = {};
+          __mfTopListRawCache[key] = merged;
+          result.sheet = __mfSheetMeta(merged);
+        } else {
+          result.sheet = __mfSheetMeta(item);
+        }
+        return result;
+      })
+      .then(null, function (error) {
+        if (typeof console !== 'undefined' && console.log) {
+          console.log(
+            '[MusicFree] getTopListDetail 失败: ' +
+              (error && error.message ? error.message : error)
+          );
+        }
+        return { isEnd: true, songs: [] };
+      });
+  });
+}
+
+function __mfRecommendSheetsByTag(tagId, page) {
+  var key = tagId === null || tagId === undefined ? '' : String(tagId);
+  var plugin = __mfPluginObject();
+  if (typeof plugin.getRecommendSheetsByTag !== 'function') {
+    return Promise.resolve({ isEnd: true, playlists: [] });
+  }
+
+  return __mfLoadSheetTags().then(function () {
+    var tag = (__mfSheetTagRawCache && __mfSheetTagRawCache[key]) || {
+      id: key,
+      title: key,
+    };
+    var pageNumber = typeof page === 'number' && page > 0 ? page : 1;
+    return Promise.resolve(plugin.getRecommendSheetsByTag(tag, pageNumber))
+      .then(function (response) {
+        var list = [];
+        if (Array.isArray(response)) list = response;
+        else if (response && typeof response === 'object') {
+          list = __mfFirstArray([response.data, response.list]);
+        }
+
+        var playlists = [];
+        for (var i = 0; i < list.length; i++) {
+          var sheet = list[i];
+          if (!sheet || typeof sheet !== 'object') continue;
+          var id = __mfIdOf(sheet);
+          if (!id) continue;
+          if (!__mfSheetRawCache) __mfSheetRawCache = {};
+          if (!__mfSheetRawCache[id]) __mfSheetRawCache[id] = sheet;
+          playlists.push({
+            id: id,
+            title: __mfText(sheet.title || sheet.name, id),
+            coverUrl: __mfCoverOf(sheet),
+            description: __mfText(sheet.description, ''),
+            playCount: __mfText(sheet.playCount, ''),
+            author: __mfText(
+              sheet.artist ||
+                sheet.author ||
+                sheet.creator ||
+                sheet.nickName ||
+                sheet.nickname,
+              ''
+            ),
+            songCount:
+              typeof sheet.musicList === 'object' && sheet.musicList
+                ? __mfFirstArray([sheet.musicList]).length
+                : 0,
+          });
+        }
+
+        var isEnd = true;
+        if (response && typeof response === 'object' && response.isEnd === false) {
+          isEnd = false;
+        }
+        return { isEnd: isEnd, playlists: playlists };
+      })
+      .then(null, function (error) {
+        if (typeof console !== 'undefined' && console.log) {
+          console.log(
+            '[MusicFree] getRecommendSheetsByTag 失败: ' +
+              (error && error.message ? error.message : error)
+          );
+        }
+        return { isEnd: true, playlists: [] };
+      });
+  });
+}
+
+function __mfMusicSheetInfo(sheetId, page) {
+  var key = sheetId === null || sheetId === undefined ? '' : String(sheetId);
+  var plugin = __mfPluginObject();
+  if (typeof plugin.getMusicSheetInfo !== 'function') {
+    return Promise.resolve({ isEnd: true, songs: [] });
+  }
+
+  return Promise.resolve().then(function () {
+    var sheet = (__mfSheetRawCache && __mfSheetRawCache[key]) || {
+      id: key,
+      title: '',
+    };
+    var pageNumber = typeof page === 'number' && page > 0 ? page : 1;
+    return Promise.resolve(plugin.getMusicSheetInfo(sheet, pageNumber))
+      .then(function (response) {
+        var result = __mfNormalizeSongPage(response);
+        // 部分插件（如网易）在第一页回传 `_trackIds` 之类的续页状态，需要
+        // 合并回缓存的 sheetItem，否则第二页会重新拉整张歌单。
+        if (response && typeof response === 'object') {
+          var merged = {};
+          Object.keys(sheet).forEach(function (k) {
+            merged[k] = sheet[k];
+          });
+          Object.keys(response).forEach(function (k) {
+            if (k === 'musicList' || k === 'isEnd') return;
+            merged[k] = response[k];
+          });
+          if (!__mfSheetRawCache) __mfSheetRawCache = {};
+          __mfSheetRawCache[key] = merged;
+          result.sheet = __mfSheetMeta(merged);
+        } else {
+          result.sheet = __mfSheetMeta(sheet);
+        }
+        return result;
+      })
+      .then(null, function (error) {
+        if (typeof console !== 'undefined' && console.log) {
+          console.log(
+            '[MusicFree] getMusicSheetInfo 失败: ' +
+              (error && error.message ? error.message : error)
+          );
+        }
+        return { isEnd: true, songs: [] };
+      });
+  });
+}
+
+/** 插件实现了哪些「发现页」能力（宿主据此决定音源是否出现在发现页）。 */
+function __mfCapabilities() {
+  var plugin = __mfPluginObject();
+  return {
+    topList:
+      typeof plugin.getTopLists === 'function' &&
+      typeof plugin.getTopListDetail === 'function',
+    sheets:
+      typeof plugin.getRecommendSheetTags === 'function' &&
+      typeof plugin.getRecommendSheetsByTag === 'function',
+    sheetDetail: typeof plugin.getMusicSheetInfo === 'function',
+  };
+}
+
+/* ------------------------------------------------------------------ *
  * 契约导出
  * ------------------------------------------------------------------ */
 
@@ -593,3 +967,23 @@ __mfContract.musicUrl = __mfMusicUrl;
 __mfContract.getPic = __mfGetPic;
 __mfContract.getLyric = __mfGetLyric;
 __mfContract.getLyricResult = __mfGetLyric;
+
+/* 发现页（榜单 / 推荐歌单）。插件未实现时返回空结果，宿主不会把这些音源列进
+ * 发现页音源选择器（见 `capabilities`）。 */
+__mfContract.getTopLists = function () {
+  return __mfLoadTopLists();
+};
+__mfContract.getTopListDetail = __mfTopListDetail;
+__mfContract.getRecommendSheetTags = function () {
+  return __mfLoadSheetTags();
+};
+__mfContract.getRecommendSheetsByTag = __mfRecommendSheetsByTag;
+__mfContract.getMusicSheetInfo = __mfMusicSheetInfo;
+
+Object.defineProperty(__mfContract, 'capabilities', {
+  enumerable: true,
+  configurable: true,
+  get: function () {
+    return __mfCapabilities();
+  },
+});

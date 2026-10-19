@@ -209,15 +209,10 @@ class PluginRepository {
     final plugins = await loadPlugins();
     final index = plugins.indexWhere((p) => p.id == id);
     if (index != -1) {
-      if (isEnabled) {
-        final updatedPlugins = plugins
-            .map((plugin) => plugin.copyWith(isEnabled: plugin.id == id))
-            .toList();
-        await savePlugins(updatedPlugins);
-      } else {
-        plugins[index] = plugins[index].copyWith(isEnabled: false);
-        await savePlugins(plugins);
-      }
+      // 允许多个插件同时启用：只翻转目标插件，其它插件保持原状态
+      // （与 PluginService.togglePlugin 的策略保持一致）。
+      plugins[index] = plugins[index].copyWith(isEnabled: isEnabled);
+      await savePlugins(plugins);
     }
   }
 

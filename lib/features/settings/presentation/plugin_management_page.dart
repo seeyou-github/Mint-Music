@@ -8,7 +8,10 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../../core/l10n/l10n.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/theme_provider.dart';
+import '../../plugin/application/music_source_manager.dart';
 import '../../plugin/data/plugin_service.dart';
+import '../../plugin/domain/builtin_source_states.dart';
+import '../../plugin/domain/plugin_types.dart';
 import '../application/plugin_providers.dart';
 import '../data/plugin_repository.dart';
 import '../domain/models/plugin_info.dart';
@@ -332,17 +335,24 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
         ],
       ),
       body: pluginsAsync.when(
-        data: (plugins) => plugins.isEmpty
-            ? _buildEmptyState(colors)
-            :              ListView.builder(
-                padding: const EdgeInsets.all(AppSpacing.lg),
-                itemCount: plugins.length,
-                itemBuilder: (context, index) => _buildPluginCard(
-                  colors,
-                  plugins[index],
-                  mergedResults,
-                ),
+        data: (plugins) => ListView(
+          padding: const EdgeInsets.all(AppSpacing.lg),
+          children: [
+            _buildBuiltInSourcesSection(colors),
+            const SizedBox(height: AppSpacing.lg),
+            _buildPluginSectionHeader(colors, plugins.length),
+            const SizedBox(height: AppSpacing.sm),
+            if (plugins.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: AppSpacing.xxl),
+                child: _buildEmptyState(colors),
+              )
+            else
+              ...plugins.map(
+                (plugin) => _buildPluginCard(colors, plugin, mergedResults),
               ),
+          ],
+        ),
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => Center(
           child: Column(
@@ -359,6 +369,220 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  /* ---------------------------------------------------------------- *
+   * 内置音源（网易云 / 酷狗 / 酷我 / QQ / 咪咕）
+   * ---------------------------------------------------------------- */
+
+  Widget _buildBuiltInSourcesSection(ThemeColors colors) {
+    final states = ref.watch(builtInSourceStateProvider);
+    final all = MusicSourceManager.allBuiltInSourceInfos;
+    final visible = all.where((info) => !states.isRemoved(info.id)).toList();
+    final removedCount = all.length - visible.length;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                context.tr('内置音源'),
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: colors.textPrimary,
+                ),
+              ),
+            ),
+            if (removedCount > 0)
+              TextButton.icon(
+                onPressed: _restoreBuiltInSources,
+                icon: const Icon(Icons.restore, size: 16),
+                label: Text(context.tr('恢复内置音源')),
+                style: TextButton.styleFrom(
+                  foregroundColor: colors.primary,
+                  visualDensity: VisualDensity.compact,
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: AppSpacing.xs),
+        Text(
+          context.tr('关闭后该音源不再出现在搜索与发现页；已收藏的歌曲仍可正常播放'),
+          style: TextStyle(fontSize: 12, color: colors.textHint),
+        ),
+        const SizedBox(height: AppSpacing.md),
+        ...visible.map((info) => _buildBuiltInSourceCard(colors, info, states)),
+        if (removedCount > 0)
+          Padding(
+            padding: const EdgeInsets.only(top: AppSpacing.xs),
+            child: Text(
+              context.tr('已卸载 $removedCount 个内置音源'),
+              style: TextStyle(fontSize: 12, color: colors.textHint),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildBuiltInSourceCard(
+    ThemeColors colors,
+    SourceInfo info,
+    BuiltInSourceStates states,
+  ) {
+    final enabled = !states.isDisabled(info.id);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: AppSpacing.md),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.md,
+        vertical: AppSpacing.sm,
+      ),
+      decoration: BoxDecoration(
+        color: colors.surface,
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+        border: Border.all(
+          color: colors.primary.withValues(alpha: enabled ? 0.25 : 0.08),
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: colors.primary.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(AppRadius.md),
+            ),
+            child: Icon(Icons.library_music, size: 20, color: colors.primary),
+          ),
+          const SizedBox(width: AppSpacing.md),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  info.name,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: colors.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  enabled ? context.tr('内置音源 · 已启用') : context.tr('内置音源 · 已关闭'),
+                  style: TextStyle(fontSize: 11, color: colors.textHint),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: context.tr('卸载'),
+            icon: Icon(
+              Icons.delete_outline,
+              size: 20,
+              color: colors.textHint,
+            ),
+            onPressed: () => _removeBuiltInSource(info),
+          ),
+          Switch(
+            value: enabled,
+            activeThumbColor: colors.primary,
+            onChanged: (value) => _setBuiltInSourceEnabled(info, value),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPluginSectionHeader(ThemeColors colors, int pluginCount) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          context.tr('插件音源（$pluginCount）'),
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
+            color: colors.textPrimary,
+          ),
+        ),
+        const SizedBox(height: AppSpacing.xs),
+        Text(
+          context.tr('可同时启用多个插件；多个插件声明同一音源时按列表顺序生效'),
+          style: TextStyle(fontSize: 12, color: colors.textHint),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _setBuiltInSourceEnabled(SourceInfo info, bool enabled) async {
+    await ref
+        .read(builtInSourceStateProvider.notifier)
+        .setEnabled(info.id, enabled);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          enabled
+              ? context.tr('已启用 ${info.name}')
+              : context.tr('已关闭 ${info.name}'),
+        ),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  Future<void> _removeBuiltInSource(SourceInfo info) async {
+    final colors = ref.read(themeColorsProvider);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: colors.surface,
+        title: Text(
+          ctx.tr('卸载内置音源'),
+          style: TextStyle(color: colors.textPrimary, fontSize: 16),
+        ),
+        content: Text(
+          ctx.tr('卸载「${info.name}」后它会从音源列表中移除，相关搜索与发现页数据不再可用。可通过「恢复内置音源」找回。'),
+          style: TextStyle(color: colors.textSecondary, fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(ctx.tr('取消')),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(ctx.tr('卸载')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    await ref.read(builtInSourceStateProvider.notifier).remove(info.id);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(context.tr('已卸载 ${info.name}')),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  Future<void> _restoreBuiltInSources() async {
+    await ref.read(builtInSourceStateProvider.notifier).restoreAll();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(context.tr('已恢复所有内置音源')),
+        behavior: SnackBarBehavior.floating,
       ),
     );
   }

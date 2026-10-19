@@ -171,6 +171,11 @@ class MusicAudioHandler extends BaseAudioHandler
   }
 
   Future<void> _initAudioSession() async {
+    // audio_session 只实现了 Android / iOS / macOS / Web，桌面端（Windows /
+    // Linux）没有插件实现，`AudioSession.instance` 会抛 MissingPluginException。
+    // 桌面端也不需要处理来电/音频焦点抢占，直接跳过。
+    if (Platform.isWindows || Platform.isLinux) return;
+
     final session = await AudioSession.instance;
     await session.configure(const AudioSessionConfiguration.music());
 

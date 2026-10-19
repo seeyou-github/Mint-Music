@@ -6,6 +6,8 @@ import '../../discover/domain/models/leaderboard.dart';
 import '../domain/music_source_provider.dart';
 import '../domain/plugin_types.dart';
 import '../domain/source_id_mapping.dart';
+import '../domain/builtin_source_states.dart';
+import '../data/builtin_source_preferences.dart';
 import '../data/plugin_service.dart';
 import '../data/plugin_host.dart';
 import '../data/netease_music_source.dart';
@@ -97,6 +99,93 @@ class MusicSourceManager {
     _builtInSources['mg'] = MiguMusicSource();
   }
 
+  /* ------------------------------------------------------------------ *
+   * 内置音源的启用/卸载状态
+   * ------------------------------------------------------------------ */
+
+  final BuiltInSourcePreferences _builtInSourcePreferences =
+      BuiltInSourcePreferences();
+  BuiltInSourceStates _builtInSourceStates = const BuiltInSourceStates();
+  bool _builtInSourceStatesLoaded = false;
+
+  BuiltInSourceStates get builtInSourceStates => _builtInSourceStates;
+
+  bool get builtInSourceStatesLoaded => _builtInSourceStatesLoaded;
+
+  /// 内置音源是否出现在音源选择器 / 聚合搜索中。
+  bool isBuiltInSourceAvailable(String sourceId) {
+    return _builtInSourceStates.isAvailable(sourceId);
+  }
+
+  /// 所有内置音源的 id 与展示名（不受启用/卸载状态影响，供管理页展示）。
+  static List<SourceInfo> get allBuiltInSourceInfos => SourceIdMapping.idToName
+      .entries
+      .where((entry) => entry.key != 'qsvip')
+      .map((entry) => SourceInfo(id: entry.key, name: entry.value))
+      .toList();
+
+  /// 当前参与搜索/发现的音源（按内置源定义顺序过滤）。
+  List<SourceInfo> get enabledBuiltInSourceInfos {
+    return _builtInSources.keys
+        .where(isBuiltInSourceAvailable)
+        .map(
+          (id) => SourceInfo(
+            id: id,
+            name: _sourceIdToName[id] ?? id,
+          ),
+        )
+        .toList();
+  }
+
+  Iterable<MapEntry<String, MusicSourceProvider>> get _availableBuiltInSources =>
+      _builtInSources.entries.where(
+        (entry) => isBuiltInSourceAvailable(entry.key),
+      );
+
+  Future<void> loadBuiltInSourceStates() async {
+    if (_builtInSourceStatesLoaded) return;
+    _builtInSourceStates = await _builtInSourcePreferences.load();
+    _builtInSourceStatesLoaded = true;
+  }
+
+  /// 关闭/开启某个内置音源。
+  Future<void> setBuiltInSourceEnabled(String sourceId, bool enabled) async {
+    await loadBuiltInSourceStates();
+    final disabled = <String>{..._builtInSourceStates.disabled};
+    if (enabled) {
+      disabled.remove(sourceId);
+    } else {
+      disabled.add(sourceId);
+    }
+    await _applyBuiltInSourceStates(
+      _builtInSourceStates.copyWith(disabled: disabled),
+    );
+  }
+
+  /// 「卸载」内置音源：从列表移除（可通过 [restoreBuiltInSources] 找回）。
+  Future<void> removeBuiltInSource(String sourceId) async {
+    await loadBuiltInSourceStates();
+    final removed = <String>{..._builtInSourceStates.removed, sourceId};
+    final disabled = <String>{..._builtInSourceStates.disabled}..remove(sourceId);
+    await _applyBuiltInSourceStates(
+      _builtInSourceStates.copyWith(removed: removed, disabled: disabled),
+    );
+  }
+
+  /// 恢复所有被卸载的内置音源。
+  Future<void> restoreBuiltInSources() async {
+    await loadBuiltInSourceStates();
+    await _applyBuiltInSourceStates(const BuiltInSourceStates());
+  }
+
+  Future<void> _applyBuiltInSourceStates(BuiltInSourceStates next) async {
+    _builtInSourceStates = next;
+    _builtInSourceStatesLoaded = true;
+    // 音源集合变了，之前缓存的搜索结果/歌单可能包含已关闭的音源，直接丢弃。
+    clearAllCaches();
+    await _builtInSourcePreferences.save(next);
+  }
+
   void dispose() {
     for (final entry in _builtInSources.entries) {
       final source = entry.value;
@@ -167,7 +256,7 @@ class MusicSourceManager {
       }
     }
 
-    for (final entry in _builtInSources.entries) {
+    for (final entry in _availableBuiltInSources) {
       if (!seenIds.contains(entry.key)) {
         sources.add(
           SourceInfo(
@@ -1501,6 +1590,240 @@ class MusicSourceManager {
     return null;
   }
 
+  /* ------------------------------------------------------------------ *
+   * 发现页：插件（MusicFree）榜单与推荐歌单
+   *
+   * MusicFree 插件只按「歌单/榜单的原始 id」工作，而本项目的歌单详情页只有一
+   * 个路由参数，所以插件来源的歌单 id 需要带上音源前缀：
+   *   mf:sheet:<sourceId>:<encoded rawId>
+   *   mf:board:<sourceId>:<encoded rawId>
+   * ------------------------------------------------------------------ */
+
+  static const String _pluginSheetIdPrefix = 'mf:sheet:';
+  static const String _pluginBoardIdPrefix = 'mf:board:';
+
+  static String pluginSheetId(String sourceId, String rawId) =>
+      '$_pluginSheetIdPrefix$sourceId:${Uri.encodeComponent(rawId)}';
+
+  static String pluginBoardId(String sourceId, String rawId) =>
+      '$_pluginBoardIdPrefix$sourceId:${Uri.encodeComponent(rawId)}';
+
+  static bool isPluginSheetId(String id) => id.startsWith(_pluginSheetIdPrefix);
+
+  static bool isPluginBoardId(String id) => id.startsWith(_pluginBoardIdPrefix);
+
+  /// 解析插件来源的歌单/榜单 id（非插件 id 返回 null）。
+  static ({String sourceId, String rawId})? parsePluginDiscoveryId(String id) {
+    for (final prefix in const [_pluginSheetIdPrefix, _pluginBoardIdPrefix]) {
+      if (!id.startsWith(prefix)) continue;
+      final rest = id.substring(prefix.length);
+      final index = rest.indexOf(':');
+      if (index <= 0) return null;
+      final sourceId = rest.substring(0, index);
+      final encoded = rest.substring(index + 1);
+      if (sourceId.isEmpty || encoded.isEmpty) return null;
+      String rawId;
+      try {
+        rawId = Uri.decodeComponent(encoded);
+      } catch (_) {
+        rawId = encoded;
+      }
+      return (sourceId: sourceId, rawId: rawId);
+    }
+    return null;
+  }
+
+  /// 找到能处理 [sourceId] 且具备所需发现能力的插件宿主。
+  PluginHost? _findDiscoverHost(
+    String sourceId, {
+    bool needTopList = false,
+    bool needSheets = false,
+    bool needSheetDetail = false,
+  }) {
+    for (final host in _findPluginHostsForSource(sourceId)) {
+      if (!host.supportsDiscover) continue;
+      if (needTopList && !host.supportsTopLists) continue;
+      if (needSheets && !host.supportsRecommendSheets) continue;
+      if (needSheetDetail && !host.supportsSheetDetail) continue;
+      return host;
+    }
+    return null;
+  }
+
+  dynamic _decodePluginJson(String? raw) {
+    if (raw == null || raw.trim().isEmpty) return null;
+    try {
+      return jsonDecode(raw.trim());
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String? _nonEmptyText(dynamic value) {
+    if (value == null) return null;
+    final text = value.toString().trim();
+    return text.isEmpty ? null : text;
+  }
+
+  List<Playlist> _pluginPlaylistsFromJson(String sourceId, dynamic decoded) {
+    final playlists = <Playlist>[];
+    final list = decoded is List
+        ? decoded
+        : (decoded is Map ? decoded['playlists'] : null);
+    if (list is! List) return playlists;
+
+    for (final entry in list) {
+      if (entry is! Map) continue;
+      final rawId = _nonEmptyText(entry['id']);
+      if (rawId == null) continue;
+      playlists.add(
+        Playlist(
+          id: pluginSheetId(sourceId, rawId),
+          title: _nonEmptyText(entry['title']) ?? rawId,
+          description: _nonEmptyText(entry['description']) ?? '',
+          coverUrl: _nonEmptyText(entry['coverUrl']),
+          songCount: int.tryParse('${entry['songCount']}') ?? 0,
+          playCount: _nonEmptyText(entry['playCount']),
+          author: _nonEmptyText(entry['author']),
+          source: sourceId,
+        ),
+      );
+    }
+    return playlists;
+  }
+
+  List<Leaderboard> _pluginLeaderboardsFromJson(
+    String sourceId,
+    dynamic decoded,
+  ) {
+    final boards = <Leaderboard>[];
+    if (decoded is! List) return boards;
+
+    for (final entry in decoded) {
+      if (entry is! Map) continue;
+      final rawId = _nonEmptyText(entry['id']);
+      if (rawId == null) continue;
+      final name = _nonEmptyText(entry['name']) ?? rawId;
+      final group = _nonEmptyText(entry['group']);
+      boards.add(
+        Leaderboard(
+          id: pluginBoardId(sourceId, rawId),
+          name: (group == null || group == name) ? name : '$group · $name',
+          coverUrl: _nonEmptyText(entry['coverUrl']),
+          source: sourceId,
+        ),
+      );
+    }
+    return boards;
+  }
+
+  List<PlaylistTagGroup> _pluginTagGroupsFromJson(
+    String sourceId,
+    dynamic decoded,
+  ) {
+    final groups = <PlaylistTagGroup>[];
+    if (decoded is! List) return groups;
+
+    for (final entry in decoded) {
+      if (entry is! Map) continue;
+      final tags = <PlaylistTag>[];
+      final rawTags = entry['tags'];
+      if (rawTags is List) {
+        for (final tag in rawTags) {
+          if (tag is! Map) continue;
+          final id = _nonEmptyText(tag['id']);
+          if (id == null) continue;
+          tags.add(
+            PlaylistTag(
+              id: id,
+              name: _nonEmptyText(tag['name']) ?? id,
+              source: sourceId,
+            ),
+          );
+        }
+      }
+      if (tags.isEmpty) continue;
+      groups.add(
+        PlaylistTagGroup(
+          name: _nonEmptyText(entry['name']) ?? '分类',
+          tags: tags,
+        ),
+      );
+    }
+    return groups;
+  }
+
+  /// 用插件推荐歌单的第一页数据充当「热门歌单」。
+  Future<List<Playlist>> _getPluginHotPlaylists(String sourceId) async {
+    final host = _findDiscoverHost(sourceId, needSheets: true);
+    if (host == null) return const [];
+
+    try {
+      final groups = _pluginTagGroupsFromJson(
+        sourceId,
+        _decodePluginJson(await host.getRecommendSheetTags()),
+      );
+      final candidates = <String>[''];
+      for (final group in groups) {
+        for (final tag in group.tags) {
+          if (!candidates.contains(tag.id)) candidates.add(tag.id);
+        }
+        if (candidates.length >= 3) break;
+      }
+
+      for (final tagId in candidates) {
+        final playlists = _pluginPlaylistsFromJson(
+          sourceId,
+          _decodePluginJson(await host.getRecommendSheetsByTag(tagId)),
+        );
+        if (playlists.isNotEmpty) return playlists;
+      }
+    } catch (e) {
+      print('[MusicSourceManager] 插件热门歌单获取失败 source=$sourceId: $e');
+    }
+    return const [];
+  }
+
+  /// 插件来源的歌单/榜单详情。
+  Future<Playlist?> _getPluginDiscoveryDetail(
+    String appId,
+    String sourceId,
+    String rawId, {
+    required bool isBoard,
+    int page = 1,
+  }) async {
+    final host = isBoard
+        ? _findDiscoverHost(sourceId, needTopList: true)
+        : _findDiscoverHost(sourceId, needSheetDetail: true);
+    if (host == null) return null;
+
+    try {
+      final raw = isBoard
+          ? await host.getTopListDetail(rawId, page: page)
+          : await host.getMusicSheetInfo(rawId, page: page);
+      if (raw == null) return null;
+
+      final decoded = _decodePluginJson(raw);
+      final songs = _parsePluginSearchResult(raw, sourceId);
+      final sheetValue = decoded is Map ? decoded['sheet'] : null;
+      final meta = sheetValue is Map ? sheetValue : const <String, dynamic>{};
+
+      return Playlist(
+        id: appId,
+        title: _nonEmptyText(meta['title']) ?? '',
+        description: _nonEmptyText(meta['description']) ?? '',
+        coverUrl: _nonEmptyText(meta['coverUrl']),
+        songCount: songs.length,
+        songs: songs,
+        author: _nonEmptyText(meta['author']),
+        source: sourceId,
+      );
+    } catch (e) {
+      print('[MusicSourceManager] 插件发现详情获取失败 id=$appId: $e');
+      return null;
+    }
+  }
+
   Future<List<Playlist>> getHotPlaylists({String sourceId = 'wy'}) async {
     final cached = _hotPlaylistsCache[sourceId];
     if (cached != null && cached.isValid) {
@@ -1509,7 +1832,7 @@ class MusicSourceManager {
     }
 
     final builtIn = _builtInSources[sourceId];
-    if (builtIn != null) {
+    if (builtIn != null && isBuiltInSourceAvailable(sourceId)) {
       try {
         final hot = await builtIn.getHotPlaylists();
         if (hot.isNotEmpty) {
@@ -1559,14 +1882,20 @@ class MusicSourceManager {
         print('[MusicSourceManager] 热门歌单标签兜底失败 source=$sourceId: $e');
       }
     }
-    return [];
+
+    // 插件（MusicFree）音源：用推荐歌单第一页数据充当热门歌单。
+    final pluginHot = await _getPluginHotPlaylists(sourceId);
+    if (pluginHot.isNotEmpty) {
+      _hotPlaylistsCache[sourceId] = _CacheEntry(pluginHot, _hotPlaylistsTTL);
+    }
+    return pluginHot;
   }
 
   Future<List<PlaylistTagGroup>> getPlaylistTags({
     String sourceId = 'wy',
   }) async {
     final builtIn = _builtInSources[sourceId];
-    if (builtIn != null) {
+    if (builtIn != null && isBuiltInSourceAvailable(sourceId)) {
       try {
         return await builtIn.getPlaylistTags();
       } catch (e) {
@@ -1574,12 +1903,24 @@ class MusicSourceManager {
         return [];
       }
     }
+
+    final host = _findDiscoverHost(sourceId, needSheets: true);
+    if (host != null) {
+      try {
+        return _pluginTagGroupsFromJson(
+          sourceId,
+          _decodePluginJson(await host.getRecommendSheetTags()),
+        );
+      } catch (e) {
+        print('[MusicSourceManager] 插件歌单分类获取失败 source=$sourceId: $e');
+      }
+    }
     return [];
   }
 
   Future<List<PlaylistTag>> getHotPlaylistTags({String sourceId = 'wy'}) async {
     final builtIn = _builtInSources[sourceId];
-    if (builtIn != null) {
+    if (builtIn != null && isBuiltInSourceAvailable(sourceId)) {
       try {
         return await builtIn.getHotPlaylistTags();
       } catch (e) {
@@ -1589,7 +1930,10 @@ class MusicSourceManager {
         return [];
       }
     }
-    return [];
+
+    // 插件音源没有单独的「热门标签」接口，取推荐分类里的前几个当作标签栏。
+    final groups = await getPlaylistTags(sourceId: sourceId);
+    return groups.expand((group) => group.tags).take(8).toList();
   }
 
   Future<List<Playlist>> getCategoryPlaylists({
@@ -1600,7 +1944,7 @@ class MusicSourceManager {
     String sourceId = 'wy',
   }) async {
     final builtIn = _builtInSources[sourceId];
-    if (builtIn != null) {
+    if (builtIn != null && isBuiltInSourceAvailable(sourceId)) {
       try {
         final playlists = await builtIn.getCategoryPlaylists(
           sortId: sortId,
@@ -1639,17 +1983,50 @@ class MusicSourceManager {
         }
       }
     }
+
+    // 插件（MusicFree）音源：按推荐歌单分类取歌单。
+    final host = _findDiscoverHost(sourceId, needSheets: true);
+    if (host != null) {
+      try {
+        final playlists = _pluginPlaylistsFromJson(
+          sourceId,
+          _decodePluginJson(
+            await host.getRecommendSheetsByTag(tagId, page: page),
+          ),
+        );
+        if (playlists.isNotEmpty) {
+          return playlists.length > limit
+              ? playlists.take(limit).toList()
+              : playlists;
+        }
+      } catch (e) {
+        print('[MusicSourceManager] 插件分类歌单获取失败 source=$sourceId: $e');
+      }
+    }
     return [];
   }
 
   Future<List<Leaderboard>> getLeaderboards({String sourceId = 'wy'}) async {
     final builtIn = _builtInSources[sourceId];
-    if (builtIn != null) {
+    if (builtIn != null && isBuiltInSourceAvailable(sourceId)) {
       try {
         return await builtIn.getLeaderboards();
       } catch (e) {
         print('[MusicSourceManager] getLeaderboards failed for $sourceId: $e');
         return [];
+      }
+    }
+
+    // 插件（MusicFree）音源：getTopLists 的扁平化结果。
+    final host = _findDiscoverHost(sourceId, needTopList: true);
+    if (host != null) {
+      try {
+        return _pluginLeaderboardsFromJson(
+          sourceId,
+          _decodePluginJson(await host.getTopLists()),
+        );
+      } catch (e) {
+        print('[MusicSourceManager] 插件榜单获取失败 source=$sourceId: $e');
       }
     }
     return [];
@@ -1663,6 +2040,24 @@ class MusicSourceManager {
     if (cached != null && cached.isValid) {
       print('[MusicSourceManager] 歌单详情缓存命中: $playlistId');
       return cached.data;
+    }
+
+    // 插件（MusicFree）来源的歌单 / 榜单：id 自带音源前缀，直接路由到插件。
+    final pluginTarget = parsePluginDiscoveryId(playlistId);
+    if (pluginTarget != null) {
+      final pluginResult = await _getPluginDiscoveryDetail(
+        playlistId,
+        pluginTarget.sourceId,
+        pluginTarget.rawId,
+        isBoard: isPluginBoardId(playlistId),
+      );
+      if (pluginResult != null) {
+        _playlistDetailCache[playlistId] = _CacheEntry(
+          pluginResult,
+          _playlistDetailTTL,
+        );
+      }
+      return pluginResult;
     }
 
     String actualSourceId = sourceId;
@@ -1745,7 +2140,7 @@ class MusicSourceManager {
     String sourceId = 'wy',
   }) async {
     final builtIn = _builtInSources[sourceId];
-    if (builtIn != null) {
+    if (builtIn != null && isBuiltInSourceAvailable(sourceId)) {
       try {
         return await builtIn.getLeaderboardDetail(boardId, page: page);
       } catch (e) {
@@ -1755,6 +2150,17 @@ class MusicSourceManager {
         return null;
       }
     }
+
+    final pluginTarget = parsePluginDiscoveryId(boardId);
+    if (pluginTarget != null) {
+      return _getPluginDiscoveryDetail(
+        boardId,
+        pluginTarget.sourceId,
+        pluginTarget.rawId,
+        isBoard: true,
+        page: page,
+      );
+    }
     return null;
   }
 
@@ -1762,16 +2168,18 @@ class MusicSourceManager {
     final sources = <SourceInfo>[];
     final seenIds = <String>{};
 
-    for (final entry in _builtInSources.entries) {
-      if (!seenIds.contains(entry.key)) {
-        sources.add(
-          SourceInfo(
-            id: entry.key,
-            name: _sourceIdToName[entry.key] ?? entry.key,
-          ),
-        );
-        seenIds.add(entry.key);
-      }
+    for (final source in enabledBuiltInSourceInfos) {
+      if (seenIds.add(source.id)) sources.add(source);
+    }
+
+    // 插件音源：复用搜索音源列表的 id 推导（与适配器保持一致），再用
+    // `_findDiscoverHost` 过滤出真正实现了榜单 / 推荐歌单的插件——没有浏览接口
+    // 的音源出现在这里只会是空页面。
+    for (final source in getPluginSupportedSources()) {
+      if (seenIds.contains(source.id)) continue;
+      if (_findDiscoverHost(source.id) == null) continue;
+      seenIds.add(source.id);
+      sources.add(source);
     }
 
     return sources;
@@ -1799,8 +2207,8 @@ class MusicSourceManager {
     }
 
     if (sourceId == 'all') {
-      // 并发搜索所有内置源
-      final futures = _builtInSources.entries.map((entry) async {
+      // 并发搜索所有「仍启用」的内置源
+      final futures = _availableBuiltInSources.map((entry) async {
         try {
           final playlists = await entry.value
               .searchPlaylists(query, limit: limit)

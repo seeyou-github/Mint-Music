@@ -6,6 +6,16 @@
 - 支持导入 MusicFree 格式音源插件（内置 CommonJS 运行时与 axios/cheerio/crypto-js/dayjs/he/qs/big-integer 依赖）
 - MusicFree 插件音源 id 自动推导（网易/QQ/酷狗/酷我/咪咕/汽水等平台名映射到内置音源 id）
 - MusicFree 音质自动回退（插件只实现部分音质时按 请求音质 → standard → high → low → super 尝试）
+- MusicFree 插件支持发现页内容：榜单（`getTopLists` / `getTopListDetail`）与推荐歌单（`getRecommendSheetTags` / `getRecommendSheetsByTag` / `getMusicSheetInfo`）
+- 插件支持同时启用多个：单平台的 MusicFree 插件（如 bilibili + 网易）可以一起使用，声明同一音源时按插件列表顺序取第一个宿主
+- 插件管理页新增「内置音源」区块：内置音源可关闭开关、可卸载，并支持「恢复内置音源」
+- Windows 版加入 media_kit（libmpv）桌面音频后端
+
+### 修复
+- 修复 Windows 版任何播放/试听校验都抛 `MissingPluginException`（just_audio 在桌面端没有原生实现）
+- 修复发现页音源切换不显示已导入的 MusicFree 音源（现在列出实现了榜单 / 推荐歌单的插件音源）
+- 桌面端不再初始化 audio_service / audio_session（两者都没有 Windows 实现），改为直接创建播放器 handler
+- 插件测试在缺少音频后端时只提示「当前平台无法试听校验」，不再把播放地址误判为插件失败
 
 ## [1.0.1] - 2026-08-14
 

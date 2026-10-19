@@ -91,10 +91,69 @@ MusicFree 的 `getMediaSource` / `getLyric` 需要原始 `musicItem`。搜索结
 避免引入完整 axios 打包产物。单个依赖注入失败不会中断插件加载，只记录日志并降级，
 避免「一个可选依赖拖垮整个插件」。
 
+### 发现页（榜单 / 推荐歌单）
+
+MusicFree 的发现接口接收的是「条目对象」而不是 id：
+
+| MusicFree 方法 | 适配器契约 | 说明 |
+| --- | --- | --- |
+| `getTopLists()` | `getTopLists()` → `[{id,name,group,coverUrl,description}]` | 分组结果按组名扁平化 |
+| `getTopListDetail(topListItem, page)` | `getTopListDetail(id, page)` → `{isEnd,songs,sheet}` | 原始条目按 id 反查缓存 |
+| `getRecommendSheetTags()` | `getRecommendSheetTags()` → `[{name,tags:[{id,name}]}]` | `pinned` 放在「推荐」组 |
+| `getRecommendSheetsByTag(tagItem, page)` | `getRecommendSheetsByTag(id, page)` → `{isEnd,playlists}` | 歌单 id 同上命名空间 |
+| `getMusicSheetInfo(sheetItem, page)` | `getMusicSheetInfo(id, page)` → `{isEnd,songs,sheet}` | 插件回传的续页字段会合并回缓存条目 |
+
+适配器在内存里缓存最近一次拿到的原始条目（`__mfTopListRawCache` /
+`__mfSheetTagRawCache` / `__mfSheetRawCache`），按 id 反查后再传给插件；缓存缺失
+（例如 App 重启后用持久化 id 打开）时退化为最小 `{ id, title }` 对象——目前见到的
+插件都只依赖 `id`。歌单详情里插件回传的 `_trackIds` 一类续页状态会合并回缓存，
+避免第二页重新拉整张歌单。任何一步失败都只记日志并返回空结果，不会让插件整体失败。
+
+`capabilities` 暴露插件是否实现了 `topList` / `sheets` / `sheetDetail`。宿主据此决定
+该音源是否出现在发现页音源选择器里（没有浏览能力的音源选进去只会是空页面）。
+
+由于本项目的歌单详情页只有一个路由参数，插件来源的歌单 id 会带上音源前缀：
+
+```
+mf:sheet:<sourceId>:<Uri.encodeComponent(rawId)>   // 推荐歌单
+mf:board:<sourceId>:<Uri.encodeComponent(rawId)>   // 榜单
+```
+
+`MusicSourceManager.getPlaylistDetail()` 按前缀路由到插件，榜单卡片与歌单卡片共用
+同一条详情链路（内置源仍走原来的 `wy_` / `kg_` 前缀与 `getLeaderboardDetail` 兜底）。
+
+内置源优先：当同一个音源 id 同时有内置实现与插件实现（例如同时启用「网易云」内置源
+与一个网易 MusicFree 插件）时，发现页使用内置源的榜单 / 歌单实现，而搜索仍然优先走
+插件。
+
+### 内置音源的启用与卸载
+
+内置音源无法真正从安装包里删除，所以「设置 → 插件管理」里对内置音源（网易云 /
+酷狗 / 酷我 / QQ / 咪咕）提供两种操作：
+
+* **开关**：加入 `disabled_builtin_sources`，该音源不再出现在音源选择器、聚合搜索
+  与发现页；
+* **卸载**：加入 `removed_builtin_sources`，从列表里移除，可通过「恢复内置音源」
+  一键找回。
+
+两者都只影响「能不能被选中」，不影响已经存在歌曲的播放解析（收藏 / 歌单里的网易
+歌曲仍然可以正常取播放地址）。状态变化后会清空搜索与歌单缓存，避免陈旧结果里混进
+已关闭音源的数据。
+
+### 多插件同时启用
+
+早期版本只允许启用一个插件（澜音 / 洛雪插件通常覆盖全部音源，互相冲突），但
+MusicFree 插件往往是单平台的（一个 bilibili 插件 + 一个网易插件），因此改为允许
+同时启用多个。多个插件声明同一个音源时，由 `MusicSourceManager` 按插件列表顺序
+取第一个匹配的宿主。
+
 ## 当前范围
 
-已支持：搜索、播放地址、封面、歌词，以及音质回退。
+已支持：搜索、播放地址、封面、歌词、音质回退，以及发现页的榜单与推荐歌单。
 
-暂不支持：`getTopLists` / `getMusicSheetInfo` / `getArtistWorks` / `getAlbumInfo` /
-`importMusicSheet` 等扩展方法——本项目的插件契约没有对应落点。cheerio 仍然会注入，
-以免这类插件在加载阶段因缺少依赖而失败。
+暂不支持：`getArtistWorks` / `getAlbumInfo` / `importMusicSheet` 等扩展方法——本项目
+的插件契约没有对应落点。cheerio 仍然会注入，以免这类插件在加载阶段因缺少依赖而失败。
+
+插件来源的歌单 / 榜单当前只取插件返回的第一页（内置源每页 30 条，插件通常 20 条），
+发现页的「加载更多」对插件音源不会继续翻页。
+

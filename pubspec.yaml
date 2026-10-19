@@ -20,6 +20,13 @@ dependencies:
   audio_service: ^0.18.18
   audio_session: ^0.1.25
 
+  # 桌面端（Windows）没有 just_audio 的原生实现，缺了后端时任何 AudioPlayer
+  # 调用都会抛 MissingPluginException（表现为「播放失败/MissingPluginException」）。
+  # 这里用 media_kit（libmpv）作为 Windows 后端；移动端仍走 just_audio 原生实现，
+  # 因为 just_audio_media_kit 只在我们显式开启的平台注册。
+  just_audio_media_kit: ^2.1.0
+  media_kit_libs_windows_audio: ^1.0.9
+
   dio: ^5.8.0+1
 
   permission_handler: ^11.4.0

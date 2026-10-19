@@ -578,8 +578,13 @@ class PluginService {
       rethrow;
     }
 
+    // 多个插件可以同时启用，这里只更新目标插件的状态，不再影响其它插件。
     final updatedPlugins = plugins
-        .map((plugin) => plugin.copyWith(isEnabled: plugin.id == id))
+        .map(
+          (plugin) => plugin.id == id
+              ? plugin.copyWith(isEnabled: true)
+              : plugin,
+        )
         .toList();
     try {
       await savePlugins(updatedPlugins);
@@ -591,39 +596,18 @@ class PluginService {
       }
       rethrow;
     }
-
-    for (final plugin in plugins) {
-      if (plugin.id != id) {
-        _unloadPlugin(plugin.id);
-      }
-    }
   }
 
-  /// Older versions allowed several plugins to remain enabled. Retain the
-  /// first enabled plugin in list order and persist the corrected state.
+  /// 允许多个插件同时启用。
+  ///
+  /// 早期版本只允许启用一个插件（澜音/洛雪插件通常覆盖全部音源，互相冲突），
+  /// 但 MusicFree 插件往往是「单平台」的（例如一个 bilibili 插件 + 一个网易
+  /// 插件），只允许启用一个会让用户无法同时使用。多个插件声明同一个音源时，
+  /// 由 [MusicSourceManager] 按插件列表顺序取第一个匹配的宿主。
   Future<List<PluginInfo>> _normalizeEnabledPlugins(
     List<PluginInfo> plugins,
   ) async {
-    var hasEnabledPlugin = false;
-    var changed = false;
-    final normalized = <PluginInfo>[];
-
-    for (final plugin in plugins) {
-      if (!plugin.isEnabled) {
-        normalized.add(plugin);
-      } else if (!hasEnabledPlugin) {
-        hasEnabledPlugin = true;
-        normalized.add(plugin);
-      } else {
-        changed = true;
-        normalized.add(plugin.copyWith(isEnabled: false));
-      }
-    }
-
-    if (changed) {
-      await savePlugins(normalized);
-    }
-    return normalized;
+    return plugins;
   }
 
   Future<PluginHost> _loadPlugin(PluginInfo plugin) async {

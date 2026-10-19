@@ -4,7 +4,11 @@ import '../domain/models/plugin_info.dart';
 import '../../plugin/application/plugin_providers.dart';
 
 export '../../plugin/application/plugin_providers.dart'
-    show musicSourceManagerProvider, pluginServiceProvider, pluginInitializedProvider;
+    show
+        musicSourceManagerProvider,
+        pluginServiceProvider,
+        pluginInitializedProvider,
+        builtInSourceStateProvider;
 
 final pluginRepositoryProvider = Provider<PluginRepository>((ref) {
   return PluginRepository();
@@ -59,12 +63,9 @@ class PluginsNotifier extends AsyncNotifier<List<PluginInfo>> {
     if (previousPlugins != null) {
       // Update the settings page before the plugin engine is initialized.
       // The actual runtime switch and persistence continue below.
+      // 多个插件可以同时启用：只翻转目标插件，其它插件保持原状态。
       final optimisticPlugins = previousPlugins.map((plugin) {
-        final nextIsEnabled = isEnabled
-            ? plugin.id == id
-            : plugin.id == id
-            ? false
-            : plugin.isEnabled;
+        final nextIsEnabled = plugin.id == id ? isEnabled : plugin.isEnabled;
         return plugin.copyWith(isEnabled: nextIsEnabled);
       }).toList();
       state = AsyncData(optimisticPlugins);
