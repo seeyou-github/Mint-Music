@@ -240,7 +240,8 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
               child: Center(
                 child: currentSource != null
                     ? _buildSourceIcon(
-                        currentSource.id,
+                        // 同名插件的变体 id 需要还原成平台 id 才能取到对应图标。
+                        SourceInfo.baseIdOf(currentSource.id),
                         size: 20,
                         label: currentSource.name,
                       )
@@ -292,7 +293,12 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
           child: Row(
             children: [
               source.id != 'all'
-                  ? _buildSourceIcon(source.id, size: 18, label: source.name)
+                  ? _buildSourceIcon(
+                      // 同名插件的变体 id 需要还原成平台 id 才能取到对应图标。
+                      SourceInfo.baseIdOf(source.id),
+                      size: 18,
+                      label: source.name,
+                    )
                   : _buildSourceIcon('all', size: 18),
               const SizedBox(width: 8),
               Expanded(

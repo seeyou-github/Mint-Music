@@ -83,6 +83,15 @@ class ResponsiveLayout {
     return isTabletLandscape(context);
   }
 
+  /// Whether the bottom of the content area needs to make room for the
+  /// mini player.
+  ///
+  /// 宽屏（左侧固定导航栏）布局下播放器固定在左侧栏底部，内容区并没有
+  /// 迷你播放器，因此底部的批量操作栏应当直接贴底而不是悬空。
+  static bool hasBottomMiniPlayer(BuildContext context) {
+    return !shouldShowSidebar(context);
+  }
+
   // ── Grid configuration ─────────────────────────────────────────────
 
   /// Returns the optimal cross-axis count for a grid based on available width.

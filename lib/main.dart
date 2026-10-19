@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:just_audio_media_kit/just_audio_media_kit.dart';
 import 'app/app.dart';
+import 'core/platform/taskbar_thumbnail_service.dart';
 import 'core/services/audio_service_init.dart';
 import 'features/settings/application/settings_providers.dart';
 import 'shared/services/amll_toggle_service.dart';
@@ -78,6 +79,11 @@ void main() async {
     unawaited(AmllLyricPlayerState.prewarm());
     // 预热字体缓存：在后台完成 base64 编码，避免首次打开歌词页时阻塞 UI
     unawaited(AmllLyricPlayerState.prewarmFonts('lyricfont'));
+  }
+
+  // Windows 任务栏缩略图工具栏（悬停任务栏图标时缩略图下方显示播放等按钮）。
+  if (Platform.isWindows) {
+    container.read(taskbarThumbnailServiceProvider);
   }
 
   print('>>> main: 启动应用...');

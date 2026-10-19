@@ -22,21 +22,73 @@ const double _kQueueItemExtent = 72.0;
 ///
 /// 从 FullPlayerPage 抽取为共享组件，供全屏播放页与迷你播放器复用：
 /// 迷你播放器点击播放队列按钮时直接弹出此面板，无需跳转全屏页。
-void showPlayQueueSheet(
+Future<void> showPlayQueueSheet(
   BuildContext context, {
   required PlaybackState playbackState,
   required PlaybackController controller,
-}) {
-  showModalBottomSheet(
-    context: context,
-    sheetAnimationStyle: const AnimationStyle(
-      duration: Duration(milliseconds: 220),
-      reverseDuration: Duration(milliseconds: 180),
-    ),
-    backgroundColor: Colors.transparent,
-    isScrollControlled: true,
-    builder: (ctx) => _PlayQueueSheetContent(controller: controller),
-  );
+}) async {
+  final navigator = Navigator.of(context, rootNavigator: true);
+  // 播放队列已经显示时，再次点击播放队列按钮应当隐藏它。
+  if (PlayQueueSheetController.isVisible) {
+    PlayQueueSheetController.hideIfVisible();
+    return;
+  }
+  PlayQueueSheetController.attach(navigator);
+  try {
+    await showModalBottomSheet(
+      context: context,
+      useRootNavigator: true,
+      sheetAnimationStyle: const AnimationStyle(
+        duration: Duration(milliseconds: 220),
+        reverseDuration: Duration(milliseconds: 180),
+      ),
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) => _PlayQueueSheetContent(controller: controller),
+    );
+  } finally {
+    PlayQueueSheetController.detach(navigator);
+  }
+}
+
+/// 播放队列弹层的开关状态。
+///
+/// 记录弹层所在的 Navigator，这样「再次点击播放队列按钮」时可以直接把
+/// 已经显示的弹层关掉，而不会重复弹出多个播放队列。
+class PlayQueueSheetController {
+  PlayQueueSheetController._();
+
+  static NavigatorState? _navigator;
+  static bool _visible = false;
+
+  /// 当前是否已经显示了播放队列弹层。
+  static bool get isVisible => _visible;
+
+  /// 记录弹层所在的 Navigator（弹层显示时调用）。
+  static void attach(NavigatorState navigator) {
+    _navigator = navigator;
+    _visible = true;
+  }
+
+  /// 弹层关闭后的清理。
+  static void detach(NavigatorState navigator) {
+    if (identical(_navigator, navigator)) {
+      _navigator = null;
+    }
+    _visible = false;
+  }
+
+  /// 隐藏已经显示的播放队列；没有显示时返回 false。
+  static bool hideIfVisible() {
+    if (!_visible) return false;
+    final navigator = _navigator;
+    _navigator = null;
+    _visible = false;
+    if (navigator != null && navigator.canPop()) {
+      navigator.pop();
+    }
+    return true;
+  }
 }
 
 class _PlayQueueSheetContent extends ConsumerStatefulWidget {

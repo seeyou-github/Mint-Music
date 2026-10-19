@@ -3,6 +3,7 @@
 #include <optional>
 
 #include "flutter/generated_plugin_registrant.h"
+#include "thumbnail_toolbar.h"
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
     : project_(project) {}
@@ -27,6 +28,34 @@ bool FlutterWindow::OnCreate() {
   RegisterPlugins(flutter_controller_->engine());
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
+  // 与 Dart 侧通信的通道：任务栏缩略图工具栏的按钮事件从这里下发，
+  // 播放状态也从这里回传给原生侧（用于切换播放/暂停图标）。
+  method_channel_ =
+      std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+          flutter_controller_->engine()->messenger(), "com.mintmusic/taskbar",
+          &flutter::StandardMethodCodec::GetInstance());
+  method_channel_->SetMethodCallHandler(
+      [this](const flutter::MethodCall<flutter::EncodableValue>& call,
+             std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>
+                 result) {
+        if (call.method_name() == "playbackState") {
+          bool playing = false;
+          const auto* arguments =
+              std::get_if<flutter::EncodableMap>(call.arguments());
+          if (arguments != nullptr) {
+            const auto entry =
+                arguments->find(flutter::EncodableValue(std::string("playing")));
+            if (entry != arguments->end()) {
+              if (const bool* value = std::get_if<bool>(&entry->second)) {
+                playing = *value;
+              }
+            }
+          }
+          mintmusic::ThumbnailToolbar::SetPlaying(playing);
+        }
+        result->Success();
+      });
+
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
     this->Show();
   });
@@ -47,6 +76,13 @@ void FlutterWindow::OnDestroy() {
   Win32Window::OnDestroy();
 }
 
+void FlutterWindow::SendToDart(const std::string& method) {
+  if (!method_channel_) {
+    return;
+  }
+  method_channel_->InvokeMethod(method, nullptr);
+}
+
 LRESULT
 FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               WPARAM const wparam,
@@ -55,15 +91,54 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
   //
   // 原因：flutter_inappwebview_windows 在析构 WebView2 时会触发 fail-fast
   // （异常码 STATUS_FAIL_FAST_EXCEPTION，常报 dcomp.dll），表现为关闭窗口时
-  // 弹出「mintmusic.exe - 快速异常检测失败」。该问题即使完全不使用 WebView
+  // 弹出「薄荷音乐.exe - 快速异常检测失败」。该问题即使完全不使用 WebView
   // 也会出现，因为插件在注册时就创建了管理器对象；上游至今未修复。
   // 见 https://github.com/pichillilorenzo/flutter_inappwebview/issues/2512
   //
   // 此处进程本就要退出，直接 TerminateProcess 反而能避免那次崩溃，且退出码
   // 为 0，不会在任务管理器/事件查看器里留下崩溃记录。
   if (message == WM_CLOSE) {
+    // 退出前先把窗口尺寸落盘，下次启动按上次的尺寸恢复。
+    SaveWindowSize();
     ::TerminateProcess(::GetCurrentProcess(), 0);
     return 0;
+  }
+
+  // 任务栏按钮创建完成后系统才会发送该消息，此时才可以给缩略图挂工具栏。
+  static const UINT taskbar_button_created =
+      ::RegisterWindowMessageW(L"TaskbarButtonCreated");
+  if (taskbar_button_created != 0 && message == taskbar_button_created) {
+    mintmusic::ThumbnailToolbar::Attach(hwnd);
+    return 0;
+  }
+
+  // 缩略图工具栏的按钮点击事件（只拦截我们自己的按钮 ID）。
+  if (message == WM_COMMAND) {
+    const int command_id = LOWORD(wparam);
+    const int notification_id = HIWORD(wparam);
+    int thumbnail_id = 0;
+    if (command_id == mintmusic::kThumbnailButtonPrevious ||
+        command_id == mintmusic::kThumbnailButtonPlayPause ||
+        command_id == mintmusic::kThumbnailButtonNext) {
+      thumbnail_id = command_id;
+    } else if (notification_id == mintmusic::kThumbnailButtonPrevious ||
+               notification_id == mintmusic::kThumbnailButtonPlayPause ||
+               notification_id == mintmusic::kThumbnailButtonNext) {
+      thumbnail_id = notification_id;
+    }
+    switch (thumbnail_id) {
+      case mintmusic::kThumbnailButtonPrevious:
+        SendToDart("previous");
+        return 0;
+      case mintmusic::kThumbnailButtonPlayPause:
+        SendToDart("playPause");
+        return 0;
+      case mintmusic::kThumbnailButtonNext:
+        SendToDart("next");
+        return 0;
+      default:
+        break;
+    }
   }
 
   // Give Flutter, including plugins, an opportunity to handle window messages.

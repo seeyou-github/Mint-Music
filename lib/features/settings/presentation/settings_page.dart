@@ -20,7 +20,6 @@ import '../application/settings_providers.dart';
 import '../application/update_providers.dart';
 import '../data/settings_service.dart';
 import '../data/update_service.dart';
-import 'plugin_management_page.dart';
 import 'update_dialog.dart';
 import '../../player/application/desktop_lyric_controller.dart';
 import '../../player/application/desktop_lyric_sync.dart';
@@ -89,7 +88,6 @@ Future<void> _doPersist(
 enum SettingsCategory {
   appearance,
   playback,
-  plugins,
   musicSource,
   storage,
   about,
@@ -115,7 +113,6 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   static const _categoryConfig = {
     SettingsCategory.appearance: (icon: Icons.palette, label: '外观设置'),
     SettingsCategory.playback: (icon: Icons.play_circle, label: '播放设置'),
-    SettingsCategory.plugins: (icon: Icons.extension, label: '插件管理'),
     SettingsCategory.musicSource: (icon: Icons.music_note, label: '音乐源'),
     SettingsCategory.storage: (icon: Icons.storage, label: '存储管理'),
     SettingsCategory.about: (icon: Icons.info, label: '关于'),
@@ -292,12 +289,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
 
 
   Widget _buildContent(ThemeColors colors) {
-    // 插件管理直接展示「管理插件」二级页面内容（含插件启用/停用），
-    // 不再先显示一个入口行。它自带列表，不能塞进 SingleChildScrollView。
-    if (_activeCategory == SettingsCategory.plugins) {
-      return const PluginManagementPage(embedded: true);
-    }
-    // Only build the active category to avoid constructing all 6 categories
+    // Only build the active category to avoid constructing all categories
     // (and their heavy providers like plugins, directory scanning, etc.) on
     // first render, which causes a noticeable delay when navigating here.
     return SingleChildScrollView(
@@ -317,9 +309,6 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
         return const _AppearanceContent();
       case SettingsCategory.playback:
         return const _PlaybackContent();
-      case SettingsCategory.plugins:
-        // 在 _buildContent 中已直接返回 PluginManagementPage。
-        return const SizedBox.shrink();
       case SettingsCategory.musicSource:
         return const _MusicSourceContent();
       case SettingsCategory.storage:

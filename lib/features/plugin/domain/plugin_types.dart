@@ -246,6 +246,16 @@ class SourceInfo {
 
   const SourceInfo({required this.id, required this.name});
 
+  /// 取出音源 id 中的平台部分。
+  ///
+  /// 同名同平台的不同插件（不同作者）会得到 `平台id@插件id` 这样的唯一
+  /// id，展示图标 / 内置源匹配时仍然使用平台部分。
+  static String baseIdOf(String id) {
+    final index = id.indexOf('@');
+    if (index <= 0 || index >= id.length - 1) return id;
+    return id.substring(0, index);
+  }
+
   static const List<SourceInfo> builtInSources = [
     SourceInfo(id: 'wy', name: '网易云音乐'),
     SourceInfo(id: 'kg', name: '酷狗音乐'),

@@ -55,6 +55,13 @@ class Win32Window {
   // Return a RECT representing the bounds of the current client area.
   RECT GetClientArea();
 
+  // Persists the current window size so the next launch can restore it.
+  //
+  // Only the "normal" (non maximized) size is recorded: clicking the maximize
+  // button or double clicking the title bar must not overwrite the size that
+  // was adjusted by the user.
+  void SaveWindowSize();
+
  protected:
   // Processes and route salient window messages for mouse handling,
   // size change and DPI. Delegates handling of these to member overloads that
@@ -97,6 +104,10 @@ class Win32Window {
 
   // window handle for hosted content.
   HWND child_content_ = nullptr;
+
+  // The last known size of the window in its "normal" (not maximized) state.
+  Size last_normal_size_{0, 0};
+  bool has_normal_size_ = false;
 };
 
 #endif  // RUNNER_WIN32_WINDOW_H_

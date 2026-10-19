@@ -14,6 +14,7 @@
 #undef APSTUDIO_READONLY_SYMBOLS
 
 /////////////////////////////////////////////////////////////////////////////
+//
 // English (United States) resources
 
 #if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_ENU)
@@ -90,12 +91,12 @@ BEGIN
         BLOCK "040904e4"
         BEGIN
             VALUE "CompanyName", "com.kingmc.mintmusic" "\0"
-            VALUE "FileDescription", "mintmusic" "\0"
+            VALUE "FileDescription", "薄荷音乐" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "mintmusic" "\0"
+            VALUE "InternalName", "薄荷音乐" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2026 com.kingmc.mintmusic. All rights reserved." "\0"
-            VALUE "OriginalFilename", "mintmusic.exe" "\0"
-            VALUE "ProductName", "mintmusic" "\0"
+            VALUE "OriginalFilename", "薄荷音乐.exe" "\0"
+            VALUE "ProductName", "薄荷音乐" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END
@@ -115,7 +116,6 @@ END
 //
 // Generated from the TEXTINCLUDE 3 resource.
 //
-
 
 /////////////////////////////////////////////////////////////////////////////
 #endif    // not APSTUDIO_INVOKED

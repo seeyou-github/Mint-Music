@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
+import '../../../core/utils/responsive_layout.dart';
 import '../../../core/utils/scroll_locate.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../../../shared/widgets/song_action_sheet.dart';
@@ -324,7 +325,11 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
                   Positioned(
                     left: 0,
                     right: 0,
-                    bottom: AppSpacing.miniPlayerHeight + AppSpacing.xl,
+                    // 宽屏（左侧导航栏）布局下内容区没有迷你播放器，
+                    // 批量操作栏直接贴底；窄屏才需要避开迷你播放器。
+                    bottom: ResponsiveLayout.hasBottomMiniPlayer(context)
+                        ? AppSpacing.miniPlayerHeight + AppSpacing.xl
+                        : 0,
                     child: SongBatchActionBar(
                       colors: colors,
                       controller: _selection,
@@ -514,14 +519,16 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
     }
 
     final selecting = _selection.isActive;
+    // 宽屏下内容区没有迷你播放器，列表底部只需避开批量操作栏。
+    final bottomInset = ResponsiveLayout.hasBottomMiniPlayer(context)
+        ? AppSpacing.miniPlayerHeight + AppSpacing.lg
+        : AppSpacing.lg;
     final list = ListView.builder(
       controller: _scrollController,
       // 预留迷你播放器高度（56px + 底部 20px 间距），保证最后一首歌曲
       // 能滚动到迷你播放器上方而不被遮挡；多选模式下还要避开批量操作栏。
       padding: EdgeInsets.only(
-        bottom: AppSpacing.miniPlayerHeight +
-            AppSpacing.lg +
-            (selecting ? SongBatchActionBar.height : 0),
+        bottom: bottomInset + (selecting ? SongBatchActionBar.height : 0),
       ),
       itemCount: songs.length,
       // 与定位用的行高常量一致：既避免估算误差累积，也让列表布局从

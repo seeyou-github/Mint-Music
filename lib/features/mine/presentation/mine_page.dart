@@ -99,9 +99,15 @@ class MinePage extends ConsumerWidget {
   Widget _buildEntryCard(BuildContext context, ThemeColors colors) {
     final entries = <_MineEntry>[
       _MineEntry(
+        icon: Icons.extension_outlined,
+        title: '插件管理',
+        subtitle: '插件的安装、启用与更新',
+        route: AppRoutes.pluginManagement,
+      ),
+      _MineEntry(
         icon: Icons.settings_outlined,
         title: '设置',
-        subtitle: '外观、播放、插件与存储管理',
+        subtitle: '外观、播放与存储管理',
         route: AppRoutes.settings,
       ),
       _MineEntry(

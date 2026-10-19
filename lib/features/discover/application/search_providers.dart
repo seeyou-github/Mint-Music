@@ -236,6 +236,8 @@ class SearchResultsNotifier extends StateNotifier<SearchResultsState> {
           .getSearchSupportedSources()
           .map((source) => source.id)
           .where((id) => id != 'all')
+          // 同名插件的变体（'wy@插件id'）与基础音源结果重复，聚合搜索只取基础项。
+          .where((id) => !id.contains('@'))
           .toSet()
           .toList();
     }

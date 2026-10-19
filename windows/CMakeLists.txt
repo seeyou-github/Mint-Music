@@ -4,7 +4,18 @@ project(mintmusic LANGUAGES CXX)
 
 # The name of the executable created for the application. Change this to change
 # the on-disk name of your application.
-set(BINARY_NAME "mintmusic")
+#
+# 这里写的是最终产物的可执行文件名「薄荷音乐.exe」：任务管理器里的进程名、
+# 资源管理器里的文件名都显示它。
+#
+# 注意：CMake 的目标名必须是 ASCII（策略 CMP0037 限制，否则
+# `add_executable` 直接报错），所以真正的 CMake 目标用下面的
+# RUNNER_TARGET_NAME，再通过 OUTPUT_NAME 把产物命名为「薄荷音乐.exe」。
+# flutter 工具会按这一行的内容查找生成的 exe，因此这一行必须是字面量。
+set(BINARY_NAME "薄荷音乐")
+
+# CMake 目标名（必须是 ASCII）。
+set(RUNNER_TARGET_NAME "mintmusic")
 
 # Explicitly opt in to modern CMake behaviors to avoid warnings with recent
 # versions of CMake.
@@ -61,6 +72,11 @@ add_subdirectory("runner")
 
 # Generated plugin build rules, which manage building the plugins and adding
 # them to the application.
+#
+# generated_plugins.cmake 用 ${BINARY_NAME} 给 runner 目标链接插件库，
+# 这里必须换成 ASCII 的目标名（上面的 BINARY_NAME 是给 flutter 工具用的
+# 中文文件名）。
+set(BINARY_NAME "${RUNNER_TARGET_NAME}")
 include(flutter/generated_plugins.cmake)
 
 
@@ -68,7 +84,7 @@ include(flutter/generated_plugins.cmake)
 # Support files are copied into place next to the executable, so that it can
 # run in place. This is done instead of making a separate bundle (as on Linux)
 # so that building and running from within Visual Studio will work.
-set(BUILD_BUNDLE_DIR "$<TARGET_FILE_DIR:${BINARY_NAME}>")
+set(BUILD_BUNDLE_DIR "$<TARGET_FILE_DIR:${RUNNER_TARGET_NAME}>")
 # Make the "install" step default, as it's required to run.
 set(CMAKE_VS_INCLUDE_INSTALL_TO_DEFAULT_BUILD 1)
 if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
@@ -78,7 +94,7 @@ endif()
 set(INSTALL_BUNDLE_DATA_DIR "${CMAKE_INSTALL_PREFIX}/data")
 set(INSTALL_BUNDLE_LIB_DIR "${CMAKE_INSTALL_PREFIX}")
 
-install(TARGETS ${BINARY_NAME} RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
+install(TARGETS ${RUNNER_TARGET_NAME} RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
   COMPONENT Runtime)
 
 install(FILES "${FLUTTER_ICU_DATA_FILE}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"
@@ -88,7 +104,7 @@ install(FILES "${FLUTTER_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
   COMPONENT Runtime)
 
 if(PLUGIN_BUNDLED_LIBRARIES)
-  install(FILES "${PLUGIN_BUNDLED_LIBRARIES}"
+  install(FILES ${PLUGIN_BUNDLED_LIBRARIES}
     DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
     COMPONENT Runtime)
 endif()
@@ -106,7 +122,8 @@ install(CODE "
   file(REMOVE_RECURSE \"${INSTALL_BUNDLE_DATA_DIR}/${FLUTTER_ASSET_DIR_NAME}\")
   " COMPONENT Runtime)
 install(DIRECTORY "${PROJECT_BUILD_DIR}/${FLUTTER_ASSET_DIR_NAME}"
-  DESTINATION "${INSTALL_BUNDLE_DATA_DIR}" COMPONENT Runtime)
+   DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"
+   COMPONENT Runtime)
 
 # Install the AOT library on non-Debug builds only.
 install(FILES "${AOT_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"

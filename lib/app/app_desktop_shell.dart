@@ -25,6 +25,12 @@ class _AppDesktopShellState extends ConsumerState<AppDesktopShell> {
   /// 二级页面没有独立的一级导航归属，保持进入前的高亮。
   int _activeIndex = 0;
 
+  /// 每个一级分类「离开时打开的二级页面」。
+  ///
+  /// 例如：发现页进入某个歌单详情后切到「我的」，再切回「发现」时
+  /// 重新回到之前那个歌单详情，而不是回到发现页顶部。
+  final Map<int, String> _savedSubRoutes = {};
+
   @override
   void initState() {
     super.initState();
@@ -60,11 +66,37 @@ class _AppDesktopShellState extends ConsumerState<AppDesktopShell> {
 
   void _handleSelect(int index) {
     final route = appNavItems[index].route;
-    // 已经停留在该一级页面时不做跳转，避免重置当前页面的滚动位置。
-    if (appRouter.routerDelegate.currentConfiguration.uri.path == route) return;
+    final currentPath = appRouter.routerDelegate.currentConfiguration.uri.path;
+
+    if (index == _activeIndex) {
+      // 连续点击同一个分类：回到该分类的第一级界面（并丢弃记住的二级页面）。
+      _savedSubRoutes.remove(index);
+      if (currentPath != route) {
+        appRouter.go(route);
+      }
+      return;
+    }
+
+    // 切换分类前记住当前分类打开的二级页面，返回时恢复。
+    // （当前就在该分类的第一级界面时不需要记录。）
+    final activeRoute = appNavItems[_activeIndex].route;
+    if (currentPath.isNotEmpty && currentPath != activeRoute) {
+      _savedSubRoutes[_activeIndex] = currentPath;
+    }
+
     setState(() => _activeIndex = index);
     // 一级页面之间切换（停留在二级页面时会一并返回一级页面）。
     appRouter.go(route);
+
+    // 该分类之前打开过二级页面：切回来时恢复它。
+    final saved = _savedSubRoutes[index];
+    if (saved != null && saved != route) {
+      // 等分支切换完成后再 push，避免与上面的 go 抢路由栈。
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        appRouter.push(saved);
+      });
+    }
   }
 
   @override

@@ -199,7 +199,7 @@ class MusicSourceManager {
   }
 
   MusicSourceProvider? getBuiltInSource(String sourceId) {
-    return _builtInSources[sourceId];
+    return _builtInSourceFor(sourceId);
   }
 
   List<SourceInfo> getAvailableSources() {
@@ -213,15 +213,51 @@ class MusicSourceManager {
   List<SourceInfo> getPluginSupportedSources() {
     final sources = <SourceInfo>[];
     final seenIds = <String>{};
+
+    // 先统计每个平台被多少个插件提供：同名同平台（不同作者）的插件
+    // 需要同时显示，展示名上要带上插件名 / 作者以便区分。
+    final providerCounts = <String, int>{};
     for (final host in _pluginService.enabledPlugins) {
       for (final source in host.sources) {
-        // 名称 → id 的推导与 MusicFree 适配器保持一致（见 SourceIdMapping）。
-        final id = SourceIdMapping.deriveId(source.name);
+        final baseId = SourceIdMapping.deriveId(source.name);
+        providerCounts[baseId] = (providerCounts[baseId] ?? 0) + 1;
+      }
+    }
 
-        if (!seenIds.contains(id)) {
-          seenIds.add(id);
-          sources.add(SourceInfo(id: id, name: source.name));
+    for (final host in _pluginService.enabledPlugins) {
+      final pluginId = _pluginService.getPluginIdForHost(host);
+      final pluginInfo = host.pluginInfo;
+      for (final source in host.sources) {
+        // 名称 → id 的推导与 MusicFree 适配器保持一致（见 SourceIdMapping）。
+        final baseId = SourceIdMapping.deriveId(source.name);
+
+        // 同名同平台的插件（作者不同）都要显示：第二个及之后的追加插件 id，
+        // 保证 id 唯一，用户可以在音源切换器里分别选择。
+        var id = baseId;
+        if (seenIds.contains(id)) {
+          id = pluginId != null
+              ? '$baseId@$pluginId'
+              : '$baseId@${seenIds.length}';
+          var counter = 2;
+          while (seenIds.contains(id)) {
+            id = '$baseId@${pluginId ?? 'plugin'}$counter';
+            counter++;
+          }
         }
+        seenIds.add(id);
+
+        var name = source.name;
+        if ((providerCounts[baseId] ?? 0) > 1 && pluginInfo != null) {
+          final author = pluginInfo.author.trim();
+          final suffix = author.isEmpty
+              ? pluginInfo.name
+              : '${pluginInfo.name} · $author';
+          if (suffix.isNotEmpty) {
+            name = '$name（$suffix）';
+          }
+        }
+
+        sources.add(SourceInfo(id: id, name: name));
       }
     }
     return sources;
@@ -232,6 +268,7 @@ class MusicSourceManager {
     final seenIds = <String>{};
 
     for (final host in _pluginService.enabledPlugins) {
+      final pluginId = _pluginService.getPluginIdForHost(host);
       for (final entry in host.sourceActions.entries) {
         final sourceId = entry.key;
         final actions = entry.value;
@@ -252,6 +289,17 @@ class MusicSourceManager {
           if (!seenIds.contains(sourceId)) {
             seenIds.add(sourceId);
             sources.add(SourceInfo(id: sourceId, name: sourceName));
+          } else {
+            // 同名同平台的不同插件：追加插件 id 后同时展示。
+            var variantId =
+                pluginId != null ? '$sourceId@$pluginId' : '$sourceId@p';
+            var counter = 2;
+            while (seenIds.contains(variantId)) {
+              variantId = '$sourceId@${pluginId ?? 'plugin'}$counter';
+              counter++;
+            }
+            seenIds.add(variantId);
+            sources.add(SourceInfo(id: variantId, name: sourceName));
           }
         }
       }
@@ -415,7 +463,7 @@ class MusicSourceManager {
   }) async {
     if (query.isEmpty) return const [];
     final effectiveSourceId = _canonicalSourceId(sourceId);
-    final builtIn = _builtInSources[effectiveSourceId];
+    final builtIn = _builtInSourceFor(effectiveSourceId);
     if (builtIn == null) return const [];
     try {
       return await builtIn.search(query, page: page, limit: limit);
@@ -457,29 +505,37 @@ class MusicSourceManager {
   }
 
   List<PluginHost> _findPluginHostsForSource(String sourceId) {
+    final (baseId, pluginId) = splitSourceId(sourceId);
     final hosts = <PluginHost>[];
     for (final host in _pluginService.enabledPlugins) {
-      if (_getSourceIdForHost(host, sourceId) != null) hosts.add(host);
+      // 指定了插件（同名同平台的变体）时只使用该插件提供的音源。
+      if (pluginId != null &&
+          _pluginService.getPluginIdForHost(host) != pluginId) {
+        continue;
+      }
+      if (_getSourceIdForHost(host, baseId) != null) hosts.add(host);
     }
     return hosts;
   }
 
   String? _getSourceIdForHost(PluginHost host, String sourceId) {
-    print('[MusicSourceManager] _getSourceIdForHost: 查找 sourceId=$sourceId');
+    // 变体 id（'wy@插件id'）按平台部分匹配。
+    final (baseId, _) = splitSourceId(sourceId);
+    print('[MusicSourceManager] _getSourceIdForHost: 查找 sourceId=$baseId');
     print(
       '[MusicSourceManager] sourceActions keys: ${host.sourceActions.keys.toList()}',
     );
 
-    if (host.sourceActions.containsKey(sourceId)) {
-      print('[MusicSourceManager] 直接匹配: $sourceId');
-      return sourceId;
+    if (host.sourceActions.containsKey(baseId)) {
+      print('[MusicSourceManager] 直接匹配: $baseId');
+      return baseId;
     }
 
     for (final entry in host.sourceActions.entries) {
       final pluginSourceId = entry.key;
       final knownId = SourceIdMapping.knownId(pluginSourceId);
-      if (knownId == sourceId) {
-        print('[MusicSourceManager] 通过名称映射匹配: $pluginSourceId -> $sourceId');
+      if (knownId == baseId) {
+        print('[MusicSourceManager] 通过名称映射匹配: $pluginSourceId -> $baseId');
         return pluginSourceId;
       }
 
@@ -487,7 +543,7 @@ class MusicSourceManager {
         RegExp(r'[^a-z0-9]'),
         '',
       );
-      if (normalizedName == sourceId) {
+      if (normalizedName == baseId) {
         print(
           '[MusicSourceManager] 通过规范化匹配: $pluginSourceId -> $normalizedName',
         );
@@ -497,14 +553,33 @@ class MusicSourceManager {
 
     for (final source in host.sources) {
       final knownId = SourceIdMapping.knownId(source.name);
-      if (knownId == sourceId) {
-        print('[MusicSourceManager] 通过sources匹配: ${source.name} -> $sourceId');
-        return sourceId;
+      if (knownId == baseId) {
+        print('[MusicSourceManager] 通过sources匹配: ${source.name} -> $baseId');
+        return baseId;
       }
     }
 
     print('[MusicSourceManager] 未找到匹配');
     return null;
+  }
+
+  /// 拆分音源 id：'平台id' / '平台id@插件id'。
+  ///
+  /// 同名同平台（不同作者）的插件会得到带插件 id 的变体 id，
+  /// 这样它们可以同时出现在音源列表里并被分别选中。
+  static (String baseId, String? pluginId) splitSourceId(String sourceId) {
+    final index = sourceId.indexOf('@');
+    if (index <= 0 || index >= sourceId.length - 1) {
+      return (sourceId, null);
+    }
+    return (sourceId.substring(0, index), sourceId.substring(index + 1));
+  }
+
+  /// 取内置音源；指定了插件的变体 id 时不回落内置音源。
+  MusicSourceProvider? _builtInSourceFor(String sourceId) {
+    final (baseId, pluginId) = splitSourceId(sourceId);
+    if (pluginId != null) return null;
+    return _builtInSources[baseId];
   }
 
   String _resolvePluginSourceId(String sourceId) {
@@ -595,7 +670,7 @@ class MusicSourceManager {
       }
     }
 
-    final builtIn = _builtInSources[effectiveSourceId];
+    final builtIn = _builtInSourceFor(effectiveSourceId);
     if (builtIn != null) {
       try {
         print('[MusicSourceManager] 使用内置源搜索: source=$sourceId, query=$query');
@@ -810,7 +885,7 @@ class MusicSourceManager {
       } catch (_) {}
     }
 
-    final builtIn = _builtInSources[effectiveSourceId];
+    final builtIn = _builtInSourceFor(effectiveSourceId);
     if (builtIn != null) {
       try {
         final suggestions = await builtIn.getSearchSuggestions(query);
@@ -840,7 +915,7 @@ class MusicSourceManager {
     // canonical built-in ID. Resolve it before looking up the built-in source
     // so hot search follows the same source mapping as search itself.
     final effectiveSourceId = _canonicalSourceId(sourceId);
-    final builtIn = _builtInSources[effectiveSourceId];
+    final builtIn = _builtInSourceFor(effectiveSourceId);
     if (builtIn != null) {
       try {
         final result = await builtIn.getHotSearchTags();
@@ -857,6 +932,9 @@ class MusicSourceManager {
   }
 
   List<Song> _parsePluginSearchResult(String resultJson, String sourceId) {
+    // 变体 id（'wy@插件id'）只用于路由到具体插件，歌曲的 source 仍记平台 id，
+    // 这样播放 / 歌词等逻辑依旧按平台处理。
+    final (baseSourceId, _) = splitSourceId(sourceId);
     try {
       var decoded = jsonDecode(resultJson);
 
@@ -901,7 +979,9 @@ class MusicSourceManager {
           .map((item) => Map<String, dynamic>.from(item))
           .toList();
       if (items.isNotEmpty) {
-        return items.map((item) => _musicInfoToSong(item, sourceId)).toList();
+        return items
+            .map((item) => _musicInfoToSong(item, baseSourceId))
+            .toList();
       }
 
       print('[MusicSourceManager] 无法识别的搜索结果格式: ${decoded.runtimeType}');
@@ -1404,7 +1484,7 @@ class MusicSourceManager {
       }
     }
 
-    final builtIn = _builtInSources[sourceId];
+    final builtIn = _builtInSourceFor(sourceId);
     print(
       '[MusicSourceManager] getLyric: using built-in source: ${builtIn != null}',
     );
@@ -1429,7 +1509,7 @@ class MusicSourceManager {
     final sourceId = song.source;
     if (sourceId == null) return null;
 
-    final builtIn = _builtInSources[sourceId];
+    final builtIn = _builtInSourceFor(sourceId);
     LyricResult? pluginFallback;
     LyricResult? builtInFallback;
 
@@ -1534,7 +1614,7 @@ class MusicSourceManager {
     String? result;
 
     Future<String?> resolveBuiltIn() async {
-      final builtIn = _builtInSources[sourceId];
+      final builtIn = _builtInSourceFor(sourceId);
       if (builtIn == null) return null;
       try {
         final cover = await builtIn.getCoverUrl(song.id);
@@ -1838,7 +1918,7 @@ class MusicSourceManager {
       return cached.data;
     }
 
-    final builtIn = _builtInSources[sourceId];
+    final builtIn = _builtInSourceFor(sourceId);
     if (builtIn != null && isBuiltInSourceAvailable(sourceId)) {
       try {
         final hot = await builtIn.getHotPlaylists();
@@ -1901,7 +1981,7 @@ class MusicSourceManager {
   Future<List<PlaylistTagGroup>> getPlaylistTags({
     String sourceId = 'wy',
   }) async {
-    final builtIn = _builtInSources[sourceId];
+    final builtIn = _builtInSourceFor(sourceId);
     if (builtIn != null && isBuiltInSourceAvailable(sourceId)) {
       try {
         return await builtIn.getPlaylistTags();
@@ -1926,7 +2006,7 @@ class MusicSourceManager {
   }
 
   Future<List<PlaylistTag>> getHotPlaylistTags({String sourceId = 'wy'}) async {
-    final builtIn = _builtInSources[sourceId];
+    final builtIn = _builtInSourceFor(sourceId);
     if (builtIn != null && isBuiltInSourceAvailable(sourceId)) {
       try {
         return await builtIn.getHotPlaylistTags();
@@ -1950,7 +2030,7 @@ class MusicSourceManager {
     required int limit,
     String sourceId = 'wy',
   }) async {
-    final builtIn = _builtInSources[sourceId];
+    final builtIn = _builtInSourceFor(sourceId);
     if (builtIn != null && isBuiltInSourceAvailable(sourceId)) {
       try {
         final playlists = await builtIn.getCategoryPlaylists(
@@ -2014,7 +2094,7 @@ class MusicSourceManager {
   }
 
   Future<List<Leaderboard>> getLeaderboards({String sourceId = 'wy'}) async {
-    final builtIn = _builtInSources[sourceId];
+    final builtIn = _builtInSourceFor(sourceId);
     if (builtIn != null && isBuiltInSourceAvailable(sourceId)) {
       try {
         return await builtIn.getLeaderboards();
@@ -2109,7 +2189,7 @@ class MusicSourceManager {
     );
 
     Playlist? result;
-    final builtIn = _builtInSources[actualSourceId];
+    final builtIn = _builtInSourceFor(actualSourceId);
     if (builtIn != null) {
       try {
         result = await builtIn.getPlaylistDetail(playlistId);
@@ -2169,7 +2249,7 @@ class MusicSourceManager {
     int page = 1,
     String sourceId = 'wy',
   }) async {
-    final builtIn = _builtInSources[sourceId];
+    final builtIn = _builtInSourceFor(sourceId);
     if (builtIn != null && isBuiltInSourceAvailable(sourceId)) {
       try {
         return await builtIn.getLeaderboardDetail(boardId, page: page);
@@ -2258,7 +2338,7 @@ class MusicSourceManager {
     } else {
       // 搜索指定源
       final effectiveSourceId = _canonicalSourceId(sourceId);
-      final builtIn = _builtInSources[effectiveSourceId];
+      final builtIn = _builtInSourceFor(effectiveSourceId);
       if (builtIn != null) {
         try {
           final playlists = await builtIn

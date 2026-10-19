@@ -4,6 +4,7 @@
 #include <flutter_windows.h>
 
 #include "resource.h"
+#include "window_state.h"
 
 namespace {
 
@@ -51,6 +52,35 @@ void EnableFullDpiSupportIfAvailable(HWND hwnd) {
     enable_non_client_dpi_scaling(hwnd);
   }
   FreeLibrary(user32_module);
+}
+
+// Applies the application icon to the window.
+//
+// The taskbar button icon, the caption icon on the left of the title bar and
+// the process icon shown in the task manager are all taken from the window
+// icon, so it has to be set explicitly with the icon resource shipped in
+// `resources/app_icon.ico`.
+void ApplyWindowIcon(HWND window) {
+  const HINSTANCE instance = ::GetModuleHandle(nullptr);
+  if (instance == nullptr) {
+    return;
+  }
+
+  HICON big_icon = static_cast<HICON>(::LoadImageW(
+      instance, MAKEINTRESOURCEW(IDI_APP_ICON), IMAGE_ICON, 0, 0,
+      LR_DEFAULTSIZE));
+  if (big_icon != nullptr) {
+    ::SendMessage(window, WM_SETICON, ICON_BIG,
+                  reinterpret_cast<LPARAM>(big_icon));
+  }
+
+  HICON small_icon = static_cast<HICON>(::LoadImageW(
+      instance, MAKEINTRESOURCEW(IDI_APP_ICON), IMAGE_ICON,
+      ::GetSystemMetrics(SM_CXSMICON), ::GetSystemMetrics(SM_CYSMICON), 0));
+  if (small_icon != nullptr) {
+    ::SendMessage(window, WM_SETICON, ICON_SMALL,
+                  reinterpret_cast<LPARAM>(small_icon));
+  }
 }
 
 }  // namespace
@@ -145,6 +175,7 @@ bool Win32Window::Create(const std::wstring& title,
   }
 
   UpdateTheme(window);
+  ApplyWindowIcon(window);
 
   return OnCreate();
 }
@@ -204,6 +235,29 @@ Win32Window::MessageHandler(HWND hwnd,
         MoveWindow(child_content_, rect.left, rect.top, rect.right - rect.left,
                    rect.bottom - rect.top, TRUE);
       }
+      // 只记录普通状态下的窗口尺寸：最大化（最大化按钮 / 双击标题栏）
+      // 不记录，下次启动仍恢复成用户调整过的尺寸。
+      if (wparam == SIZE_RESTORED) {
+        RECT window_rect{};
+        if (::GetWindowRect(hwnd, &window_rect)) {
+          const double scale = WindowState::GetScaleFactor(hwnd);
+          const int width = static_cast<int>(
+              (window_rect.right - window_rect.left) / scale);
+          const int height = static_cast<int>(
+              (window_rect.bottom - window_rect.top) / scale);
+          if (width > 0 && height > 0) {
+            last_normal_size_ = Size(static_cast<unsigned int>(width),
+                                     static_cast<unsigned int>(height));
+            has_normal_size_ = true;
+          }
+        }
+      }
+      return 0;
+    }
+
+    case WM_EXITSIZEMOVE: {
+      // 拖动 / 缩放结束时再落盘一次，避免拖动过程中频繁写注册表。
+      SaveWindowSize();
       return 0;
     }
 
@@ -261,6 +315,13 @@ HWND Win32Window::GetHandle() {
 
 void Win32Window::SetQuitOnClose(bool quit_on_close) {
   quit_on_close_ = quit_on_close;
+}
+
+void Win32Window::SaveWindowSize() {
+  if (!has_normal_size_) {
+    return;
+  }
+  WindowState::SaveSize(last_normal_size_);
 }
 
 bool Win32Window::OnCreate() {

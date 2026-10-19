@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
+import '../../../core/utils/responsive_layout.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../../../shared/widgets/song_list_item.dart';
 import '../../../shared/widgets/song_action_sheet.dart';
@@ -330,7 +331,11 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                   Positioned(
                     left: 0,
                     right: 0,
-                    bottom: AppSpacing.miniPlayerHeight + AppSpacing.xl,
+                    // 宽屏（左侧导航栏）布局下内容区没有迷你播放器，
+                    // 批量操作栏直接贴底；窄屏才需要避开迷你播放器。
+                    bottom: ResponsiveLayout.hasBottomMiniPlayer(context)
+                        ? AppSpacing.miniPlayerHeight + AppSpacing.xl
+                        : 0,
                     child: SongBatchActionBar(
                       colors: colors,
                       controller: _selection,
@@ -497,7 +502,11 @@ class _SearchPageState extends ConsumerState<SearchPage> {
               ),
               child: Center(
                 child: currentSource != null && currentSource.id != 'all'
-                    ? _buildSourceIcon(currentSource.id, size: 22)
+                    ? _buildSourceIcon(
+                        // 同名插件的变体 id 需要还原成平台 id 才能取到对应图标。
+                        SourceInfo.baseIdOf(currentSource.id),
+                        size: 22,
+                      )
                     : _buildSourceIcon('all', size: 22),
               ),
             ),
@@ -699,7 +708,11 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           child: Row(
             children: [
               source.id != 'all'
-                  ? _buildSourceIcon(source.id, size: 18)
+                  ? _buildSourceIcon(
+                      // 同名插件的变体 id 需要还原成平台 id 才能取到对应图标。
+                      SourceInfo.baseIdOf(source.id),
+                      size: 18,
+                    )
                   : _buildSourceIcon('all', size: 18),
               const SizedBox(width: AppSpacing.sm),
               Expanded(
@@ -1147,12 +1160,15 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     final songs = state.songs;
     final showLoadingRow = state.isLoadingMore;
     final selecting = _selection.isActive;
+    // 宽屏下内容区没有迷你播放器，列表底部只需避开批量操作栏。
+    final bottomInset = ResponsiveLayout.hasBottomMiniPlayer(context)
+        ? AppSpacing.xxxl
+        : AppSpacing.lg;
     return ListView.builder(
       controller: _resultsScrollController,
       // 多选模式下为底部批量操作栏留出空间
       padding: EdgeInsets.only(
-        bottom: AppSpacing.xxxl +
-            (selecting ? SongBatchActionBar.height : 0),
+        bottom: bottomInset + (selecting ? SongBatchActionBar.height : 0),
       ),
       itemCount: songs.length + (showLoadingRow ? 1 : 0),
       cacheExtent: 360,
@@ -1301,13 +1317,21 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     }
     if (state.playlists.isEmpty) return _buildEmptyPlaylistResult(colors);
 
+    // 与「发现 - 歌单」使用同一套网格参数，歌单封面宽度保持一致，
+    // 同时随窗口宽度自适应列数（不再固定两列导致封面过宽）。
+    final crossAxisCount = ResponsiveLayout.gridCrossAxisCount(context);
+    final isTablet = ResponsiveLayout.isTablet(context);
+
     return GridView.builder(
-      padding: const EdgeInsets.all(AppSpacing.lg),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        mainAxisSpacing: AppSpacing.md,
-        crossAxisSpacing: AppSpacing.md,
-        childAspectRatio: 0.82,
+      padding: EdgeInsets.symmetric(
+        horizontal: ResponsiveLayout.horizontalPadding(context),
+        vertical: AppSpacing.lg,
+      ),
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: crossAxisCount,
+        mainAxisSpacing: isTablet ? 16 : AppSpacing.md,
+        crossAxisSpacing: isTablet ? 16 : AppSpacing.md,
+        childAspectRatio: isTablet ? 0.88 : 0.82,
       ),
       itemCount: state.playlists.length,
       itemBuilder: (context, index) {

@@ -118,6 +118,8 @@ class _AppState extends ConsumerState<App> {
 
   Future<void> _checkPluginsForUpdates() async {
     if (!mounted) return;
+    // 插件「自动检测更新」默认关闭，只有用户主动开启后才在启动时检查。
+    if (!ref.read(pluginAutoCheckUpdateProvider)) return;
     try {
       final repo = PluginRepository();
       final results = await repo.checkAllPluginUpdates();

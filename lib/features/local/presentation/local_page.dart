@@ -180,7 +180,11 @@ class _LocalPageState extends ConsumerState<LocalPage> {
                     Positioned(
                       left: 0,
                       right: 0,
-                      bottom: AppSpacing.miniPlayerHeight,
+                      // 宽屏（左侧导航栏）布局下内容区没有迷你播放器，
+                      // 批量操作栏直接贴底；窄屏才需要避开迷你播放器。
+                      bottom: ResponsiveLayout.hasBottomMiniPlayer(context)
+                          ? AppSpacing.miniPlayerHeight
+                          : 0,
                       child: SongBatchActionBar(
                         colors: colors,
                         controller: _selection,

@@ -793,6 +793,16 @@ class PluginService {
     return _loadedPlugins.values.toList();
   }
 
+  /// 返回某个插件宿主对应的插件 id。
+  ///
+  /// 不同作者的插件可能提供同名同平台的音源，需要靠插件 id 区分它们。
+  String? getPluginIdForHost(PluginHost host) {
+    for (final entry in _loadedPlugins.entries) {
+      if (identical(entry.value, host)) return entry.key;
+    }
+    return null;
+  }
+
   List<String> getSupportedSourceIds() {
     final sourceIds = <String>{};
     for (final host in enabledPlugins) {
