@@ -15,6 +15,7 @@ import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../../../shared/services/app_image_cache.dart';
 import '../../../shared/services/cache_paths.dart';
+import '../application/plugin_providers.dart';
 import '../application/settings_providers.dart';
 import '../application/update_providers.dart';
 import '../data/settings_service.dart';
