@@ -1,4 +1,5 @@
 import '../domain/models/playlist.dart';
+import '../domain/models/playlist_page.dart';
 import '../domain/models/leaderboard.dart';
 import '../../player/domain/models/song.dart';
 import '../../plugin/application/music_source_manager.dart';
@@ -59,5 +60,13 @@ class DiscoverRepository {
 
   Future<Playlist?> getPlaylistDetail(String playlistId) async {
     return _manager.getPlaylistDetail(playlistId);
+  }
+
+  /// 歌单 / 榜单详情分页（插件源支持翻页，内置源一次返回全部）。
+  Future<PlaylistPage> getPlaylistDetailPage(
+    String playlistId, {
+    int page = 1,
+  }) async {
+    return _manager.getPlaylistDetailPage(playlistId, page: page);
   }
 }

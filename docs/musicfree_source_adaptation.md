@@ -122,6 +122,12 @@ mf:board:<sourceId>:<Uri.encodeComponent(rawId)>   // 榜单
 `MusicSourceManager.getPlaylistDetail()` 按前缀路由到插件，榜单卡片与歌单卡片共用
 同一条详情链路（内置源仍走原来的 `wy_` / `kg_` 前缀与 `getLeaderboardDetail` 兜底）。
 
+插件来源的歌单 / 榜单详情支持翻页：`getPlaylistDetailPage(playlistId, page)` 按页请求
+`getMusicSheetInfo` / `getTopListDetail`，歌单详情页滚动到底部时自动追加下一页，
+由插件回传的 `isEnd` 决定何时停止。内置源仍是一次性返回全量歌曲（`isEnd == true`），
+不参与翻页。整页都是不可播放歌曲（例如插件过滤掉 VIP 曲目）时会自动往后翻，
+最多连续跳过 5 页，避免卡住或无限请求。
+
 内置源优先：当同一个音源 id 同时有内置实现与插件实现（例如同时启用「网易云」内置源
 与一个网易 MusicFree 插件）时，发现页使用内置源的榜单 / 歌单实现，而搜索仍然优先走
 插件。
@@ -154,6 +160,6 @@ MusicFree 插件往往是单平台的（一个 bilibili 插件 + 一个网易插
 暂不支持：`getArtistWorks` / `getAlbumInfo` / `importMusicSheet` 等扩展方法——本项目
 的插件契约没有对应落点。cheerio 仍然会注入，以免这类插件在加载阶段因缺少依赖而失败。
 
-插件来源的歌单 / 榜单当前只取插件返回的第一页（内置源每页 30 条，插件通常 20 条），
-发现页的「加载更多」对插件音源不会继续翻页。
+插件来源的歌单 / 榜单详情会随滚动自动翻页（每页由插件决定，网易插件为 40 条）；
+内置源一次性返回全量歌曲，因此不存在翻页概念。
 

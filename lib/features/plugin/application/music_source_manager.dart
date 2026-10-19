@@ -2,6 +2,7 @@ import 'dart:convert';
 import '../../player/domain/models/song.dart';
 import '../../player/domain/models/lyric_line.dart';
 import '../../discover/domain/models/playlist.dart';
+import '../../discover/domain/models/playlist_page.dart';
 import '../../discover/domain/models/leaderboard.dart';
 import '../domain/music_source_provider.dart';
 import '../domain/plugin_types.dart';
@@ -1784,8 +1785,8 @@ class MusicSourceManager {
     return const [];
   }
 
-  /// 插件来源的歌单/榜单详情。
-  Future<Playlist?> _getPluginDiscoveryDetail(
+  /// 插件来源的歌单/榜单详情（单页）。
+  Future<PlaylistPage> _getPluginDiscoveryDetail(
     String appId,
     String sourceId,
     String rawId, {
@@ -1795,32 +1796,38 @@ class MusicSourceManager {
     final host = isBoard
         ? _findDiscoverHost(sourceId, needTopList: true)
         : _findDiscoverHost(sourceId, needSheetDetail: true);
-    if (host == null) return null;
+    if (host == null) return const PlaylistPage();
 
     try {
       final raw = isBoard
           ? await host.getTopListDetail(rawId, page: page)
           : await host.getMusicSheetInfo(rawId, page: page);
-      if (raw == null) return null;
+      if (raw == null) return const PlaylistPage();
 
       final decoded = _decodePluginJson(raw);
       final songs = _parsePluginSearchResult(raw, sourceId);
       final sheetValue = decoded is Map ? decoded['sheet'] : null;
       final meta = sheetValue is Map ? sheetValue : const <String, dynamic>{};
+      // 插件通过 isEnd 告知是否还有下一页；字段缺失时按「已到末页」处理，
+      // 避免未知插件被无限翻页。
+      final isEnd = decoded is Map ? decoded['isEnd'] == true : true;
 
-      return Playlist(
-        id: appId,
-        title: _nonEmptyText(meta['title']) ?? '',
-        description: _nonEmptyText(meta['description']) ?? '',
-        coverUrl: _nonEmptyText(meta['coverUrl']),
-        songCount: songs.length,
-        songs: songs,
-        author: _nonEmptyText(meta['author']),
-        source: sourceId,
+      return PlaylistPage(
+        playlist: Playlist(
+          id: appId,
+          title: _nonEmptyText(meta['title']) ?? '',
+          description: _nonEmptyText(meta['description']) ?? '',
+          coverUrl: _nonEmptyText(meta['coverUrl']),
+          songCount: songs.length,
+          songs: songs,
+          author: _nonEmptyText(meta['author']),
+          source: sourceId,
+        ),
+        isEnd: isEnd,
       );
     } catch (e) {
       print('[MusicSourceManager] 插件发现详情获取失败 id=$appId: $e');
-      return null;
+      return const PlaylistPage();
     }
   }
 
@@ -2032,6 +2039,40 @@ class MusicSourceManager {
     return [];
   }
 
+  /// 歌单 / 榜单详情分页。
+  ///
+  /// - 插件（MusicFree）源：首屏结果进缓存，第 2 页起每次实时请求
+  ///   `getMusicSheetInfo` / `getTopListDetail`，由插件的 `isEnd` 决定是否到底；
+  /// - 内置源：一次性返回全量歌曲（`isEnd == true`），不参与翻页。
+  Future<PlaylistPage> getPlaylistDetailPage(
+    String playlistId, {
+    int page = 1,
+    String sourceId = 'wy',
+  }) async {
+    final pluginTarget = parsePluginDiscoveryId(playlistId);
+    if (pluginTarget != null) {
+      final result = await _getPluginDiscoveryDetail(
+        playlistId,
+        pluginTarget.sourceId,
+        pluginTarget.rawId,
+        isBoard: isPluginBoardId(playlistId),
+        page: page,
+      );
+      if (page <= 1 && result.playlist != null) {
+        _playlistDetailCache[playlistId] = _CacheEntry(
+          result.playlist,
+          _playlistDetailTTL,
+        );
+      }
+      return result;
+    }
+
+    if (page > 1) return const PlaylistPage();
+
+    final detail = await getPlaylistDetail(playlistId, sourceId: sourceId);
+    return PlaylistPage(playlist: detail, isEnd: true);
+  }
+
   Future<Playlist?> getPlaylistDetail(
     String playlistId, {
     String sourceId = 'wy',
@@ -2045,19 +2086,8 @@ class MusicSourceManager {
     // 插件（MusicFree）来源的歌单 / 榜单：id 自带音源前缀，直接路由到插件。
     final pluginTarget = parsePluginDiscoveryId(playlistId);
     if (pluginTarget != null) {
-      final pluginResult = await _getPluginDiscoveryDetail(
-        playlistId,
-        pluginTarget.sourceId,
-        pluginTarget.rawId,
-        isBoard: isPluginBoardId(playlistId),
-      );
-      if (pluginResult != null) {
-        _playlistDetailCache[playlistId] = _CacheEntry(
-          pluginResult,
-          _playlistDetailTTL,
-        );
-      }
-      return pluginResult;
+      final pluginPage = await getPlaylistDetailPage(playlistId, page: 1);
+      return pluginPage.playlist;
     }
 
     String actualSourceId = sourceId;
@@ -2153,13 +2183,14 @@ class MusicSourceManager {
 
     final pluginTarget = parsePluginDiscoveryId(boardId);
     if (pluginTarget != null) {
-      return _getPluginDiscoveryDetail(
+      final result = await _getPluginDiscoveryDetail(
         boardId,
         pluginTarget.sourceId,
         pluginTarget.rawId,
         isBoard: true,
         page: page,
       );
+      return result.playlist;
     }
     return null;
   }

@@ -12,6 +12,7 @@ import '../../../shared/widgets/song_action_sheet.dart';
 import '../../../shared/widgets/song_list_item.dart';
 import '../../../shared/widgets/song_selection.dart';
 import '../application/discover_providers.dart';
+import '../domain/models/playlist_page.dart';
 import '../../library/application/playlist_providers.dart';
 import '../../library/domain/models/playlist.dart' as local;
 import '../../player/application/playback_controller.dart';
@@ -33,8 +34,28 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
   bool _isFavorited = false;
   final ScrollController _scrollController = ScrollController();
 
+  // ---- 插件源歌单翻页状态 ----
+  /// 已初始化翻页状态的歌单 id，避免每次 build 重复重置。
+  String? _pagedPlaylistId;
+  /// 首屏（第 1 页）歌曲。
+  List<Song> _baseSongs = const [];
+  /// 后续页追加的歌曲。
+  final List<Song> _extraSongs = [];
+  /// 当前已加载到的页码。
+  int _page = 1;
+  /// 是否已到末页（内置源一次给全，恒为 true）。
+  bool _isEnd = true;
+  bool _loadingMore = false;
+
+  /// 连续多少页没有新歌后放弃翻页（兜底，防止插件异常时无限请求）。
+  static const int _maxConsecutiveEmptyPages = 5;
+
+  /// 完整歌曲列表（首屏 + 已加载的后续页）。
+  List<Song> get _songs => [..._baseSongs, ..._extraSongs];
+
   @override
   void dispose() {
+    _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
     _selection.dispose();
     super.dispose();
@@ -43,17 +64,111 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
   @override
   void initState() {
     super.initState();
+    _scrollController.addListener(_onScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkIfFavorited();
     });
+  }
+
+  /// 首屏数据到达后同步翻页状态（同一歌单只初始化一次）。
+  void _syncPagination(PlaylistPage page) {
+    if (_pagedPlaylistId == widget.playlistId) return;
+    _pagedPlaylistId = widget.playlistId;
+    _baseSongs = page.playlist?.songs ?? const <Song>[];
+    _extraSongs.clear();
+    _page = 1;
+    _isEnd = page.isEnd;
+    _scheduleAutoFill();
+  }
+
+  void _onScroll() {
+    if (!_scrollController.hasClients || _loadingMore || _isEnd) return;
+    final position = _scrollController.position;
+    if (position.maxScrollExtent - position.pixels <= 480) {
+      unawaited(_loadMore());
+    }
+  }
+
+  /// 内容不足一屏时继续补齐，保证短歌单 / 大窗口下也能翻页。
+  void _scheduleAutoFill() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _isEnd || _loadingMore) return;
+      if (!_scrollController.hasClients) return;
+      if (_scrollController.position.maxScrollExtent <= 0 && _songs.length < 40) {
+        unawaited(_loadMore());
+      }
+    });
+  }
+
+  Future<void> _loadMore() async {
+    if (_loadingMore || _isEnd || _pagedPlaylistId != widget.playlistId) return;
+
+    _loadingMore = true;
+    if (mounted) setState(() {});
+
+    try {
+      var page = _page;
+      var emptyStreak = 0;
+      var reachedEnd = false;
+
+      // 插件可能把整页都是不可播放（VIP 等）的歌曲过滤掉，返回空页但
+      // `isEnd` 仍为 false。此时继续往后翻，最多连续跳过
+      // [_maxConsecutiveEmptyPages] 页，避免卡住或无限请求。
+      while (!reachedEnd && emptyStreak < _maxConsecutiveEmptyPages) {
+        page += 1;
+        final result = await ref
+            .read(discoverRepositoryProvider)
+            .getPlaylistDetailPage(widget.playlistId, page: page);
+        if (!mounted || _pagedPlaylistId != widget.playlistId) return;
+
+        final newSongs = result.playlist?.songs ?? const <Song>[];
+        final seen = <String>{
+          for (final song in _baseSongs) song.id,
+          for (final song in _extraSongs) song.id,
+        };
+        final appended = <Song>[
+          for (final song in newSongs)
+            if (seen.add(song.id)) song,
+        ];
+
+        if (appended.isNotEmpty) {
+          final isEnd = result.isEnd;
+          setState(() {
+            _page = page;
+            _extraSongs.addAll(appended);
+            _isEnd = isEnd;
+          });
+          return;
+        }
+
+        reachedEnd = result.isEnd;
+        emptyStreak++;
+      }
+
+      // 已到末页，或连续多页都没有新歌：停止翻页。
+      if (mounted) {
+        setState(() {
+          _page = page;
+          _isEnd = true;
+        });
+      }
+    } catch (e) {
+      debugPrint('[PlaylistDetailPage] 加载下一页失败: $e');
+      if (mounted) setState(() => _isEnd = true);
+    } finally {
+      if (mounted) {
+        setState(() => _loadingMore = false);
+        _scheduleAutoFill();
+      }
+    }
   }
 
   void _checkIfFavorited() {
     final playlistsAsync = ref.read(playlistsProvider);
     final playlistAsync = ref.read(playlistDetailProvider(widget.playlistId));
 
-    playlistAsync.whenData((discoverPlaylist) {
-      if (discoverPlaylist == null) return;
+    playlistAsync.whenData((page) {
+      if (page.playlist == null) return;
 
       playlistsAsync.whenData((localPlaylists) {
         final exists = localPlaylists.any(
@@ -141,22 +256,21 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
   Widget build(BuildContext context) {
     final colors = ref.watch(themeColorsProvider);
     final playlistAsync = ref.watch(playlistDetailProvider(widget.playlistId));
+    final pageData = playlistAsync.valueOrNull;
+    if (pageData != null) _syncPagination(pageData);
 
     // 提前计算当前播放歌曲在本歌单中的索引，用于定位按钮。
     // 在外层 Stack 中直接渲染 FAB，避免嵌套 Stack 裁剪导致按钮不可见。
     final currentSong = ref.watch(playbackControllerProvider).currentSong;
-    final int currentSongIndex = playlistAsync.maybeWhen(
-      data: (playlist) => (playlist != null && currentSong != null)
-          ? playlist.songs.indexWhere((s) => s.id == currentSong.id)
-          : -1,
-      orElse: () => -1,
-    );
+    final int currentSongIndex = currentSong == null
+        ? -1
+        : _songs.indexWhere((s) => s.id == currentSong.id);
 
     return ListenableBuilder(
       listenable: _selection,
       builder: (context, _) {
         final selecting = _selection.isActive;
-        final currentSongs = _currentSongs(playlistAsync);
+        final currentSongs = _songs;
         return PopScope(
           // 多选模式下先拦截返回键用于退出选择
           canPop: !selecting,
@@ -169,7 +283,8 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
               children: [
                 Positioned.fill(
                   child: playlistAsync.when(
-                    data: (playlist) {
+                    data: (page) {
+                      final playlist = page.playlist;
                       if (playlist == null) {
                         return Center(
                           child: Text(context.tr('歌单未找到'), style: TextStyle(color: colors.textHint)),
@@ -182,10 +297,10 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
                             SongSelectionBar(
                               colors: colors,
                               controller: _selection,
-                              songs: playlist.songs,
+                              songs: currentSongs,
                             ),
                           Expanded(
-                            child: _buildSongList(ref, colors, playlist.songs),
+                            child: _buildSongList(ref, colors, currentSongs),
                           ),
                         ],
                       );
@@ -228,16 +343,6 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
           ),
         );
       },
-    );
-  }
-
-  /// 当前歌单的歌曲列表（选择栏/操作栏需要它来计算已选歌曲）。
-  List<Song> _currentSongs(AsyncValue<dynamic> playlistAsync) {
-    return playlistAsync.maybeWhen(
-      data: (playlist) => playlist == null
-          ? const <Song>[]
-          : (playlist.songs as List<Song>),
-      orElse: () => const <Song>[],
     );
   }
 
@@ -327,7 +432,7 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
                     Row(
                       children: [
                         _buildActionButton(colors, Icons.play_arrow, context.tr('播放全部'), () {
-                          _playAll(playlist.songs);
+                          _playAll(_songs);
                         }),
                         const SizedBox(width: AppSpacing.md),
                         _buildFavoriteButton(colors, playlist),
@@ -409,7 +514,7 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
     }
 
     final selecting = _selection.isActive;
-    return ListView.builder(
+    final list = ListView.builder(
       controller: _scrollController,
       // 预留迷你播放器高度（56px + 底部 20px 间距），保证最后一首歌曲
       // 能滚动到迷你播放器上方而不被遮挡；多选模式下还要避开批量操作栏。
@@ -450,6 +555,52 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
           onMenuTap: () => SongActionSheet.show(context, song: song, playlistSongs: songs),
         );
       },
+    );
+
+    return Stack(
+      children: [
+        list,
+        if (_loadingMore)
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: AppSpacing.miniPlayerHeight + AppSpacing.lg,
+            child: Center(child: _buildLoadingMoreIndicator(colors)),
+          ),
+      ],
+    );
+  }
+
+  /// 翻页加载指示器（悬浮于列表底部，不占用列表项高度）。
+  Widget _buildLoadingMoreIndicator(ThemeColors colors) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.md,
+        vertical: AppSpacing.xs,
+      ),
+      decoration: BoxDecoration(
+        color: colors.surface,
+        borderRadius: BorderRadius.circular(AppRadius.full),
+        border: Border.all(color: colors.divider),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: 14,
+            height: 14,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: colors.primary,
+            ),
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          Text(
+            context.tr('加载更多...'),
+            style: TextStyle(fontSize: 12, color: colors.textSecondary),
+          ),
+        ],
+      ),
     );
   }
 
@@ -588,7 +739,7 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
       source: playlist.source,
       createTime: DateTime.now(),
       updateTime: DateTime.now(),
-      songs: playlist.songs,
+      songs: _songs,
       meta: {
         'discoverId': widget.playlistId,
         'type': 'discover_playlist',
@@ -638,7 +789,7 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
       source: playlist.source,
       createTime: DateTime.now(),
       updateTime: DateTime.now(),
-      songs: playlist.songs,
+      songs: _songs,
       meta: {
         'discoverId': widget.playlistId,
         'type': 'saved_playlist',

@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../data/discover_repository.dart';
 import '../domain/models/playlist.dart';
+import '../domain/models/playlist_page.dart';
 import '../domain/models/leaderboard.dart';
 import '../../player/domain/models/song.dart';
 import '../../plugin/application/plugin_providers.dart';
@@ -44,9 +45,9 @@ final searchResultsProvider = FutureProvider<List<Song>>((ref) async {
   return repo.search(query);
 });
 
-final playlistDetailProvider = FutureProvider.family<Playlist?, String>((ref, playlistId) async {
+final playlistDetailProvider = FutureProvider.family<PlaylistPage, String>((ref, playlistId) async {
   final repo = ref.watch(discoverRepositoryProvider);
-  return repo.getPlaylistDetail(playlistId);
+  return repo.getPlaylistDetailPage(playlistId);
 });
 
 final playlistTagsProvider = FutureProvider<List<PlaylistTagGroup>>((ref) async {
