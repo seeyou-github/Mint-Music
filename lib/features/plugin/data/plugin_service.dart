@@ -3,15 +3,37 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../platform/js_engine_service.dart';
 import '../data/plugin_host.dart';
 import '../data/lx_plugin_converter.dart';
+import '../domain/source_id_mapping.dart';
 import '../../settings/domain/models/plugin_info.dart';
 
 class PluginService {
   static const String _prefsKey = 'installed_plugins';
+
+  /// MusicFree 适配器资源路径。
+  ///
+  /// MusicFree 插件不需要按插件生成代码：适配器在运行时通过
+  /// `module.exports` 捕获器读取插件元数据，所以所有 MusicFree 插件共用同一个
+  /// 适配器脚本，存储时也保存这一份（升级 App 后会自动刷新）。
+  static const String _musicFreeAdapterAsset =
+      'assets/plugin_modules/musicfree_adapter.js';
+
+  /// 插件类型 → 展示名。
+  static String pluginTypeLabel(String type) {
+    switch (type) {
+      case 'lx':
+        return '洛雪';
+      case 'mf':
+        return 'MusicFree';
+      default:
+        return '澜音';
+    }
+  }
   final Map<String, PluginHost> _loadedPlugins = {};
   final Map<String, JsEngineService> _engines = {};
 
@@ -76,7 +98,7 @@ class PluginService {
 
   Future<PluginInfo> selectAndAddPlugin(String type) async {
     final result = await FilePicker.platform.pickFiles(
-      dialogTitle: '请选择你的 ${type == 'lx' ? '洛雪' : '澜音'} js插件',
+      dialogTitle: '请选择你的 ${pluginTypeLabel(type)} js插件',
       type: FileType.custom,
       allowedExtensions: ['js'],
     );
@@ -101,6 +123,9 @@ class PluginService {
       originalPluginCode = pluginCode;
       final converter = LxPluginConverter();
       pluginCode = converter.convert(pluginCode);
+    } else if (type == 'mf') {
+      originalPluginCode = pluginCode;
+      pluginCode = await _loadMusicFreeAdapter();
     }
 
     return await addPlugin(
@@ -170,6 +195,9 @@ class PluginService {
       originalPluginCode = pluginCode;
       final converter = LxPluginConverter();
       pluginCode = converter.convert(pluginCode);
+    } else if (type == 'mf') {
+      originalPluginCode = pluginCode;
+      pluginCode = await _loadMusicFreeAdapter();
     }
 
     final fileName = 'downloaded_${DateTime.now().millisecondsSinceEpoch}.js';
@@ -325,7 +353,28 @@ class PluginService {
           '洛雪插件格式校验失败：代码中未找到lx关键字或module.exports',
         );
       }
+    } else if (type == 'mf') {
+      // MusicFree 插件是打包后的 CommonJS 模块，必然导出 module.exports，
+      // 且声明 platform 与（getMediaSource 或 search）中的至少一个。
+      final lowerCode = code.toLowerCase();
+      final hasModuleExports = lowerCode.contains('module.exports');
+      final hasPlatform = lowerCode.contains('platform');
+      final hasMediaSource = lowerCode.contains('getmediasource');
+      if (!hasModuleExports || (!hasPlatform && !hasMediaSource)) {
+        throw Exception(
+          'MusicFree 插件格式校验失败：代码中未找到module.exports或platform/getMediaSource',
+        );
+      }
     }
+  }
+
+  /// 读取 MusicFree 适配器脚本（所有 MusicFree 插件共用）。
+  Future<String> _loadMusicFreeAdapter() async {
+    final adapter = await rootBundle.loadString(_musicFreeAdapterAsset);
+    if (adapter.trim().isEmpty) {
+      throw Exception('MusicFree 适配器资源缺失，请重新安装应用');
+    }
+    return adapter;
   }
 
   Future<PluginInfo> addPlugin(
@@ -679,6 +728,35 @@ class PluginService {
     File file,
   ) async {
     final code = await file.readAsString();
+
+    if (plugin.type == 'mf') {
+      // MusicFree 插件存储的是「适配器 + .source.js 原始插件源码」。适配器随
+      // App 升级更新，所以每次加载都从资源里重新读取，避免用户永久停留在旧
+      // 适配器上。
+      final sourceFile = File('${file.path}.source.js');
+      String? originalCode;
+      if (await sourceFile.exists()) {
+        originalCode = await sourceFile.readAsString();
+      }
+      if (originalCode == null || originalCode.trim().isEmpty) {
+        // 适配器本身没有任何音源，只有配合原始插件源码才有意义。缺少源码时
+        // 明确报错，比加载出一个「0 个音源」的插件更容易让用户理解。
+        throw Exception(
+          'MusicFree 插件 ${plugin.name} 缺少原始源码文件（.source.js），请删除后重新添加',
+        );
+      }
+
+      final adapterCode = await _loadMusicFreeAdapter();
+      if (adapterCode != code) {
+        await file.writeAsString(adapterCode);
+        print('[PluginService] refreshed MusicFree adapter: ${plugin.name}');
+      }
+      return _PreparedPluginCode(
+        code: adapterCode,
+        originalCode: originalCode,
+      );
+    }
+
     if (plugin.type != 'lx') {
       return _PreparedPluginCode(code: code);
     }
@@ -735,22 +813,11 @@ class PluginService {
     final sourceIds = <String>{};
     for (final host in enabledPlugins) {
       for (final source in host.sources) {
-        final id = _sourceNameToId(source.name);
+        final id = SourceIdMapping.knownId(source.name);
         if (id != null) sourceIds.add(id);
       }
     }
     return sourceIds.toList();
-  }
-
-  String? _sourceNameToId(String name) {
-    final map = {
-      '酷我音乐': 'kw',
-      '酷狗音乐': 'kg',
-      'QQ音乐': 'tx',
-      '网易云音乐': 'wy',
-      '咪咕音乐': 'mg',
-    };
-    return map[name];
   }
 
   void dispose() {

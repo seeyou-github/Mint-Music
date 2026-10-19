@@ -39,6 +39,16 @@ class PluginHost {
         }
         _apiInjected = true;
       }
+
+      // MusicFree 格式插件：适配器依赖 require()，需要在执行插件代码前把兼容
+      // 运行时与它声明用到的第三方模块注入到同一个 JS 运行时。
+      if (JsEngineService.isMusicFreeAdapterCode(pluginCode)) {
+        final modules = JsEngineService.detectRequiredModules(
+          originalPluginCode ?? pluginCode,
+        );
+        await _engine.ensurePluginModules(modules);
+      }
+
       print('[PluginHost] 开始加载插件...');
       _engine.evaluate('var module = { exports: {} };');
       _engine.evaluate('var exports = module.exports;');

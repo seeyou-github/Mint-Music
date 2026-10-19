@@ -86,6 +86,12 @@ class MusicInfoForPlugin {
   final Map<String, dynamic>? typeMap;
   final Map<String, dynamic>? typeUrl;
 
+  /// 插件自定义的附加数据（原样透传，不参与内置源的字段映射）。
+  ///
+  /// MusicFree 插件依赖原始 `musicItem`（`extra.musicItem`）解析播放地址与
+  /// 歌词，因此搜索结果会把它塞进这里并经由 [Song.lx] 往返。
+  final Map<String, dynamic>? extra;
+
   const MusicInfoForPlugin({
     this.songmid,
     this.songId,
@@ -107,6 +113,7 @@ class MusicInfoForPlugin {
     this.types,
     this.typeMap,
     this.typeUrl,
+    this.extra,
   });
 
   String get id => songmid ?? songId?.toString() ?? hash ?? '';
@@ -133,6 +140,7 @@ class MusicInfoForPlugin {
     'types': types,
     '_types': typeMap,
     'typeUrl': typeUrl ?? <String, dynamic>{},
+    'extra': extra,
     'id': id,
   };
 
@@ -161,6 +169,9 @@ class MusicInfoForPlugin {
           : null,
       typeUrl: json['typeUrl'] is Map
           ? Map<String, dynamic>.from(json['typeUrl'])
+          : null,
+      extra: json['extra'] is Map
+          ? Map<String, dynamic>.from(json['extra'])
           : null,
     );
   }

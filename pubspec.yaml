@@ -77,6 +77,7 @@ flutter:
   assets:
     - assets/images/
     - assets/afp/
+    - assets/plugin_modules/
     - assets/amll/amll-bundle.js
     - assets/amll/amll-core.css
     - assets/amll/lyric_player.html

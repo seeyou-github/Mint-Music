@@ -5,6 +5,7 @@ import '../../discover/domain/models/playlist.dart';
 import '../../discover/domain/models/leaderboard.dart';
 import '../domain/music_source_provider.dart';
 import '../domain/plugin_types.dart';
+import '../domain/source_id_mapping.dart';
 import '../data/plugin_service.dart';
 import '../data/plugin_host.dart';
 import '../data/netease_music_source.dart';
@@ -60,23 +61,7 @@ class MusicSourceManager {
     _searchResultsCache.clear();
   }
 
-  static const Map<String, String> _sourceIdToName = {
-    'wy': '网易云音乐',
-    'kg': '酷狗音乐',
-    'kw': '酷我音乐',
-    'tx': 'QQ音乐',
-    'mg': '咪咕音乐',
-    'qsvip': '汽水VIP',
-  };
-
-  static const Map<String, String> _sourceNameToId = {
-    '网易云音乐': 'wy',
-    '酷狗音乐': 'kg',
-    '酷我音乐': 'kw',
-    'QQ音乐': 'tx',
-    '咪咕音乐': 'mg',
-    '汽水VIP': 'qsvip',
-  };
+  static const Map<String, String> _sourceIdToName = SourceIdMapping.idToName;
 
   bool _isValidAudioUrl(String url) {
     final uri = Uri.tryParse(url.trim());
@@ -140,16 +125,8 @@ class MusicSourceManager {
     final seenIds = <String>{};
     for (final host in _pluginService.enabledPlugins) {
       for (final source in host.sources) {
-        String id;
-        final knownId = _sourceNameToId[source.name];
-        if (knownId != null) {
-          id = knownId;
-        } else {
-          id = source.name.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
-          if (id.isEmpty) {
-            id = 'src_${source.name.hashCode.toRadixString(36)}';
-          }
-        }
+        // 名称 → id 的推导与 MusicFree 适配器保持一致（见 SourceIdMapping）。
+        final id = SourceIdMapping.deriveId(source.name);
 
         if (!seenIds.contains(id)) {
           seenIds.add(id);
@@ -176,7 +153,7 @@ class MusicSourceManager {
               _sourceIdToName[sourceId] ??
               host.sources
                   .firstWhere(
-                    (s) => _sourceNameToId[s.name] == sourceId,
+                    (s) => SourceIdMapping.knownId(s.name) == sourceId,
                     orElse: () =>
                         PluginSourceInfo(name: sourceId, qualities: []),
                   )
@@ -212,10 +189,7 @@ class MusicSourceManager {
       final pluginSourceId = _getSourceIdForHost(host, sourceId);
       if (pluginSourceId != null) {
         for (final source in host.sources) {
-          final knownId = _sourceNameToId[source.name];
-          final effectiveId =
-              knownId ??
-              source.name.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+          final effectiveId = SourceIdMapping.deriveId(source.name);
           if (effectiveId == pluginSourceId && source.qualities.isNotEmpty) {
             return source.qualities;
           }
@@ -251,10 +225,7 @@ class MusicSourceManager {
     final specs = <PluginSourceSpec>[];
     final seenIds = <String>{};
     for (final source in host.sources) {
-      final knownId = _sourceNameToId[source.name];
-      final id = (knownId != null && knownId.isNotEmpty)
-          ? knownId
-          : source.name.trim();
+      final id = SourceIdMapping.deriveId(source.name);
       if (id.isEmpty || seenIds.contains(id)) continue;
       seenIds.add(id);
       final qualities = source.qualities.isNotEmpty
@@ -376,7 +347,7 @@ class MusicSourceManager {
     final normalized = sourceId.trim().toLowerCase();
     if (_builtInSources.containsKey(normalized)) return normalized;
 
-    for (final entry in _sourceNameToId.entries) {
+    for (final entry in SourceIdMapping.aliases.entries) {
       if (entry.key.toLowerCase() == normalized || entry.value == normalized) {
         return entry.value;
       }
@@ -386,7 +357,9 @@ class MusicSourceManager {
       for (final pluginSourceId in host.sourceActions.keys) {
         final pluginId = pluginSourceId.trim().toLowerCase();
         if (pluginId == normalized) return pluginSourceId;
-        if (_sourceNameToId[pluginSourceId] == normalized) return normalized;
+        if (SourceIdMapping.knownId(pluginSourceId) == normalized) {
+          return normalized;
+        }
       }
     }
 
@@ -414,7 +387,7 @@ class MusicSourceManager {
 
     for (final entry in host.sourceActions.entries) {
       final pluginSourceId = entry.key;
-      final knownId = _sourceNameToId[pluginSourceId];
+      final knownId = SourceIdMapping.knownId(pluginSourceId);
       if (knownId == sourceId) {
         print('[MusicSourceManager] 通过名称映射匹配: $pluginSourceId -> $sourceId');
         return pluginSourceId;
@@ -433,7 +406,7 @@ class MusicSourceManager {
     }
 
     for (final source in host.sources) {
-      final knownId = _sourceNameToId[source.name];
+      final knownId = SourceIdMapping.knownId(source.name);
       if (knownId == sourceId) {
         print('[MusicSourceManager] 通过sources匹配: ${source.name} -> $sourceId');
         return sourceId;
@@ -1089,10 +1062,7 @@ class MusicSourceManager {
 
   List<String> _getPluginQualities(PluginHost host, String sourceId) {
     for (final source in host.sources) {
-      final knownId = _sourceNameToId[source.name];
-      final effectiveId =
-          knownId ??
-          source.name.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+      final effectiveId = SourceIdMapping.deriveId(source.name);
       if (effectiveId == sourceId && source.qualities.isNotEmpty) {
         return source.qualities;
       }
@@ -1300,6 +1270,8 @@ class MusicSourceManager {
       types: readList('types'),
       typeMap: readMap('_types'),
       typeUrl: readMap('typeUrl') ?? <String, dynamic>{},
+      // MusicFree 插件解析播放地址 / 歌词时需要原始 musicItem，这里原样回传。
+      extra: readMap('extra'),
     );
   }
 

@@ -6,6 +6,7 @@ import 'package:crypto/crypto.dart';
 import 'package:archive/archive.dart';
 import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_js/flutter_js.dart';
 import 'package:pointycastle/export.dart' as pc;
 
@@ -746,6 +747,120 @@ function __zlibRequest(action, data) {
     return evaluate(apiCode);
   }
 
+  /// MusicFree 兼容运行时的资源目录。
+  static const String _pluginModulesAssetDir = 'assets/plugin_modules';
+
+  /// MusicFree 兼容运行时本体（require 注册表 / axios 适配层 / 浏览器垫片）。
+  static const String _musicFreeRuntimeAsset =
+      '$_pluginModulesAssetDir/musicfree_runtime.js';
+
+  /// 插件 `require()` 名称 → 内置资源文件。
+  ///
+  /// 只收录 MusicFree 生态里常见的纯前端依赖；未收录的模块由运行时返回空
+  /// 对象（与 MusicFree 官方运行时一致，插件通常把这类依赖当可选能力）。
+  static const Map<String, String> _pluginModuleAssets = {
+    'crypto-js': '$_pluginModulesAssetDir/crypto-js.js',
+    'dayjs': '$_pluginModulesAssetDir/dayjs.js',
+    'he': '$_pluginModulesAssetDir/he.js',
+    'qs': '$_pluginModulesAssetDir/qs.js',
+    'big-integer': '$_pluginModulesAssetDir/big-integer.js',
+    'cheerio': '$_pluginModulesAssetDir/cheerio.js',
+  };
+
+  final Set<String> _loadedPluginModules = <String>{};
+  bool _musicFreeRuntimeInjected = false;
+
+  /// 已注入的 MusicFree 模块名（供宿主日志与测试断言使用）。
+  Set<String> get loadedPluginModules => Set.unmodifiable(_loadedPluginModules);
+
+  /// 注入失败的模块名（用于诊断；注入失败不会中断插件加载）。
+  final Set<String> _failedPluginModules = <String>{};
+
+  /// 注入 MusicFree 依赖时失败的模块名。
+  Set<String> get failedPluginModules => Set.unmodifiable(_failedPluginModules);
+
+  /// 确保 MusicFree 兼容运行时与 [moduleNames] 指定的模块已注入当前 JS 运行时。
+  ///
+  /// 每个运行时实例只注入一次：运行时状态（模块注册表、插件缓存的实例）必须
+  /// 在同一运行时内共享，切换插件时不会重复求值这些大体积脚本。
+  ///
+  /// 单个依赖注入失败（例如极端体积的打包产物在该 JS 引擎上解析失败）不会中断
+  /// 加载：运行时的 `require()` 会对缺失模块返回空对象，插件仍能加载与搜索，
+  /// 只有真正用到该依赖的功能会报错。这样可避免「一个可选依赖拖垮整个插件」。
+  /// 运行时本体注入失败才会抛异常。
+  Future<void> ensurePluginModules(Iterable<String> moduleNames) async {
+    if (!_musicFreeRuntimeInjected) {
+      final runtimeCode = await rootBundle.loadString(_musicFreeRuntimeAsset);
+      final result = evaluate('$runtimeCode\n;void 0;');
+      if (result.isError) {
+        throw Exception('MusicFree 运行时注入失败: ${result.stringResult}');
+      }
+      _musicFreeRuntimeInjected = true;
+    }
+
+    for (final rawName in moduleNames) {
+      final name = _normalizeModuleName(rawName);
+      if (name.isEmpty || _loadedPluginModules.contains(name)) continue;
+      // axios 由运行时自带实现（基于 cerumusic.request 桥），不需要注入外部脚本。
+      if (name == 'axios') {
+        _loadedPluginModules.add(name);
+        continue;
+      }
+      final assetPath = _pluginModuleAssets[name];
+      if (assetPath == null) continue;
+
+      final source = await rootBundle.loadString(assetPath);
+      final wrapped =
+          '(function() {\n'
+          '  var module = { exports: {} };\n'
+          '  var exports = module.exports;\n'
+          '$source\n'
+          '  __mfRegisterModule(${jsonEncode(name)}, module.exports);\n'
+          '})();\n'
+          ';void 0;';
+      final result = evaluate(wrapped);
+      if (result.isError) {
+        print('[JsEngine] 注入 MusicFree 模块 $name 失败: ${result.stringResult}');
+        _failedPluginModules.add(name);
+        _loadedPluginModules.add(name);
+        continue;
+      }
+      _loadedPluginModules.add(name);
+      print('[JsEngine] 已注入 MusicFree 模块: $name');
+    }
+  }
+
+  String _normalizeModuleName(String name) {
+    var normalized = name.trim();
+    if (normalized.startsWith('node:')) {
+      normalized = normalized.substring('node:'.length);
+    }
+    return normalized;
+  }
+
+  /// 解析插件源码中出现过的 `require('xxx')` 调用。
+  ///
+  /// MusicFree 插件是打包后的 CommonJS（webpack/rollup），依赖声明集中在文件
+  /// 顶部，正则可覆盖；动态拼接的 `require(变量)` 无法静态识别，由运行时的
+  /// 空模块兜底。
+  static Set<String> detectRequiredModules(String pluginCode) {
+    final modules = <String>{};
+    final pattern = RegExp(
+      r'''require\(\s*['"]([^'"]+)['"]\s*\)''',
+      multiLine: true,
+    );
+    for (final match in pattern.allMatches(pluginCode)) {
+      final name = match.group(1);
+      if (name == null || name.isEmpty) continue;
+      modules.add(name);
+    }
+    return modules;
+  }
+
+  /// 判断插件代码是否由 MusicFree 适配器生成（即 MusicFree 格式插件）。
+  static bool isMusicFreeAdapterCode(String code) =>
+      code.contains('__mintMusicFreeAdapter');
+
   void _handleHttpRequest(dynamic args) {
     try {
       print('[JsEngine] _handleHttpRequest 收到参数类型: ${args.runtimeType}');
@@ -1061,6 +1176,14 @@ function __zlibRequest(action, data) {
       final timeout = (options['timeout'] as int?) ?? 10000;
 
       Object? bodyData = options['body'];
+      if (options['bodyBase64'] is String && bodyData == null) {
+        // 二进制请求体（axios 里 Uint8Array / ArrayBuffer 形式的 data）。
+        try {
+          bodyData = base64Decode(options['bodyBase64'] as String);
+        } catch (e) {
+          print('[JsEngine] bodyBase64 解码失败: $e');
+        }
+      }
       if (options['form'] is Map && bodyData == null) {
         final form = Map<String, dynamic>.from(options['form'] as Map);
         bodyData = Uri(
@@ -1073,7 +1196,7 @@ function __zlibRequest(action, data) {
           () => 'application/x-www-form-urlencoded;charset=UTF-8',
         );
       }
-      if (bodyData is Map || bodyData is List) {
+      if (bodyData is Map || (bodyData is List && bodyData is! Uint8List)) {
         final contentType = headers.entries
             .firstWhere(
               (entry) => entry.key.toLowerCase() == 'content-type',

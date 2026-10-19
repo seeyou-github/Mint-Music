@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../../core/l10n/l10n.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/theme_provider.dart';
+import '../../plugin/data/plugin_service.dart';
 import '../application/plugin_providers.dart';
 import '../data/plugin_repository.dart';
 import '../domain/models/plugin_info.dart';
@@ -423,10 +424,12 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
     PluginInfo plugin,
     List<PluginUpdateResult> updateResults,
   ) {
-    final typeLabel = plugin.type == 'lx' ? '洛雪' : '澜音';
-    final typeColor = plugin.type == 'lx'
-        ? const Color(0xFF4FC3F7)
-        : const Color(0xFFCE93D8);
+    final typeLabel = PluginService.pluginTypeLabel(plugin.type);
+    final typeColor = switch (plugin.type) {
+      'lx' => const Color(0xFF4FC3F7),
+      'mf' => const Color(0xFF80CBC4),
+      _ => const Color(0xFFCE93D8),
+    };
 
     // Find update result for this plugin
     final updateResult = updateResults
@@ -1053,7 +1056,7 @@ class _AddPluginSheetState extends State<_AddPluginSheet> {
             ),
             const SizedBox(height: AppSpacing.xs),
             Text(
-              context.tr('支持澜音(cr)和洛雪(lx)格式的JS插件'),
+              context.tr('支持澜音(cr)、洛雪(lx) 和 MusicFree(mf) 格式的JS插件'),
               style: TextStyle(fontSize: 12, color: colors.textHint),
             ),
             const SizedBox(height: AppSpacing.md),
@@ -1128,7 +1131,10 @@ class _AddPluginSheetState extends State<_AddPluginSheet> {
             const SizedBox(height: AppSpacing.md),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
-              child: Row(
+              child: Wrap(
+                spacing: AppSpacing.sm,
+                runSpacing: AppSpacing.sm,
+                crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
                   Text(
                     context.tr('插件类型：'),
@@ -1138,6 +1144,8 @@ class _AddPluginSheetState extends State<_AddPluginSheet> {
                   _buildTypeChip(context.tr('澜音 (cr)'), 'cr', colors),
                   const SizedBox(width: AppSpacing.sm),
                   _buildTypeChip(context.tr('洛雪 (lx)'), 'lx', colors),
+                  const SizedBox(width: AppSpacing.sm),
+                  _buildTypeChip(context.tr('MusicFree (mf)'), 'mf', colors),
                 ],
               ),
             ),
@@ -1201,7 +1209,7 @@ class _AddPluginSheetState extends State<_AddPluginSheet> {
                 const SizedBox(height: AppSpacing.md),
                 Text(
                   context.tr(
-                    '选择 ${_pluginType == 'lx' ? '洛雪' : '澜音'} 格式的 .js 插件文件',
+                    '选择 ${PluginService.pluginTypeLabel(_pluginType)} 格式的 .js 插件文件',
                   ),
                   textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 13, color: colors.textSecondary),
@@ -1209,9 +1217,11 @@ class _AddPluginSheetState extends State<_AddPluginSheet> {
                 const SizedBox(height: AppSpacing.xs),
                 Text(
                   context.tr(
-                    _pluginType == 'cr'
-                        ? '代码中需包含 cerumusic 关键字'
-                        : '代码中需包含 lx 关键字',
+                    switch (_pluginType) {
+                      'lx' => '代码中需包含 lx 关键字',
+                      'mf' => '代码中需声明 module.exports 与 platform',
+                      _ => '代码中需包含 cerumusic 关键字',
+                    },
                   ),
                   style: TextStyle(fontSize: 11, color: colors.textHint),
                 ),
