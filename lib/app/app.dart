@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -13,6 +14,7 @@ import '../features/plugin/application/plugin_providers.dart';
 import '../features/settings/application/plugin_providers.dart';
 import '../features/settings/application/settings_providers.dart';
 import '../features/settings/data/plugin_repository.dart';
+import 'app_desktop_shell.dart';
 
 class App extends ConsumerStatefulWidget {
   const App({super.key});
@@ -68,28 +70,50 @@ class _AppState extends ConsumerState<App> {
           final isTablet = ResponsiveLayout.isTablet(context);
           // 桌面歌词层与路由内容同级,因此会悬浮在所有页面/弹窗之上。
           // StackFit.passthrough 保证 Navigator 依旧拿到铺满屏幕的紧约束。
-          return Stack(
-            fit: StackFit.passthrough,
-            children: [
-              ResponsiveWrapper(
-                deviceType: deviceType,
-                layoutMode: layoutMode,
-                isLandscape: isLandscape,
-                isTablet: isTablet,
-                child: MediaQuery(
-                  data: MediaQuery.of(context).copyWith(
-                    textScaler: MediaQuery.of(context).textScaler,
+          return Listener(
+            // 鼠标侧键「后退」(Windows 上的 XButton1) 触发的指针事件。
+            // 放在路由之上，因此所有一级/二级页面都能响应。
+            behavior: HitTestBehavior.translucent,
+            onPointerDown: _handleMouseBack,
+            child: Stack(
+              fit: StackFit.passthrough,
+              children: [
+                ResponsiveWrapper(
+                  deviceType: deviceType,
+                  layoutMode: layoutMode,
+                  isLandscape: isLandscape,
+                  isTablet: isTablet,
+                  child: MediaQuery(
+                    data: MediaQuery.of(context).copyWith(
+                      textScaler: MediaQuery.of(context).textScaler,
+                    ),
+                    // 宽屏下左侧导航栏渲染在路由之外，二级页面不会再遮挡它。
+                    child: AppDesktopShell(
+                      child: child ?? const SizedBox.shrink(),
+                    ),
                   ),
-                  child: child ?? const SizedBox.shrink(),
                 ),
-              ),
-              const DesktopLyricLayer(),
-            ],
+                const DesktopLyricLayer(),
+              ],
+            ),
           );
         },
         ),
       ),
     );
+  }
+
+  /// 鼠标侧键「后退」：与系统返回键等效（关闭弹窗 / 返回上一页）。
+  ///
+  /// 复用 [GoRouterDelegate.popRoute]，与 Android 系统返回键同一套逻辑，
+  /// 因此页面里的 `PopScope` 仍然生效（多选模式先退出多选、播放页先冻结
+  /// AMLL WebView 再退出）；一级页面没有可返回内容时不做任何事。
+  void _handleMouseBack(PointerDownEvent event) {
+    if (event.kind != PointerDeviceKind.mouse) return;
+    if ((event.buttons & kBackMouseButton) == 0) return;
+    final delegate = appRouter.routerDelegate;
+    if (delegate.currentConfiguration.matches.isEmpty) return;
+    delegate.popRoute();
   }
 
   Future<void> _checkPluginsForUpdates() async {
