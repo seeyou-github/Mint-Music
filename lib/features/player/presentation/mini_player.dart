@@ -15,6 +15,11 @@ class MiniPlayer extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // 桌面/平板（侧边栏布局）下播放器固定在左侧导航栏底部（SidebarPlayer），
+    // 这里返回空占位，避免页面里再出现一个重复的迷你播放器。
+    if (ResponsiveLayout.shouldShowSidebar(context)) {
+      return const SizedBox.shrink();
+    }
     final colors = ref.watch(themeColorsProvider);
     ref.watch(currentSongIdentityProvider);
     final song = ref.read(playbackControllerProvider).currentSong;

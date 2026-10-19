@@ -4,6 +4,7 @@ import '../../core/constants/app_routes.dart';
 import '../../core/l10n/l10n.dart';
 import '../../core/theme/theme_provider.dart';
 import '../../core/utils/responsive_layout.dart';
+import '../../features/player/presentation/sidebar_player.dart';
 
 /// 一级导航项配置，侧边栏与移动端底部导航共用同一份数据。
 class AppNavItem {
@@ -168,6 +169,9 @@ class AppSidebar extends ConsumerWidget {
                 },
               ),
             ),
+
+            // 底部播放器（桌面端 MiniPlayer 的替代，只在展开态显示）
+            if (isExpanded) const SidebarPlayer(),
           ],
         ),
       ),

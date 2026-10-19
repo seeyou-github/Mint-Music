@@ -74,7 +74,7 @@ class _AppShellState extends ConsumerState<AppShell> {
     final showSidebar = ResponsiveLayout.shouldShowSidebar(context);
 
     if (showSidebar) {
-      return _buildWideLayout(colors, isSettingsPage);
+      return _buildWideLayout(colors);
     }
     return _buildPhoneLayout(colors, isSettingsPage);
   }
@@ -140,26 +140,13 @@ class _AppShellState extends ConsumerState<AppShell> {
     );
   }
 
-  /// 宽屏内容区：左侧导航栏由 `AppDesktopShell` 统一渲染在路由之外，
-  /// 这里只负责当前分支内容与迷你播放器，保证二级页面不会盖住导航栏。
-  Widget _buildWideLayout(ThemeColors colors, bool isSettingsPage) {
+  /// 宽屏内容区：左侧导航栏（含底部播放器）由 `AppDesktopShell` 统一渲染在
+  /// 路由之外，这里只负责当前分支内容，保证二级页面不会盖住导航栏。
+  Widget _buildWideLayout(ThemeColors colors) {
     return Scaffold(
       backgroundColor: colors.background,
-      body: Stack(
-        children: [
-          RepaintBoundary(
-            child: widget.navigationShell,
-          ),
-          if (!isSettingsPage)
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 5,
-              child: RepaintBoundary(
-                child: const MiniPlayer(),
-              ),
-            ),
-        ],
+      body: RepaintBoundary(
+        child: widget.navigationShell,
       ),
     );
   }
