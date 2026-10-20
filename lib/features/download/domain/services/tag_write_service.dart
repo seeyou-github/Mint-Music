@@ -4,7 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import '../../../player/domain/models/song.dart';
 import '../../../player/domain/services/lyric_parser.dart';
-import '../../../shared/services/cover_fetcher.dart';
+import '../../../../shared/services/cover_fetcher.dart';
 import 'audio_tag_writer.dart';
 
 class TagWriteService {

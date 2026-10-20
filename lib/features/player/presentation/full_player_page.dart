@@ -56,6 +56,7 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
   @override
   void dispose() {
     FullPlayerVisibility.instance.setVisible(false);
+    _pageController.dispose();
     super.dispose();
   }
 
@@ -97,12 +98,6 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
       setState(() => _lyricsPageBuilt = true);
     }
     _ensureLyricsLoaded();
-  }
-
-  @override
-  void dispose() {
-    _pageController.dispose();
-    super.dispose();
   }
 
   @override

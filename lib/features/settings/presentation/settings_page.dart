@@ -707,7 +707,7 @@ class _AppearanceContent extends ConsumerWidget {
             ],
           ),
           colors: colors,
-          onTap: () => _showAppFontSheet(context, colors, ref),
+          onTap: () => _showAppFontSheet(context, colors),
         ),
       ],
     );
@@ -941,12 +941,7 @@ class _AppearanceContent extends ConsumerWidget {
   Future<void> _showAppFontSheet(
     BuildContext context,
     ThemeColors colors,
-    WidgetRef ref,
   ) async {
-    final notifier = ref.read(appFontsProvider.notifier);
-    final fonts = ref.read(appFontsProvider);
-    final selected = ref.read(appFontSelectedProvider);
-
     await showModalBottomSheet(
       context: context,
       sheetAnimationStyle: _settingsSheetAnimationStyle,
@@ -955,104 +950,116 @@ class _AppearanceContent extends ConsumerWidget {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      builder: (sheetContext) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(AppSpacing.lg),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: colors.divider,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              ),
-              const SizedBox(height: AppSpacing.md),
-              Text(
-                context.tr('应用字体'),
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                  color: colors.textPrimary,
-                ),
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              Text(
-                context.tr('导入字体文件（可多选），选择其中之一作为应用字体'),
-                style: TextStyle(fontSize: 12, color: colors.textHint),
-              ),
-              const SizedBox(height: AppSpacing.md),
-              // 默认字体
-              _buildFontOption(
-                sheetContext,
-                colors,
-                title: context.tr('默认字体'),
-                subtitle: context.tr('使用内置字体'),
-                isSelected: selected == null,
-                onTap: () async {
-                  await notifier.select(null);
-                  if (sheetContext.mounted) Navigator.pop(sheetContext);
-                },
-              ),
-              ...fonts.map((font) {
-                return _buildFontOption(
-                  sheetContext,
-                  colors,
-                  title: font.family,
-                  subtitle: font.fileName,
-                  isSelected: selected == font.family,
-                  onTap: () async {
-                    await notifier.select(font);
-                    if (sheetContext.mounted) Navigator.pop(sheetContext);
-                  },
-                  onDelete: fonts.length > 1 || selected != font.family
-                      ? () async {
-                          await notifier.remove(font);
-                          if (sheetContext.mounted) {
-                            setState(() {});
+      // 弹层内容用 Consumer 包裹：导入 / 删除字体后列表能自动刷新。
+      builder: (sheetContext) => Consumer(
+        builder: (context, sheetRef, _) {
+          final notifier = sheetRef.read(appFontsProvider.notifier);
+          final fonts = sheetRef.watch(appFontsProvider);
+          final selected = sheetRef.watch(appFontSelectedProvider);
+          return SafeArea(
+            child: SingleChildScrollView(
+              child: Padding(
+                padding: const EdgeInsets.all(AppSpacing.lg),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: colors.divider,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.md),
+                    Text(
+                      context.tr('应用字体'),
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: colors.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    Text(
+                      context.tr('导入字体文件（可多选），选择其中之一作为应用字体'),
+                      style: TextStyle(fontSize: 12, color: colors.textHint),
+                    ),
+                    const SizedBox(height: AppSpacing.md),
+                    // 默认字体
+                    _buildFontOption(
+                      sheetContext,
+                      colors,
+                      title: context.tr('默认字体'),
+                      subtitle: context.tr('使用内置字体'),
+                      isSelected: selected == null,
+                      onTap: () async {
+                        await notifier.select(null);
+                        if (sheetContext.mounted) Navigator.pop(sheetContext);
+                      },
+                    ),
+                    ...fonts.map((font) {
+                      return _buildFontOption(
+                        sheetContext,
+                        colors,
+                        title: font.family,
+                        subtitle: font.fileName,
+                        isSelected: selected == font.family,
+                        onTap: () async {
+                          await notifier.select(font);
+                          if (sheetContext.mounted) Navigator.pop(sheetContext);
+                        },
+                        onDelete: fonts.length > 1 || selected != font.family
+                            ? () async {
+                                await notifier.remove(font);
+                              }
+                            : null,
+                      );
+                    }),
+                    const SizedBox(height: AppSpacing.sm),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: () async {
+                          final result = await FilePicker.platform.pickFiles(
+                            type: FileType.custom,
+                            allowedExtensions: AppFontManager.supportedExtensions,
+                            allowMultiple: true,
+                          );
+                          if (result == null) return;
+                          final paths = result.files
+                              .map((f) => f.path)
+                              .whereType<String>()
+                              .toList();
+                          if (paths.isEmpty) return;
+                          final count = await notifier.importFonts(paths);
+                          if (!sheetContext.mounted) return;
+                          if (count > 0) {
+                            _showSettingsMessage(
+                              sheetContext,
+                              '已导入 $count 个字体文件',
+                            );
+                          } else {
+                            _showSettingsMessage(
+                              sheetContext,
+                              '没有可导入的字体文件',
+                            );
                           }
-                        }
-                      : null,
-                );
-              }),
-              const SizedBox(height: AppSpacing.sm),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: () async {
-                    final result = await FilePicker.platform.pickFiles(
-                      type: FileType.custom,
-                      allowedExtensions: AppFontManager.supportedExtensions,
-                      allowMultiple: true,
-                    );
-                    if (result == null) return;
-                    final paths = result.files
-                        .map((f) => f.path)
-                        .whereType<String>()
-                        .toList();
-                    if (paths.isEmpty) return;
-                    final count = await notifier.importFonts(paths);
-                    if (!sheetContext.mounted) return;
-                    if (count > 0) {
-                      _showSettingsMessage(sheetContext, '已导入 $count 个字体文件');
-                    } else {
-                      _showSettingsMessage(sheetContext, '没有可导入的字体文件');
-                    }
-                    setState(() {});
-                  },
-                  icon: const Icon(Icons.file_upload_outlined, size: 18),
-                  label: Text(context.tr('导入字体文件')),
+                        },
+                        icon: const Icon(Icons.file_upload_outlined, size: 18),
+                        label: Text(context.tr('导入字体文件')),
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.lg),
+                  ],
                 ),
               ),
-              const SizedBox(height: AppSpacing.lg),
-            ],
-          ),
-        ),
+            ),
+          );
+        },
       ),
     );
   }
