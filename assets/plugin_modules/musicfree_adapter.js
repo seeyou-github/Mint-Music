@@ -263,6 +263,33 @@ function __mfUnwrapItem(musicInfo) {
   };
 }
 
+/**
+ * 统一歌曲时长单位（秒）。
+ *
+ * MusicFree 插件的 duration 单位并不统一：官方约定是秒，但不少插件直接
+ * 透传平台的毫秒值（如网易的 dt）。这里统一换算成秒——明显超出「合理歌曲
+ * 时长」范围（按秒算）的值按毫秒折算，避免界面上出现 4000:00 这类异常时长。
+ */
+function __mfNormalizeDuration(value) {
+  var duration = value;
+  if (typeof duration === 'string') {
+    var parsed = parseFloat(duration);
+    duration = isNaN(parsed) ? 0 : parsed;
+  }
+  if (typeof duration !== 'number' || !isFinite(duration) || duration < 0) {
+    return 0;
+  }
+  var MIN_SECONDS = 5; // 5 秒
+  var MAX_SECONDS = 7200; // 2 小时
+  if (duration > MAX_SECONDS) {
+    var asMilliseconds = duration / 1000;
+    if (asMilliseconds >= MIN_SECONDS && asMilliseconds <= MAX_SECONDS) {
+      duration = asMilliseconds;
+    }
+  }
+  return Math.round(duration);
+}
+
 /** 把 MusicFree musicItem 展平成本项目 _musicInfoToSong 可识别的字段。 */
 function __mfMapMusicItem(item, sourceId) {
   if (!item || typeof item !== 'object') return null;
@@ -278,12 +305,7 @@ function __mfMapMusicItem(item, sourceId) {
   if (album && typeof album === 'object') album = album.name;
   album = __mfText(album || item.albumName, '');
 
-  var duration = item.duration;
-  if (typeof duration === 'string') {
-    var parsed = parseFloat(duration);
-    duration = isNaN(parsed) ? 0 : parsed;
-  }
-  if (typeof duration !== 'number' || !isFinite(duration) || duration < 0) duration = 0;
+  var duration = __mfNormalizeDuration(item.duration);
 
   var id = item.id === null || item.id === undefined ? '' : String(item.id);
 
