@@ -30,18 +30,21 @@ class TaskbarThumbnailService {
 
   /// 处理原生侧发来的按钮事件。
   Future<void> _handleNativeCall(MethodCall call) async {
-    final controller = _ref.read(playbackControllerProvider.notifier);
     switch (call.method) {
       case 'playPause':
-        await controller.togglePlayPause();
+        await _ref.read(playbackControllerProvider.notifier).togglePlayPause();
         break;
       case 'previous':
-        await controller.previous();
+        await _ref.read(playbackControllerProvider.notifier).previous();
         break;
       case 'next':
-        await controller.next();
+        await _ref.read(playbackControllerProvider.notifier).next();
         break;
-      default:
+      case 'queryPlaybackState':
+        // 工具栏刚挂上时原生侧会来问一次当前播放状态，
+        // 保证播放 / 暂停图标正确。
+        final state = _ref.read(playbackControllerProvider);
+        _notifyPlaybackState(state.isPlaying);
         break;
     }
   }

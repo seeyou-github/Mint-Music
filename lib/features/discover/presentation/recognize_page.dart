@@ -144,7 +144,6 @@ class _RecognizePageState extends ConsumerState<RecognizePage> {
           children: [
             _buildHeader(context, colors),
             Expanded(child: _buildContent(state, colors)),
-            _buildBottomActions(state, colors),
           ],
         ),
       ),
@@ -182,36 +181,56 @@ class _RecognizePageState extends ConsumerState<RecognizePage> {
       return _buildResults(state.results, colors);
     }
 
-    if (state.status == RecognizeStatus.failed) {
-      return _buildError(state.errorMessage, colors);
-    }
-
-    return _buildRecordingState(state, colors);
+    // 识别提示（失败时显示错误信息）+ 操作按钮：
+    // 识别按钮居中，上传文件按钮在识别按钮下方。
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.xl,
+          vertical: AppSpacing.lg,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _buildStatusArea(state, colors),
+            const SizedBox(height: AppSpacing.xl),
+            _buildActionButtons(state, colors),
+          ],
+        ),
+      ),
+    );
   }
 
-  Widget _buildRecordingState(RecognizeState state, ThemeColors colors) {
+  /// 识别状态提示：失败时显示错误信息，录音中显示进度，其余状态显示一句话。
+  Widget _buildStatusArea(RecognizeState state, ThemeColors colors) {
     final isRecording = state.status == RecognizeStatus.recording;
 
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _buildStatusText(state, colors),
-          if (isRecording) ...[
-            const SizedBox(height: AppSpacing.lg),
-            _buildProgressBar(state, colors),
-            const SizedBox(height: AppSpacing.sm),
-            Text(
-              '${state.elapsedSeconds}s / 15s',
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w300,
-                color: colors.textHint,
-              ),
+    if (state.status == RecognizeStatus.failed) {
+      return Text(
+        state.errorMessage ?? tr('未能识别到歌曲'),
+        textAlign: TextAlign.center,
+        style: TextStyle(fontSize: 15, color: colors.error),
+      );
+    }
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _buildStatusText(state, colors),
+        if (isRecording) ...[
+          const SizedBox(height: AppSpacing.lg),
+          _buildProgressBar(state, colors),
+          const SizedBox(height: AppSpacing.sm),
+          Text(
+            '${state.elapsedSeconds}s / 15s',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w300,
+              color: colors.textHint,
             ),
-          ],
+          ),
         ],
-      ),
+      ],
     );
   }
 
@@ -261,34 +280,6 @@ class _RecognizePageState extends ConsumerState<RecognizePage> {
           backgroundColor: colors.divider,
           valueColor: AlwaysStoppedAnimation<Color>(colors.primary),
           minHeight: 4,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildError(String? message, ThemeColors colors) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xl),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 90,
-              height: 90,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: colors.error.withValues(alpha: 0.1),
-              ),
-              child: Icon(Icons.error_outline, size: 40, color: colors.error),
-            ),
-            const SizedBox(height: AppSpacing.lg),
-            Text(
-              message ?? context.tr('未能识别到歌曲'),
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 15, color: colors.textSecondary),
-            ),
-          ],
         ),
       ),
     );
@@ -448,14 +439,10 @@ class _RecognizePageState extends ConsumerState<RecognizePage> {
     );
   }
 
-  /// 底部操作按钮：识别按钮与上传文件按钮并排居中。
+  /// 操作按钮：识别按钮（居中）+ 上传文件按钮（在其下方）。
   ///
   /// 识别失败时同样展示这两个按钮（不再单独显示「重试」按钮）。
-  Widget _buildBottomActions(RecognizeState state, ThemeColors colors) {
-    if (state.status == RecognizeStatus.success) {
-      return const SizedBox.shrink();
-    }
-
+  Widget _buildActionButtons(RecognizeState state, ThemeColors colors) {
     final isIdle = state.status == RecognizeStatus.idle;
     final isRecording = state.status == RecognizeStatus.recording;
     final isFailed = state.status == RecognizeStatus.failed;
@@ -466,101 +453,89 @@ class _RecognizePageState extends ConsumerState<RecognizePage> {
     // 空闲 / 识别失败时都可以上传文件；录音中该按钮变为「取消」。
     final canUpload = isIdle || isFailed;
 
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(
-          AppSpacing.lg,
-          0,
-          AppSpacing.lg,
-          AppSpacing.xxl,
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            // 主按钮：开始 / 停止识别
-            GestureDetector(
-              onTap:
-                  isBusy ? null : (isRecording ? _handleStop : _handleStart),
-              child: Container(
-                width: 72,
-                height: 72,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: isBusy
-                      ? colors.disabled
-                      : isRecording
-                      ? Colors.red
-                      : colors.primary,
-                  boxShadow: [
-                    BoxShadow(
-                      color: (isRecording ? Colors.red : colors.primary)
-                          .withValues(alpha: 0.3),
-                      blurRadius: 12,
-                      spreadRadius: 1,
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // 主按钮：开始 / 停止识别（居中）
+        GestureDetector(
+          onTap: isBusy ? null : (isRecording ? _handleStop : _handleStart),
+          child: Container(
+            width: 72,
+            height: 72,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: isBusy
+                  ? colors.disabled
+                  : isRecording
+                  ? Colors.red
+                  : colors.primary,
+              boxShadow: [
+                BoxShadow(
+                  color: (isRecording ? Colors.red : colors.primary)
+                      .withValues(alpha: 0.3),
+                  blurRadius: 12,
+                  spreadRadius: 1,
+                ),
+              ],
+            ),
+            child: isBusy
+                ? const Center(
+                    child: SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.5,
+                        color: Colors.white,
+                      ),
                     ),
-                  ],
-                ),
-                child: isBusy
-                    ? const Center(
-                        child: SizedBox(
-                          width: 24,
-                          height: 24,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2.5,
-                            color: Colors.white,
-                          ),
-                        ),
-                      )
-                    : Icon(
-                        isRecording ? Icons.stop_rounded : Icons.mic_rounded,
-                        size: 32,
-                        color: colors.textOnPrimary,
-                      ),
-              ),
-            ),
-            const SizedBox(width: AppSpacing.xl),
-            // 辅助按钮：上传文件（对标 CeruMusic triggerUpload）
-            GestureDetector(
-              onTap: canUpload
-                  ? _handleFileUpload
-                  : (isRecording ? _handleCancel : null),
-              child: Opacity(
-                opacity: canUpload ? 1.0 : 0.6,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: AppSpacing.lg,
-                    vertical: AppSpacing.sm + 2,
+                  )
+                : Icon(
+                    isRecording ? Icons.stop_rounded : Icons.mic_rounded,
+                    size: 32,
+                    color: colors.textOnPrimary,
                   ),
-                  decoration: BoxDecoration(
-                    color: colors.surface,
-                    borderRadius: BorderRadius.circular(AppRadius.full),
-                    border: Border.all(color: colors.divider),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        canUpload ? Icons.file_upload_outlined : Icons.close,
-                        size: 16,
-                        color: colors.textSecondary,
-                      ),
-                      const SizedBox(width: AppSpacing.xs),
-                      Text(
-                        context.tr(canUpload ? '上传文件' : '取消'),
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: colors.textSecondary,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ],
+          ),
         ),
-      ),
+        const SizedBox(height: AppSpacing.lg),
+        // 辅助按钮：上传文件（在识别按钮下方）
+        GestureDetector(
+          onTap: canUpload
+              ? _handleFileUpload
+              : (isRecording ? _handleCancel : null),
+          child: Opacity(
+            opacity: canUpload ? 1.0 : 0.6,
+            child: Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.lg,
+                vertical: AppSpacing.sm + 2,
+              ),
+              decoration: BoxDecoration(
+                color: colors.surface,
+                borderRadius: BorderRadius.circular(AppRadius.full),
+                border: Border.all(color: colors.divider),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    canUpload ? Icons.file_upload_outlined : Icons.close,
+                    size: 16,
+                    color: colors.textSecondary,
+                  ),
+                  const SizedBox(width: AppSpacing.xs),
+                  Text(
+                    context.tr(canUpload ? '上传文件' : '取消'),
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: colors.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 

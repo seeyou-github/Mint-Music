@@ -112,6 +112,8 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
       ::RegisterWindowMessageW(L"TaskbarButtonCreated");
   if (taskbar_button_created != 0 && message == taskbar_button_created) {
     mintmusic::ThumbnailToolbar::Attach(hwnd);
+    // 让 Dart 回报一次当前播放状态，保证播放 / 暂停按钮的图标正确。
+    SendToDart("queryPlaybackState");
     return 0;
   }
 

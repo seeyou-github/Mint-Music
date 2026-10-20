@@ -89,30 +89,34 @@ HBITMAP CreateGlyphBitmap(UINT size, Glyph glyph) {
 
   switch (glyph) {
     case Glyph::kPlay: {
+      // 向右的三角形
       POINT points[3] = {
-          {cx - static_cast<LONG>(s * 0.7), cy - s},
-          {cx - static_cast<LONG>(s * 0.7), cy + s},
+          {cx - static_cast<LONG>(s * 0.6), cy - s},
+          {cx - static_cast<LONG>(s * 0.6), cy + s},
           {cx + s, cy},
       };
       ::Polygon(dc, points, 3);
       break;
     }
     case Glyph::kPause: {
+      // 两条竖条
       ::Rectangle(dc, cx - s, cy - s, cx - s + s / 2, cy + s);
       ::Rectangle(dc, cx + s / 2, cy - s, cx + s, cy + s);
       break;
     }
     case Glyph::kPrevious: {
+      // 左侧竖条 + 向左的三角形
       ::Rectangle(dc, cx - s, cy - s, cx - s + s / 3, cy + s);
       POINT points[3] = {
-          {cx - s / 2, cy - s},
-          {cx - s / 2, cy + s},
-          {cx + s, cy},
+          {cx + s / 2, cy - s},
+          {cx + s / 2, cy + s},
+          {cx - s, cy},
       };
       ::Polygon(dc, points, 3);
       break;
     }
     case Glyph::kNext: {
+      // 向右的三角形 + 右侧竖条
       POINT points[3] = {
           {cx - s, cy - s},
           {cx - s, cy + s},
