@@ -1,6 +1,9 @@
 #include "flutter_window.h"
 
 #include <optional>
+#include <windows.h>
+
+#include <shobjidl.h>
 
 #include "flutter/generated_plugin_registrant.h"
 #include "thumbnail_toolbar.h"
@@ -113,20 +116,9 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
   }
 
   // 缩略图工具栏的按钮点击事件（只拦截我们自己的按钮 ID）。
-  if (message == WM_COMMAND) {
-    const int command_id = LOWORD(wparam);
-    const int notification_id = HIWORD(wparam);
-    int thumbnail_id = 0;
-    if (command_id == mintmusic::kThumbnailButtonPrevious ||
-        command_id == mintmusic::kThumbnailButtonPlayPause ||
-        command_id == mintmusic::kThumbnailButtonNext) {
-      thumbnail_id = command_id;
-    } else if (notification_id == mintmusic::kThumbnailButtonPrevious ||
-               notification_id == mintmusic::kThumbnailButtonPlayPause ||
-               notification_id == mintmusic::kThumbnailButtonNext) {
-      thumbnail_id = notification_id;
-    }
-    switch (thumbnail_id) {
+  // 任务栏工具栏的点击通知码为 THBN_CLICKED，按钮 ID 在 wParam 低位。
+  if (message == WM_COMMAND && HIWORD(wparam) == THBN_CLICKED) {
+    switch (LOWORD(wparam)) {
       case mintmusic::kThumbnailButtonPrevious:
         SendToDart("previous");
         return 0;

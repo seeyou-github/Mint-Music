@@ -4,6 +4,7 @@
 #include <shobjidl.h>
 
 #include <cstring>
+#include <strsafe.h>
 #include <windows.h>
 
 namespace mintmusic {
@@ -213,20 +214,23 @@ void ThumbnailToolbar::Attach(HWND window) {
   buttons[0].dwMask = THB_BITMAP | THB_TOOLTIP | THB_FLAGS;
   buttons[0].iId = static_cast<UINT>(kThumbnailButtonPrevious);
   buttons[0].iBitmap = static_cast<UINT>(kImagePrevious);
-  buttons[0].pszTip = const_cast<LPWSTR>(L"\u4e0a\u4e00\u9996");
-  buttons[0].dwFlags = THBF_HIDEBACKGROUND;
+  StringCchCopyW(buttons[0].szTip, ARRAYSIZE(buttons[0].szTip),
+                 L"\u4e0a\u4e00\u9996");
+  buttons[0].dwFlags = THBF_ENABLED;
 
   buttons[1].dwMask = THB_BITMAP | THB_TOOLTIP | THB_FLAGS;
   buttons[1].iId = static_cast<UINT>(kThumbnailButtonPlayPause);
   buttons[1].iBitmap = static_cast<UINT>(g_playing ? kImagePause : kImagePlay);
-  buttons[1].pszTip = const_cast<LPWSTR>(L"\u64ad\u653e / \u6682\u505c");
-  buttons[1].dwFlags = THBF_HIDEBACKGROUND;
+  StringCchCopyW(buttons[1].szTip, ARRAYSIZE(buttons[1].szTip),
+                 L"\u64ad\u653e / \u6682\u505c");
+  buttons[1].dwFlags = THBF_ENABLED;
 
   buttons[2].dwMask = THB_BITMAP | THB_TOOLTIP | THB_FLAGS;
   buttons[2].iId = static_cast<UINT>(kThumbnailButtonNext);
   buttons[2].iBitmap = static_cast<UINT>(kImageNext);
-  buttons[2].pszTip = const_cast<LPWSTR>(L"\u4e0b\u4e00\u9996");
-  buttons[2].dwFlags = THBF_HIDEBACKGROUND;
+  StringCchCopyW(buttons[2].szTip, ARRAYSIZE(buttons[2].szTip),
+                 L"\u4e0b\u4e00\u9996");
+  buttons[2].dwFlags = THBF_ENABLED;
 
   const HRESULT result = taskbar->ThumbBarAddButtons(window, 3, buttons);
   taskbar->Release();
@@ -254,7 +258,8 @@ void ThumbnailToolbar::SetPlaying(bool playing) {
   button.dwMask = THB_BITMAP | THB_TOOLTIP;
   button.iId = static_cast<UINT>(kThumbnailButtonPlayPause);
   button.iBitmap = static_cast<UINT>(playing ? kImagePause : kImagePlay);
-  button.pszTip = const_cast<LPWSTR>(L"\u64ad\u653e / \u6682\u505c");
+  StringCchCopyW(button.szTip, ARRAYSIZE(button.szTip),
+                 L"\u64ad\u653e / \u6682\u505c");
 
   taskbar->ThumbBarUpdateButtons(g_window, 1, &button);
   taskbar->Release();
