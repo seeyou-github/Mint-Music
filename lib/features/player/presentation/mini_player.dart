@@ -118,20 +118,28 @@ class MiniPlayer extends ConsumerWidget {
                 visualDensity: VisualDensity.compact,
                 padding: const EdgeInsets.symmetric(horizontal: 4),
                 constraints: const BoxConstraints(minWidth: 32),
-                icon: isLoading
-                    ? SizedBox(
-                        width: iconSize,
-                        height: iconSize,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
+                icon: SizedBox(
+                  // 图标与加载动画放在同样大小的方框里，避免加载动画出现 /
+                  // 消失时迷你播放器高度变化。
+                  width: playIconSize,
+                  height: playIconSize,
+                  child: isLoading
+                      ? Center(
+                          child: SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: colors.textPrimary,
+                            ),
+                          ),
+                        )
+                      : Icon(
+                          isPlaying ? Icons.pause : Icons.play_arrow,
+                          size: playIconSize,
                           color: colors.textPrimary,
                         ),
-                      )
-                    : Icon(
-                        isPlaying ? Icons.pause : Icons.play_arrow,
-                        size: playIconSize,
-                        color: colors.textPrimary,
-                      ),
+                ),
                 // 遵循 CeruMusic/Sollin-Music：加载期间禁用按钮，
                 // 避免用户在 URL 获取 / 换源过程中连点导致状态错乱。
                 onPressed: isLoading ? null : () => controller.togglePlayPause(),

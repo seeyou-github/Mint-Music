@@ -53,7 +53,8 @@ class SidebarPlayer extends ConsumerWidget {
       child: Material(
         type: MaterialType.transparency,
         child: Container(
-          padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+          // 底部留白加倍，让播放器与窗口底边保持更舒适的距离。
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 20),
           decoration: BoxDecoration(
             border: Border(
               top: BorderSide(
@@ -210,20 +211,28 @@ class SidebarPlayer extends ConsumerWidget {
           size: 26,
           color: colors.textPrimary,
           onPressed: isLoading ? null : () => controller.togglePlayPause(),
-          iconWidget: isLoading
-              ? SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
+          // 切换歌曲时显示加载动画；图标与动画都放在同样大小的方框里，
+          // 避免加载动画出现 / 消失时按钮高度变化、整个播放控件上下跳动。
+          iconWidget: SizedBox(
+            width: 26,
+            height: 26,
+            child: isLoading
+                ? Center(
+                    child: SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: colors.textPrimary,
+                      ),
+                    ),
+                  )
+                : Icon(
+                    isPlaying ? Icons.pause : Icons.play_arrow,
+                    size: 26,
                     color: colors.textPrimary,
                   ),
-                )
-              : Icon(
-                  isPlaying ? Icons.pause : Icons.play_arrow,
-                  size: 26,
-                  color: colors.textPrimary,
-                ),
+          ),
         ),
         _buildIconButton(
           icon: Icons.skip_next,
