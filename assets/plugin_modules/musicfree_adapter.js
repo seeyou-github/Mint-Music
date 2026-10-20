@@ -263,40 +263,6 @@ function __mfUnwrapItem(musicInfo) {
   };
 }
 
-/**
- * 统一歌曲时长单位（秒）。
- *
- * MusicFree 插件的 duration 单位并不统一：官方约定是秒，但不少插件直接
- * 透传平台的毫秒值（如网易的 dt）。这里统一换算成秒——
- *
- * 判定规则（尽量避免误伤超长音频）：
- *   1. 只有「按秒看超过 1 小时」的值才会被认为可能是毫秒；
- *   2. 按毫秒折算后必须落在 30 秒 ~ 6 小时之间才转换。
- * 这样一首 3 小时的现场版（插件按秒返回 10800）折算后只有 10.8 秒，
- * 低于 30 秒的下限 → 不会被误改；同一首歌若插件按毫秒返回 10800000
- * 则能正确折算成 10800 秒。
- */
-function __mfNormalizeDuration(value) {
-  var duration = value;
-  if (typeof duration === 'string') {
-    var parsed = parseFloat(duration);
-    duration = isNaN(parsed) ? 0 : parsed;
-  }
-  if (typeof duration !== 'number' || !isFinite(duration) || duration < 0) {
-    return 0;
-  }
-  var SUSPECT_SECONDS = 3600; // 超过 1 小时，按秒看明显不合理
-  var MIN_SECONDS = 30; // 折算后至少 30 秒
-  var MAX_SECONDS = 21600; // 折算后最多 6 小时
-  if (duration > SUSPECT_SECONDS) {
-    var asMilliseconds = duration / 1000;
-    if (asMilliseconds >= MIN_SECONDS && asMilliseconds <= MAX_SECONDS) {
-      duration = asMilliseconds;
-    }
-  }
-  return Math.round(duration);
-}
-
 /** 把 MusicFree musicItem 展平成本项目 _musicInfoToSong 可识别的字段。 */
 function __mfMapMusicItem(item, sourceId) {
   if (!item || typeof item !== 'object') return null;
@@ -312,7 +278,12 @@ function __mfMapMusicItem(item, sourceId) {
   if (album && typeof album === 'object') album = album.name;
   album = __mfText(album || item.albumName, '');
 
-  var duration = __mfNormalizeDuration(item.duration);
+  var duration = item.duration;
+  if (typeof duration === 'string') {
+    var parsed = parseFloat(duration);
+    duration = isNaN(parsed) ? 0 : parsed;
+  }
+  if (typeof duration !== 'number' || !isFinite(duration) || duration < 0) duration = 0;
 
   var id = item.id === null || item.id === undefined ? '' : String(item.id);
 

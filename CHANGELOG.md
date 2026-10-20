@@ -7,7 +7,6 @@
 - MusicFree 插件音源 id 自动推导（网易/QQ/酷狗/酷我/咪咕/汽水等平台名映射到内置音源 id）
 - MusicFree 音质自动回退（插件只实现部分音质时按 请求音质 → standard → high → low → super 尝试）
 - MusicFree 插件支持发现页内容：榜单（`getTopLists` / `getTopListDetail`）与推荐歌单（`getRecommendSheetTags` / `getRecommendSheetsByTag` / `getMusicSheetInfo`）
-  - 修复 MusicFree 插件歌曲时长显示异常：插件的 `duration` 单位不统一（官方约定秒，部分插件直接透传平台毫秒值），在插件适配层统一换算成秒（仅在按秒看明显不合理且按毫秒折算落在 30 秒 ~ 6 小时之间时才换算，超长音频不受影响）
 - 插件支持同时启用多个：单平台的 MusicFree 插件（如 bilibili + 网易）可以一起使用，声明同一音源时按插件列表顺序取第一个宿主
 - 插件管理页新增「内置音源」区块：内置音源可关闭开关、可卸载，并支持「恢复内置音源」
 - Windows 版加入 media_kit（libmpv）桌面音频后端
