@@ -40,6 +40,14 @@ class SongListItem extends ConsumerWidget {
   /// 长按回调：页面通常在这里进入批量选择模式并选中该曲。
   final VoidCallback? onLongPress;
 
+  /// 自定义右侧区域。
+  ///
+  /// 非空时替代「时长 / 更多按钮」，用于下载管理等需要自己放置操作按钮的列表。
+  final Widget? trailing;
+
+  /// 行下方的附加内容（进度条、状态提示等）。
+  final Widget? footer;
+
   const SongListItem({
     super.key,
     required this.song,
@@ -59,6 +67,8 @@ class SongListItem extends ConsumerWidget {
     this.selected = false,
     this.onSelectionToggle,
     this.onLongPress,
+    this.trailing,
+    this.footer,
   });
 
   @override
@@ -86,19 +96,35 @@ class SongListItem extends ConsumerWidget {
             horizontal: AppSpacing.md,
             vertical: AppSpacing.sm,
           ),
-          child: Row(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (showIndex)
-                selectionMode ? _buildCheckbox(colors) : _buildIndex(colors),
-              if (showCover) ...[
-                const SizedBox(width: AppSpacing.sm),
-                _buildCover(colors, ref),
+              Row(
+                children: [
+                  if (showIndex)
+                    selectionMode
+                        ? _buildCheckbox(colors)
+                        : _buildIndex(colors),
+                  if (showCover) ...[
+                    const SizedBox(width: AppSpacing.sm),
+                    _buildCover(colors, ref),
+                  ],
+                  const SizedBox(width: AppSpacing.sm),
+                  Expanded(child: _buildSongInfo(colors, context)),
+                  if (trailing != null)
+                    trailing!
+                  else ...[
+                    if (showDuration && !selectionMode) _buildDuration(colors),
+                    if (showMenuButton && !selectionMode)
+                      _buildMenuButton(colors, context),
+                  ],
+                ],
+              ),
+              if (footer != null) ...[
+                const SizedBox(height: AppSpacing.xs),
+                footer!,
               ],
-              const SizedBox(width: AppSpacing.sm),
-              Expanded(child: _buildSongInfo(colors, context)),
-              if (showDuration && !selectionMode) _buildDuration(colors),
-              if (showMenuButton && !selectionMode)
-                _buildMenuButton(colors, context),
             ],
           ),
         ),

@@ -8,9 +8,10 @@ import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
-import '../../../shared/widgets/music_cover_image.dart';
+import '../../../shared/widgets/song_list_item.dart';
 import '../../player/application/playback_controller.dart';
 import '../application/download_providers.dart';
+import '../data/download_repository.dart';
 import '../domain/models/download_task.dart';
 
 /// 下载管理页。
@@ -52,8 +53,10 @@ class DownloadPage extends ConsumerWidget {
                     itemCount: sorted.length,
                     addAutomaticKeepAlives: false,
                     addRepaintBoundaries: true,
-                    itemBuilder: (context, index) =>
-                        _DownloadTaskItem(task: sorted[index]),
+                    itemBuilder: (context, index) => _DownloadTaskItem(
+                      task: sorted[index],
+                      index: index,
+                    ),
                   );
                 },
                 loading: () => const Center(child: CircularProgressIndicator()),
@@ -196,255 +199,263 @@ class DownloadPage extends ConsumerWidget {
   }
 }
 
-/// 单条下载任务：封面 + 曲名 / 歌手 + 状态 / 文件信息 + 操作按钮。
-class _DownloadTaskItem extends ConsumerWidget {
-  const _DownloadTaskItem({required this.task});
+/// 单条下载任务。
+///
+/// 布局与「发现页 → 歌单详情」的歌曲列表一致：序号 + 封面 + 曲名 / 来源 / 歌手，
+/// 右侧固定「删除」按钮。四种状态：
+/// * 下载中：行下方显示进度条与下载信息（不再显示「下载中」徽标）；
+/// * 失败 / 文件不存在：右侧显示「重试」按钮，其下方显示文字提示；
+/// * 成功：右侧只显示文件大小（不再显示进度条与下载信息）。
+class _DownloadTaskItem extends ConsumerStatefulWidget {
+  const _DownloadTaskItem({required this.task, required this.index});
 
   final DownloadTask task;
+  final int index;
+
+  @override
+  ConsumerState<_DownloadTaskItem> createState() => _DownloadTaskItemState();
+}
+
+class _DownloadTaskItemState extends ConsumerState<_DownloadTaskItem> {
+  /// 下载完成的歌曲，文件是否已被移除（null = 尚未检查）。
+  bool? _fileMissing;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkFile();
+  }
+
+  @override
+  void didUpdateWidget(covariant _DownloadTaskItem oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.task.status != widget.task.status ||
+        oldWidget.task.filePath != widget.task.filePath) {
+      _checkFile();
+    }
+  }
+
+  /// 检查下载完成的歌曲文件是否还在（可能被用户手动删除 / 移动）。
+  Future<void> _checkFile() async {
+    if (widget.task.status != DownloadStatus.completed) {
+      if (_fileMissing != false && mounted) {
+        setState(() => _fileMissing = false);
+      }
+      return;
+    }
+    var exists = false;
+    try {
+      exists = await File(widget.task.filePath).exists();
+    } catch (_) {
+      exists = false;
+    }
+    if (!mounted) return;
+    setState(() => _fileMissing = !exists);
+  }
+
+  DownloadTask get task => widget.task;
 
   bool get _isCompleted => task.status == DownloadStatus.completed;
 
+  bool get _isMissing => _isCompleted && _fileMissing == true;
+
+  bool get _isDownloading =>
+      task.status == DownloadStatus.downloading ||
+      task.status == DownloadStatus.queued;
+
+  bool get _isFailed =>
+      task.status == DownloadStatus.error ||
+      task.status == DownloadStatus.cancelled;
+
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final colors = ref.watch(themeColorsProvider);
     final repo = ref.read(downloadRepositoryProvider);
-    final status = _statusStyle(context, task.status, colors);
-    final showProgress = task.status == DownloadStatus.downloading ||
-        task.status == DownloadStatus.queued;
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: AppSpacing.sm),
-      padding: const EdgeInsets.all(AppSpacing.md),
-      decoration: BoxDecoration(
-        color: colors.surface,
-        borderRadius: BorderRadius.circular(AppRadius.md),
-        border: Border.all(color: colors.divider.withValues(alpha: 0.4)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    return SongListItem(
+      song: task.song,
+      index: widget.index,
+      showQuality: false,
+      showDuration: false,
+      showMenuButton: false,
+      onTap: () => _handleTap(context),
+      trailing: _buildTrailing(context, colors, repo),
+      footer: _isDownloading ? _buildProgress(colors) : null,
+    );
+  }
+
+  /// 右侧区域：成功时显示文件大小；失败 / 文件不存在时显示「重试」+ 提示文字。
+  Widget _buildTrailing(
+    BuildContext context,
+    ThemeColors colors,
+    DownloadRepository repo,
+  ) {
+    if (_isCompleted && !_isMissing) {
+      // 下载成功：只显示文件大小 + 删除按钮。
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.insert_drive_file_outlined,
+              size: 13, color: colors.textHint),
+          const SizedBox(width: 4),
+          Text(
+            _formatSize(
+              task.totalSize > 0 ? task.totalSize : task.downloadedSize,
+            ),
+            style: TextStyle(fontSize: 12, color: colors.textHint),
+          ),
+          const SizedBox(width: AppSpacing.xs),
+          _buildDeleteButton(context, colors, repo),
+        ],
+      );
+    }
+
+    if (_isFailed || _isMissing) {
+      // 失败 / 文件不存在：显示「重试」+「删除」，文字提示在按钮下方。
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
             children: [
-              // 左侧：歌曲封面 + 曲名 / 歌手（点击条目直接播放）
-              Expanded(
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: () => _playTask(context, ref),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      _buildCover(context, colors),
-                      const SizedBox(width: AppSpacing.sm),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              task.song.title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w500,
-                                color: colors.textPrimary,
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              task.song.artist,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(fontSize: 12, color: colors.textHint),
-                            ),
-                            if (_isCompleted) ...[
-                              const SizedBox(height: 4),
-                              _buildFileInfo(context, colors),
-                            ],
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(width: AppSpacing.sm),
-              // 右侧：状态徽标 / 删除按钮
-              if (_isCompleted)
-                _buildDeleteButton(context, ref, colors)
-              else
-                _StatusBadge(label: status.label, color: status.color),
+              _buildRetryButton(context, colors, repo),
+              _buildDeleteButton(context, colors, repo),
             ],
           ),
-          if (showProgress) ...[
-            const SizedBox(height: AppSpacing.sm),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(2),
-              child: LinearProgressIndicator(
-                value: task.status == DownloadStatus.queued ? null : task.progress,
-                backgroundColor: colors.disabled,
-                valueColor: AlwaysStoppedAnimation<Color>(colors.primary),
-                minHeight: 4,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  '${(task.progress * 100).toStringAsFixed(0)}%  ${_formatSpeed(task.speed)}',
-                  style: TextStyle(fontSize: 11, color: colors.textHint),
-                ),
-                Text(
-                  '${_formatSize(task.downloadedSize)}/${_formatSize(task.totalSize)}  ${_formatRemaining(context, task.remainingTime)}',
-                  style: TextStyle(fontSize: 11, color: colors.textHint),
-                ),
-              ],
-            ),
-          ],
-          if (task.error != null &&
-              task.status == DownloadStatus.error) ...[
-            const SizedBox(height: 4),
-            Text(
-              task.error!,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 11, color: colors.error),
-            ),
-          ],
-          if (_hasActions(task.status)) ...[
-            const SizedBox(height: 4),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                if (task.status == DownloadStatus.paused)
-                  _actionButton(
-                    context,
-                    colors,
-                    icon: Icons.play_arrow_rounded,
-                    label: '继续',
-                    color: colors.primary,
-                    onTap: () => repo.resumeTask(task.id),
-                  ),
-                if (task.status == DownloadStatus.error ||
-                    task.status == DownloadStatus.cancelled)
-                  _actionButton(
-                    context,
-                    colors,
-                    icon: Icons.refresh_rounded,
-                    label: '重试',
-                    color: colors.primary,
-                    onTap: () => repo.retryTask(task.id),
-                  ),
-                if (task.status == DownloadStatus.downloading ||
-                    task.status == DownloadStatus.queued ||
-                    task.status == DownloadStatus.paused) ...[
-                  if (task.status == DownloadStatus.paused)
-                    const SizedBox(width: AppSpacing.sm),
-                  _actionButton(
-                    context,
-                    colors,
-                    icon: Icons.close_rounded,
-                    label: '取消',
-                    color: colors.textSecondary,
-                    onTap: () => repo.cancelTask(task.id),
-                  ),
-                ],
-              ],
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  /// 左侧封面（没有封面时显示默认封面）。
-  Widget _buildCover(BuildContext context, ThemeColors colors) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(AppRadius.sm),
-      child: Container(
-        width: 46,
-        height: 46,
-        color: colors.surfaceVariant,
-        child: MusicCoverImage(
-          url: task.song.coverUrl,
-          songId: task.song.id,
-          mediaStoreId: task.song.mediaStoreId,
-          fit: BoxFit.cover,
-          errorWidget: Icon(
-            Icons.music_note,
-            size: 20,
-            color: colors.textHint,
+          const SizedBox(height: 2),
+          Text(
+            _isMissing
+                ? context.tr('文件已删除或移动')
+                : (task.status == DownloadStatus.cancelled
+                    ? context.tr('已取消')
+                    : context.tr('失败')),
+            style: TextStyle(fontSize: 11, color: colors.error),
           ),
-        ),
-      ),
-    );
+        ],
+      );
+    }
+
+    // 下载中：只显示删除按钮（进度信息在行下方）。
+    return _buildDeleteButton(context, colors, repo);
   }
 
-  /// 下载完成的歌曲：文件大小 / 长度 / 比特率 / 文件类型。
-  Widget _buildFileInfo(BuildContext context, ThemeColors colors) {
-    final size = task.totalSize > 0 ? task.totalSize : task.downloadedSize;
-    final durationSec = task.song.duration;
-    final bitrate = durationSec > 0 && size > 0
-        ? (size * 8 / durationSec / 1000).round()
-        : 0;
-    final type = _fileType();
-
-    return Wrap(
-      spacing: 10,
-      runSpacing: 2,
-      crossAxisAlignment: WrapCrossAlignment.center,
-      children: [
-        _infoChip(context, colors, Icons.data_usage, _formatSize(size)),
-        _infoChip(
-          context,
-          colors,
-          Icons.schedule,
-          _formatDuration(durationSec),
-        ),
-        if (bitrate > 0)
-          _infoChip(context, colors, Icons.graphic_eq, '$bitrate kbps'),
-        if (type.isNotEmpty)
-          _infoChip(context, colors, Icons.insert_drive_file, type),
-      ],
-    );
-  }
-
-  Widget _infoChip(
-    BuildContext context,
-    ThemeColors colors,
-    IconData icon,
-    String text,
-  ) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, size: 12, color: colors.textHint),
-        const SizedBox(width: 3),
-        Text(
-          text,
-          style: TextStyle(fontSize: 11, color: colors.textHint),
-        ),
-      ],
-    );
-  }
-
-  /// 下载完成的歌曲右侧的「删除」按钮。
+  /// 删除按钮：删除歌曲文件与该条下载记录。
   Widget _buildDeleteButton(
     BuildContext context,
-    WidgetRef ref,
     ThemeColors colors,
+    DownloadRepository repo,
   ) {
     return IconButton(
       visualDensity: VisualDensity.compact,
-      icon: Icon(Icons.delete_outline, size: 20, color: colors.error),
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+      icon: Icon(Icons.delete_outline, size: 19, color: colors.error),
       tooltip: context.tr('删除'),
-      onPressed: () => _confirmDelete(context, ref, colors),
+      onPressed: () => _confirmDelete(context, colors, repo),
     );
   }
 
+  /// 重试按钮。
+  Widget _buildRetryButton(
+    BuildContext context,
+    ThemeColors colors,
+    DownloadRepository repo,
+  ) {
+    return GestureDetector(
+      onTap: () => repo.retryTask(task.id),
+      child: Container(
+        margin: const EdgeInsets.only(right: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: colors.primary.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(AppRadius.full),
+          border: Border.all(color: colors.primary.withValues(alpha: 0.45)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.refresh_rounded, size: 13, color: colors.primary),
+            const SizedBox(width: 3),
+            Text(
+              context.tr('重试'),
+              style: TextStyle(fontSize: 12, color: colors.primary),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 下载中：进度条 + 进度 / 速度 / 大小信息。
+  Widget _buildProgress(ThemeColors colors) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(2),
+          child: LinearProgressIndicator(
+            value: task.status == DownloadStatus.queued ? null : task.progress,
+            backgroundColor: colors.disabled,
+            valueColor: AlwaysStoppedAnimation<Color>(colors.primary),
+            minHeight: 3,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              '${(task.progress * 100).toStringAsFixed(0)}%',
+              style: TextStyle(fontSize: 11, color: colors.textHint),
+            ),
+            Text(
+              '${context.tr('速度')}: ${_formatSpeed(task.speed)}   '
+              '${_formatSize(task.totalSize > 0 ? task.totalSize : task.downloadedSize)}',
+              style: TextStyle(fontSize: 11, color: colors.textHint),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  /// 点击条目：下载完成的歌曲直接播放；文件被移除时提示「文件不存在」。
+  Future<void> _handleTap(BuildContext context) async {
+    if (!_isCompleted) {
+      _showMessage(context, context.tr('该歌曲尚未下载完成'));
+      return;
+    }
+
+    var exists = false;
+    try {
+      exists = await File(task.filePath).exists();
+    } catch (_) {
+      exists = false;
+    }
+    if (!exists) {
+      if (mounted) setState(() => _fileMissing = true);
+      _showMessage(context, context.tr('文件不存在'));
+      return;
+    }
+
+    final song = task.song.copyWith(
+      source: 'local',
+      sourceUrl: task.filePath,
+      filePath: task.filePath,
+      clearSourceHeaders: true,
+    );
+    await ref
+        .read(playbackControllerProvider.notifier)
+        .setQueue([song], startIndex: 0);
+  }
+
   /// 删除确认：同时删除歌曲文件与该条下载记录。
-  void _confirmDelete(BuildContext context, WidgetRef ref, ThemeColors colors) {
+  void _confirmDelete(
+    BuildContext context,
+    ThemeColors colors,
+    DownloadRepository repo,
+  ) {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -468,9 +479,7 @@ class _DownloadTaskItem extends ConsumerWidget {
           TextButton(
             onPressed: () async {
               Navigator.pop(ctx);
-              await ref
-                  .read(downloadRepositoryProvider)
-                  .deleteTask(task.id, deleteFile: true);
+              await repo.deleteTask(task.id, deleteFile: true);
               if (context.mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
@@ -490,34 +499,6 @@ class _DownloadTaskItem extends ConsumerWidget {
     );
   }
 
-  /// 点击列表项：直接播放该歌曲（文件不存在时提示错误）。
-  Future<void> _playTask(BuildContext context, WidgetRef ref) async {
-    if (!_isCompleted) {
-      _showMessage(context, context.tr('该歌曲尚未下载完成'));
-      return;
-    }
-    try {
-      final file = File(task.filePath);
-      if (!await file.exists()) {
-        _showMessage(context, context.tr('歌曲文件不存在，可能已被删除'));
-        return;
-      }
-    } catch (_) {
-      _showMessage(context, context.tr('歌曲文件不存在，可能已被删除'));
-      return;
-    }
-
-    final song = task.song.copyWith(
-      source: 'local',
-      sourceUrl: task.filePath,
-      filePath: task.filePath,
-      clearSourceHeaders: true,
-    );
-    await ref
-        .read(playbackControllerProvider.notifier)
-        .setQueue([song], startIndex: 0);
-  }
-
   void _showMessage(BuildContext context, String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -527,103 +508,6 @@ class _DownloadTaskItem extends ConsumerWidget {
         duration: const Duration(seconds: 2),
       ),
     );
-  }
-
-  /// 从文件路径推断文件类型（mp3 / flac ...）。
-  String _fileType() {
-    final path = task.filePath;
-    final dot = path.lastIndexOf('.');
-    if (dot < 0 || dot == path.length - 1) return '';
-    return path.substring(dot + 1).toLowerCase();
-  }
-
-  bool _hasActions(DownloadStatus status) {
-    switch (status) {
-      case DownloadStatus.downloading:
-      case DownloadStatus.queued:
-      case DownloadStatus.paused:
-      case DownloadStatus.error:
-      case DownloadStatus.cancelled:
-        return true;
-      case DownloadStatus.completed:
-        return false;
-    }
-  }
-
-  Widget _actionButton(
-    BuildContext context,
-    ThemeColors colors, {
-    required IconData icon,
-    required String label,
-    required Color color,
-    required VoidCallback onTap,
-  }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(AppRadius.full),
-          border: Border.all(color: color.withValues(alpha: 0.4)),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 14, color: color),
-            const SizedBox(width: 4),
-            Text(
-              context.tr(label),
-              style: TextStyle(fontSize: 12, color: color),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  _StatusStyle _statusStyle(
-    BuildContext context,
-    DownloadStatus status,
-    ThemeColors colors,
-  ) {
-    switch (status) {
-      case DownloadStatus.downloading:
-        return _StatusStyle(
-          label: context.tr('进行中'),
-          icon: Icons.downloading,
-          color: colors.primary,
-        );
-      case DownloadStatus.queued:
-        return _StatusStyle(
-          label: context.tr('等待中'),
-          icon: Icons.schedule,
-          color: colors.primary,
-        );
-      case DownloadStatus.paused:
-        return _StatusStyle(
-          label: context.tr('已暂停'),
-          icon: Icons.pause_circle_outline,
-          color: colors.textSecondary,
-        );
-      case DownloadStatus.completed:
-        return _StatusStyle(
-          label: context.tr('已完成'),
-          icon: Icons.check_circle,
-          color: const Color(0xFF34A853),
-        );
-      case DownloadStatus.error:
-        return _StatusStyle(
-          label: context.tr('失败'),
-          icon: Icons.error_outline,
-          color: colors.error,
-        );
-      case DownloadStatus.cancelled:
-        return _StatusStyle(
-          label: context.tr('已取消'),
-          icon: Icons.cancel_outlined,
-          color: colors.textHint,
-        );
-    }
   }
 
   String _formatSize(int bytes) {
@@ -636,64 +520,11 @@ class _DownloadTaskItem extends ConsumerWidget {
   }
 
   String _formatSpeed(double bytesPerSec) {
-    if (bytesPerSec <= 0) return '';
+    if (bytesPerSec <= 0) return '-';
     if (bytesPerSec < 1024) return '${bytesPerSec.toStringAsFixed(0)} B/s';
     if (bytesPerSec < 1024 * 1024) {
       return '${(bytesPerSec / 1024).toStringAsFixed(1)} KB/s';
     }
     return '${(bytesPerSec / (1024 * 1024)).toStringAsFixed(1)} MB/s';
-  }
-
-  String _formatDuration(int seconds) {
-    if (seconds <= 0) return '--:--';
-    final m = seconds ~/ 60;
-    final s = seconds % 60;
-    return '$m:${s.toString().padLeft(2, '0')}';
-  }
-
-  String _formatRemaining(BuildContext context, int? seconds) {
-    if (seconds == null || seconds <= 0) return '';
-    final mins = seconds ~/ 60;
-    final secs = seconds % 60;
-    if (mins > 0) return context.tr('剩余 $mins分$secs秒');
-    return context.tr('剩余 $secs秒');
-  }
-}
-
-class _StatusStyle {
-  const _StatusStyle({
-    required this.label,
-    required this.icon,
-    required this.color,
-  });
-
-  final String label;
-  final IconData icon;
-  final Color color;
-}
-
-class _StatusBadge extends StatelessWidget {
-  const _StatusBadge({required this.label, required this.color});
-
-  final String label;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(AppRadius.full),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          fontSize: 11,
-          fontWeight: FontWeight.w500,
-          color: color,
-        ),
-      ),
-    );
   }
 }
