@@ -187,8 +187,8 @@ class DesktopLyricSyncController extends StateNotifier<DesktopLyricStatus>
     final font = await _appFont();
     await _overlay.updateConfig(
       settings,
-      fontFamily: font?.$1,
-      fontPath: font?.$2,
+      fontFamily: font?.family,
+      fontPath: font?.path,
     );
   }
 

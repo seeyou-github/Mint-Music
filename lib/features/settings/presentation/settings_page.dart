@@ -939,13 +939,11 @@ class _AppearanceContent extends ConsumerWidget {
                     context,
                     colors,
                     isSecondary: isSecondary,
-                    initial: _parseHexColor(
-                      currentHex.isEmpty
-                          ? (isSecondary
-                                ? colors.textSecondary
-                                : colors.textPrimary)
-                                : currentHex,
-                    ),
+                    initial: currentHex.isEmpty
+                        ? (isSecondary
+                              ? colors.textSecondary
+                              : colors.textPrimary)
+                        : _parseHexColor(currentHex),
                   );
                 },
                 icon: const Icon(Icons.colorize, size: 18),
