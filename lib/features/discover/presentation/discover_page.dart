@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -22,6 +23,24 @@ class DiscoverPage extends ConsumerStatefulWidget {
 
   @override
   ConsumerState<DiscoverPage> createState() => _DiscoverPageState();
+}
+
+/// 分类标签栏的滚动行为：桌面端允许用鼠标拖动横向列表。
+///
+/// Material 默认的 [MaterialScrollBehavior] 只接受触摸 / 触控笔拖动，
+/// 桌面端鼠标无法拖动，这里把鼠标与触摸板也加进来。
+class _CategoryScrollBehavior extends MaterialScrollBehavior {
+  const _CategoryScrollBehavior();
+
+  @override
+  Set<PointerDeviceKind> get dragDevices => const {
+    PointerDeviceKind.touch,
+    PointerDeviceKind.stylus,
+    PointerDeviceKind.invertedStylus,
+    PointerDeviceKind.mouse,
+    PointerDeviceKind.trackpad,
+    PointerDeviceKind.unknown,
+  };
 }
 
 class _DiscoverPageState extends ConsumerState<DiscoverPage> {
@@ -598,38 +617,47 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
     String activeTagId,
     String activeCategoryName,
   ) {
+    final hotTags = hotTagsAsync.valueOrNull ?? const <PlaylistTag>[];
     return SizedBox(
       height: 36,
-      child: ListView(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+      child: Row(
         children: [
-          _buildTagChip(
-            label: context.tr('热门'),
-            isActive: activeTagId.isEmpty,
-            colors: colors,
-            onTap: () => _onSelectTag('', '热门'),
-          ),
-          hotTagsAsync.when(
-            data: (hotTags) => Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: hotTags.map((tag) {
-                return Padding(
-                  padding: const EdgeInsets.only(left: AppSpacing.sm),
-                  child: _buildTagChip(
-                    label: tag.name,
-                    isActive: activeTagId == tag.id,
+          // 分类标签：数量多时支持鼠标拖动 / 触摸左右滑动。
+          Expanded(
+            child: ScrollConfiguration(
+              behavior: const _CategoryScrollBehavior(),
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.only(left: AppSpacing.lg),
+                children: [
+                  _buildTagChip(
+                    label: context.tr('热门'),
+                    isActive: activeTagId.isEmpty,
                     colors: colors,
-                    onTap: () => _onSelectTag(tag.id, tag.name),
+                    onTap: () => _onSelectTag('', '热门'),
                   ),
-                );
-              }).toList(),
+                  for (final tag in hotTags)
+                    Padding(
+                      padding: const EdgeInsets.only(left: AppSpacing.sm),
+                      child: _buildTagChip(
+                        label: tag.name,
+                        isActive: activeTagId == tag.id,
+                        colors: colors,
+                        onTap: () => _onSelectTag(tag.id, tag.name),
+                      ),
+                    ),
+                ],
+              ),
             ),
-            loading: () => const SizedBox.shrink(),
-            error: (_, __) => const SizedBox.shrink(),
           ),
-          const SizedBox(width: AppSpacing.sm),
-          _buildMoreCategoryButton(colors, tagsAsync, activeTagId),
+          // 「更多分类」固定在最右侧，分类过多时也不会被挤出可视区域。
+          Padding(
+            padding: const EdgeInsets.only(
+              left: AppSpacing.sm,
+              right: AppSpacing.lg,
+            ),
+            child: _buildMoreCategoryButton(colors, tagsAsync, activeTagId),
+          ),
         ],
       ),
     );
