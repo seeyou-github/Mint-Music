@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:on_audio_query/on_audio_query.dart';
 import '../../../../shared/services/app_image_cache.dart';
+import '../../../../shared/services/cover_cache_service.dart';
 import '../models/song.dart';
 import '../../application/playback_controller.dart';
 
@@ -152,6 +153,16 @@ class CoverColorExtractor {
       } catch (_) {
         return CoverColorResult.defaultResult;
       }
+    }
+
+    // 桌面端没有 MediaStore，本地歌曲的封面在封面缓存里。
+    if (song.isLocal) {
+      try {
+        final bytes = await CoverCacheService().getArtwork(song.id);
+        if (bytes != null && bytes.isNotEmpty) {
+          return extract(MemoryImage(bytes));
+        }
+      } catch (_) {}
     }
 
     return CoverColorResult.defaultResult;

@@ -8,7 +8,6 @@ import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../../../core/utils/scroll_locate.dart';
-import '../../../shared/widgets/music_cover_image.dart';
 import '../../../shared/widgets/song_action_sheet.dart';
 import '../../../shared/widgets/song_list_item.dart';
 import '../../../shared/widgets/song_selection.dart';
@@ -351,9 +350,12 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
     );
   }
 
-  /// 歌单页顶部：返回按钮 + 封面 + 名称 / 描述 / 操作按钮（同一行），让顶部更紧凑。
+  /// 歌单页顶部：返回按钮 + 名称 / 歌曲数量 + 操作按钮。
+  ///
+  /// 不再显示歌单封面与描述，整体高度与原来的封面高度保持一致，顶部更紧凑。
   Widget _buildHeader(BuildContext context, WidgetRef ref, ThemeColors colors, playlist) {
-    final coverSize = ResponsiveLayout.isTablet(context) ? 96.0 : 72.0;
+    // 与原歌单封面同高，去掉封面后顶部不会跳动
+    final headerHeight = ResponsiveLayout.isTablet(context) ? 96.0 : 72.0;
     return Container(
       padding: const EdgeInsets.fromLTRB(
         AppSpacing.sm,
@@ -371,89 +373,71 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
           end: Alignment.bottomCenter,
         ),
       ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // 返回按钮
-          GestureDetector(
-            onTap: () => context.pop(),
-            child: Padding(
-              padding: const EdgeInsets.all(AppSpacing.xs),
-              child: Icon(Icons.arrow_back, size: 24, color: colors.textPrimary),
-            ),
-          ),
-          const SizedBox(width: AppSpacing.sm),
-          // 封面
-          ClipRRect(
-            borderRadius: BorderRadius.circular(AppRadius.md),
-            child: MusicCoverImage(
-              url: playlist.coverUrl,
-              width: coverSize,
-              height: coverSize,
-              fit: BoxFit.cover,
-              errorWidget: Container(
-                width: coverSize,
-                height: coverSize,
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [
-                      colors.primary.withValues(alpha: 0.4),
-                      colors.surfaceVariant,
-                    ],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                ),
-                child: Icon(Icons.music_note, size: 48, color: colors.textHint),
+      child: SizedBox(
+        height: headerHeight,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            // 返回按钮
+            GestureDetector(
+              onTap: () => context.pop(),
+              child: Padding(
+                padding: const EdgeInsets.all(AppSpacing.xs),
+                child: Icon(Icons.arrow_back, size: 24, color: colors.textPrimary),
               ),
             ),
-          ),
-          const SizedBox(width: AppSpacing.md),
-          // 名称 + 描述 + 操作按钮
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  playlist.title,
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: colors.textPrimary,
+            const SizedBox(width: AppSpacing.sm),
+            // 名称 + 歌曲数量 + 操作按钮
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          playlist.title,
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                            color: colors.textPrimary,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(width: AppSpacing.sm),
+                      Text(
+                        context.tr('${playlist.songCount}首歌曲'),
+                        style: TextStyle(fontSize: 12, color: colors.textHint),
+                      ),
+                    ],
                   ),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: AppSpacing.xs),
-                Text(
-                  playlist.description,
-                  style: TextStyle(fontSize: 13, color: colors.textSecondary),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: AppSpacing.sm),
-                Row(
-                  children: [
-                    _buildActionButton(colors, Icons.play_arrow, context.tr('播放全部'), () {
-                      _playAll(_songs);
-                    }),
-                    const SizedBox(width: AppSpacing.sm),
-                    _buildFavoriteButton(colors, playlist),
-                  ],
-                ),
-              ],
+                  const SizedBox(height: AppSpacing.xs),
+                  Row(
+                    children: [
+                      _buildActionButton(colors, Icons.play_arrow, context.tr('播放全部'), () {
+                        _playAll(_songs);
+                      }),
+                      const SizedBox(width: AppSpacing.sm),
+                      _buildFavoriteButton(colors, playlist),
+                    ],
+                  ),
+                ],
+              ),
             ),
-          ),
-          // 更多操作
-          GestureDetector(
-            onTap: () => _showMoreActions(context, colors, playlist),
-            child: Padding(
-              padding: const EdgeInsets.all(AppSpacing.xs),
-              child: Icon(Icons.more_horiz, size: 24, color: colors.textSecondary),
+            // 更多操作
+            GestureDetector(
+              onTap: () => _showMoreActions(context, colors, playlist),
+              child: Padding(
+                padding: const EdgeInsets.all(AppSpacing.xs),
+                child: Icon(Icons.more_horiz, size: 24, color: colors.textSecondary),
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

@@ -84,7 +84,7 @@ class SidebarPlayer extends ConsumerWidget {
     );
   }
 
-  /// 封面：点击打开全屏播放页。
+  /// 封面：点击打开 / 关闭全屏播放页。
   Widget _buildCover(
     BuildContext context,
     ThemeColors colors,
@@ -93,9 +93,11 @@ class SidebarPlayer extends ConsumerWidget {
     return Center(
       child: GestureDetector(
         onTap: () {
-          // 已经在播放页时不再重复 push，避免叠加多层播放页。
-          if (appRouter.routerDelegate.currentConfiguration.uri.path ==
-              AppRoutes.fullPlayer) {
+          final path =
+              appRouter.routerDelegate.currentConfiguration.uri.path;
+          if (path == AppRoutes.fullPlayer) {
+            // 播放详情页已经打开：再次点击封面直接关闭
+            appRouter.pop();
             return;
           }
           appRouter.push(AppRoutes.fullPlayer);
@@ -123,7 +125,7 @@ class SidebarPlayer extends ConsumerWidget {
         errorWidget: Icon(Icons.music_note, size: 32, color: colors.primary),
       );
     }
-    if (song.mediaStoreId != null) {
+    if (song.mediaStoreId != null || song.isLocal) {
       return MusicCoverImage(
         key: ValueKey('sidebar_cover_img_${song.id}'),
         songId: song.id,

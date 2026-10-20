@@ -135,7 +135,7 @@ class AudioPlayerService {
     Directory? coverDir;
 
     for (final song in songs) {
-      if (song.coverUrl == null && song.mediaStoreId != null) {
+      if (song.coverUrl == null && (song.mediaStoreId != null || song.isLocal)) {
         try {
           // 优先从 CoverCacheService 获取（内存/磁盘缓存 + MediaStore 提取）
           final bytes = await coverCache.getArtwork(

@@ -626,7 +626,7 @@ class _PlayerCoverPage extends ConsumerWidget {
         errorWidget: _fallbackCover(song),
       );
     }
-    if (song.mediaStoreId != null) {
+    if (song.mediaStoreId != null || song.isLocal) {
       return MusicCoverImage(
         key: ValueKey('fp_cover_${song.id}'),
         songId: song.id,

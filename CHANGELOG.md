@@ -21,6 +21,9 @@
 - Android 端开始播放时检测通知权限，缺少权限时弹框提醒用户开启
 
 ### 变更
+- 歌单详情页顶部（发现页歌单 / 歌单页 / 搜索页歌单）改为「歌单名称 + 歌曲数量 + 操作按钮」：
+  不再显示歌单封面与描述，整体高度与原歌单封面高度保持一致，顶部更紧凑
+- Windows 左侧栏播放器：点击封面打开播放详情页，播放详情页已打开时再次点击封面直接关闭
 - 导航栏去掉「下载」「设置」，新增「我的」：我的页面提供设置、下载、最近播放、听歌识曲入口
 - 发现页：移除听歌识曲按钮，搜索框移到「发现音乐」标题同一行右侧，宽度自适应并限制最大/最小宽度
 - 发现页歌单分类栏：分类过多时「更多分类」按钮固定在最右侧不再被挤出可视区域，其余分类支持鼠标拖动 / 触摸左右滑动
@@ -73,12 +76,13 @@
   - 本地歌曲的内嵌封面会写入封面缓存，列表与播放页均可显示；「重试」按钮会重新扫描并在错误状态下显示加载反馈
 - 修复 Windows 听歌识曲提示「音频指纹模块初始化失败，请重试」的问题
   - `webview_flutter` 只实现了 Android/iOS，桌面端改用 InAppWebView（Windows 走 WebView2）承载 afp.js + afp.wasm
-  - afp.js 内联进 HTML 保证 `GenerateFP` 落在全局作用域，afp.wasm 以 base64 注入 `window.WASM_BINARY`，指纹通过 JS channel 回传
+  - afp.js 内联进 HTML 保证 `GenerateFP` 落在全局作用域，afp.wasm 分块 base64 注入 `window.WASM_BINARY`，指纹通过 JS channel 回传
 - 修复 Windows 下载的歌曲没有封面 / 基本信息 / 歌词的问题
   - 标签写入原本只走 Android 原生实现（`com.mintmusic/tag_writer`），桌面端无实现；新增纯 Dart 兜底：MP3 写 ID3v2.3（TIT2/TPE1/TALB/TPE2/USLT/APIC），FLAC 写 Vorbis Comment + PICTURE
   - 原生实现与纯 Dart 实现都失败时（如 m4a 等格式），退化为写同名的 `.lrc` 歌词文件并保留同名单封面图片
 - 修复 Windows 播放页 / 歌词页无法正常显示歌词的问题
-  - AMLL 歌词引擎依赖 WebView，Windows 端合成异常导致歌词层不显示（桌面歌词窗口走原生 Flutter 渲染所以正常）；Windows 端统一使用原生歌词渲染，歌曲菜单里的「Apple Music 风格歌词」置灰并提示
+  - AMLL 歌词引擎依赖 WebView，没有 WebView 运行时（Windows 未装 Edge WebView2）时无法渲染，改为回退到原生歌词渲染
+- 修复本地歌曲的内嵌封面在左侧栏播放器与播放页不显示的问题：桌面端封面统一从封面缓存读取
 
 ### 修复
 - 修复 Windows 版任何播放/试听校验都抛 `MissingPluginException`（just_audio 在桌面端没有原生实现）

@@ -190,7 +190,7 @@ class MiniPlayer extends ConsumerWidget {
         errorWidget: Icon(Icons.music_note, size: 20, color: colors.primary),
       );
     }
-    if (song.mediaStoreId != null) {
+    if (song.mediaStoreId != null || song.isLocal) {
       return MusicCoverImage(
         key: ValueKey('mp_cover_img_${song.id}'),
         songId: song.id,

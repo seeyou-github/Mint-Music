@@ -330,7 +330,7 @@ class LibraryPage extends ConsumerWidget {
       );
     }
 
-    if (firstSong.mediaStoreId != null) {
+    if (firstSong.mediaStoreId != null || firstSong.isLocal) {
       return SizedBox.expand(
         child: MusicCoverImage(
           key: ValueKey('lib_cover_${firstSong.id}'),
