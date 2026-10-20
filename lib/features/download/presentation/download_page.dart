@@ -230,7 +230,7 @@ class _DownloadTaskItem extends ConsumerWidget {
               Expanded(
                 child: GestureDetector(
                   behavior: HitTestBehavior.opaque,
-                  onTap: () => _playTask(context),
+                  onTap: () => _playTask(context, ref),
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
@@ -491,7 +491,7 @@ class _DownloadTaskItem extends ConsumerWidget {
   }
 
   /// 点击列表项：直接播放该歌曲（文件不存在时提示错误）。
-  Future<void> _playTask(BuildContext context) async {
+  Future<void> _playTask(BuildContext context, WidgetRef ref) async {
     if (!_isCompleted) {
       _showMessage(context, context.tr('该歌曲尚未下载完成'));
       return;

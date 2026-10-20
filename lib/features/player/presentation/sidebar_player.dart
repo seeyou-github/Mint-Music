@@ -81,7 +81,7 @@ class SidebarPlayer extends ConsumerWidget {
                   const SizedBox(height: AppSpacing.sm),
                   _buildSongTitle(context, colors, song),
                   const SizedBox(height: AppSpacing.xs),
-                  _buildProgress(context, colors, controller),
+                  _buildProgress(context, ref, colors, controller),
                   const SizedBox(height: 2),
                   _buildControls(ref, colors, controller,
                       isPlaying: isPlaying, isLoading: isLoading),
@@ -167,6 +167,7 @@ class SidebarPlayer extends ConsumerWidget {
   /// 播放进度条：可点击 / 拖动调整进度；下方显示歌曲总时长。
   Widget _buildProgress(
     BuildContext context,
+    WidgetRef ref,
     ThemeColors colors,
     PlaybackController controller,
   ) {

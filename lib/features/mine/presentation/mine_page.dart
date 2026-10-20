@@ -43,7 +43,7 @@ class MinePage extends ConsumerWidget {
               ),
             ),
             const SizedBox(height: AppSpacing.lg),
-            _buildProfileCard(context, colors),
+            _buildProfileCard(context, ref, colors),
             const SizedBox(height: AppSpacing.lg),
             _buildEntryCard(context, colors),
           ],
@@ -52,7 +52,11 @@ class MinePage extends ConsumerWidget {
     );
   }
 
-  Widget _buildProfileCard(BuildContext context, ThemeColors colors) {
+  Widget _buildProfileCard(
+    BuildContext context,
+    WidgetRef ref,
+    ThemeColors colors,
+  ) {
     final versionAsync = ref.watch(appVersionProvider);
     return Container(
       padding: const EdgeInsets.all(AppSpacing.lg),
