@@ -28,9 +28,30 @@ class LocalPage extends ConsumerStatefulWidget {
   ConsumerState<LocalPage> createState() => _LocalPageState();
 }
 
+/// 文件夹栏的滚动行为：桌面端允许用鼠标拖动横向列表。
+///
+/// Material 默认的 [MaterialScrollBehavior] 只接受触摸 / 触控笔拖动，
+/// 桌面端鼠标无法拖动，这里把鼠标与触摸板也加进来。
+class _LocalFolderScrollBehavior extends MaterialScrollBehavior {
+  const _LocalFolderScrollBehavior();
+
+  @override
+  Set<PointerDeviceKind> get dragDevices => const {
+    PointerDeviceKind.touch,
+    PointerDeviceKind.stylus,
+    PointerDeviceKind.invertedStylus,
+    PointerDeviceKind.mouse,
+    PointerDeviceKind.trackpad,
+    PointerDeviceKind.unknown,
+  };
+}
+
 class _LocalPageState extends ConsumerState<LocalPage> {
   final _searchController = TextEditingController();
   final _scrollController = ScrollController();
+
+  /// 当前选中的扫描文件夹（null = 全部）。
+  String? _selectedFolder;
 
   /// 批量选择控制器（长按歌曲进入多选模式）。
   final _selection = SongSelectionController();
@@ -121,9 +142,25 @@ class _LocalPageState extends ConsumerState<LocalPage> {
   @override
   Widget build(BuildContext context) {
     final colors = ref.watch(themeColorsProvider);
-    final songs = ref.watch(filteredLocalSongsProvider);
+    final allSongs = ref.watch(filteredLocalSongsProvider);
     final songsAsync = ref.watch(localMusicNotifierProvider);
     final scanProgress = ref.watch(scanProgressProvider);
+    final scannedDirs = ref.watch(scannedDirectoriesProvider).valueOrNull ??
+        const <String>[];
+
+    // 选中的文件夹被移除后回到「全部」
+    if (_selectedFolder != null && !scannedDirs.contains(_selectedFolder)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => _selectedFolder = null);
+      });
+    }
+
+    // 按当前选中的文件夹过滤（顶部文件夹栏切换）。
+    final songs = _selectedFolder == null
+        ? allSongs
+        : allSongs
+            .where((s) => _isInFolder(s, _selectedFolder!))
+            .toList();
 
     // 在 build 中直接计算按钮可见性，避免滚动事件初值问题导致按钮永远不显示。
     // 仅当正在播放本地歌曲且该歌曲在当前筛选列表中时显示。
@@ -152,7 +189,7 @@ class _LocalPageState extends ConsumerState<LocalPage> {
                 children: [
                   Column(
                     children: [
-                      _buildHeader(colors),
+                      _buildHeader(colors, songs, scanProgress),
                       if (selecting)
                         // 多选模式：用选择栏替换常规控制区
                         // （对应 CeruMusic 中列表列头被整行替换的设计）。
@@ -162,7 +199,7 @@ class _LocalPageState extends ConsumerState<LocalPage> {
                           songs: songs,
                         )
                       else ...[
-                        _buildControls(colors, songs, scanProgress),
+                        _buildFolderBar(colors, songs, scanProgress),
                         const SizedBox(height: AppSpacing.sm),
                       ],
                       Expanded(
@@ -205,7 +242,12 @@ class _LocalPageState extends ConsumerState<LocalPage> {
     );
   }
 
-  Widget _buildHeader(ThemeColors colors) {
+  /// 顶部：标题 + 搜索框 + 选择目录 / 扫描 / 更多操作三个图标按钮。
+  Widget _buildHeader(
+    ThemeColors colors,
+    List<Song> songs,
+    ScanProgress scanProgress,
+  ) {
     final isTablet = ResponsiveLayout.isTablet(context);
     return Padding(
       padding: EdgeInsets.symmetric(
@@ -223,35 +265,146 @@ class _LocalPageState extends ConsumerState<LocalPage> {
             ),
           ),
           const SizedBox(width: AppSpacing.md),
+          Text(
+            context.tr('本地音乐'),
+            style: TextStyle(
+              fontSize: isTablet ? 26 : 22,
+              fontWeight: FontWeight.bold,
+              color: colors.textPrimary,
+            ),
+          ),
+          const SizedBox(width: AppSpacing.md),
+          Expanded(child: _buildSearchBar(colors)),
+          const SizedBox(width: AppSpacing.sm),
+          _buildHeaderIconButton(
+            colors,
+            Icons.folder_open,
+            context.tr('选择目录'),
+            () => _showDirModal(colors),
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          _buildHeaderIconButton(
+            colors,
+            Icons.refresh,
+            context.tr('扫描本地音乐'),
+            () => _scanLibrary(),
+            active: scanProgress.running,
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          _buildHeaderIconButton(
+            colors,
+            Icons.more_horiz,
+            context.tr('更多操作'),
+            () => _showMoreActions(colors, songs),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 顶部图标按钮（统一风格：圆角方块 + 居中图标）。
+  Widget _buildHeaderIconButton(
+    ThemeColors colors,
+    IconData icon,
+    String tooltip,
+    VoidCallback onTap, {
+    bool active = false,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: GestureDetector(
+        onTap: onTap,
+        behavior: HitTestBehavior.opaque,
+        child: Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            color: colors.surface,
+            borderRadius: BorderRadius.circular(AppRadius.md),
+          ),
+          child: Icon(
+            icon,
+            size: 20,
+            color: active ? colors.primary : colors.textSecondary,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 第二行：已添加的文件夹列表。
+  ///
+  /// 超出窗口宽度时可鼠标拖动 / 触摸左右滑动，点击某个文件夹即只看该文件夹
+  /// 内的歌曲。
+  Widget _buildFolderBar(
+    ThemeColors colors,
+    List<Song> songs,
+    ScanProgress scanProgress,
+  ) {
+    final dirs = ref.watch(scannedDirectoriesProvider).valueOrNull ??
+        const <String>[];
+    if (dirs.isEmpty) return const SizedBox.shrink();
+    return SizedBox(
+      height: 40,
+      child: Row(
+        children: [
           Expanded(
-            child: Text(
-              context.tr('本地音乐库'),
-              style: TextStyle(
-                fontSize: isTablet ? 26 : 22,
-                fontWeight: FontWeight.bold,
-                color: colors.textPrimary,
+            child: ScrollConfiguration(
+              // 桌面端允许用鼠标拖动横向列表
+              behavior: const _LocalFolderScrollBehavior(),
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: EdgeInsets.symmetric(
+                  horizontal: ResponsiveLayout.horizontalPadding(context),
+                  vertical: AppSpacing.xs,
+                ),
+                itemCount: dirs.length + 1,
+                separatorBuilder: (_, __) =>
+                    const SizedBox(width: AppSpacing.sm),
+                itemBuilder: (context, index) {
+                  if (index == 0) {
+                    return _buildFolderChip(
+                      colors,
+                      context.tr('全部'),
+                      isSelected: _selectedFolder == null,
+                      onTap: () => _selectFolder(null),
+                    );
+                  }
+                  final dir = dirs[index - 1];
+                  return _buildFolderChip(
+                    colors,
+                    _folderName(dir),
+                    isSelected: _selectedFolder == dir,
+                    onTap: () => _selectFolder(dir),
+                  );
+                },
               ),
             ),
           ),
-          GestureDetector(
-            onTap: () => _showDirModal(colors),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.xs),
-              decoration: BoxDecoration(
-                color: colors.surface,
-                borderRadius: BorderRadius.circular(AppRadius.full),
+          const SizedBox(width: AppSpacing.sm),
+          if (scanProgress.running) ...[
+            SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: colors.primary,
               ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.folder_open, size: 16, color: colors.textSecondary),
-                  const SizedBox(width: 4),
-                  Text(
-                    context.tr('选择目录'),
-                    style: TextStyle(fontSize: 12, color: colors.textSecondary, fontWeight: FontWeight.w500),
-                  ),
-                ],
-              ),
+            ),
+            const SizedBox(width: 4),
+            Text(
+              '${scanProgress.processed}/${scanProgress.total}',
+              style: TextStyle(fontSize: 11, color: colors.textHint),
+            ),
+            const SizedBox(width: AppSpacing.sm),
+          ],
+          Padding(
+            padding: EdgeInsets.only(
+              right: ResponsiveLayout.horizontalPadding(context),
+            ),
+            child: Text(
+              context.tr('${songs.length} 首'),
+              style: TextStyle(fontSize: 12, color: colors.textHint),
             ),
           ),
         ],
@@ -259,91 +412,81 @@ class _LocalPageState extends ConsumerState<LocalPage> {
     );
   }
 
-  Widget _buildControls(ThemeColors colors, List<Song> songs, ScanProgress scanProgress) {
-    return Padding(
-      padding: EdgeInsets.symmetric(horizontal: ResponsiveLayout.horizontalPadding(context)),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              GestureDetector(
-                onTap: () => _playAll(songs),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm),
-                  decoration: BoxDecoration(
-                    color: colors.primary,
-                    borderRadius: BorderRadius.circular(AppRadius.full),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.play_arrow, size: 18, color: colors.textOnPrimary),
-                      const SizedBox(width: AppSpacing.xs),
-                      Text(
-                        context.tr('播放全部'),
-                        style: TextStyle(fontSize: 13, color: colors.textOnPrimary, fontWeight: FontWeight.w500),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(width: AppSpacing.sm),
-              GestureDetector(
-                onTap: () => _scanLibrary(),
-                child: Container(
-                  padding: const EdgeInsets.all(AppSpacing.sm),
-                  decoration: BoxDecoration(
-                    color: colors.surface,
-                    borderRadius: BorderRadius.circular(AppRadius.md),
-                  ),
-                  child: Icon(
-                    Icons.refresh,
-                    size: 20,
-                    color: scanProgress.running ? colors.primary : colors.textSecondary,
-                  ),
-                ),
-              ),
-              const SizedBox(width: AppSpacing.sm),
-              GestureDetector(
-                onTap: () => _showMoreActions(colors, songs),
-                child: Container(
-                  padding: const EdgeInsets.all(AppSpacing.sm),
-                  decoration: BoxDecoration(
-                    color: colors.surface,
-                    borderRadius: BorderRadius.circular(AppRadius.md),
-                  ),
-                  child: Icon(Icons.more_horiz, size: 20, color: colors.textSecondary),
-                ),
-              ),
-              if (scanProgress.running) ...[
-                const SizedBox(width: AppSpacing.sm),
-                SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: colors.primary),
-                ),
-                const SizedBox(width: 4),
-                Text(
-                  '${scanProgress.processed}/${scanProgress.total}',
-                  style: TextStyle(fontSize: 11, color: colors.textHint),
-                ),
-              ],
-              const Spacer(),
-              Text(
-                context.tr('${songs.length} 首'),
-                style: TextStyle(fontSize: 12, color: colors.textHint),
-              ),
-            ],
+  /// 文件夹标签：文件夹图标 + 名称，选中态用主色高亮。
+  Widget _buildFolderChip(
+    ThemeColors colors,
+    String name, {
+    required bool isSelected,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md,
+          vertical: AppSpacing.sm,
+        ),
+        decoration: BoxDecoration(
+          color: isSelected ? colors.primary : colors.surface,
+          borderRadius: BorderRadius.circular(AppRadius.full),
+          border: Border.all(
+            color: isSelected ? colors.primary : colors.divider,
           ),
-          const SizedBox(height: AppSpacing.sm),
-          _buildSearchBar(colors),
-        ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.folder_rounded,
+              size: 16,
+              color: isSelected ? colors.textOnPrimary : colors.textSecondary,
+            ),
+            const SizedBox(width: 6),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 160),
+              child: Text(
+                name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: isSelected ? colors.textOnPrimary : colors.textPrimary,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
+  }
+
+  /// 切换选中的文件夹（null = 全部）。
+  void _selectFolder(String? dir) {
+    if (_selectedFolder == dir) return;
+    setState(() => _selectedFolder = dir);
+  }
+
+  /// 文件夹显示名（取最后一级目录名）。
+  String _folderName(String dir) {
+    final normalized = dir.replaceAll('\\', '/').replaceAll(RegExp(r'/+$'), '');
+    final index = normalized.lastIndexOf('/');
+    if (index < 0 || index == normalized.length - 1) return normalized;
+    return normalized.substring(index + 1);
+  }
+
+  /// 歌曲是否位于指定文件夹内。
+  bool _isInFolder(Song song, String folder) {
+    final filePath = (song.filePath ?? '').replaceAll('\\', '/').toLowerCase();
+    var dir = folder.replaceAll('\\', '/').toLowerCase();
+    if (dir.isEmpty) return false;
+    if (!dir.endsWith('/')) dir = '$dir/';
+    return filePath.startsWith(dir);
   }
 
   Widget _buildSearchBar(ThemeColors colors) {
     return Container(
+      height: 40,
       padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
       decoration: BoxDecoration(
         color: colors.surface,
@@ -362,6 +505,8 @@ class _LocalPageState extends ConsumerState<LocalPage> {
               decoration: InputDecoration(
                 hintText: context.tr('搜索本地歌曲/歌手/专辑'),
                 border: InputBorder.none,
+                isDense: true,
+                contentPadding: EdgeInsets.zero,
                 hintStyle: TextStyle(color: colors.textHint, fontSize: 14),
               ),
               style: TextStyle(color: colors.textPrimary, fontSize: 14),
@@ -770,6 +915,10 @@ class _LocalPageState extends ConsumerState<LocalPage> {
                       style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: colors.textPrimary),
                     ),
                     const SizedBox(height: AppSpacing.md),
+                    _contextMenuItem(colors, Icons.play_arrow, context.tr('播放全部'), () {
+                      Navigator.pop(context);
+                      _playAll(songs);
+                    }),
                     _contextMenuItem(colors, Icons.playlist_add, context.tr('添加全部到播放列表'), () {
                       Navigator.pop(context);
                       _addAllToPlaylist(songs);
