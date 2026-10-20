@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -142,12 +144,14 @@ class MinePage extends ConsumerWidget {
         subtitle: '查看最近听过的歌曲',
         route: AppRoutes.recentlyPlayed,
       ),
-      _MineEntry(
-        icon: Icons.mic_none,
-        title: '听歌识曲',
-        subtitle: '识别周围正在播放的音乐',
-        route: AppRoutes.recognize,
-      ),
+      // 听歌识曲的音频指纹模块依赖 WebView 运行时，Windows 端不可用，隐藏入口。
+      if (!Platform.isWindows)
+        _MineEntry(
+          icon: Icons.mic_none,
+          title: '听歌识曲',
+          subtitle: '识别周围正在播放的音乐',
+          route: AppRoutes.recognize,
+        ),
     ];
 
     return Container(
