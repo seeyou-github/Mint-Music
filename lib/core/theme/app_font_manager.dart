@@ -51,6 +51,27 @@ class AppFontManager {
   /// 支持导入的字体文件后缀。
   static const List<String> supportedExtensions = ['ttf', 'otf', 'ttc'];
 
+  /// 随安装包内置的字体（无需导入即可使用）。
+  ///
+  /// - `SourceHanSerif`：思源宋体
+  /// - `FZLantingHei`：方正兰亭黑
+  ///
+  /// [asset] 是相对 `flutter_assets` 的资源路径，Windows 端桌面歌词需要
+  /// 用它把字体注册进原生侧。
+  static const List<({String family, String label, String asset})>
+      bundledFonts = [
+    (
+      family: 'SourceHanSerif',
+      label: '思源宋体',
+      asset: 'assets/fonts/SourceHanSerif.otf'
+    ),
+    (
+      family: 'FZLantingHei',
+      label: '方正兰亭黑',
+      asset: 'assets/fonts/FZLantingHei.ttf'
+    ),
+  ];
+
   final List<AppFont> _fonts = [];
   String? _selectedFamily;
   bool _loaded = false;
@@ -94,7 +115,10 @@ class AppFontManager {
         }
       }
       final selected = prefs.getString(_selectedKey);
-      if (selected != null && _fonts.any((f) => f.family == selected)) {
+      // 内置字体（思源宋体 / 方正兰亭黑）也可以被选中。
+      final isBundled = bundledFonts.any((f) => f.family == selected);
+      if (selected != null &&
+          (isBundled || _fonts.any((f) => f.family == selected))) {
         _selectedFamily = selected;
       }
     } catch (e) {
@@ -136,14 +160,16 @@ class AppFontManager {
   }
 
   /// 选择应用字体（null = 恢复默认字体）。
-  Future<void> select(AppFont? font) async {
-    _selectedFamily = font?.family;
+  ///
+  /// [family] 可以是导入字体的族名，也可以是内置字体（见 [bundledFonts]）的族名。
+  Future<void> select(String? family) async {
+    _selectedFamily = (family == null || family.isEmpty) ? null : family;
     try {
       final prefs = await SharedPreferences.getInstance();
-      if (font == null) {
+      if (_selectedFamily == null) {
         await prefs.remove(_selectedKey);
       } else {
-        await prefs.setString(_selectedKey, font.family);
+        await prefs.setString(_selectedKey, _selectedFamily!);
       }
     } catch (e) {
       debugPrint('[AppFontManager] 保存字体选择失败: $e');

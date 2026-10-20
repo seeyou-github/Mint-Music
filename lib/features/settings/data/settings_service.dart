@@ -236,11 +236,11 @@ class SettingsService {
 
   // -- appearance performance --
   bool getAppearanceJumpLyric() =>
-      _prefs.getBool('appearance_jump_lyric') ?? true;
+      _prefs.getBool('appearance_jump_lyric') ?? false;
   Future<void> setAppearanceJumpLyric(bool v) =>
       _prefs.setBool('appearance_jump_lyric', v);
   bool getAppearanceBgAnimation() =>
-      _prefs.getBool('appearance_bg_animation') ?? true;
+      _prefs.getBool('appearance_bg_animation') ?? false;
   Future<void> setAppearanceBgAnimation(bool v) =>
       _prefs.setBool('appearance_bg_animation', v);
 
@@ -344,7 +344,7 @@ class SettingsService {
 
   // -- full screen background mode --
   String getFullScreenBgMode() =>
-      _prefs.getString('full_screen_bg_mode') ?? 'theme';
+      _prefs.getString('full_screen_bg_mode') ?? 'dark';
   Future<void> setFullScreenBgMode(String v) =>
       _prefs.setString('full_screen_bg_mode', v);
 

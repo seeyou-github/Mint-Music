@@ -647,8 +647,6 @@ class _AppearanceContent extends ConsumerWidget {
       children: [
         _buildThemeGroup(context, ref, colors),
         _buildDesktopLyricGroup(context, ref, colors),
-        _buildBackgroundModeGroup(context, ref, colors),
-        _buildPerformanceGroup(context, ref, colors),
       ],
     );
   }
@@ -672,9 +670,10 @@ class _AppearanceContent extends ConsumerWidget {
     final importedFonts = ref.watch(appFontsProvider);
     final selectedFont = ref.watch(appFontSelectedProvider);
     final fontName = selectedFont ?? '默认字体';
-    final fontSubtitle = importedFonts.isEmpty
-        ? '导入字体文件（可多选），并选择其中之一作为应用字体'
-        : '已导入 ${importedFonts.length} 个字体，当前使用：$fontName';
+    final fontSubtitle =
+        '内置 ${AppFontManager.bundledFonts.length} 个字体'
+        '${importedFonts.isEmpty ? '' : '，已导入 ${importedFonts.length} 个'}，'
+        '当前使用：$fontName';
     return _SettingGroup(
       title: '基础外观',
       subtitle: '主题和外观配置',
@@ -1271,12 +1270,26 @@ class _AppearanceContent extends ConsumerWidget {
                       style: TextStyle(fontSize: 12, color: colors.textHint),
                     ),
                     const SizedBox(height: AppSpacing.md),
+                    // 内置字体（随安装包提供，无需导入）
+                    ...AppFontManager.bundledFonts.map((font) {
+                      return _buildFontOption(
+                        sheetContext,
+                        colors,
+                        title: context.tr(font.label),
+                        subtitle: context.tr('内置字体'),
+                        isSelected: selected == font.family,
+                        onTap: () async {
+                          await notifier.select(font.family);
+                          if (sheetContext.mounted) Navigator.pop(sheetContext);
+                        },
+                      );
+                    }),
                     // 默认字体
                     _buildFontOption(
                       sheetContext,
                       colors,
                       title: context.tr('默认字体'),
-                      subtitle: context.tr('使用内置字体'),
+                      subtitle: context.tr('使用系统默认字体'),
                       isSelected: selected == null,
                       onTap: () async {
                         await notifier.select(null);
@@ -1291,7 +1304,7 @@ class _AppearanceContent extends ConsumerWidget {
                         subtitle: font.fileName,
                         isSelected: selected == font.family,
                         onTap: () async {
-                          await notifier.select(font);
+                          await notifier.select(font.family);
                           if (sheetContext.mounted) Navigator.pop(sheetContext);
                         },
                         onDelete: fonts.length > 1 || selected != font.family
@@ -1385,142 +1398,6 @@ class _AppearanceContent extends ConsumerWidget {
               icon: Icon(Icons.delete_outline, size: 18, color: colors.error),
               tooltip: context.tr('删除'),
             ),
-    );
-  }
-
-  Widget _buildBackgroundModeGroup(
-    BuildContext context,
-    WidgetRef ref,
-    ThemeColors colors,
-  ) {
-    final bgMode = ref.watch(fullScreenBackgroundModeProvider);
-    final modeLabels = {
-      FullScreenBackgroundMode.theme: '跟随主题',
-      FullScreenBackgroundMode.cover: '封面模糊',
-      FullScreenBackgroundMode.dark: '纯黑背景',
-    };
-    final currentLabel = modeLabels[bgMode] ?? '跟随主题';
-    return _SettingGroup(
-      title: '全屏播放背景',
-      subtitle: '全屏播放页面的背景模式',
-      colors: colors,
-      children: [
-        _SettingRow(
-          icon: Icons.wallpaper,
-          title: '背景模式',
-          subtitle: '当前: $currentLabel',
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                context.tr(currentLabel),
-                style: TextStyle(fontSize: 13, color: colors.textHint),
-              ),
-              const SizedBox(width: 4),
-              Icon(Icons.chevron_right, size: 18, color: colors.textHint),
-            ],
-          ),
-          colors: colors,
-          onTap: () => _showBottomPicker(
-            context,
-            colors,
-            '背景模式',
-            ['跟随主题', '封面模糊', '纯黑背景'],
-            currentLabel,
-            (v) {
-              final map = {
-                '跟随主题': FullScreenBackgroundMode.theme,
-                '封面模糊': FullScreenBackgroundMode.cover,
-                '纯黑背景': FullScreenBackgroundMode.dark,
-              };
-              final container = ProviderScope.containerOf(context);
-              container.read(fullScreenBackgroundModeProvider.notifier).state =
-                  map[v] ?? FullScreenBackgroundMode.theme;
-              unawaited(
-                _doPersist(
-                  container,
-                  (s) => s.setFullScreenBgMode(
-                    v == '纯黑背景' ? 'dark' : (v == '跟随主题' ? 'theme' : 'cover'),
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildPerformanceGroup(
-    BuildContext context,
-    WidgetRef ref,
-    ThemeColors colors,
-  ) {
-    final jumpLyric = ref.watch(appearanceJumpLyricProvider);
-    final bgAnimation = ref.watch(appearanceBgAnimationProvider);
-    final routePreload = ref.watch(routePreloadEnabledProvider);
-    return _SettingGroup(
-      title: '全屏播放-性能优化',
-      subtitle: '控制全屏播放器的视觉效果和性能',
-      colors: colors,
-      children: [
-        _SettingRow(
-          icon: Icons.animation,
-          title: '跳动歌词',
-          subtitle: '使用弹簧引擎效果跳动歌词、占用更高的性能',
-          trailing: Switch(
-            value: jumpLyric,
-            onChanged: (v) => _persistBool(
-              context,
-              appearanceJumpLyricProvider,
-              v,
-              (s) => s.setAppearanceJumpLyric(v),
-            ),
-            activeTrackColor: colors.primary.withValues(alpha: 0.3),
-            activeThumbColor: colors.primary,
-          ),
-          colors: colors,
-        ),
-        _SettingDivider(colors: colors),
-        _SettingRow(
-          icon: Icons.motion_photos_on,
-          title: '背景动画',
-          subtitle: '启用布朗运动背景动画、占用更高的性能',
-          trailing: Switch(
-            value: bgAnimation,
-            onChanged: (v) => _persistBool(
-              context,
-              appearanceBgAnimationProvider,
-              v,
-              (s) => s.setAppearanceBgAnimation(v),
-            ),
-            activeTrackColor: colors.primary.withValues(alpha: 0.3),
-            activeThumbColor: colors.primary,
-          ),
-          colors: colors,
-        ),
-        _SettingDivider(colors: colors),
-        _SettingRow(
-          icon: Icons.route,
-          title: '路由预加载',
-          subtitle: '空闲时预加载页面组件，提升页面切换速度',
-          trailing: Switch(
-            value: routePreload,
-            onChanged: (v) {
-              _persistBool(
-                context,
-                routePreloadEnabledProvider,
-                v,
-                (s) => s.setRoutePreloadEnabled(v),
-              );
-              if (v) unawaited(AmllLyricPlayerState.prewarm());
-            },
-            activeTrackColor: colors.primary.withValues(alpha: 0.3),
-            activeThumbColor: colors.primary,
-          ),
-          colors: colors,
-        ),
-      ],
     );
   }
 
@@ -2148,10 +2025,12 @@ class _PlaybackContent extends ConsumerWidget {
           ),
           colors: colors,
         ),
-        _SettingDivider(colors: colors),
-        _SettingRow(
-          icon: Icons.graphic_eq,
-          title: '均衡器预设',
+        // 均衡器关闭时隐藏详细设置（预设、频段滑条、导入导出等）
+        if (equalizerEnabled) ...[
+          _SettingDivider(colors: colors),
+          _SettingRow(
+            icon: Icons.graphic_eq,
+            title: '均衡器预设',
           subtitle: '选择预设均衡器方案',
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
@@ -2285,6 +2164,7 @@ class _PlaybackContent extends ConsumerWidget {
               ),
             ],
           ),
+          ],
         ],
       ],
     );
@@ -2672,10 +2552,12 @@ class _PlaybackContent extends ConsumerWidget {
           ),
           colors: colors,
         ),
-        _SettingDivider(colors: colors),
-        _SettingRow(
-          icon: Icons.speaker,
-          title: '低音增强 (Bass Boost)',
+        // 音效增强关闭时隐藏低音增强 / 环绕音效 / 声道平衡等子项
+        if (audioEffect) ...[
+          _SettingDivider(colors: colors),
+          _SettingRow(
+            icon: Icons.speaker,
+            title: '低音增强 (Bass Boost)',
           subtitle: bassBoostEnabled
               ? '增益 ${bassBoostGain.toInt()}dB · ${bassPresetLabels[bassBoostPreset] ?? bassBoostPreset}'
               : '关闭',
@@ -2912,6 +2794,7 @@ class _PlaybackContent extends ConsumerWidget {
               ),
             ),
           ),
+          ],
         ],
       ],
     );

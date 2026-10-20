@@ -199,6 +199,14 @@ class DesktopLyricSyncController extends StateNotifier<DesktopLyricStatus>
   Future<({String family, String path})?> _appFont() async {
     final selected = _ref.read(appFontSelectedProvider);
     if (selected == null || selected.isEmpty) return null;
+
+    // 内置字体（随安装包打包）：路径是相对 flutter_assets 的相对路径，
+    // 原生侧会基于程序目录解析。
+    for (final bundled in AppFontManager.bundledFonts) {
+      if (bundled.family != selected) continue;
+      return (family: bundled.family, path: bundled.asset);
+    }
+
     final fonts = _ref.read(appFontsProvider);
     for (final font in fonts) {
       if (font.family != selected) continue;

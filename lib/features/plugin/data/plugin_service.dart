@@ -431,7 +431,8 @@ class PluginService {
         installTime: DateTime.now(),
         supportedSources: sources,
         filePath: destPath,
-        isEnabled: plugins.isEmpty,
+        // 新添加的插件默认启用（用户可在插件管理里随时关闭）。
+        isEnabled: true,
         updateUrl: pluginInfo.homepage ?? sourceUrl,
       );
 

@@ -1151,17 +1151,17 @@ class _BackgroundLayerState extends State<_BackgroundLayer>
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
                 colors: [
+                  // 跟随主题的背景整体调暗 30%，避免过亮影响歌词可读性
                   HSLColor.fromColor(dominantColor!)
                       .withLightness(
-                        (HSLColor.fromColor(
-                          dominantColor!,
-                        ).lightness).clamp(0.15, 0.45),
+                        (HSLColor.fromColor(dominantColor!).lightness * 0.7)
+                            .clamp(0.10, 0.32),
                       )
                       .toColor(),
                   HSLColor.fromColor(dominantColor!)
                       .withLightness(
-                        (HSLColor.fromColor(dominantColor!).lightness - 0.08)
-                            .clamp(0.05, 0.35),
+                        (HSLColor.fromColor(dominantColor!).lightness * 0.7 - 0.06)
+                            .clamp(0.04, 0.25),
                       )
                       .toColor(),
                 ],

@@ -96,3 +96,11 @@ flutter:
     - family: lyricfont
       fonts:
         - asset: assets/fonts/lyricfont.ttf
+    # 思源宋体（随安装包内置）
+    - family: SourceHanSerif
+      fonts:
+        - asset: assets/fonts/SourceHanSerif.otf
+    # 方正兰亭黑（随安装包内置）
+    - family: FZLantingHei
+      fonts:
+        - asset: assets/fonts/FZLantingHei.ttf

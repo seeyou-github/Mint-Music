@@ -225,8 +225,8 @@ final lyricFontWeightProvider = StateProvider<int>((ref) => 700);
 final lyricFontColorProvider = StateProvider<String>((ref) => '');
 
 // -- appearance --
-final appearanceJumpLyricProvider = StateProvider<bool>((ref) => true);
-final appearanceBgAnimationProvider = StateProvider<bool>((ref) => true);
+final appearanceJumpLyricProvider = StateProvider<bool>((ref) => false);
+final appearanceBgAnimationProvider = StateProvider<bool>((ref) => false);
 
 /// 「主题色 / 字体颜色 / 第二字体颜色」里用户新增的自定义颜色列表。
 ///
@@ -295,7 +295,7 @@ enum FullScreenBackgroundMode { theme, cover, dark }
 
 final fullScreenBackgroundModeProvider =
     StateProvider<FullScreenBackgroundMode>(
-      (ref) => FullScreenBackgroundMode.theme,
+      (ref) => FullScreenBackgroundMode.dark,
     );
 
 // -- app version (loaded once) --

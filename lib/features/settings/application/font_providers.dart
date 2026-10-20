@@ -42,12 +42,15 @@ class AppFontsNotifier extends StateNotifier<List<AppFont>> {
   }
 
   /// 选择应用字体（null = 恢复默认字体）。
-  Future<void> select(AppFont? font) async {
-    await _manager.select(font);
+  ///
+  /// [family] 可以是导入字体的族名，也可以是内置字体（思源宋体 / 方正兰亭黑）的族名。
+  Future<void> select(String? family) async {
+    await _manager.select(family);
     if (!mounted) return;
     state = _manager.fonts;
-    _ref.read(appFontSelectedProvider.notifier).state = font?.family;
-    _applyFontFamily(font?.family);
+    _ref.read(appFontSelectedProvider.notifier).state =
+        (family == null || family.isEmpty) ? null : family;
+    _applyFontFamily(family);
   }
 
   /// 删除导入的字体。

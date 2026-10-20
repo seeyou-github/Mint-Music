@@ -80,15 +80,37 @@ int MeasureTextWidth(HDC dc, const std::wstring& text) {
   return static_cast<int>(size.cx);
 }
 
+/// 解析字体文件路径。
+///
+/// 绝对路径直接使用；相对路径（内置字体，位于 flutter_assets 下）基于
+/// 程序所在目录的 `data\flutter_assets` 解析。
+std::wstring ResolveFontPath(const std::wstring& path) {
+  if (path.empty()) {
+    return path;
+  }
+  if (path.find(L':') != std::wstring::npos) {
+    return path;  // 已经是绝对路径
+  }
+  wchar_t exe_path[MAX_PATH] = {0};
+  ::GetModuleFileNameW(nullptr, exe_path, MAX_PATH);
+  std::wstring dir(exe_path);
+  const size_t slash = dir.find_last_of(L"\\/");
+  if (slash != std::wstring::npos) {
+    dir = dir.substr(0, slash);
+  }
+  return dir + L"\\data\\flutter_assets\\" + path;
+}
+
 /// 载入字体文件，返回它在系统里的字体族名（失败返回空串）。
 std::wstring LoadFontFamily(const std::wstring& path) {
-  if (path.empty()) {
+  const std::wstring resolved = ResolveFontPath(path);
+  if (resolved.empty()) {
     return std::wstring();
   }
   std::set<std::wstring> before;
   CollectFontFamilies(&before);
   // FR_PRIVATE：只在当前进程内生效，不污染系统字体。
-  if (::AddFontResourceExW(path.c_str(), FR_PRIVATE, nullptr) == 0) {
+  if (::AddFontResourceExW(resolved.c_str(), FR_PRIVATE, nullptr) == 0) {
     return std::wstring();
   }
   std::set<std::wstring> after;

@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_spacing.dart';
+import '../../core/theme/app_font_manager.dart';
 import '../../core/theme/theme_provider.dart';
 import '../../core/constants/app_routes.dart';
 import '../../core/l10n/l10n.dart';
@@ -668,6 +669,21 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
           child: _ScrollableSheet(
             title: ctx.tr('歌词设置'),
             children: [
+                // 播放详情页背景（原「全屏播放背景」，移到这里并放在最上方）
+                _lyricSettingRow(
+                  ctx,
+                  container,
+                  icon: Icons.wallpaper,
+                  title: ctx.tr('播放详情页背景'),
+                  subtitle: ctx.tr(_backgroundModeLabel(container)),
+                  onTap: () => _showBackgroundModePicker(ctx, container),
+                ),
+                const Divider(
+                  height: 1,
+                  indent: 16,
+                  endIndent: 16,
+                  color: AppColors.divider,
+                ),
                 // 字体设置行
                 _lyricSettingRow(
                   ctx,
@@ -1093,6 +1109,114 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
     );
   }
 
+  /// 「播放详情页背景」当前模式的显示文案。
+  String _backgroundModeLabel(ProviderContainer container) {
+    final mode = container.read(fullScreenBackgroundModeProvider);
+    return switch (mode) {
+      FullScreenBackgroundMode.cover => '封面模糊',
+      FullScreenBackgroundMode.dark => '纯黑背景',
+      FullScreenBackgroundMode.theme => '跟随主题',
+    };
+  }
+
+  /// 选择「播放详情页背景」模式。
+  void _showBackgroundModePicker(
+    BuildContext ctx,
+    ProviderContainer container,
+  ) {
+    const labels = ['跟随主题', '封面模糊', '纯黑背景'];
+    final current = _backgroundModeLabel(container);
+    showModalBottomSheet(
+      context: ctx,
+      sheetAnimationStyle: _sheetAnimationStyle,
+      backgroundColor: Colors.transparent,
+      builder: (sheetCtx) {
+        return Container(
+          decoration: const BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+          ),
+          child: SafeArea(
+            top: false,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(height: AppSpacing.md),
+                Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: AppColors.divider,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.md),
+                Text(
+                  sheetCtx.tr('播放详情页背景'),
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                ...labels.map(
+                  (label) => ListTile(
+                    title: Text(
+                      sheetCtx.tr(label),
+                      style: TextStyle(
+                        color: label == current
+                            ? AppColors.primary
+                            : AppColors.textPrimary,
+                      ),
+                    ),
+                    trailing: label == current
+                        ? const Icon(
+                            Icons.check,
+                            size: 18,
+                            color: AppColors.primary,
+                          )
+                        : null,
+                    onTap: () {
+                      final mode = switch (label) {
+                        '纯黑背景' => FullScreenBackgroundMode.dark,
+                        '封面模糊' => FullScreenBackgroundMode.cover,
+                        _ => FullScreenBackgroundMode.theme,
+                      };
+                      container
+                          .read(fullScreenBackgroundModeProvider.notifier)
+                          .state = mode;
+                      unawaited(_persistBackgroundMode(container, mode));
+                      Navigator.pop(sheetCtx);
+                    },
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.md),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// 持久化「播放详情页背景」模式。
+  Future<void> _persistBackgroundMode(
+    ProviderContainer container,
+    FullScreenBackgroundMode mode,
+  ) async {
+    try {
+      final svc = await container.read(settingsServiceProvider.future);
+      await svc.setFullScreenBgMode(
+        mode == FullScreenBackgroundMode.dark
+            ? 'dark'
+            : (mode == FullScreenBackgroundMode.cover ? 'cover' : 'theme'),
+      );
+    } catch (e) {
+      debugPrint('[Settings] persist background mode error: $e');
+    }
+  }
+
   Future<void> _showFontFamilyPicker(
     BuildContext ctx,
     ProviderContainer container,
@@ -1116,6 +1240,13 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
       fonts.add(font.family);
       map[font.family] = font.family;
       revMap[font.family] = font.family;
+    }
+    // 随安装包内置的字体（思源宋体 / 方正兰亭黑）。
+    for (final font in AppFontManager.bundledFonts) {
+      if (map.containsKey(font.family)) continue;
+      fonts.add(font.label);
+      map[font.family] = font.label;
+      revMap[font.label] = font.family;
     }
     final currentLabel = map[current] ?? '系统默认';
 
