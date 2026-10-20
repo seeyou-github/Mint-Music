@@ -66,7 +66,7 @@ class LibraryPage extends ConsumerWidget {
         children: [
           Expanded(
             child: Text(
-              context.tr('我的歌单'),
+              context.tr('我的收藏'),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(

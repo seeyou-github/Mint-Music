@@ -237,31 +237,31 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
             ),
           ),
           const SizedBox(width: AppSpacing.sm),
-          // 切换音源（插件）按钮：放在搜索框右侧
+          // 切换音源（插件）按钮：放在搜索框右侧，高度与搜索框一致，图标铺满圆形
           GestureDetector(
             key: _sourceButtonKey,
             onTap: () => _showSourceMenu(context, colors, sources, sourceId),
             child: Container(
-              width: 36,
-              height: 36,
+              width: _searchBarHeight,
+              height: _searchBarHeight,
               decoration: BoxDecoration(
                 color: colors.surface,
                 shape: BoxShape.circle,
               ),
-              child: Center(
-                child: currentSource != null
-                    ? _buildSourceIcon(
-                        // 同名插件的变体 id 需要还原成平台 id 才能取到对应图标。
-                        SourceInfo.baseIdOf(currentSource.id),
-                        size: 20,
-                        label: currentSource.name,
-                      )
-                    : Icon(
-                        Icons.music_note,
-                        size: 20,
-                        color: colors.textSecondary,
-                      ),
-              ),
+              // 图标铺满圆形按钮，不留内边距
+              clipBehavior: Clip.antiAlias,
+              child: currentSource != null
+                  ? _buildSourceIcon(
+                      // 同名插件的变体 id 需要还原成平台 id 才能取到对应图标。
+                      SourceInfo.baseIdOf(currentSource.id),
+                      size: _searchBarHeight,
+                      label: currentSource.name,
+                    )
+                  : Icon(
+                      Icons.music_note,
+                      size: _searchBarHeight,
+                      color: colors.textSecondary,
+                    ),
             ),
           ),
         ],
@@ -269,13 +269,16 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
     );
   }
 
+  /// 搜索框与切换音源按钮共用的高度（两者视觉高度保持一致）。
+  static const double _searchBarHeight = 40;
+
   Widget _buildSearchBar(BuildContext context, ThemeColors colors) {
     return GestureDetector(
       onTap: () => context.push('/search'),
       child: Container(
+        height: _searchBarHeight,
         padding: const EdgeInsets.symmetric(
           horizontal: AppSpacing.md,
-          vertical: AppSpacing.sm,
         ),
         decoration: BoxDecoration(
           color: colors.surface,

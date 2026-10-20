@@ -31,7 +31,7 @@ const List<AppNavItem> appNavItems = [
   AppNavItem(
     icon: Icons.library_music_outlined,
     activeIcon: Icons.library_music,
-    label: '歌单',
+    label: '收藏',
     route: AppRoutes.library,
   ),
   AppNavItem(

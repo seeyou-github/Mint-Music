@@ -441,7 +441,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           const SizedBox(width: AppSpacing.sm),
           Expanded(
             child: Container(
-              height: 40,
+              height: _searchFieldHeight,
               padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
               decoration: BoxDecoration(
                 color: colors.surface,
@@ -489,32 +489,36 @@ class _SearchPageState extends ConsumerState<SearchPage> {
             ),
           ),
           const SizedBox(width: AppSpacing.sm),
+          // 切换音源按钮：高度与搜索框一致，图标铺满圆形
           GestureDetector(
             key: _sourceButtonKey,
             onTap: () =>
                 _showSourceMenu(context, colors, sources, currentSourceId),
             child: Container(
-              width: 40,
-              height: 40,
+              width: _searchFieldHeight,
+              height: _searchFieldHeight,
               decoration: BoxDecoration(
                 color: colors.surface,
                 shape: BoxShape.circle,
               ),
-              child: Center(
-                child: currentSource != null && currentSource.id != 'all'
-                    ? _buildSourceIcon(
-                        // 同名插件的变体 id 需要还原成平台 id 才能取到对应图标。
-                        SourceInfo.baseIdOf(currentSource.id),
-                        size: 22,
-                      )
-                    : _buildSourceIcon('all', size: 22),
-              ),
+              // 图标铺满圆形按钮，不留内边距
+              clipBehavior: Clip.antiAlias,
+              child: currentSource != null && currentSource.id != 'all'
+                  ? _buildSourceIcon(
+                      // 同名插件的变体 id 需要还原成平台 id 才能取到对应图标。
+                      SourceInfo.baseIdOf(currentSource.id),
+                      size: _searchFieldHeight,
+                    )
+                  : _buildSourceIcon('all', size: _searchFieldHeight),
             ),
           ),
         ],
       ),
     );
   }
+
+  /// 搜索框与切换音源按钮共用的高度（两者视觉高度保持一致）。
+  static const double _searchFieldHeight = 40;
 
   Widget _buildSearchSuggest(ThemeColors colors) {
     final suggestAsync = ref.watch(searchSuggestResultsProvider);
