@@ -104,7 +104,11 @@ class DesktopLyricOverlay {
     }
   }
 
-  Future<void> updateConfig(DesktopLyricSettings settings) async {
+  Future<void> updateConfig(
+    DesktopLyricSettings settings, {
+    String? fontFamily,
+    String? fontPath,
+  }) async {
     if (!supported) return;
     try {
       await _channel.invokeMethod<void>('updateConfig', {
@@ -122,6 +126,9 @@ class DesktopLyricOverlay {
         'positionY': settings.positionY,
         'textAlignX': settings.textAlignX.name,
         'textAlignY': settings.textAlignY.name,
+        // 应用字体（设置 - 外观设置 - 应用字体）
+        if (fontFamily != null) 'fontFamily': fontFamily,
+        if (fontPath != null) 'fontPath': fontPath,
       });
     } on PlatformException {
       // 忽略

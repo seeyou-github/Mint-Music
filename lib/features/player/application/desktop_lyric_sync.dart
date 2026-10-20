@@ -4,6 +4,8 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/l10n/l10n.dart';
+import '../../../core/theme/app_font_manager.dart';
+import '../../settings/application/font_providers.dart';
 import '../../settings/application/settings_providers.dart';
 import '../domain/models/desktop_lyric_settings.dart';
 import '../domain/models/lyric_line.dart';
@@ -177,7 +179,38 @@ class DesktopLyricSyncController extends StateNotifier<DesktopLyricStatus>
       return;
     }
     if (!state.usingNativeOverlay) return;
-    unawaited(_overlay.updateConfig(next));
+    unawaited(_pushConfig(next));
+  }
+
+  /// 下发样式配置（含应用字体）。
+  Future<void> _pushConfig(DesktopLyricSettings settings) async {
+    final font = await _appFont();
+    await _overlay.updateConfig(
+      settings,
+      fontFamily: font?.$1,
+      fontPath: font?.$2,
+    );
+  }
+
+  /// 当前选中的应用字体（族名 + 文件路径）。
+  ///
+  /// Windows 端桌面歌词是原生窗口，需要把字体文件注册进原生侧才能用上
+  /// 「设置 - 外观设置 - 应用字体」里选择的字体。
+  Future<({String family, String path})?> _appFont() async {
+    final selected = _ref.read(appFontSelectedProvider);
+    if (selected == null || selected.isEmpty) return null;
+    final fonts = _ref.read(appFontsProvider);
+    for (final font in fonts) {
+      if (font.family != selected) continue;
+      try {
+        final path = await AppFontManager.instance.pathOf(font);
+        return (family: font.family, path: path);
+      } catch (e) {
+        debugPrint('[DesktopLyricSync] 读取字体路径失败: $e');
+        return null;
+      }
+    }
+    return null;
   }
 
   /// 切歌:重置已下发的歌词,并为新歌主动拉取歌词。
@@ -268,9 +301,8 @@ class DesktopLyricSyncController extends StateNotifier<DesktopLyricStatus>
       return;
     }
 
-    await _overlay.updateConfig(settings);
-    await pushLyric(force: true);
-    // 交给原生侧自行推进,并定期校准。
+    await _pushConfig(settings);
+    await pushLyric(force: true);    // 交给原生侧自行推进,并定期校准。
     await pushPlayState(force: true);
     _startSyncTimer();
   }

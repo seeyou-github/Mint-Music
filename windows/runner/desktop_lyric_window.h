@@ -17,13 +17,19 @@ struct DesktopLyricLine {
   std::wstring roman;
 };
 
+/// 一个要绘制的歌词元素（文本 + 颜色 + 透明度缩放）。
+struct DesktopLyricElement {
+  std::wstring text;
+  unsigned int color = 0xFFFFFFFF;
+  int alpha_scale = 100;
+};
+
 /// 桌面歌词窗口。
 ///
-/// 这是一个独立的顶层窗口（无边框、背景透明、可置顶），不依赖 Flutter 视图，
+/// 这是一个独立的顶层窗口（无边框、背景透明、始终置顶），不依赖 Flutter 视图，
 /// 因此：
 /// * 应用最小化后依然显示在桌面上；
-/// * 锁定后置顶显示（HWND_TOPMOST）；
-/// * 应用窗口内不再重复渲染歌词。
+/// * 锁定后点击穿透下层内容（未锁定时可以拖动）。
 class DesktopLyricWindow {
  public:
   static DesktopLyricWindow& Instance();
@@ -47,7 +53,9 @@ class DesktopLyricWindow {
                     unsigned int shadow_color,
                     double position_x,
                     double position_y,
-                    int align);
+                    int align,
+                    const std::wstring& font_family,
+                    const std::wstring& font_path);
 
   /// 更新歌词内容。[active_index] 为当前行（-1 表示无）。
   void UpdateLyric(const std::vector<DesktopLyricLine>& lines,
@@ -79,6 +87,10 @@ class DesktopLyricWindow {
   void DestroyWindowIfNeeded();
   void ApplySizeAndPosition();
   void EnsureFont();
+  /// 组装当前要绘制的歌词元素。
+  std::vector<DesktopLyricElement> BuildElements() const;
+  /// 测量歌词内容所需高度（长句按窗口宽度换行）。
+  int MeasureContentHeight(int width);
   /// 推进当前歌词行；返回是否发生了变化（变化时需要重绘）。
   bool AdvanceActiveIndex();
   void Paint();
@@ -102,6 +114,10 @@ class DesktopLyricWindow {
   int align_ = 1;  // 0=左 1=居中 2=右
   bool show_translation_ = false;
   bool show_roman_ = false;
+
+  // 应用字体（导入的字体文件已在进程内注册）
+  std::wstring font_family_;
+  std::wstring loaded_font_path_;
 
   // 歌词
   std::vector<DesktopLyricLine> lines_;

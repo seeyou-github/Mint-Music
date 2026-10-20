@@ -245,6 +245,9 @@ void FlutterWindow::HandleDesktopLyricCall(
     } else if (align == "right") {
       align_value = 2;
     }
+    // 应用字体：字体族名 + 字体文件路径（原生侧注册后按族名取用）。
+    const std::wstring font_family = Utf8ToWide(GetStringUtf8(arguments, "fontFamily"));
+    const std::wstring font_path = Utf8ToWide(GetStringUtf8(arguments, "fontPath"));
     window.UpdateConfig(
         GetBool(arguments, "isLock", false),
         GetInt(arguments, "maxLineNum", 1),
@@ -258,7 +261,8 @@ void FlutterWindow::HandleDesktopLyricCall(
         static_cast<unsigned int>(
             GetInt(arguments, "shadowColor", static_cast<int>(0xFF000000))),
         GetDouble(arguments, "positionX", 50),
-        GetDouble(arguments, "positionY", 20), align_value);
+        GetDouble(arguments, "positionY", 20), align_value, font_family,
+        font_path);
     result->Success();
     return;
   }

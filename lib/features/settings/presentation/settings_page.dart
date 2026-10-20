@@ -16,6 +16,7 @@ import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../../../shared/services/app_image_cache.dart';
 import '../../../shared/services/cache_paths.dart';
+import '../../../shared/widgets/hsv_color_picker.dart';
 import '../application/font_providers.dart';
 import '../application/settings_providers.dart';
 import '../data/settings_service.dart';
@@ -929,12 +930,111 @@ class _AppearanceContent extends ConsumerWidget {
                 context.tr('第一个圆圈表示恢复主题默认色'),
                 style: TextStyle(fontSize: 12, color: colors.textHint),
               ),
+              const SizedBox(height: AppSpacing.md),
+              // 新增自定义颜色
+              OutlinedButton.icon(
+                onPressed: () {
+                  Navigator.pop(context);
+                  _showHsvColorPicker(
+                    context,
+                    colors,
+                    isSecondary: isSecondary,
+                    initial: _parseHexColor(
+                      currentHex.isEmpty
+                          ? (isSecondary
+                                ? colors.textSecondary
+                                : colors.textPrimary)
+                                : currentHex,
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.colorize, size: 18),
+                label: Text(context.tr('新增颜色')),
+              ),
               const SizedBox(height: AppSpacing.lg),
             ],
           ),
         ),
       ),
     );
+  }
+
+  /// HSV 取色面板：选择颜色后可以「保存」或「取消」。
+  void _showHsvColorPicker(
+    BuildContext context,
+    ThemeColors colors, {
+    required bool isSecondary,
+    required Color initial,
+  }) {
+    showModalBottomSheet(
+      context: context,
+      sheetAnimationStyle: _settingsSheetAnimationStyle,
+      backgroundColor: colors.surface,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        child: SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.all(AppSpacing.lg),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  sheetContext.tr(
+                    isSecondary ? '选择第二字体颜色' : '选择字体颜色',
+                  ),
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: colors.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.md),
+                HsvColorPicker(
+                  initialColor: initial,
+                  onCancel: () => Navigator.pop(sheetContext),
+                  onSave: (color) {
+                    final hex = _toHexString(color);
+                    final container = ProviderScope.containerOf(sheetContext);
+                    if (isSecondary) {
+                      container
+                          .read(themeSecondaryFontColorProvider.notifier)
+                          .state = hex;
+                      unawaited(
+                        _doPersist(
+                          container,
+                          (s) => s.setThemeSecondaryFontColor(hex),
+                        ),
+                      );
+                    } else {
+                      container.read(themeFontColorProvider.notifier).state = hex;
+                      unawaited(
+                        _doPersist(
+                          container,
+                          (s) => s.setThemeFontColor(hex),
+                        ),
+                      );
+                    }
+                    Navigator.pop(sheetContext);
+                  },
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 颜色转 #RRGGBB 字符串。
+  String _toHexString(Color color) {
+    final r = (color.r * 255).round().toRadixString(16).padLeft(2, '0');
+    final g = (color.g * 255).round().toRadixString(16).padLeft(2, '0');
+    final b = (color.b * 255).round().toRadixString(16).padLeft(2, '0');
+    return '#${r.toUpperCase()}${g.toUpperCase()}${b.toUpperCase()}';
   }
 
   /// 应用字体：导入字体文件（可多选）并选择其中之一。

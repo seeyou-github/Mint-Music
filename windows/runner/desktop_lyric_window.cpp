@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <set>
 
 namespace mintmusic {
 
@@ -41,6 +42,48 @@ void GetVirtualScreen(int* left, int* top, int* width, int* height) {
   *height = static_cast<int>(desktop.bottom - desktop.top);
   if (*width <= 0) *width = ::GetSystemMetrics(SM_CXSCREEN);
   if (*height <= 0) *height = ::GetSystemMetrics(SM_CYSCREEN);
+}
+
+/// 枚举字体族时的回调（把族名收集到 set 里）。
+int CALLBACK EnumFontCollect(const LOGFONTW* font,
+                             const TEXTMETRICW*,
+                             DWORD,
+                             LPARAM param) {
+  auto* families = reinterpret_cast<std::set<std::wstring>*>(param);
+  families->insert(font->lfFaceName);
+  return 1;
+}
+
+/// 收集当前进程里已注册的字体族名。
+void CollectFontFamilies(std::set<std::wstring>* families) {
+  HDC dc = ::GetDC(nullptr);
+  if (dc == nullptr) {
+    return;
+  }
+  ::EnumFontFamiliesExW(dc, nullptr, &EnumFontCollect,
+                        reinterpret_cast<LPARAM>(families), 0);
+  ::ReleaseDC(nullptr, dc);
+}
+
+/// 载入字体文件，返回它在系统里的字体族名（失败返回空串）。
+std::wstring LoadFontFamily(const std::wstring& path) {
+  if (path.empty()) {
+    return std::wstring();
+  }
+  std::set<std::wstring> before;
+  CollectFontFamilies(&before);
+  // FR_PRIVATE：只在当前进程内生效，不污染系统字体。
+  if (::AddFontResourceExW(path.c_str(), FR_PRIVATE, nullptr) == 0) {
+    return std::wstring();
+  }
+  std::set<std::wstring> after;
+  CollectFontFamilies(&after);
+  for (const auto& family : after) {
+    if (before.find(family) == before.end()) {
+      return family;
+    }
+  }
+  return std::wstring();
 }
 
 }  // namespace
@@ -109,7 +152,9 @@ void DesktopLyricWindow::UpdateConfig(bool is_lock,
                                        unsigned int shadow_color,
                                        double position_x,
                                        double position_y,
-                                       int align) {
+                                       int align,
+                                       const std::wstring& font_family,
+                                       const std::wstring& font_path) {
   is_lock_ = is_lock;
   max_line_num_ = std::max(1, max_line_num);
   font_size_ = std::max(10, font_size);
@@ -121,6 +166,17 @@ void DesktopLyricWindow::UpdateConfig(bool is_lock,
   position_x_ = position_x;
   position_y_ = position_y;
   align_ = align;
+
+  // 应用字体：先注册字体文件，再取它在系统里的字体族名。
+  if (!font_path.empty() && font_path != loaded_font_path_) {
+    const std::wstring family = LoadFontFamily(font_path);
+    loaded_font_path_ = font_path;
+    // 枚举得到的族名最准确；枚举失败时退回 Dart 侧传来的名字。
+    font_family_ = family.empty() ? font_family : family;
+  } else if (font_path.empty() && !loaded_font_path_.empty()) {
+    loaded_font_path_.clear();
+    font_family_.clear();
+  }
 
   if (font_ != nullptr) {
     ::DeleteObject(font_);
@@ -156,16 +212,61 @@ void DesktopLyricWindow::EnsureFont() {
   if (font_ != nullptr) {
     return;
   }
-  font_ = ::CreateFontW(
-      -font_size_, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-      OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
-      DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
+  // 优先使用应用里选择的字体。
+  if (!font_family_.empty()) {
+    font_ = ::CreateFontW(
+        -font_size_, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+        OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE, font_family_.c_str());
+  }
+  if (font_ == nullptr) {
+    font_ = ::CreateFontW(
+        -font_size_, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+        OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
+  }
   if (font_ == nullptr) {
     font_ = ::CreateFontW(
         -font_size_, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
         OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
         DEFAULT_PITCH | FF_DONTCARE, L"SimHei");
   }
+}
+
+/// 组装当前要绘制的歌词元素：当前行（高亮）+ 后续行。
+std::vector<DesktopLyricElement> DesktopLyricWindow::BuildElements() const {
+  std::vector<DesktopLyricElement> elements;
+  if (active_index_ < 0 ||
+      active_index_ >= static_cast<int>(lines_.size())) {
+    return elements;
+  }
+  for (int i = active_index_;
+       i < static_cast<int>(lines_.size()) &&
+       (i - active_index_) < max_line_num_;
+       i++) {
+    const bool is_active = (i == active_index_);
+    DesktopLyricElement main;
+    main.text = lines_[i].text;
+    main.color = is_active ? played_color_ : unplay_color_;
+    main.alpha_scale = 100;
+    elements.push_back(main);
+
+    if (show_translation_ && !lines_[i].translation.empty()) {
+      DesktopLyricElement translation;
+      translation.text = lines_[i].translation;
+      translation.color = unplay_color_;
+      translation.alpha_scale = 80;
+      elements.push_back(translation);
+    }
+    if (show_roman_ && !lines_[i].roman.empty()) {
+      DesktopLyricElement roman;
+      roman.text = lines_[i].roman;
+      roman.color = unplay_color_;
+      roman.alpha_scale = 80;
+      elements.push_back(roman);
+    }
+  }
+  return elements;
 }
 
 void DesktopLyricWindow::ApplySizeAndPosition() {
@@ -180,22 +281,9 @@ void DesktopLyricWindow::ApplySizeAndPosition() {
 
   const int width =
       std::min(800, std::max(200, screen_width * width_percent_ / 100));
-  // 高度按当前会绘制的元素数量计算（最后几行歌词变少时窗口会略微变矮）。
-  int element_count = 0;
-  if (active_index_ >= 0 && active_index_ < static_cast<int>(lines_.size())) {
-    for (int i = active_index_;
-         i < static_cast<int>(lines_.size()) && element_count < max_line_num_;
-         i++) {
-      element_count++;
-      if (show_translation_ && !lines_[i].translation.empty()) {
-        element_count++;
-      }
-      if (show_roman_ && !lines_[i].roman.empty()) {
-        element_count++;
-      }
-    }
-  }
-  const int height = std::max(GetLineHeight(), element_count * GetLineHeight());
+
+  // 高度按歌词实际排版计算（长句会换行，需要更多高度）。
+  const int height = std::max(GetLineHeight(), MeasureContentHeight(width));
 
   int x = screen_left + static_cast<int>(position_x_ / 100.0 *
                                         std::max(0, screen_width - width));
@@ -213,6 +301,42 @@ void DesktopLyricWindow::ApplySizeAndPosition() {
 
   // 桌面歌词始终置顶显示（不锁定时同样置顶）。
   ::SetWindowPos(window_, HWND_TOPMOST, x, y, width, height, SWP_NOACTIVATE);
+}
+
+/// 测量歌词内容所需的高度（长句按窗口宽度换行）。
+int DesktopLyricWindow::MeasureContentHeight(int width) {
+  const std::vector<DesktopLyricElement> elements = BuildElements();
+  if (elements.empty()) {
+    return GetLineHeight();
+  }
+  HDC screen_dc = ::GetDC(window_);
+  if (screen_dc == nullptr) {
+    return static_cast<int>(elements.size()) * GetLineHeight();
+  }
+  HDC dc = ::CreateCompatibleDC(screen_dc);
+  if (dc == nullptr) {
+    ::ReleaseDC(window_, screen_dc);
+    return static_cast<int>(elements.size()) * GetLineHeight();
+  }
+  EnsureFont();
+  ::SelectObject(dc, font_);
+  int total = 0;
+  for (const auto& element : elements) {
+    if (element.text.empty()) {
+      continue;
+    }
+    RECT measure{0, 0, width, 0};
+    ::DrawTextW(dc, element.text.c_str(), -1, &measure,
+                static_cast<UINT>(DT_CALCRECT | DT_WORDS | DT_WRAP | DT_NOPREFIX));
+    int h = measure.bottom - measure.top;
+    if (h <= 0) {
+      h = GetLineHeight();
+    }
+    total += h;
+  }
+  ::DeleteDC(dc);
+  ::ReleaseDC(window_, screen_dc);
+  return total;
 }
 
 bool DesktopLyricWindow::AdvanceActiveIndex() {
@@ -251,8 +375,8 @@ void DesktopLyricWindow::Paint() {
   }
   RECT client{};
   ::GetClientRect(window_, &client);
-  const int width = static_cast<int>(client.right - client.left);
-  const int height = static_cast<int>(client.bottom - client.top);
+  const int width = client.right - client.left;
+  const int height = client.bottom - client.top;
   if (width <= 0 || height <= 0) {
     return;
   }
@@ -313,16 +437,18 @@ void DesktopLyricWindow::Paint() {
   }
 
   // 把一段文字画到蒙版（黑底白字），再按颜色合成到画布。
-  auto draw_text = [&](const std::wstring& text, int y, unsigned int color,
-                       int alpha_scale, int offset_x, int offset_y) {
-    if (text.empty()) {
+  // 文字按窗口宽度自动换行，行高由实际排版结果决定。
+  auto draw_text = [&](const std::wstring& text, int y, int height,
+                       unsigned int color, int alpha_scale, int offset_x,
+                       int offset_y) {
+    if (text.empty() || height <= 0) {
       return;
     }
     std::memset(mask_bits, 0, pixel_count * 4);
     ::SelectObject(mask_dc, font_);
-    RECT text_rect{offset_x, y + offset_y, width, y + offset_y + line_height};
+    RECT text_rect{offset_x, y + offset_y, width, y + offset_y + height};
     ::DrawTextW(mask_dc, text.c_str(), -1, &text_rect,
-                static_cast<UINT>(DT_SINGLELINE | DT_NOPREFIX | DT_VCENTER |
+                static_cast<UINT>(DT_WORDS | DT_WRAP | DT_NOPREFIX | DT_VCENTER |
                                   align_flag));
     const uint32_t alpha_base = ((color >> 24) & 0xFF) * alpha_scale / 100;
     // 再乘上整体不透明度（设置里的「不透明度」）。
@@ -344,29 +470,28 @@ void DesktopLyricWindow::Paint() {
     }
   };
 
-  // 逐行绘制：当前行用高亮色，其余用普通色；下方跟随几行。
+  // 逐个元素绘制：长句自动换行，高度按实际排版结果累加。
+  const std::vector<DesktopLyricElement> elements = BuildElements();
   int y = 0;
-  if (active_index_ >= 0 && active_index_ < static_cast<int>(lines_.size())) {
-    for (int i = active_index_;
-         i < static_cast<int>(lines_.size()) && (i - active_index_) < max_line_num_;
-         i++) {
-      const bool is_active = (i == active_index_);
-      const unsigned int color = is_active ? played_color_ : unplay_color_;
-      // 阴影：先在右下偏移 1 像素处画一遍。
-      if ((shadow_color_ >> 24) != 0) {
-        draw_text(lines_[i].text, y, shadow_color_, 60, 1, 1);
-      }
-      draw_text(lines_[i].text, y, color, 100, 0, 0);
-      y += line_height;
-      if (show_translation_ && !lines_[i].translation.empty()) {
-        draw_text(lines_[i].translation, y, unplay_color_, 80, 0, 0);
-        y += line_height;
-      }
-      if (show_roman_ && !lines_[i].roman.empty()) {
-        draw_text(lines_[i].roman, y, unplay_color_, 80, 0, 0);
-        y += line_height;
-      }
+  for (const auto& element : elements) {
+    if (element.text.empty()) {
+      continue;
     }
+    RECT measure{0, 0, width, 0};
+    ::SelectObject(mask_dc, font_);
+    ::DrawTextW(mask_dc, element.text.c_str(), -1, &measure,
+                static_cast<UINT>(DT_CALCRECT | DT_WORDS | DT_WRAP | DT_NOPREFIX));
+    int element_height = measure.bottom - measure.top;
+    if (element_height <= 0) {
+      element_height = line_height;
+    }
+    // 阴影：先在右下偏移 1 像素处画一遍。
+    if ((shadow_color_ >> 24) != 0) {
+      draw_text(element.text, y, element_height, shadow_color_, 60, 1, 1);
+    }
+    draw_text(element.text, y, element_height, element.color,
+              element.alpha_scale, 0, 0);
+    y += element_height;
   }
 
   POINT origin{0, 0};

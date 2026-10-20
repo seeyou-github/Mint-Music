@@ -13,6 +13,7 @@ import '../../features/library/domain/models/playlist.dart';
 import '../../features/player/application/playback_controller.dart';
 import '../../features/player/domain/models/song.dart';
 import '../../features/download/application/download_providers.dart';
+import '../../features/settings/application/font_providers.dart';
 import '../../features/settings/application/settings_providers.dart';
 import '../../features/settings/data/settings_service.dart';
 import '../services/amll_toggle_service.dart';
@@ -1116,6 +1117,14 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
       '阿里巴巴圆润体': 'lyricfont',
       '苹方-简 中粗体': 'PingFangSC-Semibold',
     };
+    // 「设置 - 外观设置 - 应用字体」里导入的字体也出现在字体列表中。
+    final importedFonts = container.read(appFontsProvider);
+    for (final font in importedFonts) {
+      if (map.containsKey(font.family)) continue;
+      fonts.add(font.family);
+      map[font.family] = font.family;
+      revMap[font.family] = font.family;
+    }
     final currentLabel = map[current] ?? '系统默认';
 
     return showModalBottomSheet(

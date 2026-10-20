@@ -182,6 +182,12 @@ class AppFontManager {
     }
   }
 
+  /// 字体文件在磁盘上的完整路径。
+  Future<String> pathOf(AppFont font) async {
+    final dir = await fontDirectory();
+    return p.join(dir.path, font.fileName);
+  }
+
   /// 把字体文件注册到 Flutter 引擎。
   Future<void> _register(AppFont font, File file) async {
     try {
