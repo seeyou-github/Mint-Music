@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:path_provider/path_provider.dart';
+import '../../../core/platform/download_paths.dart';
 
 class SettingsService {
   final SharedPreferences _prefs;
@@ -87,7 +88,9 @@ class SettingsService {
   Future<String> getDownloadDir() async {
     final persisted = _prefs.getString('download_dir');
     if (persisted != null && persisted.isNotEmpty) return persisted;
-    return '/storage/emulated/0/Music/MintMusic';
+    // 默认目录必须按平台区分：桌面端不能使用 Android 的公共音乐目录，
+    // 否则在 Windows 上会被解析成 `<当前盘符>:\storage\emulated\...`。
+    return defaultDownloadDir();
   }
 
   Future<void> setDownloadDir(String v) => _prefs.setString('download_dir', v);

@@ -5,8 +5,10 @@ import 'dart:ui' show Color;
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
+import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../../../core/platform/download_paths.dart';
 import '../../../core/platform/media_scanner.dart';
 import '../../../core/platform/permission_helper.dart';
 import '../../../shared/services/cover_fetcher.dart';
@@ -57,8 +59,14 @@ class DownloadRepository {
   int _activeDownloads = 0;
   final Set<String> _initializingTasks = {};
   final Map<String, bool> _fileLocks = {};
-  bool _initialized = false;
-  String _downloadDir = '/storage/emulated/0/Music/MintMusic';
+  Future<void>? _initFuture;
+  String _downloadDir = defaultDownloadDirSync();
+
+  /// 运行期是否通过 [updateSettings] 显式指定过下载目录。
+  ///
+  /// 为 true 时初始化不会再从持久化配置里覆盖，避免刚在设置里改完目录、
+  /// 下载器初始化恰好晚一步时被旧值覆盖。
+  bool _dirFromSettings = false;
   bool _wifiOnly = false;
   UrlFetcher? _urlFetcher;
   void Function(String dirPath)? onDirectoryChanged;
@@ -87,19 +95,45 @@ class DownloadRepository {
   void setCoverFetcher(CoverUrlFetcher fetcher) => _coverFetcher = fetcher;
   void setQualityValidator(QualityValidator validator) => _qualityValidator = validator;
 
-  Future<void> init({String? downloadDir, bool? wifiOnly, int? maxConcurrent}) async {
-    if (_initialized) return;
-    _initialized = true;
+  Future<void> init({
+    String? downloadDir,
+    bool? wifiOnly,
+    int? maxConcurrent,
+  }) {
+    // 只初始化一次；并发调用方（provider 的异步初始化与首次下载的
+    // _ensureInitialized）共享同一个 Future，避免目录被重复改写。
+    return _initFuture ??= _init(
+      downloadDir: downloadDir,
+      wifiOnly: wifiOnly,
+      maxConcurrent: maxConcurrent,
+    );
+  }
 
-    if (downloadDir != null && downloadDir.isNotEmpty) {
-      _downloadDir = downloadDir;
+  Future<void> _init({
+    String? downloadDir,
+    bool? wifiOnly,
+    int? maxConcurrent,
+  }) async {
+    if (!_dirFromSettings) {
+      if (downloadDir != null && downloadDir.isNotEmpty) {
+        _downloadDir = downloadDir;
+      } else {
+        // 没有显式传入目录时（例如设置初始化失败 / 超时），直接从持久化
+        // 配置里读取，绝不能把硬编码的 Android 默认路径当成真实目录。
+        _downloadDir = await _readPersistedDownloadDir();
+      }
     }
     onDirectoryChanged?.call(_downloadDir);
     if (wifiOnly != null) _wifiOnly = wifiOnly;
     if (maxConcurrent != null) _maxConcurrent = maxConcurrent;
 
-    final prefs = await SharedPreferences.getInstance();
-    final tasksJson = prefs.getString(_tasksKey);
+    SharedPreferences? prefs;
+    try {
+      prefs = await SharedPreferences.getInstance();
+    } catch (e) {
+      debugPrint('[DownloadRepository] 读取任务记录失败: $e');
+    }
+    final tasksJson = prefs?.getString(_tasksKey);
     if (tasksJson != null) {
       try {
         final list = jsonDecode(tasksJson) as List;
@@ -119,6 +153,11 @@ class DownloadRepository {
       }
     }
 
+    // 修正旧版本写错的路径：先迁移桌面上被写到 Android 默认目录里的
+    // 已完成文件，再让所有未完成任务跟随当前下载目录。
+    await _migrateLegacyCompletedFiles();
+    _retargetUnfinishedTasks();
+
     // 验证已完成任务的文件是否存在
     for (int i = 0; i < _tasks.length; i++) {
       if (_tasks[i].status == DownloadStatus.completed) {
@@ -137,9 +176,135 @@ class DownloadRepository {
     _processQueue();
   }
 
+  /// 保证构建文件路径前已经拿到真实的下载目录。
+  ///
+  /// [downloadRepositoryProvider] 的初始化是异步的，首次点下载时可能还没
+  /// 执行到 [init]；此时直接从持久化设置读取目录，避免用默认值写到错误位置。
+  Future<void> _ensureInitialized() async {
+    final existing = _initFuture;
+    if (existing != null) {
+      try {
+        await existing;
+      } catch (e) {
+        debugPrint('[DownloadRepository] 初始化失败: $e');
+      }
+      return;
+    }
+    await init();
+  }
+
+  Future<String> _readPersistedDownloadDir() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final persisted = prefs.getString('download_dir');
+      if (persisted != null && persisted.isNotEmpty) return persisted;
+    } catch (e) {
+      debugPrint('[DownloadRepository] 读取下载目录失败: $e');
+    }
+    return defaultDownloadDirSync();
+  }
+
+  /// 旧版本在桌面端把下载目录解析成了 `/storage/emulated/...`。把仍然存在
+  /// 的文件移动到当前下载目录，并修正对应任务路径。
+  Future<void> _migrateLegacyCompletedFiles() async {
+    if (Platform.isAndroid) return;
+    var changed = false;
+    for (var i = 0; i < _tasks.length; i++) {
+      final task = _tasks[i];
+      if (task.status != DownloadStatus.completed) continue;
+      final normalized = task.filePath.replaceAll('\\', '/');
+      if (!normalized.startsWith(legacyAndroidDownloadDir)) continue;
+      if (_isPathInDownloadDir(task.filePath)) continue;
+
+      final targetPath = DownloadTask.buildFilePathSync(
+        downloadDir: _downloadDir,
+        title: task.song.title,
+        artist: task.song.artist,
+        quality: task.quality,
+        extension: _extensionOf(task.filePath),
+      );
+      try {
+        final source = File(task.filePath);
+        if (!await source.exists()) continue;
+        final target = File(targetPath);
+        // 不覆盖已有文件，避免误删用户数据。
+        if (await target.exists()) continue;
+        await target.parent.create(recursive: true);
+        await source.rename(targetPath);
+        _tasks[i] = task.copyWith(filePath: targetPath);
+        changed = true;
+      } catch (e) {
+        debugPrint('[DownloadRepository] 迁移旧下载文件失败: $e');
+      }
+    }
+    if (changed) {
+      unawaited(_saveTasks());
+      _emitUpdate();
+    }
+  }
+
+  /// 未完成任务的路径跟随当前下载目录。
+  ///
+  /// 旧版本遗留的任务（例如指向 `/storage/emulated/...`）如果继续重试，
+  /// 会一直写到错误位置，因此启动恢复或目录变化时统一重算路径。
+  void _retargetUnfinishedTasks() {
+    var changed = false;
+    for (var i = 0; i < _tasks.length; i++) {
+      final next = _retargeted(_tasks[i]);
+      if (!identical(next, _tasks[i])) {
+        _tasks[i] = next;
+        changed = true;
+      }
+    }
+    if (changed) {
+      unawaited(_saveTasks());
+      _emitUpdate();
+    }
+  }
+
+  /// 返回路径已对齐当前下载目录的任务；无需调整时原样返回。
+  DownloadTask _retargeted(DownloadTask task) {
+    // 正在下载的任务路径已经被 _downloadFile 使用，中途修改会与临时文件
+    // 不一致，交给下次启动或重试时处理。
+    if (task.status == DownloadStatus.completed ||
+        task.status == DownloadStatus.downloading ||
+        task.filePath.isEmpty ||
+        _isPathInDownloadDir(task.filePath)) {
+      return task;
+    }
+    return task.copyWith(
+      filePath: DownloadTask.buildFilePathSync(
+        downloadDir: _downloadDir,
+        title: task.song.title,
+        artist: task.song.artist,
+        quality: task.quality,
+        extension: _extensionOf(task.filePath),
+      ),
+    );
+  }
+
+  /// 从旧路径取扩展名（不带点，与 [DownloadTask.buildFilePath] 的约定一致）。
+  String _extensionOf(String filePath) {
+    final ext = p.extension(filePath);
+    return ext.startsWith('.') ? ext.substring(1) : ext;
+  }
+
+  bool _isPathInDownloadDir(String filePath) {
+    String normalize(String value) =>
+        value.replaceAll('\\', '/').replaceAll(RegExp(r'/+$'), '');
+    final dir = normalize(_downloadDir);
+    final file = normalize(filePath);
+    return dir.isNotEmpty && file.startsWith('$dir/');
+  }
+
   void updateSettings({String? downloadDir, bool? wifiOnly, int? maxConcurrent}) {
-    if (downloadDir != null) {
+    if (downloadDir != null &&
+        downloadDir.isNotEmpty &&
+        downloadDir != _downloadDir) {
       _downloadDir = downloadDir;
+      _dirFromSettings = true;
+      // 下载目录改变后，未完成的任务改写到新目录，避免重试时继续写旧位置。
+      _retargetUnfinishedTasks();
       onDirectoryChanged?.call(_downloadDir);
     }
     if (wifiOnly != null) _wifiOnly = wifiOnly;
@@ -167,6 +332,10 @@ class DownloadRepository {
     String quality = '320k',
     int priority = 0,
   }) async {
+    // 首次下载时 provider 的异步初始化可能尚未完成，先确保下载目录已就绪，
+    // 避免任务路径落到默认目录（Windows 上会变成 <盘符>:\storage\...）。
+    await _ensureInitialized();
+
     // 检查存储权限
     if (!await _ensureStoragePermission()) {
       throw Exception('没有存储权限，请在系统设置中允许「所有文件访问权限」');
@@ -308,7 +477,7 @@ class DownloadRepository {
     _initializingTasks.remove(taskId);
     _fileLocks.remove(task.filePath);
 
-    _tasks[index] = task.copyWith(
+    _tasks[index] = _retargeted(task).copyWith(
       status: DownloadStatus.queued,
       retries: 0,
       error: null,
@@ -323,10 +492,11 @@ class DownloadRepository {
     final index = _tasks.indexWhere((t) => t.id == taskId);
     if (index == -1) return;
 
+    final task = _tasks[index];
     _initializingTasks.remove(taskId);
-    _fileLocks.remove(_tasks[index].filePath);
+    _fileLocks.remove(task.filePath);
 
-    _tasks[index] = _tasks[index].copyWith(
+    _tasks[index] = _retargeted(task).copyWith(
       status: DownloadStatus.queued,
       progress: 0,
       downloadedSize: 0,

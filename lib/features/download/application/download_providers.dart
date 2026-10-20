@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/l10n/l10n.dart';
@@ -17,7 +19,6 @@ final downloadNotificationProvider = StateProvider<DownloadNotification?>((ref) 
 
 final downloadRepositoryProvider = Provider<DownloadRepository>((ref) {
   final repo = DownloadRepository();
-  bool initialized = false;
 
   // 当下载目录变化时，自动注册到本地音乐扫描器
   repo.onDirectoryChanged = (dir) {
@@ -25,19 +26,29 @@ final downloadRepositoryProvider = Provider<DownloadRepository>((ref) {
     localRepo.addDirectory(dir);
   };
 
-  // 从设置中读取下载配置并初始化
-  ref.listen<AsyncValue<void>>(settingsInitProvider, (prev, next) async {
-    if (next is AsyncData && !initialized) {
-      initialized = true;
+  // 异步初始化下载器（恢复任务 + 读取下载目录）。
+  //
+  // 首次点下载时这里可能还没执行完，此时 DownloadRepository.addTask 会
+  // 自行从持久化设置里兜底读取目录，不会再用到硬编码的默认路径。
+  unawaited(() async {
+    try {
       final svc = await ref.read(settingsServiceProvider.future);
-      repo.init(
+      await repo.init(
         downloadDir: await svc.getDownloadDir(),
         // 仅 WiFi 下载设置项已移除，固定为任意网络。
         wifiOnly: false,
         maxConcurrent: 3,
       );
+    } catch (e) {
+      // 设置初始化失败 / 超时也要初始化，让 addTask 使用持久化目录兜底。
+      debugPrint('[DownloadProviders] 下载器初始化失败，使用持久化配置: $e');
+      try {
+        await repo.init(wifiOnly: false, maxConcurrent: 3);
+      } catch (e2) {
+        debugPrint('[DownloadProviders] 下载器兜底初始化失败: $e2');
+      }
     }
-  }, fireImmediately: true);
+  }());
 
   // 设置 URL 获取器
   final musicSourceManager = ref.read(musicSourceManagerProvider);
@@ -106,7 +117,7 @@ final downloadRepositoryProvider = Provider<DownloadRepository>((ref) {
     );
   };
 
-  // 监听设置变化
+  // 监听设置变化（初始化完成前不主动覆盖，避免把尚未加载完的默认值写进 repo）
   ref.listen(downloadDirProvider, (prev, next) {
     repo.updateSettings(downloadDir: next);
   });

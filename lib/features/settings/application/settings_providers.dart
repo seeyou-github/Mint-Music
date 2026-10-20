@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/l10n/app_locale.dart';
 import '../../../core/l10n/l10n.dart';
+import '../../../core/platform/download_paths.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../plugin/application/plugin_providers.dart';
 import '../../plugin/domain/plugin_types.dart';
@@ -33,7 +34,7 @@ final autoSwitchSourceProvider = StateProvider<bool>((ref) => false);
 
 // -- download --
 final downloadDirProvider = StateProvider<String>(
-  (ref) => '/storage/emulated/0/Music/MintMusic',
+  (ref) => defaultDownloadDirSync(),
 );
 final wifiOnlyDownloadProvider = StateProvider<bool>((ref) => false);
 

@@ -142,6 +142,21 @@ class DownloadTask {
 
   static String generateId() => _uuid.v4();
 
+  /// 只计算路径，不创建目录（用于同步迁移已存在的任务）。
+  static String buildFilePathSync({
+    required String downloadDir,
+    required String title,
+    required String artist,
+    required String quality,
+    String? extension,
+  }) {
+    final ext = _extensionFromQuality(quality, extension);
+    // 下载文件名固定为：歌手名 - 歌曲名
+    // 用平台分隔符拼接，避免 Windows 上出现「C:\.../歌曲.mp3」这种混合路径。
+    final safeTitle = _sanitizeFilename('$artist - $title');
+    return p.join(downloadDir, '$safeTitle.$ext');
+  }
+
   static Future<String> buildFilePath({
     required String downloadDir,
     required String title,
@@ -154,11 +169,13 @@ class DownloadTask {
       await dir.create(recursive: true);
     }
 
-    final ext = _extensionFromQuality(quality, extension);
-    // 下载文件名固定为：歌手名 - 歌曲名
-    // 用平台分隔符拼接，避免 Windows 上出现「C:\.../歌曲.mp3」这种混合路径。
-    final safeTitle = _sanitizeFilename('$artist - $title');
-    return p.join(dir.path, '$safeTitle.$ext');
+    return buildFilePathSync(
+      downloadDir: downloadDir,
+      title: title,
+      artist: artist,
+      quality: quality,
+      extension: extension,
+    );
   }
 
   static String _extensionFromQuality(String quality, String? original) {

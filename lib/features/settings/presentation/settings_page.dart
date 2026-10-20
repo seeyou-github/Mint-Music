@@ -10,6 +10,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/l10n/l10n.dart';
+import '../../../core/platform/download_paths.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/app_font_manager.dart';
 import '../../../core/theme/theme_provider.dart';
@@ -3065,7 +3066,7 @@ class _StorageContent extends ConsumerWidget {
             onPressed: () async {
               Navigator.pop(ctx);
               final container = ProviderScope.containerOf(context);
-              final defaultDownload = '/storage/emulated/0/Music/MintMusic';
+              final defaultDownload = await defaultDownloadDir();
               // 默认缓存目录使用应用缓存目录，不再指向系统临时目录。
               final appCacheDir = await getApplicationCacheDirectory();
               container.read(downloadDirProvider.notifier).state =
