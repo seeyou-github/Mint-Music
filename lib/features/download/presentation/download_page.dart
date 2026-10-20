@@ -294,7 +294,7 @@ class _DownloadTaskItemState extends ConsumerState<_DownloadTaskItem> {
     DownloadRepository repo,
   ) {
     if (_isCompleted && !_isMissing) {
-      // 下载成功：只显示文件大小 + 删除按钮。
+      // 下载成功：显示文件大小 + 删除按钮；封面缺失时额外给一个提示。
       return Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -307,6 +307,24 @@ class _DownloadTaskItemState extends ConsumerState<_DownloadTaskItem> {
             ),
             style: TextStyle(fontSize: 12, color: colors.textHint),
           ),
+          if (task.coverMissing) ...[
+            const SizedBox(width: AppSpacing.sm),
+            Tooltip(
+              message: context.tr('封面获取失败，歌曲未写入内嵌封面'),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.image_not_supported_outlined,
+                      size: 13, color: colors.warning),
+                  const SizedBox(width: 2),
+                  Text(
+                    context.tr('无封面'),
+                    style: TextStyle(fontSize: 11, color: colors.warning),
+                  ),
+                ],
+              ),
+            ),
+          ],
           const SizedBox(width: AppSpacing.xs),
           _buildDeleteButton(context, colors, repo),
         ],

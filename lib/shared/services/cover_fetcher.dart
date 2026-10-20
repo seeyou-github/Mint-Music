@@ -51,23 +51,47 @@ class CoverFetcher {
   );
 
   /// 下载封面；失败返回 null。
+  ///
+  /// 顺序：先看本地图片缓存（列表里显示过的封面通常已经缓存好了），
+  /// 本地没有再走网络下载。
   static Future<Uint8List?> fetch(String rawUrl) async {
     final candidates = candidatesOf(rawUrl);
     if (candidates.isEmpty) {
       debugPrint('[CoverFetcher] 无效的封面地址: $rawUrl');
       return null;
     }
+    // 1) 优先使用本地已缓存的封面
+    for (final candidate in candidates) {
+      final bytes = await _fromCache(candidate);
+      if (bytes != null) return bytes;
+    }
+    // 2) 本地没有，再下载
     for (final candidate in candidates) {
       final bytes = await _download(candidate);
       if (bytes != null) return bytes;
     }
-    // 兜底：走应用自己的图片缓存。列表里显示过的封面通常已经缓存好了，
-    // 这里可以直接取到本地文件，不再走网络。
+    // 3) 兜底：交给图片缓存管理器下载（它的网络策略已在列表里验证过）
     for (final candidate in candidates) {
       final bytes = await _fromImageCache(candidate);
       if (bytes != null) return bytes;
     }
     debugPrint('[CoverFetcher] 全部候选地址都失败: $rawUrl');
+    return null;
+  }
+
+  /// 只查本地缓存，不触发下载。
+  static Future<Uint8List?> _fromCache(String url) async {
+    try {
+      final file = await AppImageCache.manager.getFileFromCache(url);
+      if (file == null) return null;
+      final bytes = await file.readAsBytes();
+      if (bytes.length >= _minBytes) {
+        debugPrint('[CoverFetcher] 命中本地封面缓存 ($url, ${bytes.length} bytes)');
+        return bytes;
+      }
+    } catch (e) {
+      debugPrint('[CoverFetcher] 读取本地封面缓存失败 ($url): $e');
+    }
     return null;
   }
 

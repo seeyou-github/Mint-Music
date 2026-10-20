@@ -10,7 +10,10 @@ import 'audio_tag_writer.dart';
 class TagWriteService {
   static const _channel = MethodChannel('com.mintmusic/tag_writer');
 
-  Future<void> processSongFiles(
+  /// 标签写入结果：true 表示封面已成功写入（或本次不要求写封面）。
+  ///
+  /// 封面失败时下载列表会给出提示，但歌曲本身的下载状态仍然是成功。
+  Future<bool> processSongFiles(
     String songPath,
     Song songInfo, {
     required bool basicInfo,
@@ -21,8 +24,8 @@ class TagWriteService {
     List<String> coverUrls = const <String>[],
   }) async {
     final file = File(songPath);
-    if (!await file.exists()) return;
-    if (!_isAudioFile(songPath)) return;
+    if (!await file.exists()) return true;
+    if (!_isAudioFile(songPath)) return true;
 
     debugPrint('[TagWriteService] processSongFiles: path=$songPath, basicInfo=$basicInfo, cover=$cover, lyrics=$lyrics, downloadLyrics=$downloadLyrics, lyricFormat=$lyricFormat');
 
@@ -165,6 +168,10 @@ class TagWriteService {
         debugPrint('[TagWriteService] 封面保留为独立文件: $coverPath');
       }
     }
+
+    // 封面结果：没有开启封面写入时视为正常。
+    if (!cover) return true;
+    return coverBytes != null;
   }
 
   /// 依据图片内容判断扩展名（URL 后缀可能不准，图片实际格式更可靠）。

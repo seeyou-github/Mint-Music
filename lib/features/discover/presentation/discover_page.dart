@@ -703,25 +703,18 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
     return GestureDetector(
       onTap: () => _showCategoryBottomSheet(colors, tagsAsync, activeTagId),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
         decoration: BoxDecoration(
           color: colors.surface,
           borderRadius: BorderRadius.circular(6),
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              context.tr('更多分类'),
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w400,
-                color: colors.textSecondary,
-              ),
-            ),
-            const SizedBox(width: 4),
-            Icon(Icons.arrow_drop_down, size: 16, color: colors.textSecondary),
-          ],
+        child: Text(
+          context.tr('更多分类'),
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w400,
+            color: colors.textSecondary,
+          ),
         ),
       ),
     );

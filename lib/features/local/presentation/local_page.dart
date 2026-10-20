@@ -275,7 +275,19 @@ class _LocalPageState extends ConsumerState<LocalPage> {
             ),
           ),
           const SizedBox(width: AppSpacing.md),
-          Expanded(child: _buildSearchBar(colors)),
+          // 搜索框：与发现页保持一致的最大 / 最小宽度
+          Expanded(
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  minWidth: 140,
+                  maxWidth: isTablet ? 420 : 300,
+                ),
+                child: _buildSearchBar(colors),
+              ),
+            ),
+          ),
           const SizedBox(width: AppSpacing.sm),
           _buildHeaderIconButton(
             colors,

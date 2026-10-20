@@ -30,6 +30,12 @@ class DownloadTask {
   final int? remainingTime;
   final int retries;
   final String? error;
+
+  /// 封面缺失：封面获取 / 写入失败时标记。
+  ///
+  /// 歌曲本身仍然是下载成功状态，只是没有内嵌封面，下载列表里会给出提示。
+  final bool coverMissing;
+
   final int priority;
   final int createdAt;
 
@@ -47,6 +53,7 @@ class DownloadTask {
     this.remainingTime,
     this.retries = 0,
     this.error,
+    this.coverMissing = false,
     this.priority = 0,
     required this.createdAt,
   });
@@ -65,6 +72,7 @@ class DownloadTask {
     int? remainingTime,
     int? retries,
     String? error,
+    bool? coverMissing,
     int? priority,
     int? createdAt,
   }) {
@@ -82,6 +90,7 @@ class DownloadTask {
       remainingTime: remainingTime ?? this.remainingTime,
       retries: retries ?? this.retries,
       error: error ?? this.error,
+      coverMissing: coverMissing ?? this.coverMissing,
       priority: priority ?? this.priority,
       createdAt: createdAt ?? this.createdAt,
     );
@@ -101,6 +110,7 @@ class DownloadTask {
     'remainingTime': remainingTime,
     'retries': retries,
     'error': error,
+    'coverMissing': coverMissing,
     'priority': priority,
     'createdAt': createdAt,
   };
@@ -123,6 +133,7 @@ class DownloadTask {
       remainingTime: json['remainingTime'],
       retries: json['retries'] ?? 0,
       error: json['error'],
+      coverMissing: json['coverMissing'] == true,
       priority: json['priority'] ?? 0,
       createdAt: json['createdAt'] ?? DateTime.now().millisecondsSinceEpoch,
     );

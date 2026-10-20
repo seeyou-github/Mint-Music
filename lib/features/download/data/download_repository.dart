@@ -668,6 +668,7 @@ class DownloadRepository {
         } catch (_) {}
 
         // 写入标签（对齐 CeruMusic processSongFiles 逻辑）
+        var coverOk = true;
         try {
           final tagOpts = _tagWriteOptionsFetcher?.call() ?? const TagWriteOptions();
           Song songForTag = task.song;
@@ -720,7 +721,7 @@ class DownloadRepository {
               debugPrint('[DownloadRepository] 获取高清封面失败: $e');
             }
           }
-          await _tagWriteService.processSongFiles(
+          final coverWritten = await _tagWriteService.processSongFiles(
             finalPath,
             songForTag,
             basicInfo: tagOpts.basicInfo,
@@ -730,6 +731,7 @@ class DownloadRepository {
             lyricFormat: tagOpts.lyricFormat,
             coverUrls: coverCandidates,
           );
+          coverOk = coverWritten;
         } catch (e) {
           debugPrint('[DownloadRepository] 标签写入失败: $e');
         }
@@ -742,6 +744,8 @@ class DownloadRepository {
             speed: 0,
             remainingTime: 0,
             filePath: finalPath,
+            // 封面没拿到不影响下载成功，只在列表里提示。
+            coverMissing: !coverOk,
           );
           await _saveTasks();
           _emitUpdate();
