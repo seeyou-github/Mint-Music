@@ -1020,7 +1020,10 @@ class MusicSourceManager {
     }
 
     String? coverUrl;
-    if (info['picUrl'] != null) {
+    if (info['artwork'] != null) {
+      // MusicFree 插件的封面字段是 artwork。
+      coverUrl = info['artwork'].toString();
+    } else if (info['picUrl'] != null) {
       coverUrl = info['picUrl'].toString();
     } else if (info['pic'] != null) {
       coverUrl = info['pic'].toString();
@@ -1036,11 +1039,15 @@ class MusicSourceManager {
         coverUrl = album['picUrl'].toString();
       } else if (album['pic'] != null) {
         coverUrl = album['pic'].toString();
+      } else if (album['artwork'] != null) {
+        coverUrl = album['artwork'].toString();
       }
     } else if (info['al'] != null && info['al'] is Map) {
       final al = info['al'] as Map;
       if (al['picUrl'] != null) {
         coverUrl = al['picUrl'].toString();
+      } else if (al['artwork'] != null) {
+        coverUrl = al['artwork'].toString();
       }
     } else if (info['pic_id'] != null) {
       final picId = info['pic_id'].toString();

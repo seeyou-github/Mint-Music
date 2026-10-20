@@ -422,16 +422,16 @@ class _LocalPlaylistDetailPageState
     );
   }
 
-  /// 歌单页顶部：返回按钮 + 名称 / 歌曲数量 + 操作按钮。
+  /// 歌单页顶部：返回按钮 + 封面 + 名称 / 歌曲数量 + 操作按钮。
   ///
-  /// 不再显示歌单封面与描述，整体高度与原来的封面高度保持一致，顶部更紧凑。
+  /// 不显示歌单描述；名称 + 歌曲数量 + 按钮这一列的高度与歌单封面保持一致。
   Widget _buildHeader(
     BuildContext context,
     WidgetRef ref,
     ThemeColors colors,
     Playlist playlist,
   ) {
-    // 与原歌单封面同高，去掉封面后顶部不会跳动
+    // 与歌单封面同高，去掉描述后顶部不会跳动
     final headerHeight = ResponsiveLayout.isTablet(context) ? 96.0 : 72.0;
     return Container(
       padding: const EdgeInsets.fromLTRB(
@@ -464,6 +464,16 @@ class _LocalPlaylistDetailPageState
               ),
             ),
             const SizedBox(width: AppSpacing.sm),
+            // 歌单封面（没有封面时用第一首歌的封面）
+            ClipRRect(
+              borderRadius: BorderRadius.circular(AppRadius.md),
+              child: SizedBox(
+                width: headerHeight,
+                height: headerHeight,
+                child: _buildPlaylistCoverWidget(colors, playlist),
+              ),
+            ),
+            const SizedBox(width: AppSpacing.md),
             // 名称 + 歌曲数量 + 操作按钮
             Expanded(
               child: Column(
@@ -731,6 +741,59 @@ class _LocalPlaylistDetailPageState
         });
         _onSortModeChanged(mode);
       },
+    );
+  }
+
+  /// 歌单封面：优先用歌单自己的封面，没有则用第一首歌的封面。
+  Widget _buildPlaylistCoverWidget(ThemeColors colors, Playlist playlist) {
+    if (playlist.coverImgUrl.isNotEmpty) {
+      return MusicCoverImage(
+        url: playlist.coverImgUrl,
+        fit: BoxFit.cover,
+        errorWidget: _coverFallback(colors),
+      );
+    }
+
+    final firstSong = playlist.songs.isNotEmpty ? playlist.songs.first : null;
+    if (firstSong == null) {
+      return _coverFallback(colors);
+    }
+
+    if (firstSong.mediaStoreId != null || firstSong.isLocal) {
+      return MusicCoverImage(
+        key: ValueKey('lp_cover_${firstSong.id}'),
+        songId: firstSong.id,
+        mediaStoreId: firstSong.mediaStoreId,
+        fit: BoxFit.cover,
+        errorWidget: _coverFallback(colors),
+      );
+    }
+
+    if (firstSong.coverUrl != null && firstSong.coverUrl!.isNotEmpty) {
+      return MusicCoverImage(
+        key: ValueKey('lp_cover_url_${firstSong.id}'),
+        url: firstSong.coverUrl,
+        fit: BoxFit.cover,
+        errorWidget: _coverFallback(colors),
+      );
+    }
+
+    return _coverFallback(colors);
+  }
+
+  Widget _coverFallback(ThemeColors colors) {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            colors.primary.withValues(alpha: 0.4),
+            colors.surfaceVariant,
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
+      child: Icon(Icons.music_note, size: 48, color: colors.textHint),
     );
   }
 

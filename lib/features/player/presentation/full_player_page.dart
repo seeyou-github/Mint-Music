@@ -8,6 +8,7 @@ import '../../../core/l10n/l10n.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../application/playback_controller.dart';
+import '../application/full_player_visibility.dart';
 import '../application/lyric_controller.dart';
 import '../domain/models/play_mode.dart';
 import '../domain/models/song.dart';
@@ -48,6 +49,14 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
   @override
   void initState() {
     super.initState();
+    // 登记「播放详情页已打开」，左侧栏封面按钮据此做打开 / 关闭切换。
+    FullPlayerVisibility.instance.setVisible(true);
+  }
+
+  @override
+  void dispose() {
+    FullPlayerVisibility.instance.setVisible(false);
+    super.dispose();
   }
 
   /// 退出全屏播放页：先冻结 AMLL WebView 的 JS 动画（若在歌词页），

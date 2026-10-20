@@ -700,12 +700,21 @@ class DownloadRepository {
               debugPrint('[DownloadRepository] 获取歌词失败: $e');
             }
           }
+          // 收集封面地址候选：歌曲自带封面 + 高清封面接口返回的地址。
+          final coverCandidates = <String>[];
+          void addCover(String? url) {
+            if (url == null || url.isEmpty) return;
+            if (!coverCandidates.contains(url)) coverCandidates.add(url);
+          }
+
+          addCover(songForTag.coverUrl);
           if (tagOpts.cover && _coverFetcher != null) {
             try {
               final highResCover = await _coverFetcher!(songForTag);
               debugPrint('[DownloadRepository] 高清封面获取结果: ${highResCover != null ? highResCover.substring(0, highResCover.length.clamp(0, 80)) : "null"}');
               if (highResCover != null && highResCover.isNotEmpty) {
                 songForTag = songForTag.copyWith(coverUrl: highResCover);
+                addCover(highResCover);
               }
             } catch (e) {
               debugPrint('[DownloadRepository] 获取高清封面失败: $e');
@@ -719,6 +728,7 @@ class DownloadRepository {
             lyrics: tagOpts.lyrics,
             downloadLyrics: tagOpts.downloadLyrics,
             lyricFormat: tagOpts.lyricFormat,
+            coverUrls: coverCandidates,
           );
         } catch (e) {
           debugPrint('[DownloadRepository] 标签写入失败: $e');

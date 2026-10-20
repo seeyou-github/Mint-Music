@@ -8,6 +8,7 @@ import '../../../core/theme/theme_provider.dart';
 import '../../../shared/widgets/marquee_text.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../application/playback_controller.dart';
+import '../application/full_player_visibility.dart';
 import '../domain/models/song.dart';
 import 'widgets/play_queue_sheet.dart';
 
@@ -93,10 +94,12 @@ class SidebarPlayer extends ConsumerWidget {
     return Center(
       child: GestureDetector(
         onTap: () {
+          // 播放详情页已经打开：再次点击封面直接关闭；否则打开。
           final path =
               appRouter.routerDelegate.currentConfiguration.uri.path;
-          if (path == AppRoutes.fullPlayer) {
-            // 播放详情页已经打开：再次点击封面直接关闭
+          final isOpen =
+              FullPlayerVisibility.instance.visible || path == AppRoutes.fullPlayer;
+          if (isOpen) {
             appRouter.pop();
             return;
           }

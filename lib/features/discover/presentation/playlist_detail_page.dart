@@ -8,6 +8,7 @@ import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../../../core/utils/scroll_locate.dart';
+import '../../../shared/widgets/music_cover_image.dart';
 import '../../../shared/widgets/song_action_sheet.dart';
 import '../../../shared/widgets/song_list_item.dart';
 import '../../../shared/widgets/song_selection.dart';
@@ -350,11 +351,11 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
     );
   }
 
-  /// 歌单页顶部：返回按钮 + 名称 / 歌曲数量 + 操作按钮。
+  /// 歌单页顶部：返回按钮 + 封面 + 名称 / 歌曲数量 + 操作按钮。
   ///
-  /// 不再显示歌单封面与描述，整体高度与原来的封面高度保持一致，顶部更紧凑。
+  /// 不显示歌单描述；名称 + 歌曲数量 + 按钮这一列的高度与歌单封面保持一致。
   Widget _buildHeader(BuildContext context, WidgetRef ref, ThemeColors colors, playlist) {
-    // 与原歌单封面同高，去掉封面后顶部不会跳动
+    // 与歌单封面同高，去掉描述后顶部不会跳动
     final headerHeight = ResponsiveLayout.isTablet(context) ? 96.0 : 72.0;
     return Container(
       padding: const EdgeInsets.fromLTRB(
@@ -387,6 +388,32 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
               ),
             ),
             const SizedBox(width: AppSpacing.sm),
+            // 歌单封面
+            ClipRRect(
+              borderRadius: BorderRadius.circular(AppRadius.md),
+              child: MusicCoverImage(
+                url: playlist.coverUrl,
+                width: headerHeight,
+                height: headerHeight,
+                fit: BoxFit.cover,
+                errorWidget: Container(
+                  width: headerHeight,
+                  height: headerHeight,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        colors.primary.withValues(alpha: 0.4),
+                        colors.surfaceVariant,
+                      ],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                  ),
+                  child: Icon(Icons.music_note, size: 48, color: colors.textHint),
+                ),
+              ),
+            ),
+            const SizedBox(width: AppSpacing.md),
             // 名称 + 歌曲数量 + 操作按钮
             Expanded(
               child: Column(
