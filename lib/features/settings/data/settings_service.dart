@@ -354,8 +354,9 @@ class SettingsService {
   // -- cache clearing (non-persistent action) --
   /// 清理应用缓存的子目录（不删除用户选择的目录本身）。
   ///
-  /// 只清理应用自己创建的 `artwork_cache` / `covers` / `image_cache`，
-  /// 不会误删用户缓存目录里的其它文件，也不再动系统临时目录。
+  /// 只清理应用自己创建的 `artwork_cache` / `covers` / `image_cache` /
+  /// `audio_cache`（音频缓存），不会误删用户缓存目录里的其它文件，
+  /// 也不再动系统临时目录。
   Future<int> clearCache() async {
     int total = 0;
     final roots = <Directory>[];
@@ -367,7 +368,12 @@ class SettingsService {
       roots.add(await getApplicationCacheDirectory());
     } catch (_) {}
 
-    const subDirectories = ['artwork_cache', 'covers', 'image_cache'];
+    const subDirectories = [
+      'artwork_cache',
+      'covers',
+      'image_cache',
+      'audio_cache',
+    ];
     for (final root in roots) {
       for (final name in subDirectories) {
         final dir = Directory('${root.path}${Platform.pathSeparator}$name');

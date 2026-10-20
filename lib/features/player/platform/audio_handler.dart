@@ -10,6 +10,7 @@ import 'package:just_audio/just_audio.dart';
 import '../domain/models/song.dart';
 import '../../../shared/services/cache_paths.dart';
 import '../../../shared/services/cover_cache_service.dart';
+import 'audio_cache_service.dart';
 
 class MusicAudioHandler extends BaseAudioHandler
     with QueueHandler, SeekHandler {
@@ -470,12 +471,45 @@ class MusicAudioHandler extends BaseAudioHandler
           extraHeaders: headers,
         );
 
-        final audioSource = requestHeaders.isEmpty
-            ? AudioSource.uri(uri, tag: mediaItem)
-            : AudioSource.uri(uri, tag: mediaItem, headers: requestHeaders);
-        await _player.setAudioSource(
-          ConcatenatingAudioSource(children: [audioSource]),
-        );
+        // 命中音频缓存：直接播放本地文件（秒开、不消耗流量）。
+        final cachedFile = song == null
+            ? null
+            : await AudioCacheService.findCachedFile(
+                songId: song.id,
+                quality: song.sourceQuality ?? '320k',
+                source: song.source,
+                url: url,
+              );
+
+        if (cachedFile != null) {
+          debugPrint(
+            'MusicAudioHandler: 命中音频缓存 -> ${cachedFile.path}',
+          );
+          await _player.setAudioSource(
+            ConcatenatingAudioSource(
+              children: [
+                AudioSource.uri(Uri.file(cachedFile.path), tag: mediaItem),
+              ],
+            ),
+          );
+        } else {
+          final audioSource = requestHeaders.isEmpty
+              ? AudioSource.uri(uri, tag: mediaItem)
+              : AudioSource.uri(uri, tag: mediaItem, headers: requestHeaders);
+          await _player.setAudioSource(
+            ConcatenatingAudioSource(children: [audioSource]),
+          );
+          // 后台把音频缓存一份到「缓存目录」，下次播放即可直接走本地文件。
+          unawaited(
+            AudioCacheService.cacheInBackground(
+              url: url,
+              headers: requestHeaders,
+              songId: song?.id ?? url,
+              quality: song?.sourceQuality ?? '320k',
+              source: song?.source,
+            ),
+          );
+        }
         await _validateRemoteSongDuration(preparedSong, url);
       } else {
         await _player.setAudioSource(
