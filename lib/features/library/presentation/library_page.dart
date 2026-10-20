@@ -309,45 +309,45 @@ class LibraryPage extends ConsumerWidget {
     ThemeColors colors,
     local_playlist.Playlist playlist,
   ) {
-    // 优先使用歌单自己的封面
+    // 封面始终使用歌单当前的第一首歌的封面，
+    // 这样删除 / 新增歌曲后封面会立即跟着更新。
+    final firstSong = playlist.songs.isNotEmpty ? playlist.songs.first : null;
+
+    if (firstSong != null) {
+      if (firstSong.mediaStoreId != null || firstSong.isLocal) {
+        return SizedBox.expand(
+          child: MusicCoverImage(
+            key: ValueKey('lib_cover_${firstSong.id}'),
+            songId: firstSong.id,
+            mediaStoreId: firstSong.mediaStoreId,
+            fit: BoxFit.cover,
+            errorWidget: Center(
+              child: Icon(Icons.music_note, size: 40, color: colors.textHint),
+            ),
+          ),
+        );
+      }
+
+      if (firstSong.coverUrl != null && firstSong.coverUrl!.isNotEmpty) {
+        return SizedBox.expand(
+          child: MusicCoverImage(
+            // 带上歌曲 id：第一首歌变化时强制重建，避免沿用上一首的封面
+            key: ValueKey('lib_cover_url_${firstSong.id}'),
+            url: firstSong.coverUrl,
+            fit: BoxFit.cover,
+            errorWidget: Center(
+              child: Icon(Icons.music_note, size: 40, color: colors.textHint),
+            ),
+          ),
+        );
+      }
+    }
+
+    // 歌单里没有歌曲时退回歌单自身的封面
     if (playlist.coverImgUrl.isNotEmpty) {
       return SizedBox.expand(
         child: MusicCoverImage(
           url: playlist.coverImgUrl,
-          fit: BoxFit.cover,
-          errorWidget: Center(
-            child: Icon(Icons.music_note, size: 40, color: colors.textHint),
-          ),
-        ),
-      );
-    }
-
-    // 没有歌单封面则使用第一首歌的封面
-    final firstSong = playlist.songs.isNotEmpty ? playlist.songs.first : null;
-    if (firstSong == null) {
-      return Center(
-        child: Icon(Icons.music_note, size: 40, color: colors.textHint),
-      );
-    }
-
-    if (firstSong.mediaStoreId != null || firstSong.isLocal) {
-      return SizedBox.expand(
-        child: MusicCoverImage(
-          key: ValueKey('lib_cover_${firstSong.id}'),
-          songId: firstSong.id,
-          mediaStoreId: firstSong.mediaStoreId,
-          fit: BoxFit.cover,
-          errorWidget: Center(
-            child: Icon(Icons.music_note, size: 40, color: colors.textHint),
-          ),
-        ),
-      );
-    }
-
-    if (firstSong.coverUrl != null && firstSong.coverUrl!.isNotEmpty) {
-      return SizedBox.expand(
-        child: MusicCoverImage(
-          url: firstSong.coverUrl,
           fit: BoxFit.cover,
           errorWidget: Center(
             child: Icon(Icons.music_note, size: 40, color: colors.textHint),

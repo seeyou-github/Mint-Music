@@ -141,9 +141,8 @@ class PlaylistRepository {
           playlists[index] = playlist.copyWith(
             songs: updatedSongs,
             updateTime: DateTime.now(),
-            coverImgUrl: playlist.coverImgUrl.isEmpty
-                ? (song.coverUrl ?? '')
-                : playlist.coverImgUrl,
+            // 歌单封面始终跟随当前第一首歌
+            coverImgUrl: updatedSongs.first.coverUrl ?? '',
           );
           await savePlaylists(playlists);
           return true;
@@ -166,6 +165,10 @@ class PlaylistRepository {
       playlists[index] = playlist.copyWith(
         songs: updatedSongs,
         updateTime: DateTime.now(),
+        // 删除歌曲后封面跟随新的第一首歌（没有歌曲时清空）
+        coverImgUrl: updatedSongs.isEmpty
+            ? ''
+            : (updatedSongs.first.coverUrl ?? ''),
       );
       await savePlaylists(playlists);
     }

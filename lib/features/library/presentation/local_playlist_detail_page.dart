@@ -160,7 +160,15 @@ class _LocalPlaylistDetailPageState
     final remaining = _originalSongs.where((s) => !ids.contains(s.id)).toList();
     await ref
         .read(playlistsProvider.notifier)
-        .updatePlaylist(playlist.copyWith(songs: remaining));
+        .updatePlaylist(
+          playlist.copyWith(
+            songs: remaining,
+            // 歌单封面跟随当前第一首歌
+            coverImgUrl: remaining.isEmpty
+                ? ''
+                : (remaining.first.coverUrl ?? ''),
+          ),
+        );
     if (!mounted) return;
     _selection.exit();
     _showMessage('已从歌单移除 ${ids.length} 首歌曲');
