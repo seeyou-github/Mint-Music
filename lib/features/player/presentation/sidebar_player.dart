@@ -25,13 +25,8 @@ import 'widgets/play_queue_sheet.dart';
 class SidebarPlayer extends ConsumerWidget {
   const SidebarPlayer({super.key});
 
-  /// 封面边长：随侧边栏宽度与可用高度自适应，并限制最大值。
-  static double _coverSize(double availableWidth, double availableHeight) {
-    final byWidth = availableWidth - 56;
-    // 封面之外还要留出曲名、进度条、时长与控制按钮的高度。
-    final byHeight = availableHeight - 130;
-    return (byWidth < byHeight ? byWidth : byHeight).clamp(64.0, 168.0);
-  }
+  /// 封面边长（固定值，避免在无界高度下计算出异常尺寸）。
+  static const double _coverSize = 150;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -57,38 +52,32 @@ class SidebarPlayer extends ConsumerWidget {
       // InkWell / IconButton 的水波纹，避免水波纹被背景色盖住。
       child: Material(
         type: MaterialType.transparency,
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final coverSize = _coverSize(
-              constraints.maxWidth,
-              constraints.maxHeight.isFinite ? constraints.maxHeight : 400,
-            );
-            return Container(
-              padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
-              decoration: BoxDecoration(
-                border: Border(
-                  top: BorderSide(
-                    color: colors.divider.withValues(alpha: 0.3),
-                    width: 0.5,
-                  ),
-                ),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+          decoration: BoxDecoration(
+            border: Border(
+              top: BorderSide(
+                color: colors.divider.withValues(alpha: 0.3),
+                width: 0.5,
               ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _buildCover(context, colors, song, coverSize),
-                  const SizedBox(height: AppSpacing.sm),
-                  _buildSongTitle(context, colors, song),
-                  const SizedBox(height: AppSpacing.xs),
-                  _buildProgress(context, ref, colors, controller),
-                  const SizedBox(height: 2),
-                  _buildControls(ref, colors, controller,
-                      isPlaying: isPlaying, isLoading: isLoading),
-                ],
-              ),
-            );
-          },
+            ),
+          ),
+          // 播放器整体高度固定：主轴使用 min，避免在无界高度下被拉伸，
+          // 否则会顶掉上方的导航项。
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _buildCover(context, colors, song),
+              const SizedBox(height: AppSpacing.sm),
+              _buildSongTitle(context, colors, song),
+              const SizedBox(height: AppSpacing.xs),
+              _buildProgress(context, ref, colors, controller),
+              const SizedBox(height: 2),
+              _buildControls(ref, colors, controller,
+                  isPlaying: isPlaying, isLoading: isLoading),
+            ],
+          ),
         ),
       ),
     );
@@ -99,7 +88,6 @@ class SidebarPlayer extends ConsumerWidget {
     BuildContext context,
     ThemeColors colors,
     Song song,
-    double size,
   ) {
     return Center(
       child: GestureDetector(
@@ -114,8 +102,8 @@ class SidebarPlayer extends ConsumerWidget {
         child: ClipRRect(
           borderRadius: BorderRadius.circular(12),
           child: Container(
-            width: size,
-            height: size,
+            width: _coverSize,
+            height: _coverSize,
             color: colors.surfaceVariant,
             child: _buildCoverImage(colors, song),
           ),
@@ -154,6 +142,7 @@ class SidebarPlayer extends ConsumerWidget {
         alignment: Alignment.center,
         child: MarqueeText(
           text: song.title,
+          textAlign: TextAlign.center,
           style: TextStyle(
             fontSize: 15,
             fontWeight: FontWeight.w600,
@@ -179,9 +168,10 @@ class SidebarPlayer extends ConsumerWidget {
     );
 
     return Column(
+      mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _SidebarProgressSlider(
+        _SidebarProgressBar(
           duration: duration,
           position: position,
           colors: colors,
@@ -189,7 +179,7 @@ class SidebarPlayer extends ConsumerWidget {
         ),
         // 歌曲总时长（不再显示剩余时间）
         Padding(
-          padding: const EdgeInsets.only(right: 2),
+          padding: const EdgeInsets.only(right: 2, top: 2),
           child: Text(
             _formatDuration(duration),
             textAlign: TextAlign.right,
@@ -295,9 +285,12 @@ class SidebarPlayer extends ConsumerWidget {
   }
 }
 
-/// 侧边栏播放进度条：拖动时显示本地进度，松手后才真正跳转。
-class _SidebarProgressSlider extends StatefulWidget {
-  const _SidebarProgressSlider({
+/// 侧边栏播放进度条。
+///
+/// 自绘（不使用 Slider）：拖动时显示本地进度，松手后才真正跳转；
+/// 高度固定为 16，避免在无界高度下把布局撑开。
+class _SidebarProgressBar extends StatefulWidget {
+  const _SidebarProgressBar({
     required this.duration,
     required this.position,
     required this.colors,
@@ -310,11 +303,16 @@ class _SidebarProgressSlider extends StatefulWidget {
   final void Function(Duration target) onSeek;
 
   @override
-  State<_SidebarProgressSlider> createState() => _SidebarProgressSliderState();
+  State<_SidebarProgressBar> createState() => _SidebarProgressBarState();
 }
 
-class _SidebarProgressSliderState extends State<_SidebarProgressSlider> {
+class _SidebarProgressBarState extends State<_SidebarProgressBar> {
+  /// 拖动中的进度（毫秒），为空时跟随播放进度。
   double? _dragValue;
+
+  static const double _barHeight = 16;
+  static const double _trackHeight = 4;
+  static const double _thumbSize = 10;
 
   @override
   Widget build(BuildContext context) {
@@ -322,33 +320,90 @@ class _SidebarProgressSliderState extends State<_SidebarProgressSlider> {
     final maxMs = totalMs > 0 ? totalMs.toDouble() : 1.0;
     final currentMs = _dragValue ??
         widget.position.inMilliseconds.clamp(0, totalMs).toDouble();
+    final ratio = (currentMs / maxMs).clamp(0.0, 1.0);
+    final colors = widget.colors;
 
-    return SliderTheme(
-      data: SliderTheme.of(context).copyWith(
-        trackHeight: 3,
-        thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
-        overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
-        activeTrackColor: widget.colors.primary,
-        inactiveTrackColor: widget.colors.divider,
-        thumbColor: widget.colors.primary,
-        overlayColor: widget.colors.primary.withValues(alpha: 0.12),
-      ),
-      child: Slider(
-        value: currentMs.clamp(0, maxMs),
-        max: maxMs,
-        onChanged: totalMs <= 0
-            ? null
-            : (value) => setState(() => _dragValue = value),
-        onChangeEnd: totalMs <= 0
-            ? null
-            : (value) {
-                final target = Duration(
-                  milliseconds: value.round().clamp(0, totalMs),
-                );
-                setState(() => _dragValue = null);
-                widget.onSeek(target);
-              },
-      ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : 0.0;
+        final thumbLeft =
+            (width * ratio - _thumbSize / 2).clamp(0.0, (width - _thumbSize).clamp(0.0, double.infinity));
+
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTapDown: (details) => _preview(details.localPosition.dx, width, totalMs),
+          onTapUp: (_) => _commit(),
+          onHorizontalDragStart: (details) =>
+              _preview(details.localPosition.dx, width, totalMs),
+          onHorizontalDragUpdate: (details) =>
+              _preview(details.localPosition.dx, width, totalMs),
+          onHorizontalDragEnd: (_) => _commit(),
+          child: SizedBox(
+            height: _barHeight,
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                // 轨道
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  top: (_barHeight - _trackHeight) / 2,
+                  height: _trackHeight,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: colors.divider,
+                      borderRadius: BorderRadius.circular(_trackHeight / 2),
+                    ),
+                  ),
+                ),
+                // 已播放部分
+                Positioned(
+                  left: 0,
+                  top: (_barHeight - _trackHeight) / 2,
+                  height: _trackHeight,
+                  width: width * ratio,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: colors.primary,
+                      borderRadius: BorderRadius.circular(_trackHeight / 2),
+                    ),
+                  ),
+                ),
+                // 滑块
+                Positioned(
+                  left: thumbLeft,
+                  top: (_barHeight - _thumbSize) / 2,
+                  width: _thumbSize,
+                  height: _thumbSize,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: colors.primary,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
+  }
+
+  /// 拖动 / 点击时更新本地进度（不立即跳转）。
+  void _preview(double dx, double width, int totalMs) {
+    if (totalMs <= 0 || width <= 0) return;
+    final ratio = (dx / width).clamp(0.0, 1.0);
+    setState(() => _dragValue = ratio * totalMs);
+  }
+
+  /// 松手后真正跳转。
+  void _commit() {
+    final value = _dragValue;
+    if (value == null) return;
+    setState(() => _dragValue = null);
+    widget.onSeek(Duration(milliseconds: value.round()));
   }
 }
