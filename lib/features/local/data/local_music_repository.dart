@@ -314,7 +314,7 @@ class LocalMusicRepository {
 
       final files = <String>[];
       for (final dir in dirs) {
-        files.addAll(_listAudioFiles(dir));
+        files.addAll(await _listAudioFiles(dir));
       }
 
       final total = files.length;
@@ -417,12 +417,13 @@ class LocalMusicRepository {
   }
 
   /// 递归列出目录下的音频文件。
-  List<String> _listAudioFiles(String dir) {
+  Future<List<String>> _listAudioFiles(String dir) async {
     final result = <String>[];
     try {
       final directory = Directory(dir);
-      if (!directory.existsSync()) return result;
-      for (final entity in directory.list(recursive: true, followLinks: false)) {
+      if (!await directory.exists()) return result;
+      await for (final entity
+          in directory.list(recursive: true, followLinks: false)) {
         if (entity is! File) continue;
         final path = entity.path;
         if (!LocalMetadataReader.isAudioFile(path)) continue;

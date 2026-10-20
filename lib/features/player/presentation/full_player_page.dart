@@ -762,7 +762,7 @@ class _PlayerLyricsPage extends ConsumerWidget {
             //
             // Windows 端 AMLL 的 WebView 合成异常，整块都不构建，
             // 直接使用原生歌词层渲染。
-            if (AmllToggleService().isPlatformSupported)
+            if (AmllToggleService.isPlatformSupported)
               RepaintBoundary(
                 child: TickerMode(
                   enabled: !hideWebView,

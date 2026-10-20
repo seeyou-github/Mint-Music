@@ -60,14 +60,14 @@ class DesktopFingerprintBridge {
       // 分块注入，避免单次执行的 JS 过大被 WebView 拒绝。
       const chunkSize = 60000;
       final base64Data = _wasmBase64!;
-      await controller.runJavaScript('window.WASM_BINARY = "";');
+      await controller.evaluateJavascript(source: 'window.WASM_BINARY = "";');
       for (var i = 0; i < base64Data.length; i += chunkSize) {
         final end = i + chunkSize;
         final chunk = end < base64Data.length
             ? base64Data.substring(i, end)
             : base64Data.substring(i);
-        await controller.runJavaScript(
-          'window.WASM_BINARY += "$chunk";',
+        await controller.evaluateJavascript(
+          source: 'window.WASM_BINARY += "$chunk";',
         );
       }
       _pageLoaded = true;
@@ -102,10 +102,12 @@ class DesktopFingerprintBridge {
       for (var i = 0; i < 60; i++) {
         await Future.delayed(const Duration(milliseconds: 500));
         try {
-          final result = await controller.runJavaScriptReturningResult(
-            'typeof GenerateFP === "function" ? "ready" : "not_ready"',
+          final result = await controller.evaluateJavascript(
+            source: 'typeof GenerateFP === "function" ? "ready" : "not_ready"',
           );
-          if (result.toString() == '"ready"') {
+          // 不同平台返回的可能是原始字符串，也可能是 JSON 编码后的字符串
+          final status = result.toString();
+          if (status == 'ready' || status == '"ready"') {
             _ready = true;
             debugPrint('[AFP-Desktop] GenerateFP 已就绪');
             final completer = _readyCompleter;
@@ -148,8 +150,8 @@ class DesktopFingerprintBridge {
       );
       final pcmBase64 = base64.encode(pcmBytes);
 
-      await controller.runJavaScript(
-        'window.generateFingerprint($requestId, "$pcmBase64");',
+      await controller.evaluateJavascript(
+        source: 'window.generateFingerprint($requestId, "$pcmBase64");',
       );
 
       return await completer.future.timeout(

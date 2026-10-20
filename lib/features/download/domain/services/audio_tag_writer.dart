@@ -85,6 +85,7 @@ class AudioTagWriter {
     List<int> audioBytes;
     final frames = <String, Uint8List>{};
     try {
+      final fileLength = await raf.length();
       final header = await raf.read(10);
       var audioStart = 0;
       if (header.length == 10 && _isId3Header(header)) {
@@ -103,7 +104,8 @@ class AudioTagWriter {
         audioStart = 10 + tagSize;
       }
       await raf.setPosition(audioStart);
-      audioBytes = await raf.read();
+      final remaining = fileLength - audioStart;
+      audioBytes = remaining > 0 ? await raf.read(remaining) : <int>[];
     } finally {
       await raf.close();
     }
@@ -222,7 +224,7 @@ class AudioTagWriter {
       for (var i = 0; i < 4; i++) {
         header[i] = id.codeUnitAt(i) & 0xFF;
       }
-      _writeBe32(header, 4, content.length);
+      _writeBe32At(header, 4, content.length);
       out.add(header);
       out.add(content);
     });
@@ -486,6 +488,14 @@ class AudioTagWriter {
       (value >> 8) & 0xFF,
       value & 0xFF,
     ]);
+  }
+
+  /// 以大端序写入 32 位整数到指定偏移。
+  static void _writeBe32At(Uint8List target, int offset, int value) {
+    target[offset] = (value >> 24) & 0xFF;
+    target[offset + 1] = (value >> 16) & 0xFF;
+    target[offset + 2] = (value >> 8) & 0xFF;
+    target[offset + 3] = value & 0xFF;
   }
 
   static void _writeLe32(BytesBuilder out, int value) {

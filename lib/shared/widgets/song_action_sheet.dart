@@ -891,7 +891,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
   Widget _buildAmllToggle(BuildContext ctx, ProviderContainer container) {
     // Windows 端 AMLL 依赖的 WebView 合成异常（应用内歌词无法显示），
     // 该选项置灰并提示，避免用户打开后没有效果。
-    final supported = AmllToggleService().isPlatformSupported;
+    final supported = AmllToggleService.isPlatformSupported;
     return ListenableBuilder(
       listenable: AmllToggleService(),
       builder: (context, _) {

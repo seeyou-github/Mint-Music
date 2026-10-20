@@ -301,7 +301,7 @@ class _LyricPageState extends ConsumerState<LyricPage> {
                                           //
                                           // Windows 端 AMLL 的 WebView 合成异常，
                                           // 整块都不构建，直接使用原生歌词层。
-                                          if (AmllToggleService().isPlatformSupported)
+                                          if (AmllToggleService.isPlatformSupported)
                                             RepaintBoundary(
                                               child: TickerMode(
                                                 enabled: !_isLeaving,
