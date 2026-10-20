@@ -414,14 +414,21 @@ class _LocalPlaylistDetailPageState
     );
   }
 
+  /// 歌单页顶部：返回按钮 + 封面 + 名称 / 描述 / 操作按钮（同一行），让顶部更紧凑。
   Widget _buildHeader(
     BuildContext context,
     WidgetRef ref,
     ThemeColors colors,
     Playlist playlist,
   ) {
+    final coverSize = ResponsiveLayout.isTablet(context) ? 96.0 : 72.0;
     return Container(
-      padding: const EdgeInsets.all(AppSpacing.lg),
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.sm,
+        AppSpacing.md,
+        AppSpacing.lg,
+        AppSpacing.md,
+      ),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [
@@ -432,142 +439,138 @@ class _LocalPlaylistDetailPageState
           end: Alignment.bottomCenter,
         ),
       ),
-      child: Column(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              GestureDetector(
-                onTap: () => context.pop(),
-                child: Icon(Icons.arrow_back,
-                    size: 24, color: colors.textPrimary),
-              ),
-              const Spacer(),
-              PopupMenuButton<String>(
-                icon: Icon(Icons.more_horiz,
-                    size: 24, color: colors.textSecondary),
-                color: colors.surface,
-                onSelected: (value) {
-                  if (value == 'share') {
-                    _sharePlaylist(context, ref, colors, playlist);
-                  } else if (value == 'export') {
-                    _exportPlaylist(context, ref, colors, playlist);
-                  } else if (value == 'edit') {
-                    _editPlaylist(context, ref, colors, playlist);
-                  } else if (value == 'multiselect') {
-                    _toggleMultiSelectMode();
-                  }
-                },
-                itemBuilder: (context) => [
-                  PopupMenuItem(
-                    value: 'multiselect',
-                    child: Row(
-                      children: [
-                        Icon(Icons.select_all, size: 18, color: colors.textSecondary),
-                        const SizedBox(width: 8),
-                        Text(
-                          context.tr(
-                            _selection.isActive ? '取消批量选择' : '批量选择',
-                          ),
-                          style: TextStyle(color: colors.textPrimary),
-                        ),
-                      ],
-                    ),
+          // 返回按钮
+          GestureDetector(
+            onTap: () => context.pop(),
+            child: Padding(
+              padding: const EdgeInsets.all(AppSpacing.xs),
+              child: Icon(Icons.arrow_back, size: 24, color: colors.textPrimary),
+            ),
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          // 封面
+          Container(
+            width: coverSize,
+            height: coverSize,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(AppRadius.lg),
+              color: colors.surfaceVariant,
+            ),
+            child: _buildPlaylistCover(colors, playlist),
+          ),
+          const SizedBox(width: AppSpacing.md),
+          // 名称 + 描述 + 操作按钮
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  playlist.name,
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: colors.textPrimary,
                   ),
-                  PopupMenuItem(
-                    value: 'edit',
-                    child: Text(context.tr('编辑歌单'),
-                        style: TextStyle(color: colors.textPrimary)),
-                  ),
-                  PopupMenuItem(
-                    value: 'share',
-                    child: Row(
-                      children: [
-                        Icon(Icons.share, size: 18, color: colors.textSecondary),
-                        const SizedBox(width: 8),
-                        Text(context.tr('分享歌单'),
-                            style: TextStyle(color: colors.textPrimary)),
-                      ],
-                    ),
-                  ),
-                  PopupMenuItem(
-                    value: 'export',
-                    child: Text(context.tr('导出歌单'),
-                        style: TextStyle(color: colors.textPrimary)),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                if (playlist.description.isNotEmpty) ...[
+                  const SizedBox(height: AppSpacing.xs),
+                  Text(
+                    playlist.description,
+                    style: TextStyle(fontSize: 13, color: colors.textSecondary),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ],
-              ),
-            ],
-          ),
-          const SizedBox(height: AppSpacing.lg),
-          Row(
-            children: [
-              Container(
-                width: 100,
-                height: 100,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(AppRadius.lg),
-                  color: colors.surfaceVariant,
+                const SizedBox(height: 2),
+                Text(
+                  context.tr('${playlist.songCount}首歌曲'),
+                  style: TextStyle(fontSize: 12, color: colors.textHint),
                 ),
-                child: _buildPlaylistCover(colors, playlist),
-              ),
-              const SizedBox(width: AppSpacing.md),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                const SizedBox(height: AppSpacing.sm),
+                Row(
                   children: [
+                    _buildActionButton(
+                        colors, Icons.play_arrow, context.tr('播放全部'), () {
+                      if (_sortedSongs.isNotEmpty) {
+                        final controller = ref
+                            .read(playbackControllerProvider.notifier);
+                        controller.setQueue(_sortedSongs);
+                      }
+                    }),
+                    const SizedBox(width: AppSpacing.sm),
+                    _buildActionButton(colors, Icons.shuffle, context.tr('随机播放'),
+                        () {
+                      if (_sortedSongs.isNotEmpty) {
+                        final songs = [..._sortedSongs]..shuffle();
+                        final controller = ref
+                            .read(playbackControllerProvider.notifier);
+                        controller.setQueue(songs);
+                      }
+                    }),
+                    const SizedBox(width: AppSpacing.sm),
+                    _buildSortButton(colors),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          // 更多操作
+          PopupMenuButton<String>(
+            icon: Icon(Icons.more_horiz, size: 24, color: colors.textSecondary),
+            color: colors.surface,
+            onSelected: (value) {
+              if (value == 'share') {
+                _sharePlaylist(context, ref, colors, playlist);
+              } else if (value == 'export') {
+                _exportPlaylist(context, ref, colors, playlist);
+              } else if (value == 'edit') {
+                _editPlaylist(context, ref, colors, playlist);
+              } else if (value == 'multiselect') {
+                _toggleMultiSelectMode();
+              }
+            },
+            itemBuilder: (context) => [
+              PopupMenuItem(
+                value: 'multiselect',
+                child: Row(
+                  children: [
+                    Icon(Icons.select_all, size: 18, color: colors.textSecondary),
+                    const SizedBox(width: 8),
                     Text(
-                      playlist.name,
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: colors.textPrimary,
+                      context.tr(
+                        _selection.isActive ? '取消批量选择' : '批量选择',
                       ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    if (playlist.description.isNotEmpty) ...[
-                      const SizedBox(height: AppSpacing.xs),
-                      Text(
-                        playlist.description,
-                        style: TextStyle(
-                            fontSize: 13, color: colors.textSecondary),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
-                    const SizedBox(height: AppSpacing.xs),
-                    Text(
-                      context.tr('${playlist.songCount}首歌曲'),
-                      style:
-                          TextStyle(fontSize: 12, color: colors.textHint),
-                    ),
-                    const SizedBox(height: AppSpacing.md),
-                    Row(
-                      children: [
-                        _buildActionButton(
-                            colors, Icons.play_arrow, context.tr('播放全部'), () {
-                          if (_sortedSongs.isNotEmpty) {
-                            final controller = ref
-                                .read(playbackControllerProvider.notifier);
-                            controller.setQueue(_sortedSongs);
-                          }
-                        }),
-                        const SizedBox(width: AppSpacing.sm),
-                        _buildActionButton(colors, Icons.shuffle, context.tr('随机播放'),
-                            () {
-                          if (_sortedSongs.isNotEmpty) {
-                            final songs = [..._sortedSongs]..shuffle();
-                            final controller = ref
-                                .read(playbackControllerProvider.notifier);
-                            controller.setQueue(songs);
-                          }
-                        }),
-                        const SizedBox(width: AppSpacing.sm),
-                        _buildSortButton(colors),
-                      ],
+                      style: TextStyle(color: colors.textPrimary),
                     ),
                   ],
                 ),
+              ),
+              PopupMenuItem(
+                value: 'edit',
+                child: Text(context.tr('编辑歌单'),
+                    style: TextStyle(color: colors.textPrimary)),
+              ),
+              PopupMenuItem(
+                value: 'share',
+                child: Row(
+                  children: [
+                    Icon(Icons.share, size: 18, color: colors.textSecondary),
+                    const SizedBox(width: 8),
+                    Text(context.tr('分享歌单'),
+                        style: TextStyle(color: colors.textPrimary)),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'export',
+                child: Text(context.tr('导出歌单'),
+                    style: TextStyle(color: colors.textPrimary)),
               ),
             ],
           ),
