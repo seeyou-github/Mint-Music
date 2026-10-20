@@ -248,6 +248,10 @@ class _SearchPageState extends ConsumerState<SearchPage> {
 
     final searchTab = ref.watch(searchTabProvider);
     final playlistSearchState = ref.watch(playlistSearchControllerProvider);
+    // 正在播放的歌曲（列表里高亮显示）。
+    final currentSongId = ref.watch(
+      playbackControllerProvider.select((s) => s.currentSong?.id),
+    );
 
     return ListenableBuilder(
       listenable: _selection,
@@ -308,7 +312,11 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                         // 根据标签页显示对应结果
                         Expanded(
                           child: searchTab == SearchTab.songs || selecting
-                              ? _buildSearchResults(colors, searchState)
+                              ? _buildSearchResults(
+                                  colors,
+                                  searchState,
+                                  currentSongId: currentSongId,
+                                )
                               : _buildPlaylistResults(
                                   colors,
                                   playlistSearchState,
@@ -1085,6 +1093,9 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           addRepaintBoundaries: true,
           itemBuilder: (context, index) {
             final song = songs[index];
+            final currentSongId = ref.watch(
+              playbackControllerProvider.select((s) => s.currentSong?.id),
+            );
             return SongListItem(
               song: song,
               index: index,
@@ -1094,6 +1105,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
               showQuality: true,
               showDuration: true,
               showMenuButton: true,
+              // 正在播放的歌曲高亮显示。
+              isPlaying: currentSongId != null && currentSongId == song.id,
               // 主操作为「下一首播放」：插到当前播放歌曲之后，
               // 不会把播放队列替换成全部搜索结果。
               onMenuTap: () => SongActionSheet.show(
@@ -1137,10 +1150,15 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       addRepaintBoundaries: true,
       itemBuilder: (context, index) {
         final song = songs[index];
+        final currentSongId = ref.watch(
+          playbackControllerProvider.select((s) => s.currentSong?.id),
+        );
         return SongListItem(
           song: song,
           index: index,
           showSource: false,
+          // 正在播放的歌曲高亮显示。
+          isPlaying: currentSongId != null && currentSongId == song.id,
           onPlayTap: () async {
             final now = DateTime.now();
             final lastTap = _globalLastTapTime;
@@ -1159,7 +1177,11 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     );
   }
 
-  Widget _buildSearchResults(ThemeColors colors, SearchResultsState state) {
+  Widget _buildSearchResults(
+    ThemeColors colors,
+    SearchResultsState state, {
+    String? currentSongId,
+  }) {
     if (state.isLoading && state.songs.isEmpty) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -1210,6 +1232,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           showQuality: true,
           showDuration: true,
           showMenuButton: true,
+          // 正在播放的歌曲高亮显示。
+          isPlaying: currentSongId != null && currentSongId == song.id,
           // 主操作为「下一首播放」：插到当前播放歌曲之后，
           // 不会把播放队列替换成全部搜索结果。
           onMenuTap: () => SongActionSheet.show(
