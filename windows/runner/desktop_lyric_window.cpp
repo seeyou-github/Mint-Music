@@ -35,10 +35,10 @@ ATOM RegisterLyricWindowClass() {
 void GetVirtualScreen(int* left, int* top, int* width, int* height) {
   RECT desktop{};
   ::GetWindowRect(::GetDesktopWindow(), &desktop);
-  *left = desktop.left;
-  *top = desktop.top;
-  *width = desktop.right - desktop.left;
-  *height = desktop.bottom - desktop.top;
+  *left = static_cast<int>(desktop.left);
+  *top = static_cast<int>(desktop.top);
+  *width = static_cast<int>(desktop.right - desktop.left);
+  *height = static_cast<int>(desktop.bottom - desktop.top);
   if (*width <= 0) *width = ::GetSystemMetrics(SM_CXSCREEN);
   if (*height <= 0) *height = ::GetSystemMetrics(SM_CYSCREEN);
 }
@@ -245,8 +245,8 @@ void DesktopLyricWindow::Paint() {
   }
   RECT client{};
   ::GetClientRect(window_, &client);
-  const int width = client.right - client.left;
-  const int height = client.bottom - client.top;
+  const int width = static_cast<int>(client.right - client.left);
+  const int height = static_cast<int>(client.bottom - client.top);
   if (width <= 0 || height <= 0) {
     return;
   }
@@ -394,10 +394,13 @@ void DesktopLyricWindow::ReportPosition() {
   int screen_width = 0;
   int screen_height = 0;
   GetVirtualScreen(&screen_left, &screen_top, &screen_width, &screen_height);
-  const double x = (rect.left - screen_left) * 100.0 /
-                   std::max(1, screen_width - (rect.right - rect.left));
-  const double y = (rect.top - screen_top) * 100.0 /
-                   std::max(1, screen_height - (rect.bottom - rect.top));
+  // RECT 的字段是 LONG，这里先转成 int，避免 std::max 的模板类型推导失败。
+  const int window_width = static_cast<int>(rect.right - rect.left);
+  const int window_height = static_cast<int>(rect.bottom - rect.top);
+  const double x = (static_cast<int>(rect.left) - screen_left) * 100.0 /
+                   std::max(1, screen_width - window_width);
+  const double y = (static_cast<int>(rect.top) - screen_top) * 100.0 /
+                   std::max(1, screen_height - window_height);
   position_callback_(x, y);
 }
 
@@ -437,8 +440,8 @@ LRESULT DesktopLyricWindow::HandleMessage(HWND hwnd,
       }
       RECT rect{};
       ::GetWindowRect(hwnd, &rect);
-      drag_offset_x_ = GET_X_LPARAM(lparam) - rect.left;
-      drag_offset_y_ = GET_Y_LPARAM(lparam) - rect.top;
+      drag_offset_x_ = GET_X_LPARAM(lparam) - static_cast<int>(rect.left);
+      drag_offset_y_ = GET_Y_LPARAM(lparam) - static_cast<int>(rect.top);
       dragging_ = true;
       ::SetCapture(hwnd);
       return 0;
