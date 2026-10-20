@@ -210,114 +210,93 @@ class MusicSourceManager {
     return sources;
   }
 
+  /// 插件提供的音源列表（发现页 / 搜索页共用同一份 id 与名称）。
+  ///
+  /// * 名称只取插件声明的 platform（音源平台名，例如「网易云音乐」「bilibili」），
+  ///   不拼接插件名 / 作者等信息；
+  /// * 同名同平台（不同作者）的插件都能显示，第二个及之后的用
+  ///   `平台id@插件id` 作为唯一 id，名称保持一致。
   List<SourceInfo> getPluginSupportedSources() {
     final sources = <SourceInfo>[];
     final seenIds = <String>{};
 
-    // 先统计每个平台被多少个插件提供：同名同平台（不同作者）的插件
-    // 需要同时显示，展示名上要带上插件名 / 作者以便区分。
-    final providerCounts = <String, int>{};
-    for (final host in _pluginService.enabledPlugins) {
-      for (final source in host.sources) {
-        final baseId = SourceIdMapping.deriveId(source.name);
-        providerCounts[baseId] = (providerCounts[baseId] ?? 0) + 1;
-      }
-    }
-
     for (final host in _pluginService.enabledPlugins) {
       final pluginId = _pluginService.getPluginIdForHost(host);
-      final pluginInfo = host.pluginInfo;
       for (final source in host.sources) {
         // 名称 → id 的推导与 MusicFree 适配器保持一致（见 SourceIdMapping）。
         final baseId = SourceIdMapping.deriveId(source.name);
-
-        // 同名同平台的插件（作者不同）都要显示：第二个及之后的追加插件 id，
-        // 保证 id 唯一，用户可以在音源切换器里分别选择。
-        var id = baseId;
-        if (seenIds.contains(id)) {
-          id = pluginId != null
-              ? '$baseId@$pluginId'
-              : '$baseId@${seenIds.length}';
-          var counter = 2;
-          while (seenIds.contains(id)) {
-            id = '$baseId@${pluginId ?? 'plugin'}$counter';
-            counter++;
-          }
-        }
+        final id = _uniqueSourceId(baseId, pluginId, seenIds);
         seenIds.add(id);
-
-        var name = source.name;
-        if ((providerCounts[baseId] ?? 0) > 1 && pluginInfo != null) {
-          final author = pluginInfo.author.trim();
-          final suffix = author.isEmpty
-              ? pluginInfo.name
-              : '${pluginInfo.name} · $author';
-          if (suffix.isNotEmpty) {
-            name = '$name（$suffix）';
-          }
-        }
-
-        sources.add(SourceInfo(id: id, name: name));
+        sources.add(SourceInfo(id: id, name: source.name));
       }
     }
     return sources;
+  }
+
+  /// 同名同平台（不同作者）的插件需要唯一的 id。
+  static String _uniqueSourceId(
+    String baseId,
+    String? pluginId,
+    Set<String> seenIds,
+  ) {
+    if (!seenIds.contains(baseId)) return baseId;
+    var id =
+        pluginId != null ? '$baseId@$pluginId' : '$baseId@${seenIds.length}';
+    var counter = 2;
+    while (seenIds.contains(id)) {
+      id = '$baseId@${pluginId ?? 'plugin'}$counter';
+      counter++;
+    }
+    return id;
   }
 
   List<SourceInfo> getSearchSupportedSources() {
     final sources = <SourceInfo>[];
     final seenIds = <String>{};
 
-    for (final host in _pluginService.enabledPlugins) {
-      final pluginId = _pluginService.getPluginIdForHost(host);
-      for (final entry in host.sourceActions.entries) {
-        final sourceId = entry.key;
-        final actions = entry.value;
-
-        if (actions
-            .map((action) => action.toLowerCase())
-            .any((action) => action == 'musicsearch' || action == 'search')) {
-          final sourceName =
-              _sourceIdToName[sourceId] ??
-              host.sources
-                  .firstWhere(
-                    (s) => SourceIdMapping.knownId(s.name) == sourceId,
-                    orElse: () =>
-                        PluginSourceInfo(name: sourceId, qualities: []),
-                  )
-                  .name;
-
-          if (!seenIds.contains(sourceId)) {
-            seenIds.add(sourceId);
-            sources.add(SourceInfo(id: sourceId, name: sourceName));
-          } else {
-            // 同名同平台的不同插件：追加插件 id 后同时展示。
-            var variantId =
-                pluginId != null ? '$sourceId@$pluginId' : '$sourceId@p';
-            var counter = 2;
-            while (seenIds.contains(variantId)) {
-              variantId = '$sourceId@${pluginId ?? 'plugin'}$counter';
-              counter++;
-            }
-            seenIds.add(variantId);
-            sources.add(SourceInfo(id: variantId, name: sourceName));
-          }
-        }
-      }
-    }
-
+    // 内置音源（与发现页顺序一致：内置在前）。
     for (final entry in _availableBuiltInSources) {
-      if (!seenIds.contains(entry.key)) {
+      if (seenIds.add(entry.key)) {
         sources.add(
           SourceInfo(
             id: entry.key,
             name: _sourceIdToName[entry.key] ?? entry.key,
           ),
         );
-        seenIds.add(entry.key);
       }
     }
 
+    // 插件音源：与发现页共用同一份 id / 名称，这里只额外过滤掉不支持搜索的音源。
+    for (final source in getPluginSupportedSources()) {
+      if (seenIds.contains(source.id)) continue;
+      if (!_pluginSourceSupportsSearch(source.id)) continue;
+      seenIds.add(source.id);
+      sources.add(source);
+    }
+
     return sources;
+  }
+
+  /// 插件音源是否支持搜索。
+  ///
+  /// 变体 id（`wy@插件id`）只认对应插件提供的音源。
+  bool _pluginSourceSupportsSearch(String sourceId) {
+    final (baseId, pluginId) = splitSourceId(sourceId);
+    for (final host in _pluginService.enabledPlugins) {
+      if (pluginId != null &&
+          _pluginService.getPluginIdForHost(host) != pluginId) {
+        continue;
+      }
+      final pluginSourceId = _getSourceIdForHost(host, baseId);
+      if (pluginSourceId == null) continue;
+      final actions = host.sourceActions[pluginSourceId] ?? const <String>[];
+      if (actions
+          .map((action) => action.toLowerCase())
+          .any((action) => action == 'musicsearch' || action == 'search')) {
+        return true;
+      }
+    }
+    return false;
   }
 
   List<String> getSupportedQualitiesForSourceId(String sourceId) {
