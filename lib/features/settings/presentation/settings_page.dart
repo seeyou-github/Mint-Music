@@ -1261,7 +1261,7 @@ class _AppearanceContent extends ConsumerWidget {
     return _SettingGroup(
       title: '桌面歌词',
       subtitle: Platform.isWindows
-          ? '独立的桌面歌词窗口，应用最小化后仍显示在桌面上，锁定后置顶'
+          ? '独立的桌面歌词窗口（始终置顶），应用最小化后仍显示在桌面上，可拖动'
           : '悬浮在页面之上的歌词窗，可拖动位置，锁定后点击穿透',
       colors: colors,
       children: [
@@ -1271,7 +1271,7 @@ class _AppearanceContent extends ConsumerWidget {
           subtitle: needPermission
               ? '需要「在其他应用上层显示」权限，开启时会跳转到授权页'
               : (Platform.isWindows
-                  ? '开启后弹出独立的桌面歌词窗口，可拖动，锁定后置顶显示'
+                  ? '开启后弹出独立的桌面歌词窗口（始终置顶），可拖动，锁定后点击穿透'
                   : '开启后歌词窗悬浮在其它应用之上，可拖动，锁定后点击穿透'),
           trailing: Switch(
             // 未拿到悬浮窗权限时保持关闭:授权成功后才自动置为开启。

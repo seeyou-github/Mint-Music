@@ -79,7 +79,8 @@ class DesktopLyricWindow {
   void DestroyWindowIfNeeded();
   void ApplySizeAndPosition();
   void EnsureFont();
-  void AdvanceActiveIndex();
+  /// 推进当前歌词行；返回是否发生了变化（变化时需要重绘）。
+  bool AdvanceActiveIndex();
   void Paint();
   void ReportPosition();
   int GetLineHeight() const;
@@ -110,11 +111,6 @@ class DesktopLyricWindow {
   long long anchor_position_ms_ = 0;
   ULONGLONG anchor_tick_ = 0;
   bool is_playing_ = false;
-
-  // 拖动
-  bool dragging_ = false;
-  int drag_offset_x_ = 0;
-  int drag_offset_y_ = 0;
 
   std::function<void(double, double)> position_callback_;
 };

@@ -66,6 +66,7 @@ void DesktopLyricWindow::Show() {
   }
   ApplySizeAndPosition();
   ::ShowWindow(window_, SW_SHOWNOACTIVATE);
+  Paint();
   ::UpdateWindow(window_);
 }
 
@@ -203,24 +204,27 @@ void DesktopLyricWindow::ApplySizeAndPosition() {
   if (x < screen_left) x = screen_left;
   if (y < screen_top) y = screen_top;
 
-  // 锁定：置顶显示，且鼠标点击穿透到下层内容。
+  // 锁定：点击穿透到下层内容；未锁定：可以拖动。
   LONG_PTR ex_style = WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
   if (is_lock_) {
     ex_style |= WS_EX_TRANSPARENT;
   }
   ::SetWindowLongPtrW(window_, GWL_EXSTYLE, ex_style);
 
-  ::SetWindowPos(window_, is_lock_ ? HWND_TOPMOST : HWND_NOTOPMOST, x, y, width,
-                 height, SWP_NOACTIVATE);
+  // 桌面歌词始终置顶显示（不锁定时同样置顶）。
+  ::SetWindowPos(window_, HWND_TOPMOST, x, y, width, height, SWP_NOACTIVATE);
 }
 
-void DesktopLyricWindow::AdvanceActiveIndex() {
+bool DesktopLyricWindow::AdvanceActiveIndex() {
   if (lines_.empty()) {
-    active_index_ = -1;
-    return;
+    if (active_index_ != -1) {
+      active_index_ = -1;
+      return true;
+    }
+    return false;
   }
   if (!is_playing_) {
-    return;
+    return false;
   }
   const ULONGLONG now = ::GetTickCount64();
   const long long position =
@@ -233,10 +237,12 @@ void DesktopLyricWindow::AdvanceActiveIndex() {
       break;
     }
   }
-  if (index != active_index_) {
-    active_index_ = index;
-    ApplySizeAndPosition();
+  if (index == active_index_) {
+    return false;
   }
+  active_index_ = index;
+  ApplySizeAndPosition();
+  return true;
 }
 
 void DesktopLyricWindow::Paint() {
@@ -401,6 +407,9 @@ void DesktopLyricWindow::ReportPosition() {
                    std::max(1, screen_width - window_width);
   const double y = (static_cast<int>(rect.top) - screen_top) * 100.0 /
                    std::max(1, screen_height - window_height);
+  // 同步内部位置，避免后续应用配置时窗口跳回旧位置。
+  position_x_ = x;
+  position_y_ = y;
   position_callback_(x, y);
 }
 
@@ -423,8 +432,10 @@ LRESULT DesktopLyricWindow::HandleMessage(HWND hwnd,
                                           LPARAM lparam) {
   switch (message) {
     case WM_TIMER:
-      AdvanceActiveIndex();
-      Paint();
+      // 只在当前歌词行变化时重绘，避免拖动时反复刷新导致闪烁。
+      if (AdvanceActiveIndex()) {
+        Paint();
+      }
       return 0;
     case WM_PAINT: {
       PAINTSTRUCT ps{};
@@ -438,32 +449,15 @@ LRESULT DesktopLyricWindow::HandleMessage(HWND hwnd,
       if (is_lock_) {
         return 0;
       }
-      RECT rect{};
-      ::GetWindowRect(hwnd, &rect);
-      drag_offset_x_ = GET_X_LPARAM(lparam) - static_cast<int>(rect.left);
-      drag_offset_y_ = GET_Y_LPARAM(lparam) - static_cast<int>(rect.top);
-      dragging_ = true;
-      ::SetCapture(hwnd);
-      return 0;
-    }
-    case WM_MOUSEMOVE: {
-      if (!dragging_) {
-        return 0;
-      }
-      RECT rect{};
-      ::GetWindowRect(hwnd, &rect);
-      const int x = GET_X_LPARAM(lparam) - drag_offset_x_;
-      const int y = GET_Y_LPARAM(lparam) - drag_offset_y_;
-      ::SetWindowPos(hwnd, nullptr, x, y, 0, 0,
-                     SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
-      return 0;
-    }
-    case WM_LBUTTONUP: {
-      if (!dragging_) {
-        return 0;
-      }
-      dragging_ = false;
+      // 交给系统的「标题栏拖动」逻辑移动窗口：
+      // 窗口跟随鼠标且不需要重绘，拖动时不会闪烁；
+      // 用屏幕坐标计算也不会出现「指针与窗口距离越来越远」的问题。
       ::ReleaseCapture();
+      ::SendMessage(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+      return 0;
+    }
+    case WM_EXITSIZEMOVE: {
+      // 拖动结束：把新位置回传给 Dart 侧持久化。
       ReportPosition();
       return 0;
     }
