@@ -11,10 +11,12 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
+import '../../../core/theme/app_font_manager.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../../../shared/services/app_image_cache.dart';
 import '../../../shared/services/cache_paths.dart';
+import '../application/font_providers.dart';
 import '../application/settings_providers.dart';
 import '../data/settings_service.dart';
 import '../../player/application/desktop_lyric_controller.dart';
@@ -554,6 +556,15 @@ class _AppearanceContent extends ConsumerWidget {
         ? '跟随系统，当前为${isThemeModeLight(themeMode, platformBrightness) ? '浅色' : '深色'}'
         : '选择应用的主题颜色';
     final primaryHex = ref.watch(themePrimaryColorProvider);
+    final fontColorHex = ref.watch(themeFontColorProvider);
+    final secondaryFontColorHex = ref.watch(themeSecondaryFontColorProvider);
+    // 已导入 / 选中的应用字体
+    final importedFonts = ref.watch(appFontsProvider);
+    final selectedFont = ref.watch(appFontSelectedProvider);
+    final fontName = selectedFont ?? '默认字体';
+    final fontSubtitle = importedFonts.isEmpty
+        ? '导入字体文件（可多选），并选择其中之一作为应用字体'
+        : '已导入 ${importedFonts.length} 个字体，当前使用：$fontName';
     final presetColors = [
       ('#1DB954', 'Spotify 绿'),
       ('#6366F1', '靛蓝'),
@@ -624,6 +635,79 @@ class _AppearanceContent extends ConsumerWidget {
           colors: colors,
           onTap: () =>
               _showThemeColorPicker(context, colors, presetColors, primaryHex),
+        ),
+        _SettingDivider(colors: colors),
+        _SettingRow(
+          icon: Icons.text_fields,
+          title: '字体颜色',
+          subtitle: fontColorHex.isEmpty
+              ? '主文字颜色（当前使用主题默认色）'
+              : '主文字颜色：$fontColorHex',
+          trailing: Container(
+            width: 24,
+            height: 24,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: fontColorHex.isEmpty
+                  ? colors.textPrimary
+                  : _parseHexColor(fontColorHex),
+              border: Border.all(color: colors.divider, width: 1.5),
+            ),
+          ),
+          colors: colors,
+          onTap: () => _showFontColorPicker(
+            context,
+            colors,
+            presetColors,
+            fontColorHex,
+            isSecondary: false,
+          ),
+        ),
+        _SettingDivider(colors: colors),
+        _SettingRow(
+          icon: Icons.text_fields_outlined,
+          title: '第二字体颜色',
+          subtitle: secondaryFontColorHex.isEmpty
+              ? '次级文字颜色（当前使用主题默认色）'
+              : '次级文字颜色：$secondaryFontColorHex',
+          trailing: Container(
+            width: 24,
+            height: 24,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: secondaryFontColorHex.isEmpty
+                  ? colors.textSecondary
+                  : _parseHexColor(secondaryFontColorHex),
+              border: Border.all(color: colors.divider, width: 1.5),
+            ),
+          ),
+          colors: colors,
+          onTap: () => _showFontColorPicker(
+            context,
+            colors,
+            presetColors,
+            secondaryFontColorHex,
+            isSecondary: true,
+          ),
+        ),
+        _SettingDivider(colors: colors),
+        _SettingRow(
+          icon: Icons.font_download_outlined,
+          title: '应用字体',
+          subtitle: fontSubtitle,
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                context.tr(fontName),
+                style: TextStyle(fontSize: 13, color: colors.textHint),
+              ),
+              const SizedBox(width: 4),
+              Icon(Icons.chevron_right, size: 18, color: colors.textHint),
+            ],
+          ),
+          colors: colors,
+          onTap: () => _showAppFontSheet(context, colors, ref),
         ),
       ],
     );
@@ -723,6 +807,295 @@ class _AppearanceContent extends ConsumerWidget {
           ),
         ),
       ),
+    );
+  }
+
+  /// 字体颜色 / 第二字体颜色的选择面板。
+  void _showFontColorPicker(
+    BuildContext context,
+    ThemeColors colors,
+    List<(String, String)> presetColors,
+    String currentHex, {
+    required bool isSecondary,
+  }) {
+    void apply(String hex) {
+      final container = ProviderScope.containerOf(context);
+      if (isSecondary) {
+        container.read(themeSecondaryFontColorProvider.notifier).state = hex;
+        unawaited(
+          _doPersist(
+            container,
+            (s) => s.setThemeSecondaryFontColor(hex),
+          ),
+        );
+      } else {
+        container.read(themeFontColorProvider.notifier).state = hex;
+        unawaited(
+          _doPersist(
+            container,
+            (s) => s.setThemeFontColor(hex),
+          ),
+        );
+      }
+      Navigator.pop(context);
+    }
+
+    showModalBottomSheet(
+      context: context,
+      sheetAnimationStyle: _settingsSheetAnimationStyle,
+      backgroundColor: colors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.lg),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: colors.divider,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: AppSpacing.md),
+              Text(
+                context.tr(isSecondary ? '选择第二字体颜色' : '选择字体颜色'),
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: colors.textPrimary,
+                ),
+              ),
+              const SizedBox(height: AppSpacing.md),
+              Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: [
+                  // 恢复默认色
+                  GestureDetector(
+                    onTap: () => apply(''),
+                    child: Container(
+                      width: 56,
+                      height: 56,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: colors.surfaceVariant,
+                        border: currentHex.isEmpty
+                            ? Border.all(color: colors.textPrimary, width: 3)
+                            : Border.all(color: colors.divider, width: 1),
+                      ),
+                      child: Icon(
+                        Icons.restart_alt,
+                        size: 22,
+                        color: colors.textSecondary,
+                      ),
+                    ),
+                  ),
+                  ...presetColors.map((item) {
+                    final isSelected = item.$1 == currentHex;
+                    return GestureDetector(
+                      onTap: () => apply(item.$1),
+                      child: Container(
+                        width: 56,
+                        height: 56,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: _parseHexColor(item.$1),
+                          border: isSelected
+                              ? Border.all(color: colors.textPrimary, width: 3)
+                              : null,
+                        ),
+                        child: isSelected
+                            ? const Icon(
+                                Icons.check,
+                                color: Colors.white,
+                                size: 24,
+                              )
+                            : null,
+                      ),
+                    );
+                  }),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.md),
+              Text(
+                context.tr('第一个圆圈表示恢复主题默认色'),
+                style: TextStyle(fontSize: 12, color: colors.textHint),
+              ),
+              const SizedBox(height: AppSpacing.lg),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 应用字体：导入字体文件（可多选）并选择其中之一。
+  Future<void> _showAppFontSheet(
+    BuildContext context,
+    ThemeColors colors,
+    WidgetRef ref,
+  ) async {
+    final notifier = ref.read(appFontsProvider.notifier);
+    final fonts = ref.read(appFontsProvider);
+    final selected = ref.read(appFontSelectedProvider);
+
+    await showModalBottomSheet(
+      context: context,
+      sheetAnimationStyle: _settingsSheetAnimationStyle,
+      backgroundColor: colors.surface,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.lg),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: colors.divider,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: AppSpacing.md),
+              Text(
+                context.tr('应用字体'),
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: colors.textPrimary,
+                ),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              Text(
+                context.tr('导入字体文件（可多选），选择其中之一作为应用字体'),
+                style: TextStyle(fontSize: 12, color: colors.textHint),
+              ),
+              const SizedBox(height: AppSpacing.md),
+              // 默认字体
+              _buildFontOption(
+                sheetContext,
+                colors,
+                title: context.tr('默认字体'),
+                subtitle: context.tr('使用内置字体'),
+                isSelected: selected == null,
+                onTap: () async {
+                  await notifier.select(null);
+                  if (sheetContext.mounted) Navigator.pop(sheetContext);
+                },
+              ),
+              ...fonts.map((font) {
+                return _buildFontOption(
+                  sheetContext,
+                  colors,
+                  title: font.family,
+                  subtitle: font.fileName,
+                  isSelected: selected == font.family,
+                  onTap: () async {
+                    await notifier.select(font);
+                    if (sheetContext.mounted) Navigator.pop(sheetContext);
+                  },
+                  onDelete: fonts.length > 1 || selected != font.family
+                      ? () async {
+                          await notifier.remove(font);
+                          if (sheetContext.mounted) {
+                            setState(() {});
+                          }
+                        }
+                      : null,
+                );
+              }),
+              const SizedBox(height: AppSpacing.sm),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: () async {
+                    final result = await FilePicker.platform.pickFiles(
+                      type: FileType.custom,
+                      allowedExtensions: AppFontManager.supportedExtensions,
+                      allowMultiple: true,
+                    );
+                    if (result == null) return;
+                    final paths = result.files
+                        .map((f) => f.path)
+                        .whereType<String>()
+                        .toList();
+                    if (paths.isEmpty) return;
+                    final count = await notifier.importFonts(paths);
+                    if (!sheetContext.mounted) return;
+                    if (count > 0) {
+                      _showSettingsMessage(sheetContext, '已导入 $count 个字体文件');
+                    } else {
+                      _showSettingsMessage(sheetContext, '没有可导入的字体文件');
+                    }
+                    setState(() {});
+                  },
+                  icon: const Icon(Icons.file_upload_outlined, size: 18),
+                  label: Text(context.tr('导入字体文件')),
+                ),
+              ),
+              const SizedBox(height: AppSpacing.lg),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 顶部提示条。
+  void _showSettingsMessage(BuildContext context, String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(context.tr(message))),
+    );
+  }
+
+  Widget _buildFontOption(
+    BuildContext context,
+    ThemeColors colors, {
+    required String title,
+    required String subtitle,
+    required bool isSelected,
+    required VoidCallback onTap,
+    VoidCallback? onDelete,
+  }) {
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      dense: true,
+      onTap: onTap,
+      leading: Icon(
+        isSelected ? Icons.radio_button_checked : Icons.radio_button_off,
+        color: isSelected ? colors.primary : colors.textHint,
+      ),
+      title: Text(
+        title,
+        style: TextStyle(fontSize: 14, color: colors.textPrimary),
+      ),
+      subtitle: Text(
+        subtitle,
+        style: TextStyle(fontSize: 11, color: colors.textHint),
+      ),
+      trailing: onDelete == null
+          ? null
+          : IconButton(
+              onPressed: onDelete,
+              icon: Icon(Icons.delete_outline, size: 18, color: colors.error),
+              tooltip: context.tr('删除'),
+            ),
     );
   }
 

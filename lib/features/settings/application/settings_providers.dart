@@ -340,6 +340,9 @@ final settingsInitProvider = FutureProvider<void>((ref) async {
   );
   ref.read(themePrimaryColorProvider.notifier).state = svc
       .getThemePrimaryColor();
+  ref.read(themeFontColorProvider.notifier).state = svc.getThemeFontColor();
+  ref.read(themeSecondaryFontColorProvider.notifier).state =
+      svc.getThemeSecondaryFontColor();
 
   ref.read(audioQualityProvider.notifier).state = svc.getAudioQuality();
   ref.read(autoQualityDowngradeProvider.notifier).state = svc

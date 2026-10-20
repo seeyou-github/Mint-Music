@@ -346,74 +346,78 @@ class _LocalPageState extends ConsumerState<LocalPage> {
         const <String>[];
     if (dirs.isEmpty) return const SizedBox.shrink();
     return SizedBox(
-      height: 40,
-      child: Row(
-        children: [
-          Expanded(
-            child: ScrollConfiguration(
-              // 桌面端允许用鼠标拖动横向列表
-              behavior: const _LocalFolderScrollBehavior(),
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                padding: EdgeInsets.symmetric(
-                  horizontal: ResponsiveLayout.horizontalPadding(context),
-                  vertical: AppSpacing.xs,
-                ),
-                itemCount: dirs.length + 1,
-                separatorBuilder: (_, __) =>
-                    const SizedBox(width: AppSpacing.sm),
-                itemBuilder: (context, index) {
-                  if (index == 0) {
+      height: 44,
+      child: MediaQuery.withClampedTextScaling(
+        // 限制文本缩放，避免大字体时文件夹名称被裁切。
+        maxScaleFactor: 1.2,
+        child: Row(
+          children: [
+            Expanded(
+              child: ScrollConfiguration(
+                // 桌面端允许用鼠标拖动横向列表
+                behavior: const _LocalFolderScrollBehavior(),
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  padding: EdgeInsets.symmetric(
+                    horizontal: ResponsiveLayout.horizontalPadding(context),
+                    vertical: AppSpacing.xs,
+                  ),
+                  itemCount: dirs.length + 1,
+                  separatorBuilder: (_, __) =>
+                      const SizedBox(width: AppSpacing.sm),
+                  itemBuilder: (context, index) {
+                    if (index == 0) {
+                      return _buildFolderChip(
+                        colors,
+                        context.tr('全部'),
+                        isSelected: _selectedFolder == null,
+                        onTap: () => _selectFolder(null),
+                      );
+                    }
+                    final dir = dirs[index - 1];
                     return _buildFolderChip(
                       colors,
-                      context.tr('全部'),
-                      isSelected: _selectedFolder == null,
-                      onTap: () => _selectFolder(null),
+                      _folderName(dir),
+                      isSelected: _selectedFolder == dir,
+                      onTap: () => _selectFolder(dir),
                     );
-                  }
-                  final dir = dirs[index - 1];
-                  return _buildFolderChip(
-                    colors,
-                    _folderName(dir),
-                    isSelected: _selectedFolder == dir,
-                    onTap: () => _selectFolder(dir),
-                  );
-                },
+                  },
+                ),
               ),
-            ),
-          ),
-          const SizedBox(width: AppSpacing.sm),
-          if (scanProgress.running) ...[
-            SizedBox(
-              width: 14,
-              height: 14,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: colors.primary,
-              ),
-            ),
-            const SizedBox(width: 4),
-            Text(
-              '${scanProgress.processed}/${scanProgress.total}',
-              style: TextStyle(fontSize: 11, color: colors.textHint),
             ),
             const SizedBox(width: AppSpacing.sm),
+            if (scanProgress.running) ...[
+              SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: colors.primary,
+                ),
+              ),
+              const SizedBox(width: 4),
+              Text(
+                '${scanProgress.processed}/${scanProgress.total}',
+                style: TextStyle(fontSize: 11, color: colors.textHint),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+            ],
+            Padding(
+              padding: EdgeInsets.only(
+                right: ResponsiveLayout.horizontalPadding(context),
+              ),
+              child: Text(
+                context.tr('${songs.length} 首'),
+                style: TextStyle(fontSize: 12, color: colors.textHint),
+              ),
+            ),
           ],
-          Padding(
-            padding: EdgeInsets.only(
-              right: ResponsiveLayout.horizontalPadding(context),
-            ),
-            child: Text(
-              context.tr('${songs.length} 首'),
-              style: TextStyle(fontSize: 12, color: colors.textHint),
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
 
-  /// 文件夹标签：文件夹图标 + 名称，选中态用主色高亮。
+  /// 文件夹标签：仅显示文件夹名称，选中态用主色高亮。
   Widget _buildFolderChip(
     ThemeColors colors,
     String name, {
@@ -434,29 +438,18 @@ class _LocalPageState extends ConsumerState<LocalPage> {
             color: isSelected ? colors.primary : colors.divider,
           ),
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Icons.folder_rounded,
-              size: 16,
-              color: isSelected ? colors.textOnPrimary : colors.textSecondary,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 180),
+          child: Text(
+            name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+              color: isSelected ? colors.textOnPrimary : colors.textPrimary,
             ),
-            const SizedBox(width: 6),
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 160),
-              child: Text(
-                name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w500,
-                  color: isSelected ? colors.textOnPrimary : colors.textPrimary,
-                ),
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -1864,7 +1857,7 @@ class _LocalSongItem extends ConsumerWidget {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    '${song.artist}${song.album != '未知专辑' ? ' · ${song.album}' : ''}',
+                    song.artist,
                     style: TextStyle(fontSize: 12, color: colors.textHint),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,

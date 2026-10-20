@@ -11,6 +11,7 @@ import '../core/theme/system_brightness_sync.dart';
 import '../core/utils/responsive_layout.dart';
 import '../features/player/presentation/desktop_lyric_window.dart';
 import '../features/plugin/application/plugin_providers.dart';
+import '../features/settings/application/font_providers.dart';
 import '../features/settings/application/plugin_providers.dart';
 import '../features/settings/application/settings_providers.dart';
 import '../features/settings/data/plugin_repository.dart';
@@ -30,6 +31,8 @@ class _AppState extends ConsumerState<App> {
   Widget build(BuildContext context) {
     final themeMode = ref.watch(themeModeProvider);
     final appLocale = ref.watch(appLocaleProvider);
+    // 应用字体：设置里导入并选中的字体（为空则用默认字体）。
+    final appFontFamily = ref.watch(appFontSelectedProvider);
     // 同步全局语言,供非 widget 场景(如歌词控制器)使用
     currentLocale = appLocale;
 
@@ -59,8 +62,8 @@ class _AppState extends ConsumerState<App> {
         child: MaterialApp.router(
           title: tr('薄荷音乐'),
           debugShowCheckedModeBanner: false,
-          theme: AppTheme.light,
-          darkTheme: AppTheme.dark,
+          theme: _applyAppFont(AppTheme.light, appFontFamily),
+          darkTheme: _applyAppFont(AppTheme.dark, appFontFamily),
           themeMode: themeMode,
           routerConfig: appRouter,
         builder: (context, child) {
@@ -100,6 +103,14 @@ class _AppState extends ConsumerState<App> {
         },
         ),
       ),
+    );
+  }
+
+  /// 把导入的应用字体应用到主题的文字样式上。
+  ThemeData _applyAppFont(ThemeData theme, String? family) {
+    if (family == null || family.isEmpty) return theme;
+    return theme.copyWith(
+      textTheme: theme.textTheme.apply(fontFamily: family),
     );
   }
 

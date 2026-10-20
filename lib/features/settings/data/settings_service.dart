@@ -15,6 +15,17 @@ class SettingsService {
   Future<void> setThemePrimaryColor(String v) =>
       _prefs.setString('theme_primary_color', v);
 
+  /// 「字体颜色」：为空表示使用主题默认色。
+  String getThemeFontColor() => _prefs.getString('theme_font_color') ?? '';
+  Future<void> setThemeFontColor(String v) =>
+      _prefs.setString('theme_font_color', v);
+
+  /// 「第二字体颜色」：为空表示使用主题默认色。
+  String getThemeSecondaryFontColor() =>
+      _prefs.getString('theme_secondary_font_color') ?? '';
+  Future<void> setThemeSecondaryFontColor(String v) =>
+      _prefs.setString('theme_secondary_font_color', v);
+
   // -- audio quality --
   String getAudioQuality() => _prefs.getString('audio_quality') ?? '128k';
   Future<void> setAudioQuality(String v) =>

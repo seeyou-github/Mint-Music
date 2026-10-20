@@ -39,17 +39,43 @@ final filteredLocalSongsProvider = Provider<List<Song>>((ref) {
   final songsAsync = ref.watch(localMusicNotifierProvider);
   return songsAsync.when(
     data: (songs) {
-      if (query.isEmpty) return songs;
-      final q = query.toLowerCase();
-      return songs.where((s) =>
-          s.title.toLowerCase().contains(q) ||
-          s.artist.toLowerCase().contains(q) ||
-          s.album.toLowerCase().contains(q)).toList();
+      final List<Song> result;
+      if (query.isEmpty) {
+        // 仓库返回的是不可变列表，排序前先复制一份。
+        result = List<Song>.of(songs);
+      } else {
+        final q = query.toLowerCase();
+        result = songs
+            .where((s) =>
+                s.title.toLowerCase().contains(q) ||
+                s.artist.toLowerCase().contains(q) ||
+                s.album.toLowerCase().contains(q))
+            .toList();
+      }
+      // 按歌手名称的第一个字排序，同名歌手再按歌名排。
+      result.sort(compareSongByArtistFirstChar);
+      return result;
     },
     loading: () => [],
     error: (_, _) => [],
   );
 });
+
+/// 按歌手名称的第一个字排序（同名歌手再按歌名排序）。
+///
+/// 本地音乐按歌手聚在一起更方便查找：以歌手名的首字符作为主键，
+/// 首字符相同时比较完整歌手名，最后比较歌名，保证顺序稳定。
+int compareSongByArtistFirstChar(Song a, Song b) {
+  final artistA = a.artist.trim();
+  final artistB = b.artist.trim();
+  final firstA = artistA.isEmpty ? '' : artistA.substring(0, 1);
+  final firstB = artistB.isEmpty ? '' : artistB.substring(0, 1);
+  final firstCmp = firstA.compareTo(firstB);
+  if (firstCmp != 0) return firstCmp;
+  final artistCmp = artistA.toLowerCase().compareTo(artistB.toLowerCase());
+  if (artistCmp != 0) return artistCmp;
+  return a.title.toLowerCase().compareTo(b.title.toLowerCase());
+}
 
 /// 已保存的扫描目录。异步加载以确保从持久化恢复
 /// （repo 为单例，init 后结果会缓存）。

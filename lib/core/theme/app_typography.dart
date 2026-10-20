@@ -3,98 +3,100 @@ import 'package:flutter/material.dart';
 class AppTypography {
   AppTypography._();
 
-  static const String _fontFamily = 'PingFangSC';
+  /// 应用字体族。默认为内置的 PingFangSC，可在「设置 - 外观设置 - 应用字体」
+  /// 里切换成导入的字体。
+  static String fontFamily = 'PingFangSC';
 
-  static TextStyle get displayLarge => const TextStyle(
-        fontFamily: _fontFamily,
+  static TextStyle get displayLarge => TextStyle(
+        fontFamily: fontFamily,
         fontSize: 28,
         fontWeight: FontWeight.w700,
         height: 1.2,
         letterSpacing: -0.5,
       );
 
-  static TextStyle get displayMedium => const TextStyle(
-        fontFamily: _fontFamily,
+  static TextStyle get displayMedium => TextStyle(
+        fontFamily: fontFamily,
         fontSize: 24,
         fontWeight: FontWeight.w700,
         height: 1.25,
         letterSpacing: -0.3,
       );
 
-  static TextStyle get headlineLarge => const TextStyle(
-        fontFamily: _fontFamily,
+  static TextStyle get headlineLarge => TextStyle(
+        fontFamily: fontFamily,
         fontSize: 20,
         fontWeight: FontWeight.w600,
         height: 1.3,
       );
 
-  static TextStyle get headlineMedium => const TextStyle(
-        fontFamily: _fontFamily,
+  static TextStyle get headlineMedium => TextStyle(
+        fontFamily: fontFamily,
         fontSize: 18,
         fontWeight: FontWeight.w600,
         height: 1.35,
       );
 
-  static TextStyle get titleLarge => const TextStyle(
-        fontFamily: _fontFamily,
+  static TextStyle get titleLarge => TextStyle(
+        fontFamily: fontFamily,
         fontSize: 16,
         fontWeight: FontWeight.w600,
         height: 1.4,
       );
 
-  static TextStyle get titleMedium => const TextStyle(
-        fontFamily: _fontFamily,
+  static TextStyle get titleMedium => TextStyle(
+        fontFamily: fontFamily,
         fontSize: 14,
         fontWeight: FontWeight.w600,
         height: 1.4,
       );
 
-  static TextStyle get titleSmall => const TextStyle(
-        fontFamily: _fontFamily,
+  static TextStyle get titleSmall => TextStyle(
+        fontFamily: fontFamily,
         fontSize: 13,
         fontWeight: FontWeight.w500,
         height: 1.4,
       );
 
-  static TextStyle get bodyLarge => const TextStyle(
-        fontFamily: _fontFamily,
+  static TextStyle get bodyLarge => TextStyle(
+        fontFamily: fontFamily,
         fontSize: 16,
         fontWeight: FontWeight.w400,
         height: 1.5,
       );
 
-  static TextStyle get bodyMedium => const TextStyle(
-        fontFamily: _fontFamily,
+  static TextStyle get bodyMedium => TextStyle(
+        fontFamily: fontFamily,
         fontSize: 14,
         fontWeight: FontWeight.w400,
         height: 1.5,
       );
 
-  static TextStyle get bodySmall => const TextStyle(
-        fontFamily: _fontFamily,
+  static TextStyle get bodySmall => TextStyle(
+        fontFamily: fontFamily,
         fontSize: 12,
         fontWeight: FontWeight.w400,
         height: 1.5,
       );
 
-  static TextStyle get labelLarge => const TextStyle(
-        fontFamily: _fontFamily,
+  static TextStyle get labelLarge => TextStyle(
+        fontFamily: fontFamily,
         fontSize: 14,
         fontWeight: FontWeight.w500,
         height: 1.4,
         letterSpacing: 0.1,
       );
 
-  static TextStyle get labelMedium => const TextStyle(
-        fontFamily: _fontFamily,
+  static TextStyle get labelMedium => TextStyle(
+        fontFamily: fontFamily,
         fontSize: 12,
         fontWeight: FontWeight.w500,
         height: 1.4,
         letterSpacing: 0.5,
       );
 
-  static TextStyle get labelSmall => const TextStyle(
-        fontFamily: _fontFamily,
+  static TextStyle get labelSmall => TextStyle(
+        fontFamily: fontFamily,
         fontSize: 10,
         fontWeight: FontWeight.w500,
         height: 1.4,

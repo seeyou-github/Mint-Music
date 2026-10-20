@@ -6,6 +6,9 @@ import 'package:just_audio_media_kit/just_audio_media_kit.dart';
 import 'app/app.dart';
 import 'core/platform/taskbar_thumbnail_service.dart';
 import 'core/services/audio_service_init.dart';
+import 'core/theme/app_font_manager.dart';
+import 'core/theme/app_typography.dart';
+import 'features/settings/application/font_providers.dart';
 import 'features/settings/application/settings_providers.dart';
 import 'shared/services/amll_toggle_service.dart';
 import 'shared/services/app_image_cache.dart';
@@ -59,6 +62,17 @@ void main() async {
   // 初始化 AMLL 开关
   await AmllToggleService().loadFromPrefs();
   print('>>> main: AMLL toggle loaded: ${AmllToggleService().enabled}');
+
+  // 加载导入的字体文件，并恢复上次选择的应用字体。
+  unawaited(
+    AppFontManager.instance.load().then((_) {
+      final selected = AppFontManager.instance.selectedFamily;
+      container.read(appFontSelectedProvider.notifier).state = selected;
+      AppTypography.fontFamily =
+          (selected == null || selected.isEmpty) ? 'PingFangSC' : selected;
+      print('>>> main: 应用字体 -> ${AppTypography.fontFamily}');
+    }),
+  );
 
   // 缓存目录：封面 / 网络图片等缓存统一写到「设置 - 存储管理」里指定的目录。
   try {

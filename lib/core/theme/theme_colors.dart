@@ -30,8 +30,7 @@ class ThemeColors {
   final Color coverShadow;
   final Color shadow;
 
-  const ThemeColors({
-    required this.primary,
+  const ThemeColors({    required this.primary,
     required this.primaryLight,
     required this.primaryDark,
     required this.accent,
@@ -53,6 +52,36 @@ class ThemeColors {
     required this.coverShadow,
     required this.shadow,
   });
+
+  /// 复制并覆盖文字颜色（设置里的「字体颜色」「第二字体颜色」）。
+  ThemeColors copyWithTextColors({
+    Color? textPrimary,
+    Color? textSecondary,
+  }) {
+    return ThemeColors(
+      primary: primary,
+      primaryLight: primaryLight,
+      primaryDark: primaryDark,
+      accent: accent,
+      accentLight: accentLight,
+      background: background,
+      surface: surface,
+      surfaceVariant: surfaceVariant,
+      textPrimary: textPrimary ?? this.textPrimary,
+      textSecondary: textSecondary ?? this.textSecondary,
+      textHint: textHint,
+      textOnPrimary: textOnPrimary,
+      error: error,
+      success: success,
+      warning: warning,
+      divider: divider,
+      disabled: disabled,
+      miniPlayerBackground: miniPlayerBackground,
+      miniPlayerProgress: miniPlayerProgress,
+      coverShadow: coverShadow,
+      shadow: shadow,
+    );
+  }
 
   static ThemeColors lightWithPrimary(Color primary) {
     return ThemeColors(
