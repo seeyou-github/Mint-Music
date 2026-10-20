@@ -67,16 +67,33 @@ class AppSidebar extends ConsumerWidget {
 
   /// 根据当前路由地址推导应高亮的一级导航下标。
   ///
-  /// 二级页面（歌单详情、搜索、播放页等）返回 null，表示保持上一次高亮，
-  /// 这样从一级页面进入二级页面时导航栏不会跳动，返回后仍是原来的分区。
+  /// 二级页面（歌单详情、搜索、设置…）在路由表里属于对应的一级分类，
+  /// 这里按归属分类返回下标；无法归属的页面（如全屏播放页）返回 null，
+  /// 表示保持上一次高亮。
   static int? indexForLocation(String path) {
     if (path.isEmpty) return null;
     for (var i = 0; i < appNavItems.length; i++) {
       final route = appNavItems[i].route;
       if (path == route || path.startsWith('$route/')) return i;
     }
+    for (final entry in _subRouteOwners.entries) {
+      final prefix = entry.key;
+      if (path == prefix || path.startsWith('$prefix/')) return entry.value;
+    }
     return null;
   }
+
+  /// 二级页面路径 → 所属的一级分类下标。
+  static const Map<String, int> _subRouteOwners = {
+    '/playlist': 0, // 发现：歌单 / 榜单详情
+    '/search': 0, // 发现：搜索
+    '/library/playlist': 1, // 歌单：我的歌单详情
+    '/settings': 3, // 我的：设置
+    '/download': 3, // 我的：下载
+    '/plugin-management': 3, // 我的：插件管理
+    '/recently-played': 3, // 我的：最近播放
+    '/recognize': 3, // 我的：听歌识曲
+  };
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {

@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../../core/l10n/l10n.dart';
+import '../../core/router/navigation_shell_provider.dart';
 import '../../core/theme/app_spacing.dart';
 import '../../core/theme/theme_provider.dart';
 import '../../core/utils/responsive_layout.dart';
@@ -36,6 +37,10 @@ class _AppShellState extends ConsumerState<AppShell> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(playbackControllerProvider.notifier).onMessage =
           _showPlaybackMessage;
+      // 把导航壳暴露给路由之外的左侧导航栏：切换一级分类时用它切换分支，
+      // 这样各分类自己的页面栈（已打开的二级页面）才能被保留。
+      if (!mounted) return;
+      ref.read(navigationShellProvider.notifier).state = widget.navigationShell;
     });
     // 启动时自动检查更新（需开启「启动时检查更新」开关）
     WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -176,7 +181,10 @@ class _AppShellState extends ConsumerState<AppShell> {
               padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
               child: BottomNavigationBar(
                 currentIndex: widget.navigationShell.currentIndex,
-                onTap: (index) => widget.navigationShell.goBranch(index),
+                onTap: (index) => widget.navigationShell.goBranch(
+                  index,
+                  initialLocation: false,
+                ),
                 type: BottomNavigationBarType.fixed,
                 backgroundColor: Colors.transparent,
                 elevation: 0,

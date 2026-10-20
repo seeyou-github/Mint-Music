@@ -218,8 +218,8 @@ class _AppState extends ConsumerState<App> {
           TextButton(
             onPressed: () {
               Navigator.pop(ctx);
-              // Navigate to plugin management page
-              GoRouter.of(context).push('/plugin-management');
+              // 跳到「我的」分支里的插件管理页。
+              GoRouter.of(context).go('/plugin-management');
             },
             child: const Text(
               '去更新',

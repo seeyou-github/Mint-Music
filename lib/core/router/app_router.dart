@@ -17,6 +17,7 @@ import '../../features/settings/presentation/settings_page.dart';
 import '../../features/player/presentation/full_player_page.dart';
 import '../../features/player/presentation/lyric_page.dart';
 import '../constants/app_routes.dart';
+import 'navigation_shell_provider.dart';
 
 /// 右侧滑入的二级页面转场。
 CustomTransitionPage<void> _slidePage({
@@ -48,22 +49,105 @@ final appRouter = GoRouter(
         return AppShell(navigationShell: navigationShell);
       },
       branches: [
+        // ── 发现 ──────────────────────────────────────────────
+        // 歌单 / 榜单详情放在发现分支内，切换分类再切回来时会恢复到
+        // 之前打开的那张歌单。
         StatefulShellBranch(
           routes: [
             GoRoute(
               path: AppRoutes.discover,
               builder: (context, state) => const DiscoverPage(),
             ),
+            GoRoute(
+              path: AppRoutes.playlistDetail,
+              pageBuilder: (context, state) {
+                final playlistId = state.pathParameters['id'] ?? '';
+                return CustomTransitionPage(
+                  key: state.pageKey,
+                  child: PlaylistDetailPage(playlistId: playlistId),
+                  transitionDuration: const Duration(milliseconds: 220),
+                  reverseTransitionDuration: const Duration(milliseconds: 180),
+                  transitionsBuilder: (context, animation, secondaryAnimation,
+                      child) {
+                    return SlideTransition(
+                      position: Tween<Offset>(
+                        begin: const Offset(1, 0),
+                        end: Offset.zero,
+                      ).animate(
+                        CurvedAnimation(
+                          parent: animation,
+                          curve: Curves.easeOutCubic,
+                        ),
+                      ),
+                      child: child,
+                    );
+                  },
+                );
+              },
+            ),
+            GoRoute(
+              path: AppRoutes.search,
+              pageBuilder: (context, state) => CustomTransitionPage(
+                key: state.pageKey,
+                child: const SearchPage(),
+                transitionDuration: const Duration(milliseconds: 220),
+                reverseTransitionDuration: const Duration(milliseconds: 180),
+                transitionsBuilder: (context, animation, secondaryAnimation,
+                    child) {
+                  return SlideTransition(
+                    position: Tween<Offset>(begin: const Offset(1, 0), end: Offset.zero)
+                        .animate(
+                      CurvedAnimation(
+                        parent: animation,
+                        curve: Curves.easeOutCubic,
+                      ),
+                    ),
+                    child: child,
+                  );
+                },
+              ),
+            ),
           ],
         ),
+
+        // ── 歌单 ──────────────────────────────────────────────
         StatefulShellBranch(
           routes: [
             GoRoute(
               path: AppRoutes.library,
               builder: (context, state) => const LibraryPage(),
             ),
+            GoRoute(
+              path: AppRoutes.localPlaylistDetail,
+              pageBuilder: (context, state) {
+                final playlistId = state.pathParameters['id'] ?? '';
+                return CustomTransitionPage(
+                  key: state.pageKey,
+                  child: LocalPlaylistDetailPage(playlistId: playlistId),
+                  transitionDuration: const Duration(milliseconds: 220),
+                  reverseTransitionDuration: const Duration(milliseconds: 180),
+                  transitionsBuilder: (context, animation, secondaryAnimation,
+                      child) {
+                    return SlideTransition(
+                      position: Tween<Offset>(
+                        begin: const Offset(1, 0),
+                        end: Offset.zero,
+                      ).animate(
+                        CurvedAnimation(
+                          parent: animation,
+                          curve: Curves.easeOutCubic,
+                        ),
+                      ),
+                      child: child,
+                    );
+                  },
+                );
+              },
+            ),
           ],
         ),
+
+        // ── 本地 ──────────────────────────────────────────────
         StatefulShellBranch(
           routes: [
             GoRoute(
@@ -72,30 +156,121 @@ final appRouter = GoRouter(
             ),
           ],
         ),
+
+        // ── 我的 ──────────────────────────────────────────────
+        // 设置 / 下载 / 插件管理 / 最近播放 / 听歌识曲都属于「我的」分支。
         StatefulShellBranch(
           routes: [
             GoRoute(
               path: AppRoutes.mine,
               builder: (context, state) => const MinePage(),
             ),
+            GoRoute(
+              path: AppRoutes.settings,
+              pageBuilder: (context, state) => _slidePage(
+                key: state.pageKey,
+                child: const SettingsPage(),
+              ),
+            ),
+            GoRoute(
+              path: AppRoutes.download,
+              pageBuilder: (context, state) => _slidePage(
+                key: state.pageKey,
+                child: const DownloadPage(),
+              ),
+            ),
+            GoRoute(
+              path: AppRoutes.pluginManagement,
+              pageBuilder: (context, state) => CustomTransitionPage(
+                key: state.pageKey,
+                child: const PluginManagementPage(),
+                transitionDuration: const Duration(milliseconds: 220),
+                reverseTransitionDuration: const Duration(milliseconds: 180),
+                transitionsBuilder: (context, animation, secondaryAnimation,
+                    child) {
+                  return SlideTransition(
+                    position: Tween<Offset>(begin: const Offset(1, 0), end: Offset.zero)
+                        .animate(
+                      CurvedAnimation(
+                        parent: animation,
+                        curve: Curves.easeOutCubic,
+                      ),
+                    ),
+                    child: child,
+                  );
+                },
+              ),
+            ),
+            GoRoute(
+              path: AppRoutes.recentlyPlayed,
+              pageBuilder: (context, state) => CustomTransitionPage(
+                key: state.pageKey,
+                child: const RecentlyPlayedPage(),
+                transitionDuration: const Duration(milliseconds: 220),
+                reverseTransitionDuration: const Duration(milliseconds: 180),
+                transitionsBuilder: (context, animation, secondaryAnimation,
+                    child) {
+                  return SlideTransition(
+                    position: Tween<Offset>(begin: const Offset(1, 0), end: Offset.zero)
+                        .animate(
+                      CurvedAnimation(
+                        parent: animation,
+                        curve: Curves.easeOutCubic,
+                      ),
+                    ),
+                    child: child,
+                  );
+                },
+              ),
+            ),
+            GoRoute(
+              path: AppRoutes.recognize,
+              pageBuilder: (context, state) => CustomTransitionPage(
+                key: state.pageKey,
+                child: const RecognizePage(),
+                transitionDuration: const Duration(milliseconds: 220),
+                reverseTransitionDuration: const Duration(milliseconds: 180),
+                transitionsBuilder: (context, animation, secondaryAnimation,
+                    child) {
+                  return SlideTransition(
+                    position: Tween<Offset>(begin: const Offset(1, 0), end: Offset.zero)
+                        .animate(
+                      CurvedAnimation(
+                        parent: animation,
+                        curve: Curves.easeOutCubic,
+                      ),
+                    ),
+                    child: child,
+                  );
+                },
+              ),
+            ),
           ],
         ),
       ],
     ),
-    // 「下载」与「设置」从一级导航移到「我的」里作为二级页面。
+
+    // ── 全局二级页面（覆盖整个内容区，不属于任何分类） ──────────
     GoRoute(
-      path: AppRoutes.download,
-      pageBuilder: (context, state) => _slidePage(
-        key: state.pageKey,
-        child: const DownloadPage(),
-      ),
-    ),
-    GoRoute(
-      path: AppRoutes.settings,
-      pageBuilder: (context, state) => _slidePage(
-        key: state.pageKey,
-        child: const SettingsPage(),
-      ),
+      path: AppRoutes.tagEditor,
+      pageBuilder: (context, state) {
+        final songId = state.uri.queryParameters['songId'];
+        return CustomTransitionPage(
+          key: state.pageKey,
+          child: TagEditorPage(songId: songId),
+          transitionDuration: const Duration(milliseconds: 220),
+          reverseTransitionDuration: const Duration(milliseconds: 180),
+          transitionsBuilder: (context, animation, secondaryAnimation, child) {
+            return SlideTransition(
+              position: Tween<Offset>(begin: const Offset(1, 0), end: Offset.zero)
+                  .animate(
+                CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
+              ),
+              child: child,
+            );
+          },
+        );
+      },
     ),
     GoRoute(
       path: AppRoutes.fullPlayer,
@@ -128,176 +303,8 @@ final appRouter = GoRouter(
           return SlideTransition(
             position: Tween<Offset>(begin: const Offset(0, 1), end: Offset.zero)
                 .animate(
-                  CurvedAnimation(
-                    parent: animation,
-                    curve: Curves.easeOutCubic,
-                  ),
-                ),
-            child: child,
-          );
-        },
-      ),
-    ),
-    GoRoute(
-      path: AppRoutes.search,
-      pageBuilder: (context, state) => CustomTransitionPage(
-        key: state.pageKey,
-        child: const SearchPage(),
-        transitionDuration: const Duration(milliseconds: 220),
-        reverseTransitionDuration: const Duration(milliseconds: 180),
-        transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          return SlideTransition(
-            position: Tween<Offset>(begin: const Offset(1, 0), end: Offset.zero)
-                .animate(
-                  CurvedAnimation(
-                    parent: animation,
-                    curve: Curves.easeOutCubic,
-                  ),
-                ),
-            child: child,
-          );
-        },
-      ),
-    ),
-    GoRoute(
-      path: AppRoutes.playlistDetail,
-      pageBuilder: (context, state) {
-        final playlistId = state.pathParameters['id'] ?? '';
-        return CustomTransitionPage(
-          key: state.pageKey,
-          child: PlaylistDetailPage(playlistId: playlistId),
-          transitionDuration: const Duration(milliseconds: 220),
-          reverseTransitionDuration: const Duration(milliseconds: 180),
-          transitionsBuilder: (context, animation, secondaryAnimation, child) {
-            return SlideTransition(
-              position:
-                  Tween<Offset>(
-                    begin: const Offset(1, 0),
-                    end: Offset.zero,
-                  ).animate(
-                    CurvedAnimation(
-                      parent: animation,
-                      curve: Curves.easeOutCubic,
-                    ),
-                  ),
-              child: child,
-            );
-          },
-        );
-      },
-    ),
-    GoRoute(
-      path: AppRoutes.localPlaylistDetail,
-      pageBuilder: (context, state) {
-        final playlistId = state.pathParameters['id'] ?? '';
-        return CustomTransitionPage(
-          key: state.pageKey,
-          child: LocalPlaylistDetailPage(playlistId: playlistId),
-          transitionDuration: const Duration(milliseconds: 220),
-          reverseTransitionDuration: const Duration(milliseconds: 180),
-          transitionsBuilder: (context, animation, secondaryAnimation, child) {
-            return SlideTransition(
-              position:
-                  Tween<Offset>(
-                    begin: const Offset(1, 0),
-                    end: Offset.zero,
-                  ).animate(
-                    CurvedAnimation(
-                      parent: animation,
-                      curve: Curves.easeOutCubic,
-                    ),
-                  ),
-              child: child,
-            );
-          },
-        );
-      },
-    ),
-    GoRoute(
-      path: AppRoutes.recentlyPlayed,
-      pageBuilder: (context, state) => CustomTransitionPage(
-        key: state.pageKey,
-        child: const RecentlyPlayedPage(),
-        transitionDuration: const Duration(milliseconds: 220),
-        reverseTransitionDuration: const Duration(milliseconds: 180),
-        transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          return SlideTransition(
-            position: Tween<Offset>(begin: const Offset(1, 0), end: Offset.zero)
-                .animate(
-                  CurvedAnimation(
-                    parent: animation,
-                    curve: Curves.easeOutCubic,
-                  ),
-                ),
-            child: child,
-          );
-        },
-      ),
-    ),
-    GoRoute(
-      path: AppRoutes.recognize,
-      pageBuilder: (context, state) => CustomTransitionPage(
-        key: state.pageKey,
-        child: const RecognizePage(),
-        transitionDuration: const Duration(milliseconds: 220),
-        reverseTransitionDuration: const Duration(milliseconds: 180),
-        transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          return SlideTransition(
-            position: Tween<Offset>(begin: const Offset(1, 0), end: Offset.zero)
-                .animate(
-                  CurvedAnimation(
-                    parent: animation,
-                    curve: Curves.easeOutCubic,
-                  ),
-                ),
-            child: child,
-          );
-        },
-      ),
-    ),
-    GoRoute(
-      path: AppRoutes.tagEditor,
-      pageBuilder: (context, state) {
-        final songId = state.uri.queryParameters['songId'];
-        return CustomTransitionPage(
-          key: state.pageKey,
-          child: TagEditorPage(songId: songId),
-          transitionDuration: const Duration(milliseconds: 220),
-          reverseTransitionDuration: const Duration(milliseconds: 180),
-          transitionsBuilder: (context, animation, secondaryAnimation, child) {
-            return SlideTransition(
-              position:
-                  Tween<Offset>(
-                    begin: const Offset(1, 0),
-                    end: Offset.zero,
-                  ).animate(
-                    CurvedAnimation(
-                      parent: animation,
-                      curve: Curves.easeOutCubic,
-                    ),
-                  ),
-              child: child,
-            );
-          },
-        );
-      },
-    ),
-    GoRoute(
-      path: AppRoutes.pluginManagement,
-      pageBuilder: (context, state) => CustomTransitionPage(
-        key: state.pageKey,
-        child: const PluginManagementPage(),
-        transitionDuration: const Duration(milliseconds: 220),
-        reverseTransitionDuration: const Duration(milliseconds: 180),
-        transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          return SlideTransition(
-            position: Tween<Offset>(begin: const Offset(1, 0), end: Offset.zero)
-                .animate(
-                  CurvedAnimation(
-                    parent: animation,
-                    curve: Curves.easeOutCubic,
-                  ),
-                ),
+              CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
+            ),
             child: child,
           );
         },

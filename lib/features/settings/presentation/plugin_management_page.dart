@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../../../../core/constants/app_routes.dart';
 import '../../../../core/l10n/l10n.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/theme_provider.dart';
@@ -405,7 +406,15 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
         elevation: 0,
         leading: IconButton(
           icon: Icon(Icons.arrow_back, color: colors.textPrimary),
-          onPressed: () => context.pop(),
+          onPressed: () {
+            // 正常情况下直接返回上一页；若当前分支里没有可返回的页面
+            // （例如从启动弹窗直接进入），则回到「我的」页面。
+            if (context.canPop()) {
+              context.pop();
+            } else {
+              context.go(AppRoutes.mine);
+            }
+          },
         ),
         title: Text(
           context.tr('插件管理'),
