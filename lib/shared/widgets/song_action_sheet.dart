@@ -307,13 +307,6 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                       icon: Icons.playlist_play,
                       label: context.tr('下一首播放'),
                       onTap: _playNext,
-                    )
-                  else
-                    _buildActionItem(
-                      colors: colors,
-                      icon: Icons.play_circle_outline,
-                      label: context.tr('播放'),
-                      onTap: _play,
                     ),
                   _buildActionItem(
                     colors: colors,
@@ -336,7 +329,6 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                     onTap: () => _showAddToPlaylist(colors, playlistsAsync),
                     skipPop: true,
                   ),
-                  _buildShareItem(colors),
                   _buildFavoriteItem(colors),
                   if (widget.showDelete && widget.onDelete != null)
                     _buildActionItem(
@@ -1368,21 +1360,6 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
       debugPrint('[Settings] saved Int ${p.name ?? p.runtimeType} = $v');
     } catch (e) {
       debugPrint('[Settings] persistInt error: $e');
-    }
-  }
-
-  Future<void> _play() async {
-    final controller = ref.read(playbackControllerProvider.notifier);
-    if (widget.playlistSongs != null && widget.playlistSongs!.isNotEmpty) {
-      final index = widget.playlistSongs!.indexWhere(
-        (s) => s.id == widget.song.id,
-      );
-      await controller.setQueue(
-        widget.playlistSongs!,
-        startIndex: index >= 0 ? index : 0,
-      );
-    } else {
-      await controller.setQueue([widget.song]);
     }
   }
 

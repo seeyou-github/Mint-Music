@@ -8,6 +8,7 @@ import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../../../shared/widgets/song_list_item.dart';
+import '../../../shared/widgets/source_icon.dart';
 import '../../../shared/widgets/song_action_sheet.dart';
 import '../../../shared/widgets/song_selection.dart';
 import '../../player/presentation/mini_player.dart';
@@ -516,6 +517,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                       // 同名插件的变体 id 需要还原成平台 id 才能取到对应图标。
                       SourceInfo.baseIdOf(currentSource.id),
                       size: _searchFieldHeight,
+                      label: currentSource.name,
                     )
                   : _buildSourceIcon('all', size: _searchFieldHeight),
             ),
@@ -724,6 +726,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                       // 同名插件的变体 id 需要还原成平台 id 才能取到对应图标。
                       SourceInfo.baseIdOf(source.id),
                       size: 18,
+                      label: source.name,
                     )
                   : _buildSourceIcon('all', size: 18),
               const SizedBox(width: AppSpacing.sm),
@@ -782,157 +785,14 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     });
   }
 
-  Widget _buildSourceIcon(String sourceId, {double size = 20}) {
-    switch (sourceId) {
-      case 'wy':
-        return Container(
-          width: size,
-          height: size,
-          decoration: const BoxDecoration(
-            color: Color(0xFFE60026),
-            shape: BoxShape.circle,
-          ),
-          child: Center(
-            child: Text(
-              '云',
-              style: TextStyle(
-                fontSize: size * 0.5,
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
-              ),
-            ),
-          ),
-        );
-      case 'tx':
-        return Container(
-          width: size,
-          height: size,
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [Color(0xFF31C27C), Color(0xFF2AB456)],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-            borderRadius: BorderRadius.circular(size * 0.2),
-          ),
-          child: Center(
-            child: Text(
-              'Q',
-              style: TextStyle(
-                fontSize: size * 0.55,
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
-              ),
-            ),
-          ),
-        );
-      case 'kg':
-        return Container(
-          width: size,
-          height: size,
-          decoration: BoxDecoration(
-            color: const Color(0xFF2EADFB),
-            borderRadius: BorderRadius.circular(size * 0.2),
-          ),
-          child: Center(
-            child: Text(
-              'K',
-              style: TextStyle(
-                fontSize: size * 0.55,
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
-              ),
-            ),
-          ),
-        );
-      case 'kw':
-        return Container(
-          width: size,
-          height: size,
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [Color(0xFFFF8C00), Color(0xFFFFAA00)],
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-            ),
-            borderRadius: BorderRadius.circular(size * 0.2),
-          ),
-          child: Center(
-            child: Text(
-              'K',
-              style: TextStyle(
-                fontSize: size * 0.55,
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
-              ),
-            ),
-          ),
-        );
-      case 'mg':
-        return Container(
-          width: size,
-          height: size,
-          decoration: BoxDecoration(
-            color: const Color(0xFFFF6B35),
-            borderRadius: BorderRadius.circular(size * 0.2),
-          ),
-          child: Center(
-            child: Text(
-              'M',
-              style: TextStyle(
-                fontSize: size * 0.55,
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
-              ),
-            ),
-          ),
-        );
-      case 'qsvip':
-        return Container(
-          width: size,
-          height: size,
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [Color(0xFFFF4081), Color(0xFFFF80AB)],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-            borderRadius: BorderRadius.circular(size * 0.2),
-          ),
-          child: Center(
-            child: Text(
-              '汽',
-              style: TextStyle(
-                fontSize: size * 0.5,
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
-              ),
-            ),
-          ),
-        );
-      case 'all':
-        return Container(
-          width: size,
-          height: size,
-          decoration: BoxDecoration(
-            color: const Color(0xFF6366F1),
-            shape: BoxShape.circle,
-          ),
-          child: Center(
-            child: Text(
-              '聚',
-              style: TextStyle(
-                fontSize: size * 0.55,
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
-              ),
-            ),
-          ),
-        );
-      default:
-        return Icon(Icons.music_note, size: size, color: Colors.grey);
-    }
+  Widget _buildSourceIcon(
+    String sourceId, {
+    double size = 20,
+    String? label,
+  }) {
+    return SourceIcon(sourceId: sourceId, size: size, label: label);
   }
+
 
   Widget _buildSearchHistory(ThemeColors colors, List<String> history) {
     return Padding(

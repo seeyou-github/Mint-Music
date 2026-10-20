@@ -11,6 +11,7 @@ import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../../../shared/widgets/music_cover_image.dart';
+import '../../../shared/widgets/source_icon.dart';
 import '../application/discover_providers.dart';
 import '../domain/models/playlist.dart';
 import '../domain/models/leaderboard.dart';
@@ -395,128 +396,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
     double size = 20,
     String? label,
   }) {
-    switch (sourceId) {
-      case 'wy':
-        return Container(
-          width: size,
-          height: size,
-          decoration: const BoxDecoration(
-            color: Color(0xFFE60026),
-            shape: BoxShape.circle,
-          ),
-          child: Center(
-            child: Text(
-              '网',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: size * 0.55,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-        );
-      case 'kg':
-        return Container(
-          width: size,
-          height: size,
-          decoration: const BoxDecoration(
-            color: Color(0xFF2EADFB),
-            shape: BoxShape.circle,
-          ),
-          child: Center(
-            child: Text(
-              '狗',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: size * 0.55,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-        );
-      case 'kw':
-        return Container(
-          width: size,
-          height: size,
-          decoration: const BoxDecoration(
-            color: Color(0xFFFF8500),
-            shape: BoxShape.circle,
-          ),
-          child: Center(
-            child: Text(
-              '我',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: size * 0.55,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-        );
-      case 'tx':
-        return Container(
-          width: size,
-          height: size,
-          decoration: const BoxDecoration(
-            color: Color(0xFF31C27C),
-            shape: BoxShape.circle,
-          ),
-          child: Center(
-            child: Text(
-              'Q',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: size * 0.55,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-        );
-      case 'mg':
-        return Container(
-          width: size,
-          height: size,
-          decoration: const BoxDecoration(
-            color: Color(0xFFFF7E00),
-            shape: BoxShape.circle,
-          ),
-          child: Center(
-            child: Text(
-              '咪',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: size * 0.55,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-        );
-      default:
-        // 插件音源（例如 MusicFree 的「bilibili」）没有内置图标，用名称首字
-        // 生成一个中性色圆标，避免和其它内置源混在一起看不出区别。
-        final glyph = (label ?? '').trim();
-        if (glyph.isEmpty) {
-          return Icon(Icons.music_note, size: size, color: Colors.grey);
-        }
-        return Container(
-          width: size,
-          height: size,
-          decoration: BoxDecoration(
-            color: Colors.blueGrey.shade500,
-            shape: BoxShape.circle,
-          ),
-          child: Center(
-            child: Text(
-              glyph.substring(0, 1).toUpperCase(),
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: size * 0.55,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-        );
-    }
+    return SourceIcon(sourceId: sourceId, size: size, label: label);
   }
 
   Widget _buildTabChip({
