@@ -327,7 +327,7 @@ int DesktopLyricWindow::MeasureContentHeight(int width) {
     }
     RECT measure{0, 0, width, 0};
     ::DrawTextW(dc, element.text.c_str(), -1, &measure,
-                static_cast<UINT>(DT_CALCRECT | DT_WORDS | DT_WRAP | DT_NOPREFIX));
+                static_cast<UINT>(DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX));
     int h = measure.bottom - measure.top;
     if (h <= 0) {
       h = GetLineHeight();
@@ -448,7 +448,7 @@ void DesktopLyricWindow::Paint() {
     ::SelectObject(mask_dc, font_);
     RECT text_rect{offset_x, y + offset_y, width, y + offset_y + height};
     ::DrawTextW(mask_dc, text.c_str(), -1, &text_rect,
-                static_cast<UINT>(DT_WORDS | DT_WRAP | DT_NOPREFIX | DT_VCENTER |
+                static_cast<UINT>(DT_WORDBREAK | DT_NOPREFIX | DT_VCENTER |
                                   align_flag));
     const uint32_t alpha_base = ((color >> 24) & 0xFF) * alpha_scale / 100;
     // 再乘上整体不透明度（设置里的「不透明度」）。
@@ -480,7 +480,7 @@ void DesktopLyricWindow::Paint() {
     RECT measure{0, 0, width, 0};
     ::SelectObject(mask_dc, font_);
     ::DrawTextW(mask_dc, element.text.c_str(), -1, &measure,
-                static_cast<UINT>(DT_CALCRECT | DT_WORDS | DT_WRAP | DT_NOPREFIX));
+                static_cast<UINT>(DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX));
     int element_height = measure.bottom - measure.top;
     if (element_height <= 0) {
       element_height = line_height;
