@@ -82,10 +82,10 @@ class CoverFetcher {
   /// 只查本地缓存，不触发下载。
   static Future<Uint8List?> _fromCache(String url) async {
     try {
-      // getFileFromCache 返回的是 FileInfo，图片内容在 data 里。
+      // getFileFromCache 返回 FileInfo，缓存文件在 file 字段里。
       final info = await AppImageCache.manager.getFileFromCache(url);
       if (info == null) return null;
-      final bytes = info.data;
+      final bytes = await info.file.readAsBytes();
       if (bytes.length >= _minBytes) {
         debugPrint('[CoverFetcher] 命中本地封面缓存 ($url, ${bytes.length} bytes)');
         return bytes;
