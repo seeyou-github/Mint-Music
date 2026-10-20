@@ -59,7 +59,7 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
     FocusManager.instance.primaryFocus?.unfocus();
 
     final amllState = _amllKey.currentState;
-    final amllEnabled = AmllToggleService().enabled;
+    final amllEnabled = AmllToggleService().isActive;
     if (amllEnabled && amllState != null) {
       // 等待 JS rAF 循环真正停止（WebView 画布稳定为静态帧）
       await amllState.freeze();
@@ -179,7 +179,7 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
                         child: ListenableBuilder(
                           listenable: AmllToggleService(),
                           builder: (context, _) {
-                            final amllEnabled = AmllToggleService().enabled;
+                            final amllEnabled = AmllToggleService().isActive;
                             return PageView.builder(
                               controller: _pageController,
                               physics: const NeverScrollableScrollPhysics(),
@@ -717,7 +717,7 @@ class _PlayerLyricsPage extends ConsumerWidget {
     return ListenableBuilder(
       listenable: AmllToggleService(),
       builder: (context, _) {
-        final amll = AmllToggleService().enabled;
+        final amll = AmllToggleService().isActive;
         if (lyricState.isLoading && lyricState.lines.isEmpty) {
           return Center(
             child: Text(
@@ -759,36 +759,40 @@ class _PlayerLyricsPage extends ConsumerWidget {
             // Keep the native AMLL WebView mounted in a stable platform-view
             // slot. Switching only the Flutter lyric layer prevents the first
             // WebView detach/attach from flashing after a cold app start.
-            RepaintBoundary(
-              child: TickerMode(
-                enabled: !hideWebView,
-                child: Offstage(
-                  offstage: hideWebView,
-                  child: AmllLyricPlayer(
-                    key: amllKey,
-                    lines: lyricState.lines,
-                    currentTimeMs: position.inMilliseconds,
-                    isPlaying: isPlaying,
-                    fontSizeRate: watchFontRate * layoutScale,
-                    fontFamily: watchFontFamily,
-                    fontWeight: watchFontWeight,
-                    showTranslation: showTranslation,
-                    showRoman: showRoman,
-                    enableBlur: enableBlur,
-                    enableScale: enableScale,
-                    enableJumpLyric: enableJumpLyric,
-                    centerAlign: amllCenterAlign,
-                    isVisible: amll,
-                    isActive: !hideWebView,
-                    onLineClick: (startTimeMs) {
-                      ref
-                          .read(playbackControllerProvider.notifier)
-                          .seek(Duration(milliseconds: startTimeMs));
-                    },
+            //
+            // Windows 端 AMLL 的 WebView 合成异常，整块都不构建，
+            // 直接使用原生歌词层渲染。
+            if (AmllToggleService().isPlatformSupported)
+              RepaintBoundary(
+                child: TickerMode(
+                  enabled: !hideWebView,
+                  child: Offstage(
+                    offstage: hideWebView,
+                    child: AmllLyricPlayer(
+                      key: amllKey,
+                      lines: lyricState.lines,
+                      currentTimeMs: position.inMilliseconds,
+                      isPlaying: isPlaying,
+                      fontSizeRate: watchFontRate * layoutScale,
+                      fontFamily: watchFontFamily,
+                      fontWeight: watchFontWeight,
+                      showTranslation: showTranslation,
+                      showRoman: showRoman,
+                      enableBlur: enableBlur,
+                      enableScale: enableScale,
+                      enableJumpLyric: enableJumpLyric,
+                      centerAlign: amllCenterAlign,
+                      isVisible: amll,
+                      isActive: !hideWebView,
+                      onLineClick: (startTimeMs) {
+                        ref
+                            .read(playbackControllerProvider.notifier)
+                            .seek(Duration(milliseconds: startTimeMs));
+                      },
+                    ),
                   ),
                 ),
               ),
-            ),
             IgnorePointer(
               ignoring: amll,
               child: Visibility(

@@ -116,6 +116,13 @@ class CoverCacheService {
     }
   }
 
+  /// 直接缓存封面字节（桌面端从音频文件内嵌封面提取时使用）。
+  Future<void> putArtwork(String songId, Uint8List bytes) async {
+    if (bytes.isEmpty) return;
+    _putMemCache(songId, bytes);
+    await _writeToDisk(songId, bytes);
+  }
+
   /// 从 MediaStore 提取封面并缓存到内存 + 磁盘
   Future<Uint8List?> _extractAndCache(String songId, int mediaStoreId) async {
     try {

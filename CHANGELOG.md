@@ -57,6 +57,18 @@
 ### 修复
 - 修复 Windows 上设置缓存目录后缓存仍写入系统临时目录：封面、播放器封面与网络图片缓存现在统一写入设置的缓存目录
 - 修复「清除本地缓存」会清空整个系统临时目录的问题（现在只清理应用自己的缓存目录）
+- 修复 Windows 本地页「选择目录 → 确认并重新扫描」后显示「加载失败」、点「重试」无反应的问题
+  - 桌面端没有 MediaStore（`on_audio_query` 仅 Android/iOS），扫描会抛 MissingPluginException；现在桌面端改为纯 Dart 遍历目录并解析文件标签
+  - 新增纯 Dart 元信息解析：MP3（ID3v2 + MPEG 帧头算时长）、FLAC（STREAMINFO + Vorbis Comment + PICTURE）、M4A/MP4（moov/udta/meta/ilst）、WAV（fmt/data + LIST/INFO）、OGG（Vorbis Comment + 末页 granule）
+  - 本地歌曲的内嵌封面会写入封面缓存，列表与播放页均可显示；「重试」按钮会重新扫描并在错误状态下显示加载反馈
+- 修复 Windows 听歌识曲提示「音频指纹模块初始化失败，请重试」的问题
+  - `webview_flutter` 只实现了 Android/iOS，桌面端改用 InAppWebView（Windows 走 WebView2）承载 afp.js + afp.wasm
+  - afp.js 内联进 HTML 保证 `GenerateFP` 落在全局作用域，afp.wasm 以 base64 注入 `window.WASM_BINARY`，指纹通过 JS channel 回传
+- 修复 Windows 下载的歌曲没有封面 / 基本信息 / 歌词的问题
+  - 标签写入原本只走 Android 原生实现（`com.mintmusic/tag_writer`），桌面端无实现；新增纯 Dart 兜底：MP3 写 ID3v2.3（TIT2/TPE1/TALB/TPE2/USLT/APIC），FLAC 写 Vorbis Comment + PICTURE
+  - 原生实现与纯 Dart 实现都失败时（如 m4a 等格式），退化为写同名的 `.lrc` 歌词文件并保留同名单封面图片
+- 修复 Windows 播放页 / 歌词页无法正常显示歌词的问题
+  - AMLL 歌词引擎依赖 WebView，Windows 端合成异常导致歌词层不显示（桌面歌词窗口走原生 Flutter 渲染所以正常）；Windows 端统一使用原生歌词渲染，歌曲菜单里的「Apple Music 风格歌词」置灰并提示
 
 ### 修复
 - 修复 Windows 版任何播放/试听校验都抛 `MissingPluginException`（just_audio 在桌面端没有原生实现）

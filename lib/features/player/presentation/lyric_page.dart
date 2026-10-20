@@ -97,7 +97,7 @@ class _LyricPageState extends ConsumerState<LyricPage> {
     );
 
     final amllState = _amllKey.currentState;
-    final amllEnabled = AmllToggleService().enabled;
+    final amllEnabled = AmllToggleService().isActive;
     if (amllEnabled && amllState != null) {
       // 等待 JS rAF 循环真正停止（画布稳定为静态帧）。
       // 先冻结再置位 _isLeaving：WebView 在冻结期间仍可见（页面静止），
@@ -243,7 +243,7 @@ class _LyricPageState extends ConsumerState<LyricPage> {
                             return ListenableBuilder(
                               listenable: AmllToggleService(),
                               builder: (context, _) {
-                                final amllEnabled = AmllToggleService().enabled;
+                                final amllEnabled = AmllToggleService().isActive;
                                 final centerAlign = amllEnabled
                                     ? amllCenterAlign
                                     : lyricCenterAlign;
@@ -298,73 +298,77 @@ class _LyricPageState extends ConsumerState<LyricPage> {
                                           // platform-view slot. Only the Flutter
                                           // lyric layer changes visibility when
                                           // the engine switch is toggled.
-                                          RepaintBoundary(
-                                            child: TickerMode(
-                                              enabled: !_isLeaving,
-                                              child: Visibility(
-                                                // 退出动画期间隐藏 WebView
-                                                // （Offstage 不参与绘制/合成），
-                                                // 滑动阶段平台视图不在变换
-                                                // 子树中，中低端手机也不会
-                                                // 掉帧闪回。
-                                                visible: !_isLeaving,
-                                                maintainState: true,
-                                                maintainAnimation: true,
-                                                child: Consumer(
-                                                  builder: (context, ref, _) {
-                                                    final playback = ref.watch(
-                                                      playbackControllerProvider
-                                                          .select(
-                                                            (state) => (
-                                                              position: state
-                                                                  .position,
-                                                              isPlaying: state
-                                                                  .isPlaying,
-                                                            ),
-                                                          ),
-                                                    );
-                                                    return AmllLyricPlayer(
-                                                      key: _amllKey,
-                                                      lines: lyricState.lines,
-                                                      currentTimeMs: playback
-                                                          .position
-                                                          .inMilliseconds,
-                                                      isPlaying:
-                                                          playback.isPlaying,
-                                                      fontFamily:
-                                                          watchFontFamily,
-                                                      fontSizeRate:
-                                                          watchFontRate,
-                                                      fontWeight:
-                                                          watchFontWeight,
-                                                      showTranslation:
-                                                          showTranslation,
-                                                      showRoman: showRoman,
-                                                      enableBlur: enableBlur,
-                                                      enableScale: enableScale,
-                                                      enableJumpLyric:
-                                                          enableJumpLyric,
-                                                      centerAlign:
-                                                          amllCenterAlign,
-                                                      isVisible: amllEnabled,
-                                                      // 退出动画期间冻结
-                                                      // WebView 的 JS 歌词动画
-                                                      isActive: !_isLeaving,
-                                                      onLineClick:
-                                                          (startTimeMs) {
-                                                            controller.seek(
-                                                              Duration(
-                                                                milliseconds:
-                                                                    startTimeMs,
+                                          //
+                                          // Windows 端 AMLL 的 WebView 合成异常，
+                                          // 整块都不构建，直接使用原生歌词层。
+                                          if (AmllToggleService().isPlatformSupported)
+                                            RepaintBoundary(
+                                              child: TickerMode(
+                                                enabled: !_isLeaving,
+                                                child: Visibility(
+                                                  // 退出动画期间隐藏 WebView
+                                                  // （Offstage 不参与绘制/合成），
+                                                  // 滑动阶段平台视图不在变换
+                                                  // 子树中，中低端手机也不会
+                                                  // 掉帧闪回。
+                                                  visible: !_isLeaving,
+                                                  maintainState: true,
+                                                  maintainAnimation: true,
+                                                  child: Consumer(
+                                                    builder: (context, ref, _) {
+                                                      final playback = ref.watch(
+                                                        playbackControllerProvider
+                                                            .select(
+                                                              (state) => (
+                                                                position: state
+                                                                    .position,
+                                                                isPlaying: state
+                                                                    .isPlaying,
                                                               ),
-                                                            );
-                                                          },
-                                                    );
-                                                  },
+                                                            ),
+                                                      );
+                                                      return AmllLyricPlayer(
+                                                        key: _amllKey,
+                                                        lines: lyricState.lines,
+                                                        currentTimeMs: playback
+                                                            .position
+                                                            .inMilliseconds,
+                                                        isPlaying:
+                                                            playback.isPlaying,
+                                                        fontFamily:
+                                                            watchFontFamily,
+                                                        fontSizeRate:
+                                                            watchFontRate,
+                                                        fontWeight:
+                                                            watchFontWeight,
+                                                        showTranslation:
+                                                            showTranslation,
+                                                        showRoman: showRoman,
+                                                        enableBlur: enableBlur,
+                                                        enableScale: enableScale,
+                                                        enableJumpLyric:
+                                                            enableJumpLyric,
+                                                        centerAlign:
+                                                            amllCenterAlign,
+                                                        isVisible: amllEnabled,
+                                                        // 退出动画期间冻结
+                                                        // WebView 的 JS 歌词动画
+                                                        isActive: !_isLeaving,
+                                                        onLineClick:
+                                                            (startTimeMs) {
+                                                              controller.seek(
+                                                                Duration(
+                                                                  milliseconds:
+                                                                      startTimeMs,
+                                                                ),
+                                                              );
+                                                            },
+                                                      );
+                                                    },
+                                                  ),
                                                 ),
                                               ),
                                             ),
-                                          ),
                                           IgnorePointer(
                                             ignoring: amllEnabled || _isLeaving,
                                             child: Visibility(

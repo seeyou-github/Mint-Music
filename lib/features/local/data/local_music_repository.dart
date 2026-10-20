@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -6,7 +7,9 @@ import 'package:flutter/foundation.dart';
 import 'package:on_audio_query/on_audio_query.dart';
 import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
+import '../../../shared/services/cover_cache_service.dart';
 import '../../player/domain/models/song.dart';
+import 'local_metadata_reader.dart';
 
 class ScanProgress {
   final int processed;
@@ -58,6 +61,13 @@ typedef BatchMatchProgressCallback = void Function(BatchMatchProgress progress);
 class LocalMusicRepository {
   static const _dirsKey = 'local_music_dirs';
   static const _songsKey = 'local_music_songs';
+
+  /// 当前平台是否有 MediaStore（Android/iOS）。
+  ///
+  /// 桌面端（Windows/macOS/Linux）没有 MediaStore，`on_audio_query` 插件不可用，
+  /// 扫描目录时会抛 MissingPluginException，这里改用纯 Dart 遍历目录并解析
+  /// 文件标签（见 [LocalMetadataReader]）。
+  static bool get supportsMediaStore => Platform.isAndroid || Platform.isIOS;
 
   final OnAudioQuery _audioQuery = OnAudioQuery();
 
@@ -169,10 +179,12 @@ class LocalMusicRepository {
   }
 
   Future<bool> requestPermission() async {
+    if (!supportsMediaStore) return true;
     return await _audioQuery.permissionsRequest();
   }
 
   Future<bool> checkPermission() async {
+    if (!supportsMediaStore) return true;
     return await _audioQuery.permissionsStatus();
   }
 
@@ -182,6 +194,12 @@ class LocalMusicRepository {
     _isScanning = true;
 
     try {
+      if (!supportsMediaStore) {
+        // 桌面端：没有 MediaStore，直接遍历目录解析文件标签。
+        await _scanDesktop(onProgress);
+        return;
+      }
+
       final alreadyGranted = await checkPermission();
       if (!alreadyGranted) {
         final hasPermission = await requestPermission();
@@ -278,6 +296,143 @@ class LocalMusicRepository {
     } finally {
       _isScanning = false;
     }
+  }
+
+  /// 桌面端扫描：遍历已设置的目录（或系统音乐目录），解析文件标签。
+  ///
+  /// 与 Android 端 MediaStore 扫描不同，这里直接读文件，所以能拿到内嵌封面，
+  /// 并把它写进封面缓存供列表显示。
+  Future<void> _scanDesktop(ScanProgressCallback? onProgress) async {
+    final startProgress = ScanProgress(processed: 0, total: 0, running: true);
+    onScanProgress?.call(startProgress);
+    onProgress?.call(startProgress);
+
+    try {
+      final dirs = _scannedDirs.isNotEmpty
+          ? _scannedDirs.toList()
+          : await _defaultMusicDirectories();
+
+      final files = <String>[];
+      for (final dir in dirs) {
+        files.addAll(_listAudioFiles(dir));
+      }
+
+      final total = files.length;
+      onScanProgress?.call(ScanProgress(processed: 0, total: total, running: true));
+      onProgress?.call(ScanProgress(processed: 0, total: total, running: true));
+
+      final newSongsMap = <String, Song>{};
+      var processed = 0;
+      final coverCache = CoverCacheService();
+
+      for (final filePath in files) {
+        final metadata = await LocalMetadataReader.read(filePath);
+        final id = _genId(filePath);
+        final fileName = p.basenameWithoutExtension(filePath);
+
+        final title = (metadata.title?.isNotEmpty ?? false)
+            ? metadata.title!
+            : fileName;
+        final artist = (metadata.artist?.isNotEmpty ?? false)
+            ? metadata.artist!
+            : '未知艺术家';
+        final album = (metadata.album?.isNotEmpty ?? false)
+            ? metadata.album!
+            : '未知专辑';
+
+        final song = Song(
+          id: id,
+          title: title,
+          artist: artist,
+          album: album,
+          duration: metadata.durationSeconds ?? 0,
+          source: 'local',
+          filePath: filePath,
+          sourceUrl: filePath,
+          hasCover: metadata.artwork != null,
+          coverKey: _genCoverKey(filePath),
+          bitrate: _inferBitrateFromExtension(filePath),
+        );
+
+        final existing = _songsMap[id];
+        newSongsMap[id] = existing != null
+            ? _mergePreferFilled(existing, song)
+            : song;
+
+        // 内嵌封面写入封面缓存，列表与播放页即可显示。
+        final artwork = metadata.artwork;
+        if (artwork != null && artwork.isNotEmpty) {
+          unawaited(coverCache.putArtwork(id, artwork));
+        }
+
+        processed++;
+        if (processed % 10 == 0 || processed == total) {
+          final progress = ScanProgress(
+            processed: processed,
+            total: total,
+            running: true,
+          );
+          onScanProgress?.call(progress);
+          onProgress?.call(progress);
+        }
+      }
+
+      _songsMap.clear();
+      _songsMap.addAll(newSongsMap);
+      await _saveIndex();
+
+      final doneProgress = ScanProgress(
+        processed: total,
+        total: total,
+        running: false,
+      );
+      onScanProgress?.call(doneProgress);
+      onProgress?.call(doneProgress);
+    } catch (e) {
+      debugPrint('[LocalMusic] 桌面端扫描失败: $e');
+      final errorProgress = ScanProgress(processed: 0, total: 0, running: false);
+      onScanProgress?.call(errorProgress);
+      onProgress?.call(errorProgress);
+    }
+  }
+
+  /// 系统默认音乐目录（未设置扫描目录时使用）。
+  Future<List<String>> _defaultMusicDirectories() async {
+    final home = Platform.environment['USERPROFILE'] ??
+        Platform.environment['HOME'] ??
+        '';
+    if (home.isEmpty) return const [];
+    final candidates = <String>[
+      p.join(home, 'Music'),
+      p.join(home, 'OneDrive', 'Music'),
+      p.join(home, '音乐'),
+    ];
+    final result = <String>[];
+    for (final candidate in candidates) {
+      try {
+        if (await Directory(candidate).exists()) result.add(candidate);
+      } catch (_) {}
+    }
+    return result;
+  }
+
+  /// 递归列出目录下的音频文件。
+  List<String> _listAudioFiles(String dir) {
+    final result = <String>[];
+    try {
+      final directory = Directory(dir);
+      if (!directory.existsSync()) return result;
+      for (final entity in directory.list(recursive: true, followLinks: false)) {
+        if (entity is! File) continue;
+        final path = entity.path;
+        if (!LocalMetadataReader.isAudioFile(path)) continue;
+        result.add(path);
+      }
+    } catch (e) {
+      debugPrint('[LocalMusic] 扫描目录失败 $dir: $e');
+    }
+    result.sort();
+    return result;
   }
 
   Future<Uint8List?> getCoverData(int mediaStoreId) async {

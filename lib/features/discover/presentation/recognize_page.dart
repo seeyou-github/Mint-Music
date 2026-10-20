@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -11,6 +12,12 @@ import '../../player/application/playback_controller.dart';
 import '../application/recognize_provider.dart';
 import '../application/search_providers.dart';
 import '../domain/models/recognize_result.dart';
+import 'widgets/afp_webview_host.dart';
+
+/// 桌面端（Windows/macOS/Linux）没有 `webview_flutter`，
+/// 音频指纹模块改用 InAppWebView 承载。
+bool get useDesktopFingerprint =>
+    Platform.isWindows || Platform.isLinux || Platform.isMacOS;
 
 class RecognizePage extends ConsumerStatefulWidget {
   const RecognizePage({super.key});
@@ -140,10 +147,27 @@ class _RecognizePageState extends ConsumerState<RecognizePage> {
     return Scaffold(
       backgroundColor: colors.background,
       body: SafeArea(
-        child: Column(
+        child: Stack(
           children: [
-            _buildHeader(context, colors),
-            Expanded(child: _buildContent(state, colors)),
+            Column(
+              children: [
+                _buildHeader(context, colors),
+                Expanded(child: _buildContent(state, colors)),
+              ],
+            ),
+            // 桌面端的音频指纹模块需要一个真实存在的 WebView 来跑 afp.js，
+            // 放在屏幕外，只执行 JS 不显示内容。
+            if (useDesktopFingerprint)
+              Positioned(
+                left: -400,
+                top: -400,
+                child: AfpWebViewHost(
+                  bridge: ref
+                      .read(recognizeProvider.notifier)
+                      .fingerprintService
+                      .desktopBridge,
+                ),
+              ),
           ],
         ),
       ),

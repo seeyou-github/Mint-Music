@@ -1,8 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+
+import 'audio_fingerprint_desktop_service.dart';
 
 /// 使用 WebView 执行 CeruMusic 的 AFP WASM 模块生成音频指纹
 ///
@@ -12,11 +15,24 @@ import 'package:webview_flutter/webview_flutter.dart';
 /// 3. WebView 有完整的 WebAssembly 支持，可以正确执行 Embind 绑定的 WASM
 /// 4. 通过 runJavaScript 调用 GenerateFP(pcmData)，通过 JS channel 接收结果
 /// 5. 对标 CeruMusic: afp.js 的 GenerateFP(Float32Array) -> base64 指纹
+///
+/// 移动端（Android/iOS）用 `webview_flutter`；桌面端没有该插件实现，
+/// 改用 [DesktopFingerprintBridge]（InAppWebView / WebView2）。
 class AudioFingerprintService {
   WebViewController? _controller;
   bool _initialized = false;
   bool _initializing = false;
   Completer<bool>? _initCompleter;
+
+  /// 桌面端桥接（仅桌面端使用）。
+  final DesktopFingerprintBridge _desktop = DesktopFingerprintBridge();
+
+  /// 当前平台是否走桌面端实现。
+  bool get usesDesktopBridge =>
+      Platform.isWindows || Platform.isLinux || Platform.isMacOS;
+
+  /// 桌面端桥接实例（供宿主组件创建 WebView）。
+  DesktopFingerprintBridge get desktopBridge => _desktop;
 
   /// 当前请求 ID，用于匹配请求和响应
   int _requestId = 0;
@@ -30,6 +46,9 @@ class AudioFingerprintService {
 
   /// 初始化 WebView 和 AFP WASM 模块
   Future<bool> initialize() async {
+    if (usesDesktopBridge) {
+      return _desktop.initialize();
+    }
     if (_initialized) return true;
     if (_initializing) {
       return await _initCompleter!.future;
@@ -262,6 +281,9 @@ $escapedAfpJs
   ///
   /// 对标 CeruMusic: GenerateFP(Float32Array) -> base64 string
   Future<String?> generateFingerprint(Float32List pcm8k) async {
+    if (usesDesktopBridge) {
+      return _desktop.generateFingerprint(pcm8k);
+    }
     if (!_initialized) {
       final ok = await initialize();
       if (!ok) return null;
@@ -305,5 +327,6 @@ $escapedAfpJs
     _initialized = false;
     _initializing = false;
     _pendingRequests.clear();
+    _desktop.dispose();
   }
 }

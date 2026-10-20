@@ -74,6 +74,9 @@ class RecognizeNotifier extends StateNotifier<RecognizeState> {
 
   RecognizeNotifier() : super(const RecognizeState());
 
+  /// 音频指纹服务（桌面端需要用它创建 WebView 宿主）。
+  AudioFingerprintService get fingerprintService => _afpService;
+
   Future<bool> requestPermission() async {
     state = state.copyWith(status: RecognizeStatus.initializing);
     final granted = await _processor.requestPermission();

@@ -75,7 +75,9 @@ void main() async {
   // Route preload is an idle-time optimization controlled by settings. It
   // only prepares the cached AMLL document; no WebView or audio resource is
   // created until the lyric route is actually shown.
-  if (container.read(routePreloadEnabledProvider)) {
+  // Windows 端不启用 AMLL（WebView 合成异常），无需预热。
+  if (container.read(routePreloadEnabledProvider) &&
+      AmllToggleService().isPlatformSupported) {
     unawaited(AmllLyricPlayerState.prewarm());
     // 预热字体缓存：在后台完成 base64 编码，避免首次打开歌词页时阻塞 UI
     unawaited(AmllLyricPlayerState.prewarmFonts('lyricfont'));

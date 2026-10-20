@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import '../../../player/domain/models/song.dart';
 import '../../../player/domain/services/lyric_parser.dart';
+import 'audio_tag_writer.dart';
 
 class TagWriteService {
   static const _channel = MethodChannel('com.mintmusic/tag_writer');
@@ -28,6 +29,8 @@ class TagWriteService {
     final dirName = file.parent.path;
     String? coverPath;
     Uint8List? coverBytes;
+    // 标签是否已成功写入文件（原生实现或纯 Dart 兜底）。
+    bool embedded = false;
 
     try {
       if (cover && songInfo.coverUrl != null && songInfo.coverUrl!.isNotEmpty) {
@@ -95,7 +98,7 @@ class TagWriteService {
 
       if (useArtwork) {
         debugPrint('[TagWriteService] 写入标签+封面: title=$titleStr, artist=$artistStr, album=$albumStr, hasLyrics=${lrcToEmbed != null}, artworkSize=${coverBytes?.length}');
-        await _writeTagsAndArtwork(
+        embedded = await _writeTagsAndArtwork(
           songPath,
           title: titleStr,
           artist: artistStr,
@@ -106,7 +109,7 @@ class TagWriteService {
         );
       } else if (useBasicInfo || lrcToEmbed != null) {
         debugPrint('[TagWriteService] 写入标签: title=$titleStr, artist=$artistStr, album=$albumStr, hasLyrics=${lrcToEmbed != null}');
-        await _writeTags(
+        embedded = await _writeTags(
           songPath,
           title: titleStr,
           artist: artistStr,
@@ -117,20 +120,39 @@ class TagWriteService {
       } else {
         debugPrint('[TagWriteService] 无需写入标签');
       }
+
+      // 标签没能写进文件时（桌面端无原生实现且格式不支持内嵌），
+      // 退化为写同名的 .lrc 歌词文件，并保留同名单的封面图片。
+      if (!embedded && lrcToEmbed != null && lrcToEmbed.isNotEmpty) {
+        try {
+          final lrcPath = '$dirName${Platform.pathSeparator}$baseName.lrc';
+          await File(lrcPath).writeAsString(lrcToEmbed);
+          debugPrint('[TagWriteService] 歌词已保存为独立文件: $lrcPath');
+        } catch (e) {
+          debugPrint('[TagWriteService] 保存歌词文件失败: $e');
+        }
+      }
     } catch (e) {
       debugPrint('[TagWriteService] 写入音乐元信息或LRC文件失败: $e');
     } finally {
-      if (coverPath != null) {
+      // 封面已内嵌进音频文件时删除临时图片；没有内嵌时保留为同名单图片。
+      if (coverPath != null && embedded) {
         final coverFile = File(coverPath);
         if (await coverFile.exists()) {
           await coverFile.delete().catchError((_) {});
           debugPrint('[TagWriteService] 临时封面文件已删除: $coverPath');
         }
+      } else if (coverPath != null) {
+        debugPrint('[TagWriteService] 封面保留为独立文件: $coverPath');
       }
     }
   }
 
-  Future<void> _writeTags(
+  /// 写入基础信息与歌词。
+  ///
+  /// 优先走原生实现（Android）；平台没有原生实现时（Windows 等桌面端）
+  /// 退化为纯 Dart 写入 ID3/FLAC 标签。返回是否写入成功。
+  Future<bool> _writeTags(
     String filePath, {
     String? title,
     String? artist,
@@ -138,22 +160,32 @@ class TagWriteService {
     String? albumArtist,
     String? lyrics,
   }) async {
+    final args = <String, dynamic>{
+      'filePath': filePath,
+      if (title != null) 'title': title,
+      if (artist != null) 'artist': artist,
+      if (album != null) 'album': album,
+      if (albumArtist != null) 'albumArtist': albumArtist,
+      if (lyrics != null) 'lyrics': lyrics,
+    };
     try {
-      final args = <String, dynamic>{
-        'filePath': filePath,
-        if (title != null) 'title': title,
-        if (artist != null) 'artist': artist,
-        if (album != null) 'album': album,
-        if (albumArtist != null) 'albumArtist': albumArtist,
-        if (lyrics != null) 'lyrics': lyrics,
-      };
       debugPrint('[TagWriteService] _writeTags args: $args');
       await _channel.invokeMethod<bool>('writeTags', args);
       debugPrint('[TagWriteService] _writeTags 成功');
+      return true;
     } on PlatformException catch (e) {
       debugPrint('[TagWriteService] writeTags PlatformException: ${e.code} - ${e.message}');
-      rethrow;
+    } on MissingPluginException catch (e) {
+      debugPrint('[TagWriteService] writeTags 无原生实现: $e');
     }
+    return _writeTagsFallback(
+      filePath,
+      title: title,
+      artist: artist,
+      album: album,
+      albumArtist: albumArtist,
+      lyrics: lyrics,
+    );
   }
 
   Future<void> _writeArtwork(String filePath, Uint8List artwork) async {
@@ -170,7 +202,11 @@ class TagWriteService {
     }
   }
 
-  Future<void> _writeTagsAndArtwork(
+  /// 写入基础信息、歌词与封面。
+  ///
+  /// 优先走原生实现（Android）；平台没有原生实现时（Windows 等桌面端）
+  /// 退化为纯 Dart 写入 ID3/FLAC 标签。返回是否写入成功。
+  Future<bool> _writeTagsAndArtwork(
     String filePath, {
     String? title,
     String? artist,
@@ -192,9 +228,50 @@ class TagWriteService {
       debugPrint('[TagWriteService] _writeTagsAndArtwork args: filePath=$filePath, title=$title, artist=$artist, album=$album, albumArtist=$albumArtist, hasLyrics=${lyrics != null}, hasArtwork=${artwork != null}');
       await _channel.invokeMethod<bool>('writeTagsAndArtwork', args);
       debugPrint('[TagWriteService] _writeTagsAndArtwork 成功');
+      return true;
     } on PlatformException catch (e) {
       debugPrint('[TagWriteService] writeTagsAndArtwork PlatformException: ${e.code} - ${e.message}');
-      rethrow;
+    } on MissingPluginException catch (e) {
+      debugPrint('[TagWriteService] writeTagsAndArtwork 无原生实现: $e');
+    }
+    return _writeTagsFallback(
+      filePath,
+      title: title,
+      artist: artist,
+      album: album,
+      albumArtist: albumArtist,
+      lyrics: lyrics,
+      artwork: artwork,
+    );
+  }
+
+  /// 纯 Dart 兜底实现（Windows 等没有原生标签写入能力的平台）。
+  Future<bool> _writeTagsFallback(
+    String filePath, {
+    String? title,
+    String? artist,
+    String? album,
+    String? albumArtist,
+    String? lyrics,
+    Uint8List? artwork,
+  }) async {
+    try {
+      final ok = await AudioTagWriter.write(
+        filePath,
+        title: title,
+        artist: artist,
+        album: album,
+        albumArtist: albumArtist,
+        lyrics: lyrics,
+        artwork: artwork,
+      );
+      debugPrint(
+        '[TagWriteService] 纯 Dart 写入标签: ${ok ? "成功" : "失败"} ($filePath)',
+      );
+      return ok;
+    } catch (e) {
+      debugPrint('[TagWriteService] 纯 Dart 写入标签失败: $e');
+      return false;
     }
   }
 

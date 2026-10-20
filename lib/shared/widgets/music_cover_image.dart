@@ -90,9 +90,9 @@ class _MusicCoverImageState extends State<MusicCoverImage> {
   void _load() {
     final url = widget.url;
 
-    // Case 1: 无 URL — 从 CoverCacheService 获取（MediaStore 提取）
+    // Case 1: 无 URL — 从 CoverCacheService 获取（MediaStore 提取 / 桌面端缓存）
     if (url == null || url.isEmpty) {
-      if (widget.songId != null && widget.mediaStoreId != null) {
+      if (widget.songId != null) {
         _loadFromCoverCache();
       } else {
         setState(() {

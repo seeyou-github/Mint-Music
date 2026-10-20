@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -21,6 +23,16 @@ class AmllToggleService extends ChangeNotifier {
 
   /// 当前是否启用了 AMLL 歌词引擎
   bool get enabled => _enabled;
+
+  /// 当前平台是否支持 AMLL 歌词引擎。
+  ///
+  /// AMLL 依赖 WebView 渲染歌词。Windows 端 InAppWebView 以纹理方式合成，
+  /// 在应用内播放页/歌词页里歌词层无法正常显示（桌面歌词窗口走的是原生
+  /// Flutter 渲染，所以显示正常）。因此 Windows 端统一使用原生歌词渲染。
+  static bool get isPlatformSupported => !Platform.isWindows;
+
+  /// 是否真正生效的 AMLL 开关（受平台支持情况约束）。
+  bool get isActive => _enabled && isPlatformSupported;
 
   /// 设置开关值（立即通知监听者）
   set enabled(bool value) {

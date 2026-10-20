@@ -74,15 +74,19 @@ class LocalMusicNotifier extends StateNotifier<AsyncValue<List<Song>>> {
     _init();
   }
 
-  Future<void> _init() async {
+  Future<void> _init({bool rescan = false}) async {
     try {
+      // 之前是错误状态时先切到加载中，点击「重试」能看到明确的反馈。
+      if (state.hasError) {
+        state = const AsyncValue.loading();
+      }
       final repo = _ref.read(localMusicRepositoryProvider);
       await repo.init();
 
       final hasPermission = await repo.checkPermission();
       if (hasPermission) {
         final songs = repo.getLocalSongs();
-        if (songs.isEmpty) {
+        if (songs.isEmpty || rescan) {
           await repo.scanAll(
             onProgress: (progress) {
               _ref.read(scanProgressProvider.notifier).state = progress;
@@ -173,6 +177,9 @@ class LocalMusicNotifier extends StateNotifier<AsyncValue<List<Song>>> {
 
   Future<void> scanAll() async {
     try {
+      if (state.hasError) {
+        state = const AsyncValue.loading();
+      }
       final repo = _ref.read(localMusicRepositoryProvider);
       await repo.scanAll(
         onProgress: (progress) {
@@ -239,8 +246,9 @@ class LocalMusicNotifier extends StateNotifier<AsyncValue<List<Song>>> {
     }
   }
 
+  /// 重新扫描并刷新列表（本地页「重试」按钮）。
   void refresh() {
-    _init();
+    _init(rescan: true);
   }
 }
 

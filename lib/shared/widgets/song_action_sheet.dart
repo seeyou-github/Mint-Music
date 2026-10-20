@@ -762,7 +762,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                 ListenableBuilder(
                   listenable: AmllToggleService(),
                   builder: (context, _) {
-                    final amll = AmllToggleService().enabled;
+                    final amll = AmllToggleService().isActive;
                     final provider = amll
                         ? amllCenterAlignProvider
                         : lyricCenterAlignProvider;
@@ -889,6 +889,9 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
   }
 
   Widget _buildAmllToggle(BuildContext ctx, ProviderContainer container) {
+    // Windows 端 AMLL 依赖的 WebView 合成异常（应用内歌词无法显示），
+    // 该选项置灰并提示，避免用户打开后没有效果。
+    final supported = AmllToggleService().isPlatformSupported;
     return ListenableBuilder(
       listenable: AmllToggleService(),
       builder: (context, _) {
@@ -900,21 +903,44 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
           ),
           child: Row(
             children: [
-              const Icon(
+              Icon(
                 Icons.music_video,
                 size: 22,
-                color: AppColors.textSecondary,
+                color: supported
+                    ? AppColors.textSecondary
+                    : AppColors.textSecondary.withValues(alpha: 0.4),
               ),
               const SizedBox(width: AppSpacing.md),
               Expanded(
-                child: Text(
-                  context.tr('Apple Music 风格歌词'),
-                  style: TextStyle(fontSize: 15, color: AppColors.textPrimary),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      context.tr('Apple Music 风格歌词'),
+                      style: TextStyle(
+                        fontSize: 15,
+                        color: supported
+                            ? AppColors.textPrimary
+                            : AppColors.textPrimary.withValues(alpha: 0.4),
+                      ),
+                    ),
+                    if (!supported)
+                      Text(
+                        context.tr('Windows 端暂不支持，已使用原生歌词渲染'),
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: AppColors.textSecondary.withValues(alpha: 0.6),
+                        ),
+                      ),
+                  ],
                 ),
               ),
               Switch(
-                value: amll,
-                onChanged: (v) => AmllToggleService().setAndPersist(v),
+                value: supported && amll,
+                onChanged: supported
+                    ? (v) => AmllToggleService().setAndPersist(v)
+                    : null,
                 activeTrackColor: AppColors.primary.withValues(alpha: 0.3),
                 activeThumbColor: AppColors.primary,
               ),

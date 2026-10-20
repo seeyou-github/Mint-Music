@@ -505,6 +505,17 @@ class _LocalPageState extends ConsumerState<LocalPage> {
           Icon(Icons.error_outline, size: 48, color: colors.textHint),
           const SizedBox(height: AppSpacing.md),
           Text(context.tr('加载失败'), style: TextStyle(color: colors.textHint)),
+          const SizedBox(height: AppSpacing.xs),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xl),
+            child: Text(
+              error,
+              textAlign: TextAlign.center,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 12, color: colors.textHint),
+            ),
+          ),
           const SizedBox(height: AppSpacing.sm),
           TextButton(
             onPressed: () => ref.read(localMusicNotifierProvider.notifier).refresh(),
@@ -1667,29 +1678,24 @@ class _LocalSongItem extends ConsumerWidget {
                         ),
                       ),
                     )
-                  : song.mediaStoreId != null
-                      ? ClipRRect(
-                          borderRadius: BorderRadius.circular(AppRadius.sm),
-                          child: MusicCoverImage(
-                            key: ValueKey('local_cover_${song.id}'),
-                            songId: song.id,
-                            mediaStoreId: song.mediaStoreId,
-                            fit: BoxFit.cover,
-                            width: 48,
-                            height: 48,
-                            errorWidget: Icon(
-                              isPlaying ? Icons.equalizer : Icons.music_note,
-                              size: 22,
-                              color:
-                                  isPlaying ? colors.primary : colors.textHint,
-                            ),
-                          ),
-                        )
-                      : Icon(
+                  : ClipRRect(
+                      borderRadius: BorderRadius.circular(AppRadius.sm),
+                      child: MusicCoverImage(
+                        key: ValueKey('local_cover_${song.id}'),
+                        songId: song.id,
+                        // 桌面端没有 MediaStore，封面来自扫描时写入的封面缓存
+                        mediaStoreId: song.mediaStoreId,
+                        fit: BoxFit.cover,
+                        width: 48,
+                        height: 48,
+                        errorWidget: Icon(
                           isPlaying ? Icons.equalizer : Icons.music_note,
                           size: 22,
-                          color: isPlaying ? colors.primary : colors.textHint,
+                          color:
+                              isPlaying ? colors.primary : colors.textHint,
                         ),
+                      ),
+                    ),
             ),
             const SizedBox(width: AppSpacing.md),
             Expanded(

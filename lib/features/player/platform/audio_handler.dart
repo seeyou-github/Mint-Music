@@ -345,7 +345,9 @@ class MusicAudioHandler extends BaseAudioHandler
     final coverCache = CoverCacheService();
 
     Future<Song> processSong(Song song) async {
-      if (song.coverUrl == null && song.mediaStoreId != null) {
+      // 桌面端没有 MediaStore，封面由扫描时写入封面缓存，这里同样能取到。
+      if (song.coverUrl == null &&
+          (song.mediaStoreId != null || song.source == 'local')) {
         try {
           // 优先从 CoverCacheService 获取（内存/磁盘缓存 + MediaStore 提取）
           final bytes = await coverCache.getArtwork(
