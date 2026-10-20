@@ -1100,35 +1100,20 @@ class MusicSourceManager {
       coverUrl: coverUrl,
       source: sourceId,
       lyricUrl: sourceId == 'tx' ? pluginSongId?.toString() : null,
-      duration: _parseDurationSeconds(info['duration'] ?? info['interval']),
+      duration: info['duration'] != null
+          ? _parseDurationSeconds(info['duration'])
+          : 0,
       hash: info['hash']?.toString(),
       lx: lxMeta,
     );
   }
 
-  /// 把插件返回的时长解析成秒。
-  ///
-  /// 插件的时长单位并不统一：MusicFree 官方约定是秒，但不少插件直接透传
-  /// 平台的毫秒值（如网易的 dt）；LX 插件则用 `interval`（秒）。这里统一
-  /// 换算成秒：明显超出「合理歌曲时长」范围（按秒算）的值按毫秒折算，避免
-  /// 界面上出现 4000:00 这类异常时长。
   int _parseDurationSeconds(dynamic value) {
     if (value == null) return 0;
-    if (value is num) {
-      final seconds = value.round();
-      const int minSeconds = 5;
-      const int maxSeconds = 7200; // 2 小时
-      if (seconds > maxSeconds) {
-        final asMilliseconds = seconds ~/ 1000;
-        if (asMilliseconds >= minSeconds && asMilliseconds <= maxSeconds) {
-          return asMilliseconds;
-        }
-      }
-      return seconds;
-    }
+    if (value is num) return value.round();
     final text = value.toString();
     final direct = int.tryParse(text);
-    if (direct != null) return _parseDurationSeconds(direct);
+    if (direct != null) return direct;
     final parts = text.split(':').map((e) => int.tryParse(e) ?? 0).toList();
     if (parts.length == 2) return parts[0] * 60 + parts[1];
     if (parts.length == 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
