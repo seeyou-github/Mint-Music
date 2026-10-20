@@ -62,7 +62,10 @@ class AudioTagWriter {
   static String _extOf(String filePath) {
     final dot = filePath.lastIndexOf('.');
     if (dot < 0) return '';
-    final sep = filePath.lastIndexOf(Platform.pathSeparator);
+    // 路径里可能混用 '/' 和 '\'（Windows 上尤其如此），两种都要判断。
+    final lastSlash = filePath.lastIndexOf('/');
+    final lastBackslash = filePath.lastIndexOf('\\');
+    final sep = lastSlash > lastBackslash ? lastSlash : lastBackslash;
     if (dot < sep) return '';
     return filePath.substring(dot).toLowerCase();
   }
@@ -190,6 +193,18 @@ class AudioTagWriter {
         data[2] == 0x4E &&
         data[3] == 0x47) {
       return 'image/png';
+    }
+    // RIFF....WEBP
+    if (data.length >= 12 &&
+        data[0] == 0x52 &&
+        data[1] == 0x49 &&
+        data[2] == 0x46 &&
+        data[3] == 0x46 &&
+        data[8] == 0x57 &&
+        data[9] == 0x45 &&
+        data[10] == 0x42 &&
+        data[11] == 0x50) {
+      return 'image/webp';
     }
     return 'image/jpeg';
   }

@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:path/path.dart' as p;
 import 'package:uuid/uuid.dart';
 import '../../../player/domain/models/song.dart';
 
@@ -155,8 +156,9 @@ class DownloadTask {
 
     final ext = _extensionFromQuality(quality, extension);
     // 下载文件名固定为：歌手名 - 歌曲名
+    // 用平台分隔符拼接，避免 Windows 上出现「C:\.../歌曲.mp3」这种混合路径。
     final safeTitle = _sanitizeFilename('$artist - $title');
-    return '${dir.path}/$safeTitle.$ext';
+    return p.join(dir.path, '$safeTitle.$ext');
   }
 
   static String _extensionFromQuality(String quality, String? original) {

@@ -22,6 +22,7 @@ class TagWriteService {
     required bool downloadLyrics,
     required String lyricFormat,
     List<String> coverUrls = const <String>[],
+    Uint8List? preloadedCover,
   }) async {
     final file = File(songPath);
     if (!await file.exists()) return true;
@@ -51,31 +52,43 @@ class TagWriteService {
           addCandidate(url);
         }
 
-        if (candidates.isEmpty) {
+        if (preloadedCover != null && preloadedCover.isNotEmpty) {
+          // 列表里已经加载并缓存过这张封面，直接复用，不再走网络。
+          coverBytes = preloadedCover;
+          debugPrint(
+            '[TagWriteService] 使用已缓存封面 (${preloadedCover.length} bytes)',
+          );
+        } else if (candidates.isEmpty) {
           debugPrint('[TagWriteService] 歌曲没有封面地址，跳过封面写入');
         } else {
           try {
-            for (final url in candidates) {
-              debugPrint('[TagWriteService] 下载封面: $url');
-              final bytes = await CoverFetcher.fetch(url);
-              if (bytes != null && bytes.isNotEmpty) {
-                coverBytes = bytes;
-                break;
-              }
-            }
-            if (coverBytes != null) {
-              final coverExt = _coverExtFromBytes(coverBytes!, songInfo.coverUrl ?? '');
-              coverPath = '$dirName${Platform.pathSeparator}$baseName$coverExt';
-              await File(coverPath).writeAsBytes(coverBytes!);
-              debugPrint('[TagWriteService] 封面已下载: $coverPath (${coverBytes!.length} bytes)');
-            } else {
-              debugPrint('[TagWriteService] 封面下载失败: $candidates');
+            // 先把所有候选地址的本地缓存查一遍，都没有缓存才走网络；
+            // 网络下载单张封面最多等待 30 秒。
+            debugPrint('[TagWriteService] 获取封面: $candidates');
+            final bytes = await CoverFetcher.fetchAny(candidates);
+            if (bytes != null && bytes.isNotEmpty) {
+              coverBytes = bytes;
             }
           } catch (e) {
-            debugPrint('[TagWriteService] 下载封面失败: $e');
-            coverPath = null;
-            coverBytes = null;
+            debugPrint('[TagWriteService] 获取封面失败: $e');
           }
+        }
+
+        if (coverBytes != null && coverBytes.isNotEmpty) {
+          try {
+            final coverExt =
+                _coverExtFromBytes(coverBytes!, songInfo.coverUrl ?? '');
+            coverPath = '$dirName${Platform.pathSeparator}$baseName$coverExt';
+            await File(coverPath).writeAsBytes(coverBytes!);
+            debugPrint(
+              '[TagWriteService] 封面文件已写入: $coverPath (${coverBytes!.length} bytes)',
+            );
+          } catch (e) {
+            debugPrint('[TagWriteService] 保存封面文件失败: $e');
+            coverPath = null;
+          }
+        } else if (candidates.isNotEmpty) {
+          debugPrint('[TagWriteService] 封面获取失败: $candidates');
         }
       }
 
@@ -170,8 +183,11 @@ class TagWriteService {
     }
 
     // 封面结果：没有开启封面写入时视为正常。
+    // 拿到了封面图片但没能写进音频文件时同样算失败，下载列表会提示「无封面」，
+    // 避免出现「看起来写入成功、文件里其实没有封面」的情况。
     if (!cover) return true;
-    return coverBytes != null;
+    if (coverBytes == null || coverBytes.isEmpty) return false;
+    return embedded;
   }
 
   /// 依据图片内容判断扩展名（URL 后缀可能不准，图片实际格式更可靠）。
@@ -326,7 +342,12 @@ class TagWriteService {
   }
 
   String _baseNameWithoutExt(String filePath) {
-    final lastSep = filePath.lastIndexOf(Platform.pathSeparator);
+    // 路径里可能混用 '/' 和 '\'（Windows 的下载路径尤其如此），
+    // 只按 Platform.pathSeparator 找会拿到多余的目录片段，
+    // 导致同名封面 / 歌词文件写到非法路径。
+    final lastSlash = filePath.lastIndexOf('/');
+    final lastBackslash = filePath.lastIndexOf('\\');
+    final lastSep = lastSlash > lastBackslash ? lastSlash : lastBackslash;
     final lastDot = filePath.lastIndexOf('.');
     if (lastDot <= lastSep) return filePath.substring(lastSep + 1);
     return filePath.substring(lastSep + 1, lastDot);

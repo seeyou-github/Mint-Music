@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/platform/media_scanner.dart';
 import '../../../core/platform/permission_helper.dart';
+import '../../../shared/services/cover_fetcher.dart';
 import '../domain/models/download_task.dart';
 import '../domain/services/tag_write_service.dart';
 import '../../player/domain/models/song.dart';
@@ -18,7 +19,7 @@ typedef UrlFetcher = Future<String?> Function(DownloadTask task);
 typedef TagWriteOptionsFetcher = TagWriteOptions Function();
 typedef LyricFetcher = Future<String?> Function(Song song);
 typedef LyricResultFetcher = Future<LyricResult?> Function(Song song);
-typedef CoverFetcher = Future<String?> Function(Song song);
+typedef CoverUrlFetcher = Future<String?> Function(Song song);
 typedef QualityValidator = List<String> Function(String sourceId);
 
 class TagWriteOptions {
@@ -65,7 +66,7 @@ class DownloadRepository {
   TagWriteOptionsFetcher? _tagWriteOptionsFetcher;
   LyricFetcher? _lyricFetcher;
   LyricResultFetcher? _lyricResultFetcher;
-  CoverFetcher? _coverFetcher;
+  CoverUrlFetcher? _coverFetcher;
   QualityValidator? _qualityValidator;
 
   void Function(DownloadTask task, {Color? backgroundColor})? onTaskStarted;
@@ -83,7 +84,7 @@ class DownloadRepository {
   void setTagWriteOptionsFetcher(TagWriteOptionsFetcher fetcher) => _tagWriteOptionsFetcher = fetcher;
   void setLyricFetcher(LyricFetcher fetcher) => _lyricFetcher = fetcher;
   void setLyricResultFetcher(LyricResultFetcher fetcher) => _lyricResultFetcher = fetcher;
-  void setCoverFetcher(CoverFetcher fetcher) => _coverFetcher = fetcher;
+  void setCoverFetcher(CoverUrlFetcher fetcher) => _coverFetcher = fetcher;
   void setQualityValidator(QualityValidator validator) => _qualityValidator = validator;
 
   Future<void> init({String? downloadDir, bool? wifiOnly, int? maxConcurrent}) async {
@@ -709,13 +710,25 @@ class DownloadRepository {
           }
 
           addCover(songForTag.coverUrl);
-          if (tagOpts.cover && _coverFetcher != null) {
+
+          // 优先使用列表里已经加载并缓存好的封面：命中缓存就不再请求高清
+          // 封面地址，也不再走网络下载。
+          var cachedCover = tagOpts.cover
+              ? await CoverFetcher.fetchCached(songForTag.coverUrl)
+              : null;
+          debugPrint('[DownloadRepository] 本地缓存封面: '
+              '${cachedCover != null ? "${cachedCover.length} bytes" : "未命中"}');
+
+          if (tagOpts.cover &&
+              cachedCover == null &&
+              _coverFetcher != null) {
             try {
               final highResCover = await _coverFetcher!(songForTag);
               debugPrint('[DownloadRepository] 高清封面获取结果: ${highResCover != null ? highResCover.substring(0, highResCover.length.clamp(0, 80)) : "null"}');
               if (highResCover != null && highResCover.isNotEmpty) {
                 songForTag = songForTag.copyWith(coverUrl: highResCover);
                 addCover(highResCover);
+                cachedCover = await CoverFetcher.fetchCached(highResCover);
               }
             } catch (e) {
               debugPrint('[DownloadRepository] 获取高清封面失败: $e');
@@ -730,6 +743,7 @@ class DownloadRepository {
             downloadLyrics: tagOpts.downloadLyrics,
             lyricFormat: tagOpts.lyricFormat,
             coverUrls: coverCandidates,
+            preloadedCover: cachedCover,
           );
           coverOk = coverWritten;
         } catch (e) {
