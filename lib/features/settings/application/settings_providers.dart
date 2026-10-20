@@ -228,6 +228,14 @@ final lyricFontColorProvider = StateProvider<String>((ref) => '');
 final appearanceJumpLyricProvider = StateProvider<bool>((ref) => true);
 final appearanceBgAnimationProvider = StateProvider<bool>((ref) => true);
 
+/// 「主题色 / 字体颜色 / 第二字体颜色」里用户新增的自定义颜色列表。
+///
+/// 颜色以 `#RRGGBB` 形式保存；选择面板里长按可以编辑或删除。
+final customThemeColorsProvider = StateProvider<List<String>>((ref) => const []);
+final customFontColorsProvider = StateProvider<List<String>>((ref) => const []);
+final customSecondaryFontColorsProvider =
+    StateProvider<List<String>>((ref) => const []);
+
 /// 桌面歌词(悬浮歌词窗)的完整配置。
 ///
 /// 整体作为一个对象持久化(见 [SettingsService.setDesktopLyricSettings]),
@@ -344,6 +352,12 @@ final settingsInitProvider = FutureProvider<void>((ref) async {
   ref.read(themeFontColorProvider.notifier).state = svc.getThemeFontColor();
   ref.read(themeSecondaryFontColorProvider.notifier).state =
       svc.getThemeSecondaryFontColor();
+  ref.read(customThemeColorsProvider.notifier).state =
+      svc.getCustomThemeColors();
+  ref.read(customFontColorsProvider.notifier).state =
+      svc.getCustomFontColors();
+  ref.read(customSecondaryFontColorsProvider.notifier).state =
+      svc.getCustomSecondaryFontColors();
 
   ref.read(audioQualityProvider.notifier).state = svc.getAudioQuality();
   ref.read(autoQualityDowngradeProvider.notifier).state = svc

@@ -513,6 +513,114 @@ Color _parseHexColor(String hex) {
   }
 }
 
+/// 外观设置里「主题色 / 字体颜色 / 第二字体颜色」的内置颜色。
+const List<(String, String)> _presetColors = [
+  ('#1DB954', 'Spotify 绿'),
+  ('#6366F1', '靛蓝'),
+  ('#3B82F6', '天蓝'),
+  ('#EC4899', '粉红'),
+  ('#F59E0B', '琥珀'),
+  ('#EF4444', '红色'),
+  ('#8B5CF6', '紫色'),
+  ('#14B8A6', '青绿'),
+  ('#F97316', '橙色'),
+  ('#06B6D4', '蓝绿'),
+];
+
+/// 合并内置颜色与用户自定义颜色（按色值去重，内置颜色优先）。
+List<(String, String)> _mergeColors(
+  List<(String, String)> presets,
+  List<String> custom,
+) {
+  final seen = <String>{};
+  final merged = <(String, String)>[];
+  for (final item in presets) {
+    if (seen.add(item.$1.toUpperCase())) merged.add(item);
+  }
+  for (final hex in custom) {
+    if (seen.add(hex.toUpperCase())) merged.add((hex, '自定义'));
+  }
+  return merged;
+}
+
+/// 在自定义颜色列表里新增或替换颜色。
+///
+/// [replacing] 不为空时替换该颜色（编辑场景），否则追加（新增场景）。
+List<String> _upsertCustomColor(
+  List<String> current,
+  String hex,
+  String? replacing,
+) {
+  final target = hex.toUpperCase();
+  final replaceTarget = replacing?.toUpperCase();
+  final next = <String>[];
+  var inserted = false;
+  for (final item in current) {
+    final upper = item.toUpperCase();
+    if (replaceTarget != null && upper == replaceTarget) {
+      if (!inserted) {
+        next.add(hex);
+        inserted = true;
+      }
+      continue;
+    }
+    if (upper == target) continue;
+    next.add(item);
+  }
+  if (!inserted && !next.any((item) => item.toUpperCase() == target)) {
+    next.add(hex);
+  }
+  return next;
+}
+
+/// 颜色选择面板里的一个圆形色块。
+class _ColorDot extends StatelessWidget {
+  const _ColorDot({
+    required this.hex,
+    required this.selected,
+    required this.colors,
+    required this.onTap,
+    this.onLongPress,
+  });
+
+  final String hex;
+  final bool selected;
+  final ThemeColors colors;
+  final VoidCallback onTap;
+  final VoidCallback? onLongPress;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = _parseHexColor(hex);
+    return GestureDetector(
+      onTap: onTap,
+      onLongPress: onLongPress,
+      child: Container(
+        width: 56,
+        height: 56,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: color,
+          border: selected
+              ? Border.all(color: colors.textPrimary, width: 3)
+              : null,
+          boxShadow: selected
+              ? [
+                  BoxShadow(
+                    color: color.withValues(alpha: 0.4),
+                    blurRadius: 8,
+                  ),
+                ]
+              : null,
+        ),
+        child: selected
+            ? const Icon(Icons.check, color: Colors.white, size: 24)
+            : null,
+      ),
+    );
+  }
+}
+
 /// 主题模式对应的显示名（选择主题弹窗的选项文案）。
 String _themeModeLabel(ThemeMode mode) => switch (mode) {
   ThemeMode.dark => '深色主题',
@@ -567,18 +675,6 @@ class _AppearanceContent extends ConsumerWidget {
     final fontSubtitle = importedFonts.isEmpty
         ? '导入字体文件（可多选），并选择其中之一作为应用字体'
         : '已导入 ${importedFonts.length} 个字体，当前使用：$fontName';
-    final presetColors = [
-      ('#1DB954', 'Spotify 绿'),
-      ('#6366F1', '靛蓝'),
-      ('#3B82F6', '天蓝'),
-      ('#EC4899', '粉红'),
-      ('#F59E0B', '琥珀'),
-      ('#EF4444', '红色'),
-      ('#8B5CF6', '紫色'),
-      ('#14B8A6', '青绿'),
-      ('#F97316', '橙色'),
-      ('#06B6D4', '蓝绿'),
-    ];
     return _SettingGroup(
       title: '基础外观',
       subtitle: '主题和外观配置',
@@ -624,7 +720,7 @@ class _AppearanceContent extends ConsumerWidget {
           icon: Icons.color_lens,
           title: '主题色',
           subtitle:
-              '当前: ${presetColors.firstWhere((c) => c.$1 == primaryHex, orElse: () => (primaryHex, '自定义')).$2}',
+              '当前: ${_presetColors.firstWhere((c) => c.$1 == primaryHex, orElse: () => (primaryHex, '自定义')).$2}',
           trailing: Container(
             width: 24,
             height: 24,
@@ -635,8 +731,15 @@ class _AppearanceContent extends ConsumerWidget {
             ),
           ),
           colors: colors,
-          onTap: () =>
-              _showThemeColorPicker(context, colors, presetColors, primaryHex),
+          onTap: () => _showPalettePicker(
+            context,
+            colors,
+            title: '选择主题色',
+            currentProvider: themePrimaryColorProvider,
+            customProvider: customThemeColorsProvider,
+            persistCurrent: (s, hex) => s.setThemePrimaryColor(hex),
+            persistCustom: (s, list) => s.setCustomThemeColors(list),
+          ),
         ),
         _SettingDivider(colors: colors),
         _SettingRow(
@@ -657,12 +760,16 @@ class _AppearanceContent extends ConsumerWidget {
             ),
           ),
           colors: colors,
-          onTap: () => _showFontColorPicker(
+          onTap: () => _showPalettePicker(
             context,
             colors,
-            presetColors,
-            fontColorHex,
-            isSecondary: false,
+            title: '选择字体颜色',
+            currentProvider: themeFontColorProvider,
+            customProvider: customFontColorsProvider,
+            persistCurrent: (s, hex) => s.setThemeFontColor(hex),
+            persistCustom: (s, list) => s.setCustomFontColors(list),
+            showReset: true,
+            emptyInitialColor: colors.textPrimary,
           ),
         ),
         _SettingDivider(colors: colors),
@@ -684,12 +791,16 @@ class _AppearanceContent extends ConsumerWidget {
             ),
           ),
           colors: colors,
-          onTap: () => _showFontColorPicker(
+          onTap: () => _showPalettePicker(
             context,
             colors,
-            presetColors,
-            secondaryFontColorHex,
-            isSecondary: true,
+            title: '选择第二字体颜色',
+            currentProvider: themeSecondaryFontColorProvider,
+            customProvider: customSecondaryFontColorsProvider,
+            persistCurrent: (s, hex) => s.setThemeSecondaryFontColor(hex),
+            persistCustom: (s, list) => s.setCustomSecondaryFontColors(list),
+            showReset: true,
+            emptyInitialColor: colors.textSecondary,
           ),
         ),
         _SettingDivider(colors: colors),
@@ -715,244 +826,335 @@ class _AppearanceContent extends ConsumerWidget {
     );
   }
 
-  void _showThemeColorPicker(
+  /// 主题色 / 字体颜色 / 第二字体颜色的通用选择面板。
+  ///
+  /// 内置颜色与用户新增的自定义颜色一起显示；长按自定义颜色可以编辑或删除。
+  /// [showReset] 为 true 时第一个圆圈表示恢复主题默认色（字体颜色用）。
+  void _showPalettePicker(
     BuildContext context,
-    ThemeColors colors,
-    List<(String, String)> presetColors,
-    String currentHex,
-  ) {
-    showModalBottomSheet(
+    ThemeColors colors, {
+    required String title,
+    required StateProvider<String> currentProvider,
+    required StateProvider<List<String>> customProvider,
+    required Future<void> Function(SettingsService svc, String hex)
+        persistCurrent,
+    required Future<void> Function(SettingsService svc, List<String> colors)
+        persistCustom,
+    bool showReset = false,
+    Color? emptyInitialColor,
+  }) {
+    final container = ProviderScope.containerOf(context);
+    showModalBottomSheet<void>(
       context: context,
       sheetAnimationStyle: _settingsSheetAnimationStyle,
       backgroundColor: colors.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      builder: (context) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(AppSpacing.lg),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: colors.divider,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              ),
-              const SizedBox(height: AppSpacing.md),
-              Text(
-                context.tr('选择主题色'),
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                  color: colors.textPrimary,
-                ),
-              ),
-              const SizedBox(height: AppSpacing.md),
-              Wrap(
-                spacing: 12,
-                runSpacing: 12,
-                children: presetColors.map((item) {
-                  final isSelected = item.$1 == currentHex;
-                  return GestureDetector(
-                    onTap: () {
-                      final container = ProviderScope.containerOf(context);
-                      container.read(themePrimaryColorProvider.notifier).state =
-                          item.$1;
-                      unawaited(
-                        _doPersist(
-                          container,
-                          (s) => s.setThemePrimaryColor(item.$1),
+      builder: (sheetContext) => Consumer(
+        builder: (_, ref, __) {
+          final currentHex = ref.watch(currentProvider);
+          final custom = ref.watch(customProvider);
+          final customUpper = custom.map((e) => e.toUpperCase()).toSet();
+          final allColors = _mergeColors(_presetColors, custom);
+
+          void apply(String hex) {
+            ref.read(currentProvider.notifier).state = hex;
+            unawaited(_doPersist(container, (s) => persistCurrent(s, hex)));
+            Navigator.pop(sheetContext);
+          }
+
+          // 保存 / 编辑颜色后重新打开颜色列表，让新增的颜色立即可见。
+          void reopenPalette() {
+            if (!context.mounted) return;
+            _showPalettePicker(
+              context,
+              colors,
+              title: title,
+              currentProvider: currentProvider,
+              customProvider: customProvider,
+              persistCurrent: persistCurrent,
+              persistCustom: persistCustom,
+              showReset: showReset,
+              emptyInitialColor: emptyInitialColor,
+            );
+          }
+
+          return SafeArea(
+            child: SingleChildScrollView(
+              child: Padding(
+                padding: const EdgeInsets.all(AppSpacing.lg),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: colors.divider,
+                          borderRadius: BorderRadius.circular(2),
                         ),
-                      );
-                      Navigator.pop(context);
-                    },
-                    child: Container(
-                      width: 56,
-                      height: 56,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: _parseHexColor(item.$1),
-                        border: isSelected
-                            ? Border.all(color: colors.textPrimary, width: 3)
-                            : null,
-                        boxShadow: isSelected
-                            ? [
-                                BoxShadow(
-                                  color: _parseHexColor(
-                                    item.$1,
-                                  ).withValues(alpha: 0.4),
-                                  blurRadius: 8,
-                                ),
-                              ]
-                            : null,
                       ),
-                      child: isSelected
-                          ? const Icon(
-                              Icons.check,
-                              color: Colors.white,
-                              size: 24,
-                            )
-                          : null,
                     ),
-                  );
-                }).toList(),
+                    const SizedBox(height: AppSpacing.md),
+                    Text(
+                      sheetContext.tr(title),
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: colors.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.md),
+                    Wrap(
+                      spacing: 12,
+                      runSpacing: 12,
+                      children: [
+                        if (showReset)
+                          GestureDetector(
+                            onTap: () => apply(''),
+                            child: Container(
+                              width: 56,
+                              height: 56,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: colors.surfaceVariant,
+                                border: currentHex.isEmpty
+                                    ? Border.all(
+                                        color: colors.textPrimary,
+                                        width: 3,
+                                      )
+                                    : Border.all(
+                                        color: colors.divider,
+                                        width: 1,
+                                      ),
+                              ),
+                              child: Icon(
+                                Icons.restart_alt,
+                                size: 22,
+                                color: colors.textSecondary,
+                              ),
+                            ),
+                          ),
+                        for (final item in allColors)
+                          _ColorDot(
+                            hex: item.$1,
+                            selected: item.$1.toUpperCase() ==
+                                currentHex.toUpperCase(),
+                            colors: colors,
+                            onTap: () => apply(item.$1),
+                            onLongPress:
+                                customUpper.contains(item.$1.toUpperCase())
+                                ? () => _showCustomColorActions(
+                                    sheetContext,
+                                    colors,
+                                    item.$1,
+                                    onEdit: () {
+                                      Navigator.pop(sheetContext);
+                                      _openColorEditor(
+                                        context,
+                                        colors,
+                                        title: title,
+                                        initial: _parseHexColor(item.$1),
+                                        editingHex: item.$1,
+                                        currentProvider: currentProvider,
+                                        customProvider: customProvider,
+                                        persistCurrent: persistCurrent,
+                                        persistCustom: persistCustom,
+                                        onSaved: reopenPalette,
+                                      );
+                                    },
+                                    onDelete: () {
+                                      final next = ref
+                                          .read(customProvider)
+                                          .where(
+                                            (value) =>
+                                                value.toUpperCase() !=
+                                                item.$1.toUpperCase(),
+                                          )
+                                          .toList();
+                                      ref.read(customProvider.notifier).state =
+                                          next;
+                                      unawaited(
+                                        _doPersist(
+                                          container,
+                                          (s) => persistCustom(s, next),
+                                        ),
+                                      );
+                                    },
+                                  )
+                                : null,
+                          ),
+                      ],
+                    ),
+                    if (showReset) ...[
+                      const SizedBox(height: AppSpacing.md),
+                      Text(
+                        sheetContext.tr('第一个圆圈表示恢复主题默认色'),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: colors.textHint,
+                        ),
+                      ),
+                    ],
+                    if (custom.isNotEmpty) ...[
+                      const SizedBox(height: AppSpacing.md),
+                      Text(
+                        sheetContext.tr('长按自定义颜色可编辑或删除'),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: colors.textHint,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: AppSpacing.md),
+                    // 新增自定义颜色
+                    OutlinedButton.icon(
+                      onPressed: () {
+                        final initial = currentHex.isEmpty
+                            ? (emptyInitialColor ?? colors.textPrimary)
+                            : _parseHexColor(currentHex);
+                        Navigator.pop(sheetContext);
+                        _openColorEditor(
+                          context,
+                          colors,
+                          title: title,
+                          initial: initial,
+                          editingHex: null,
+                          currentProvider: currentProvider,
+                          customProvider: customProvider,
+                          persistCurrent: persistCurrent,
+                          persistCustom: persistCustom,
+                          onSaved: reopenPalette,
+                        );
+                      },
+                      icon: const Icon(Icons.colorize, size: 18),
+                      label: Text(sheetContext.tr('新增颜色')),
+                    ),
+                    const SizedBox(height: AppSpacing.lg),
+                  ],
+                ),
               ),
-              const SizedBox(height: AppSpacing.lg),
-            ],
-          ),
-        ),
+            ),
+          );
+        },
       ),
     );
   }
 
-  /// 字体颜色 / 第二字体颜色的选择面板。
-  void _showFontColorPicker(
+  /// 打开 HSV 取色面板：保存后应用颜色，并同步到自定义颜色列表。
+  void _openColorEditor(
+    BuildContext context,
+    ThemeColors colors, {
+    required String title,
+    required Color initial,
+    required String? editingHex,
+    required StateProvider<String> currentProvider,
+    required StateProvider<List<String>> customProvider,
+    required Future<void> Function(SettingsService svc, String hex)
+        persistCurrent,
+    required Future<void> Function(SettingsService svc, List<String> colors)
+        persistCustom,
+    VoidCallback? onSaved,
+  }) {
+    final container = ProviderScope.containerOf(context);
+    _showHsvColorPicker(
+      context,
+      colors,
+      title: title,
+      initial: initial,
+      onSave: (hex) {
+        container.read(currentProvider.notifier).state = hex;
+        unawaited(_doPersist(container, (s) => persistCurrent(s, hex)));
+        final next = _upsertCustomColor(
+          container.read(customProvider),
+          hex,
+          editingHex,
+        );
+        container.read(customProvider.notifier).state = next;
+        unawaited(_doPersist(container, (s) => persistCustom(s, next)));
+        onSaved?.call();
+      },
+    );
+  }
+
+  /// 长按自定义颜色：编辑 / 删除。
+  void _showCustomColorActions(
     BuildContext context,
     ThemeColors colors,
-    List<(String, String)> presetColors,
-    String currentHex, {
-    required bool isSecondary,
+    String hex, {
+    required VoidCallback onEdit,
+    required VoidCallback onDelete,
   }) {
-    void apply(String hex) {
-      final container = ProviderScope.containerOf(context);
-      if (isSecondary) {
-        container.read(themeSecondaryFontColorProvider.notifier).state = hex;
-        unawaited(
-          _doPersist(
-            container,
-            (s) => s.setThemeSecondaryFontColor(hex),
-          ),
-        );
-      } else {
-        container.read(themeFontColorProvider.notifier).state = hex;
-        unawaited(
-          _doPersist(
-            container,
-            (s) => s.setThemeFontColor(hex),
-          ),
-        );
-      }
-      Navigator.pop(context);
-    }
-
-    showModalBottomSheet(
+    showModalBottomSheet<void>(
       context: context,
       sheetAnimationStyle: _settingsSheetAnimationStyle,
       backgroundColor: colors.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      builder: (context) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(AppSpacing.lg),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: colors.divider,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
+      builder: (actionContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.lg,
+                vertical: AppSpacing.md,
               ),
-              const SizedBox(height: AppSpacing.md),
-              Text(
-                context.tr(isSecondary ? '选择第二字体颜色' : '选择字体颜色'),
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                  color: colors.textPrimary,
-                ),
-              ),
-              const SizedBox(height: AppSpacing.md),
-              Wrap(
-                spacing: 12,
-                runSpacing: 12,
+              child: Row(
                 children: [
-                  // 恢复默认色
-                  GestureDetector(
-                    onTap: () => apply(''),
-                    child: Container(
-                      width: 56,
-                      height: 56,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: colors.surfaceVariant,
-                        border: currentHex.isEmpty
-                            ? Border.all(color: colors.textPrimary, width: 3)
-                            : Border.all(color: colors.divider, width: 1),
-                      ),
-                      child: Icon(
-                        Icons.restart_alt,
-                        size: 22,
-                        color: colors.textSecondary,
-                      ),
+                  Container(
+                    width: 24,
+                    height: 24,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: _parseHexColor(hex),
+                      border: Border.all(color: colors.divider, width: 1),
                     ),
                   ),
-                  ...presetColors.map((item) {
-                    final isSelected = item.$1 == currentHex;
-                    return GestureDetector(
-                      onTap: () => apply(item.$1),
-                      child: Container(
-                        width: 56,
-                        height: 56,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: _parseHexColor(item.$1),
-                          border: isSelected
-                              ? Border.all(color: colors.textPrimary, width: 3)
-                              : null,
-                        ),
-                        child: isSelected
-                            ? const Icon(
-                                Icons.check,
-                                color: Colors.white,
-                                size: 24,
-                              )
-                            : null,
-                      ),
-                    );
-                  }),
+                  const SizedBox(width: 12),
+                  Text(
+                    '${actionContext.tr('自定义颜色')} $hex',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: colors.textPrimary,
+                    ),
+                  ),
                 ],
               ),
-              const SizedBox(height: AppSpacing.md),
-              Text(
-                context.tr('第一个圆圈表示恢复主题默认色'),
-                style: TextStyle(fontSize: 12, color: colors.textHint),
+            ),
+            _SettingDivider(colors: colors),
+            ListTile(
+              leading: Icon(Icons.edit_outlined, color: colors.textSecondary),
+              title: Text(
+                actionContext.tr('编辑颜色'),
+                style: TextStyle(color: colors.textPrimary),
               ),
-              const SizedBox(height: AppSpacing.md),
-              // 新增自定义颜色
-              OutlinedButton.icon(
-                onPressed: () {
-                  Navigator.pop(context);
-                  _showHsvColorPicker(
-                    context,
-                    colors,
-                    isSecondary: isSecondary,
-                    initial: currentHex.isEmpty
-                        ? (isSecondary
-                              ? colors.textSecondary
-                              : colors.textPrimary)
-                        : _parseHexColor(currentHex),
-                  );
-                },
-                icon: const Icon(Icons.colorize, size: 18),
-                label: Text(context.tr('新增颜色')),
+              onTap: () {
+                Navigator.pop(actionContext);
+                onEdit();
+              },
+            ),
+            ListTile(
+              leading: Icon(
+                Icons.delete_outline,
+                color: colors.textSecondary,
               ),
-              const SizedBox(height: AppSpacing.lg),
-            ],
-          ),
+              title: Text(
+                actionContext.tr('删除颜色'),
+                style: TextStyle(color: colors.textPrimary),
+              ),
+              onTap: () {
+                Navigator.pop(actionContext);
+                onDelete();
+              },
+            ),
+            const SizedBox(height: AppSpacing.md),
+          ],
         ),
       ),
     );
@@ -962,10 +1164,11 @@ class _AppearanceContent extends ConsumerWidget {
   void _showHsvColorPicker(
     BuildContext context,
     ThemeColors colors, {
-    required bool isSecondary,
+    required String title,
     required Color initial,
+    required ValueChanged<String> onSave,
   }) {
-    showModalBottomSheet(
+    showModalBottomSheet<void>(
       context: context,
       sheetAnimationStyle: _settingsSheetAnimationStyle,
       backgroundColor: colors.surface,
@@ -982,9 +1185,7 @@ class _AppearanceContent extends ConsumerWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  sheetContext.tr(
-                    isSecondary ? '选择第二字体颜色' : '选择字体颜色',
-                  ),
+                  sheetContext.tr(title),
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w600,
@@ -996,28 +1197,10 @@ class _AppearanceContent extends ConsumerWidget {
                   initialColor: initial,
                   onCancel: () => Navigator.pop(sheetContext),
                   onSave: (color) {
+                    // 先关闭取色面板，再应用颜色（保存后会重新打开颜色列表）。
                     final hex = _toHexString(color);
-                    final container = ProviderScope.containerOf(sheetContext);
-                    if (isSecondary) {
-                      container
-                          .read(themeSecondaryFontColorProvider.notifier)
-                          .state = hex;
-                      unawaited(
-                        _doPersist(
-                          container,
-                          (s) => s.setThemeSecondaryFontColor(hex),
-                        ),
-                      );
-                    } else {
-                      container.read(themeFontColorProvider.notifier).state = hex;
-                      unawaited(
-                        _doPersist(
-                          container,
-                          (s) => s.setThemeFontColor(hex),
-                        ),
-                      );
-                    }
                     Navigator.pop(sheetContext);
+                    onSave(hex);
                   },
                 ),
               ],

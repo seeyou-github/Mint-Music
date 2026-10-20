@@ -22,6 +22,10 @@ struct DesktopLyricElement {
   std::wstring text;
   unsigned int color = 0xFFFFFFFF;
   int alpha_scale = 100;
+  /// 是否为当前播放行主歌词（居中显示，超长时横向滚动）。
+  bool active = false;
+  /// 是否属于当前播放行（含翻译 / 音译），居中显示。
+  bool centered = false;
 };
 
 /// 桌面歌词窗口。
@@ -69,14 +73,15 @@ class DesktopLyricWindow {
   /// 设置 / 清除拖动结束后的位置回调（参数为屏幕百分比）。
   void SetPositionCallback(std::function<void(double, double)> callback);
 
- private:
-  DesktopLyricWindow() = default;
-  ~DesktopLyricWindow() = default;
-
+  /// 窗口过程（注册窗口类时需要取它的地址）。
   static LRESULT CALLBACK WindowProc(HWND hwnd,
                                      UINT message,
                                      WPARAM wparam,
                                      LPARAM lparam);
+
+ private:
+  DesktopLyricWindow() = default;
+  ~DesktopLyricWindow() = default;
 
   LRESULT HandleMessage(HWND hwnd,
                         UINT message,
@@ -89,8 +94,8 @@ class DesktopLyricWindow {
   void EnsureFont();
   /// 组装当前要绘制的歌词元素。
   std::vector<DesktopLyricElement> BuildElements() const;
-  /// 测量歌词内容所需高度（长句按窗口宽度换行）。
-  int MeasureContentHeight(int width);
+  /// 测量歌词内容所需高度（每行只显示一行文字，超长横向滚动）。
+  int MeasureContentHeight() const;
   /// 推进当前歌词行；返回是否发生了变化（变化时需要重绘）。
   bool AdvanceActiveIndex();
   void Paint();
@@ -122,6 +127,10 @@ class DesktopLyricWindow {
   // 歌词
   std::vector<DesktopLyricLine> lines_;
   int active_index_ = -1;
+
+  // 当前播放行超出窗口宽度时的横向滚动
+  ULONGLONG marquee_start_tick_ = 0;
+  int marquee_overflow_px_ = 0;
 
   // 播放进度锚点
   long long anchor_position_ms_ = 0;

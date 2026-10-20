@@ -27,6 +27,36 @@ class SettingsService {
   Future<void> setThemeSecondaryFontColor(String v) =>
       _prefs.setString('theme_secondary_font_color', v);
 
+  // -- 自定义颜色列表（外观设置里「新增颜色」保存的颜色） --
+  static const _themeCustomColorsKey = 'theme_custom_colors';
+  static const _fontCustomColorsKey = 'font_custom_colors';
+  static const _secondaryFontCustomColorsKey =
+      'secondary_font_custom_colors';
+
+  List<String> _getColorList(String key) {
+    final list = _prefs.getStringList(key);
+    if (list == null) return const [];
+    return list
+        .where((value) => value.trim().isNotEmpty)
+        .toList(growable: false);
+  }
+
+  /// 主题色的自定义颜色列表。
+  List<String> getCustomThemeColors() => _getColorList(_themeCustomColorsKey);
+  Future<void> setCustomThemeColors(List<String> values) =>
+      _prefs.setStringList(_themeCustomColorsKey, values);
+
+  /// 字体颜色的自定义颜色列表。
+  List<String> getCustomFontColors() => _getColorList(_fontCustomColorsKey);
+  Future<void> setCustomFontColors(List<String> values) =>
+      _prefs.setStringList(_fontCustomColorsKey, values);
+
+  /// 第二字体颜色的自定义颜色列表。
+  List<String> getCustomSecondaryFontColors() =>
+      _getColorList(_secondaryFontCustomColorsKey);
+  Future<void> setCustomSecondaryFontColors(List<String> values) =>
+      _prefs.setStringList(_secondaryFontCustomColorsKey, values);
+
   // -- audio quality --
   String getAudioQuality() => _prefs.getString('audio_quality') ?? '128k';
   Future<void> setAudioQuality(String v) =>

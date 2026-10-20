@@ -115,7 +115,8 @@ class DesktopLyricOverlay {
         'isLock': settings.isLock,
         'isSingleLine': settings.isSingleLine,
         'showToggleAnima': settings.showToggleAnima,
-        'maxLineNum': settings.maxLineNum,
+        // 单行模式下原生侧只按 1 行布局（Windows 原生窗口也据此渲染）。
+        'maxLineNum': settings.visibleLineNum,
         'fontSize': settings.fontSize,
         'opacityPercent': settings.opacityPercent,
         'widthPercent': settings.widthPercent,
