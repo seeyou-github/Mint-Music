@@ -123,8 +123,9 @@ class DownloadRepository {
       if (_tasks[i].status == DownloadStatus.completed) {
         final file = File(_tasks[i].filePath);
         if (!await file.exists()) {
+          // 文件被删除 / 移动：单独状态，界面上显示「文件已删除」而不是「失败」
           _tasks[i] = _tasks[i].copyWith(
-            status: DownloadStatus.error,
+            status: DownloadStatus.fileMissing,
             error: '文件已删除或移动',
           );
         }
@@ -298,7 +299,8 @@ class DownloadRepository {
     final task = _tasks[index];
     if (task.status != DownloadStatus.paused &&
         task.status != DownloadStatus.error &&
-        task.status != DownloadStatus.cancelled) {
+        task.status != DownloadStatus.cancelled &&
+        task.status != DownloadStatus.fileMissing) {
       return;
     }
 
@@ -454,7 +456,8 @@ class DownloadRepository {
           break;
         case 'failed':
           if (task.status == DownloadStatus.error ||
-              task.status == DownloadStatus.cancelled) {
+              task.status == DownloadStatus.cancelled ||
+              task.status == DownloadStatus.fileMissing) {
             toRemove.add(task.id);
           }
           break;

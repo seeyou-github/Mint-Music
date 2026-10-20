@@ -57,6 +57,16 @@
 ### 修复
 - 修复 Windows 上设置缓存目录后缓存仍写入系统临时目录：封面、播放器封面与网络图片缓存现在统一写入设置的缓存目录
 - 修复「清除本地缓存」会清空整个系统临时目录的问题（现在只清理应用自己的缓存目录）
+- 修复下载管理页里「歌曲文件被删除」的任务显示为「失败」：现在单独标记为「文件已删除」
+- 修复缓存目录里的音频缓存文件名不友好：改名为「歌手 - 歌名 [音质].扩展名」
+- 修复 Windows 听歌识曲提示「音频指纹模块初始化失败，请重试」但原因不明的问题
+  - 新增 WebView 运行时检测：Windows 上 InAppWebView 依赖 Microsoft Edge WebView2 运行时，
+    未安装时无法创建 WebView（音频指纹的 WASM、AMLL 歌词都跑不起来）
+  - 缺少运行时时给出明确提示，并在识别页提供「下载 WebView2 运行时」入口
+  - AMLL 歌词引擎改为按「WebView 是否可用」判断：装了 WebView2 就能正常使用 Apple Music 风格歌词，
+    没装则自动回退到原生歌词渲染（桌面歌词窗口同样是原生渲染）
+- 修复下载的歌曲没有内嵌封面的问题：封面下载改为带 Referer / User-Agent、接收超时放宽到 60 秒，
+  网易 CDN 优先请求 400x400 缩略图（原图 2MB+ 容易超时），失败自动换地址重试
 - 修复 Windows 本地页「选择目录 → 确认并重新扫描」后显示「加载失败」、点「重试」无反应的问题
   - 桌面端没有 MediaStore（`on_audio_query` 仅 Android/iOS），扫描会抛 MissingPluginException；现在桌面端改为纯 Dart 遍历目录并解析文件标签
   - 新增纯 Dart 元信息解析：MP3（ID3v2 + MPEG 帧头算时长）、FLAC（STREAMINFO + Vorbis Comment + PICTURE）、M4A/MP4（moov/udta/meta/ilst）、WAV（fmt/data + LIST/INFO）、OGG（Vorbis Comment + 末页 granule）

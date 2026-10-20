@@ -480,6 +480,8 @@ class MusicAudioHandler extends BaseAudioHandler
                 songId: song.id,
                 quality: song.sourceQuality ?? '320k',
                 source: song.source,
+                artist: song.artist,
+                title: song.title,
                 url: url,
               );
 
@@ -509,6 +511,8 @@ class MusicAudioHandler extends BaseAudioHandler
               songId: song?.id ?? url,
               quality: song?.sourceQuality ?? '320k',
               source: song?.source,
+              artist: song?.artist,
+              title: song?.title,
             ),
           );
         }

@@ -927,7 +927,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                     ),
                     if (!supported)
                       Text(
-                        context.tr('Windows 端暂不支持，已使用原生歌词渲染'),
+                        context.tr('当前系统缺少 WebView 运行时，已使用原生歌词渲染'),
                         style: TextStyle(
                           fontSize: 11,
                           color: AppColors.textSecondary.withValues(alpha: 0.6),

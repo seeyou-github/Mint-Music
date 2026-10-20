@@ -35,17 +35,10 @@ class TagWriteService {
     try {
       if (cover && songInfo.coverUrl != null && songInfo.coverUrl!.isNotEmpty) {
         try {
-          final coverRes = await Dio().get<List<int>>(
-            songInfo.coverUrl!,
-            options: Options(responseType: ResponseType.bytes, receiveTimeout: const Duration(seconds: 15)),
-          );
-          final rawBytes = coverRes.data;
-          if (rawBytes != null && rawBytes.isNotEmpty) {
-            coverBytes = Uint8List.fromList(rawBytes);
-            final coverExt = _resolveCoverExt(
-              songInfo.coverUrl!,
-              coverRes.headers.value('content-type'),
-            );
+          final bytes = await _downloadCover(songInfo.coverUrl!);
+          if (bytes != null && bytes.isNotEmpty) {
+            coverBytes = bytes;
+            final coverExt = _coverExtFromBytes(bytes, songInfo.coverUrl!);
             coverPath = '$dirName${Platform.pathSeparator}$baseName$coverExt';
             await File(coverPath).writeAsBytes(coverBytes!);
             debugPrint('[TagWriteService] 封面已下载: $coverPath (${coverBytes!.length} bytes)');
@@ -146,6 +139,74 @@ class TagWriteService {
         debugPrint('[TagWriteService] 封面保留为独立文件: $coverPath');
       }
     }
+  }
+
+  /// 下载封面图片。
+  ///
+  /// 封面地址来自各音源的 CDN，常见问题有两个：
+  /// 1. 网易 CDN 的原图有 2MB+（很容易触发超时），优先改用 400x400 缩略图；
+  /// 2. 少数 CDN 需要 Referer / User-Agent。
+  ///
+  /// 这里按候选地址依次尝试，任一成功即返回。
+  Future<Uint8List?> _downloadCover(String url) async {
+    final dio = Dio(
+      BaseOptions(
+        connectTimeout: const Duration(seconds: 15),
+        receiveTimeout: const Duration(seconds: 60),
+        headers: const {
+          'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Referer': 'https://music.163.com',
+        },
+      ),
+    );
+
+    for (final candidate in _coverUrlCandidates(url)) {
+      try {
+        final response = await dio.get<List<int>>(
+          candidate,
+          options: Options(responseType: ResponseType.bytes),
+        );
+        final data = response.data;
+        if (data != null && data.isNotEmpty) {
+          return Uint8List.fromList(data);
+        }
+      } catch (e) {
+        debugPrint('[TagWriteService] 封面下载失败 ($candidate): $e');
+      }
+    }
+    return null;
+  }
+
+  /// 封面地址候选：网易 CDN 先用 400x400 缩略图，失败再试原图。
+  List<String> _coverUrlCandidates(String url) {
+    final candidates = <String>[];
+    if (url.contains('music.126.net')) {
+      final base = url.split('?').first;
+      final thumb = '$base?param=400y400';
+      if (thumb != url) candidates.add(thumb);
+    }
+    candidates.add(url);
+    return candidates;
+  }
+
+  /// 依据图片内容判断扩展名（URL 后缀可能不准，图片实际格式更可靠）。
+  String _coverExtFromBytes(Uint8List bytes, String url) {
+    if (bytes.length >= 4 &&
+        bytes[0] == 0x89 &&
+        bytes[1] == 0x50 &&
+        bytes[2] == 0x4E &&
+        bytes[3] == 0x47) {
+      return '.png';
+    }
+    if (bytes.length >= 12 &&
+        bytes[0] == 0x52 &&
+        bytes[1] == 0x49 &&
+        bytes[2] == 0x46 &&
+        bytes[3] == 0x46) {
+      return '.webp';
+    }
+    return _resolveCoverExt(url, null);
   }
 
   /// 写入基础信息与歌词。

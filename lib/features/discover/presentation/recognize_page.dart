@@ -4,10 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../shared/services/app_image_cache.dart';
+import '../../../shared/services/webview_availability.dart';
 import '../../player/application/playback_controller.dart';
 import '../application/recognize_provider.dart';
 import '../application/search_providers.dart';
@@ -157,7 +159,8 @@ class _RecognizePageState extends ConsumerState<RecognizePage> {
             ),
             // 桌面端的音频指纹模块需要一个真实存在的 WebView 来跑 afp.js，
             // 放在屏幕外，只执行 JS 不显示内容。
-            if (useDesktopFingerprint)
+            // 没有 WebView 运行时（Windows 未装 WebView2）时干脆不创建。
+            if (useDesktopFingerprint && WebViewAvailability.isAvailable)
               Positioned(
                 left: -400,
                 top: -400,
@@ -230,10 +233,34 @@ class _RecognizePageState extends ConsumerState<RecognizePage> {
     final isRecording = state.status == RecognizeStatus.recording;
 
     if (state.status == RecognizeStatus.failed) {
-      return Text(
-        state.errorMessage ?? tr('未能识别到歌曲'),
-        textAlign: TextAlign.center,
-        style: TextStyle(fontSize: 15, color: colors.error),
+      final message = state.errorMessage ?? tr('未能识别到歌曲');
+      // 缺少 WebView 运行时（Windows）时，给出下载入口。
+      final needsWebView = useDesktopFingerprint &&
+          !WebViewAvailability.isAvailable &&
+          message.contains('WebView2');
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            message,
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 15, color: colors.error),
+          ),
+          if (needsWebView) ...[
+            const SizedBox(height: AppSpacing.sm),
+            TextButton.icon(
+              onPressed: () => unawaited(
+                launchUrl(
+                  Uri.parse(WebViewAvailability.webView2DownloadUrl),
+                  mode: LaunchMode.externalApplication,
+                ),
+              ),
+              icon: const Icon(Icons.open_in_new, size: 16),
+              label: Text(context.tr('下载 WebView2 运行时')),
+              style: TextButton.styleFrom(foregroundColor: colors.primary),
+            ),
+          ],
+        ],
       );
     }
 

@@ -257,7 +257,10 @@ class _DownloadTaskItemState extends ConsumerState<_DownloadTaskItem> {
 
   bool get _isCompleted => task.status == DownloadStatus.completed;
 
-  bool get _isMissing => _isCompleted && _fileMissing == true;
+  /// 文件已被删除 / 移动（恢复任务时标记，或列表内检测到文件缺失）。
+  bool get _isMissing =>
+      task.status == DownloadStatus.fileMissing ||
+      (_isCompleted && _fileMissing == true);
 
   bool get _isDownloading =>
       task.status == DownloadStatus.downloading ||
@@ -326,7 +329,7 @@ class _DownloadTaskItemState extends ConsumerState<_DownloadTaskItem> {
           const SizedBox(height: 2),
           Text(
             _isMissing
-                ? context.tr('文件已删除或移动')
+                ? context.tr('文件已删除')
                 : (task.status == DownloadStatus.cancelled
                     ? context.tr('已取消')
                     : context.tr('失败')),

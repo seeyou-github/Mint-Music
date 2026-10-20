@@ -157,7 +157,8 @@ final downloadStatsProvider = Provider<({
       final completed = tasks.where((t) => t.status == DownloadStatus.completed).length;
       final failed = tasks.where((t) =>
           t.status == DownloadStatus.error ||
-          t.status == DownloadStatus.cancelled).length;
+          t.status == DownloadStatus.cancelled ||
+          t.status == DownloadStatus.fileMissing).length;
       return (total: tasks.length, downloading: downloading, completed: completed, failed: failed);
     },
     loading: () => (total: 0, downloading: 0, completed: 0, failed: 0),

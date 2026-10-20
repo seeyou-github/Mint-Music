@@ -11,6 +11,9 @@ enum DownloadStatus {
   completed,
   error,
   cancelled,
+
+  /// 下载完成但文件已被用户删除 / 移动（不是下载失败）。
+  fileMissing,
 }
 
 class DownloadTask {

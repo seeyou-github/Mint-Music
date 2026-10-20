@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import '../../../shared/services/webview_availability.dart';
 import 'audio_fingerprint_desktop_service.dart';
 
 /// 使用 WebView 执行 CeruMusic 的 AFP WASM 模块生成音频指纹
@@ -31,6 +32,9 @@ class AudioFingerprintService {
   bool get usesDesktopBridge =>
       Platform.isWindows || Platform.isLinux || Platform.isMacOS;
 
+  /// 当前平台是否有可用的 WebView（Windows 需要 Edge WebView2 运行时）。
+  bool get isWebViewAvailable => WebViewAvailability.isAvailable;
+
   /// 桌面端桥接实例（供宿主组件创建 WebView）。
   DesktopFingerprintBridge get desktopBridge => _desktop;
 
@@ -47,6 +51,10 @@ class AudioFingerprintService {
   /// 初始化 WebView 和 AFP WASM 模块
   Future<bool> initialize() async {
     if (usesDesktopBridge) {
+      if (!WebViewAvailability.isAvailable) {
+        debugPrint('[AFP] 未检测到可用的 WebView 运行时，无法初始化指纹模块');
+        return false;
+      }
       return _desktop.initialize();
     }
     if (_initialized) return true;

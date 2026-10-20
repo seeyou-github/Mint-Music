@@ -22,19 +22,41 @@ class AudioCacheService {
   /// 缓存子目录名。
   static const String subDirectoryName = 'audio_cache';
 
-  /// 缓存键：音源 + 歌曲 id + 音质（不同音源的同一首歌分开缓存）。
-  static String cacheKey({
+  /// 缓存文件名：`歌手 - 歌名 [音质].扩展名`。
+  ///
+  /// 缓存目录里的音频文件用「歌手 - 歌名」命名，方便直接识别；
+  /// 歌手 / 歌名缺失时回退为 `歌曲id-音质.扩展名`。
+  static String fileNameFor({
     required String songId,
     required String quality,
-    String? source,
+    required String extension,
+    String? artist,
+    String? title,
   }) {
-    return '${source ?? ''}|$songId|$quality';
+    final safeArtist = _sanitizeFileName(artist);
+    final safeTitle = _sanitizeFileName(title);
+    if (safeArtist.isNotEmpty && safeTitle.isNotEmpty) {
+      return '$safeArtist - $safeTitle [$quality].$extension';
+    }
+    if (safeTitle.isNotEmpty) {
+      return '$safeTitle [$quality].$extension';
+    }
+    if (safeArtist.isNotEmpty) {
+      return '$safeArtist [$quality].$extension';
+    }
+    final safeId = _sanitizeFileName(songId);
+    final safeQuality = _sanitizeFileName(quality);
+    return '$safeId-$safeQuality.$extension';
   }
 
-  /// 缓存文件名：`缓存键.扩展名`（非法字符会被替换）。
-  static String fileNameFor(String key, String extension) {
-    final safeKey = key.replaceAll(RegExp(r'[^\w\-.]'), '_');
-    return '$safeKey.$extension';
+  /// 去掉文件名里的非法字符（与下载文件名规则保持一致）。
+  static String _sanitizeFileName(String? value) {
+    if (value == null) return '';
+    return value
+        .replaceAll(RegExp(r'[/\\:*?"<>|\r\n\t]'), '')
+        .replaceAll(RegExp(r'^\.+'), '')
+        .replaceAll(RegExp(r'\.+$'), '')
+        .trim();
   }
 
   /// 推断缓存文件的扩展名：优先取 URL 上的扩展名，其次按音质判断。
@@ -63,13 +85,14 @@ class AudioCacheService {
     required String quality,
     required String url,
     String? source,
+    String? artist,
+    String? title,
   }) async {
     try {
       final dir = await CachePaths.subDirectory(subDirectoryName);
-      final key = cacheKey(songId: songId, quality: quality, source: source);
       final file = File(
         '${dir.path}${Platform.pathSeparator}'
-        '${fileNameFor(key, extensionFor(url, quality))}',
+        '${fileNameFor(songId: songId, quality: quality, extension: extensionFor(url, quality), artist: artist, title: title)}',
       );
       if (await file.exists() && await file.length() > 0) {
         return file;
@@ -87,14 +110,15 @@ class AudioCacheService {
     required String songId,
     required String quality,
     String? source,
+    String? artist,
+    String? title,
   }) async {
     File? temp;
     try {
       final dir = await CachePaths.subDirectory(subDirectoryName);
-      final key = cacheKey(songId: songId, quality: quality, source: source);
       final target = File(
         '${dir.path}${Platform.pathSeparator}'
-        '${fileNameFor(key, extensionFor(url, quality))}',
+        '${fileNameFor(songId: songId, quality: quality, extension: extensionFor(url, quality), artist: artist, title: title)}',
       );
       // 已经有缓存文件就不再重复下载。
       if (await target.exists() && await target.length() > 0) return;
