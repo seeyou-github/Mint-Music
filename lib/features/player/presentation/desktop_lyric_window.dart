@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -28,6 +29,9 @@ class DesktopLyricLayer extends ConsumerWidget {
       playbackControllerProvider.select((s) => s.currentSong != null),
     );
     if (!settings.enable || !hasSong) return const SizedBox.shrink();
+    // Windows 上歌词由独立的桌面歌词窗口渲染（应用最小化后仍显示在桌面上），
+    // 应用窗口内不再重复渲染一份。
+    if (Platform.isWindows) return const SizedBox.shrink();
     // 歌词已由系统悬浮窗接管,应用内不再重复渲染。
     if (status.usingNativeOverlay) return const SizedBox.shrink();
 

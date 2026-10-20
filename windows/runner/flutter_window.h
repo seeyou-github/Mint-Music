@@ -36,8 +36,17 @@ class FlutterWindow : public Win32Window {
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
       method_channel_;
 
+  // Channel used to control the native desktop lyric window.
+  std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
+      desktop_lyric_channel_;
+
   // Sends |method| to the Dart side.
   void SendToDart(const std::string& method);
+
+  // Handles a desktop lyric method call coming from the Dart side.
+  void HandleDesktopLyricCall(
+      const flutter::MethodCall<flutter::EncodableValue>& call,
+      std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result);
 };
 
 #endif  // RUNNER_FLUTTER_WINDOW_H_

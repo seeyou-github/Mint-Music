@@ -6,7 +6,99 @@
 #include <shobjidl.h>
 
 #include "flutter/generated_plugin_registrant.h"
+#include "desktop_lyric_window.h"
 #include "thumbnail_toolbar.h"
+
+namespace {
+
+// 从 EncodableMap 中按键取值的辅助函数。
+const flutter::EncodableValue* MapValue(const flutter::EncodableMap* map,
+                                        const char* key) {
+  if (map == nullptr) {
+    return nullptr;
+  }
+  const auto it = map->find(flutter::EncodableValue(std::string(key)));
+  if (it == map->end()) {
+    return nullptr;
+  }
+  return &it->second;
+}
+
+bool GetBool(const flutter::EncodableMap* map, const char* key, bool fallback) {
+  const auto* value = MapValue(map, key);
+  if (value == nullptr) {
+    return fallback;
+  }
+  if (const bool* result = std::get_if<bool>(value)) {
+    return *result;
+  }
+  return fallback;
+}
+
+int GetInt(const flutter::EncodableMap* map, const char* key, int fallback) {
+  const auto* value = MapValue(map, key);
+  if (value == nullptr) {
+    return fallback;
+  }
+  if (const int32_t* result = std::get_if<int32_t>(value)) {
+    return *result;
+  }
+  if (const int64_t* result = std::get_if<int64_t>(value)) {
+    return static_cast<int>(*result);
+  }
+  if (const double* result = std::get_if<double>(value)) {
+    return static_cast<int>(*result);
+  }
+  return fallback;
+}
+
+double GetDouble(const flutter::EncodableMap* map,
+                 const char* key,
+                 double fallback) {
+  const auto* value = MapValue(map, key);
+  if (value == nullptr) {
+    return fallback;
+  }
+  if (const double* result = std::get_if<double>(value)) {
+    return *result;
+  }
+  if (const int32_t* result = std::get_if<int32_t>(value)) {
+    return static_cast<double>(*result);
+  }
+  if (const int64_t* result = std::get_if<int64_t>(value)) {
+    return static_cast<double>(*result);
+  }
+  return fallback;
+}
+
+std::string GetStringUtf8(const flutter::EncodableMap* map, const char* key) {
+  const auto* value = MapValue(map, key);
+  if (value == nullptr) {
+    return std::string();
+  }
+  if (const std::string* result = std::get_if<std::string>(value)) {
+    return *result;
+  }
+  return std::string();
+}
+
+// UTF-8 字符串转 UTF-16（GDI 绘制中文需要 UTF-16）。
+std::wstring Utf8ToWide(const std::string& text) {
+  if (text.empty()) {
+    return std::wstring();
+  }
+  const int length =
+      ::MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, nullptr, 0);
+  if (length <= 1) {
+    return std::wstring();
+  }
+  std::wstring wide(static_cast<size_t>(length), L'\0');
+  ::MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, &wide[0], length);
+  wide.resize(static_cast<size_t>(length - 1));
+  return wide;
+}
+
+}  // namespace
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
     : project_(project) {}
@@ -59,6 +151,35 @@ bool FlutterWindow::OnCreate() {
         result->Success();
       });
 
+  // 桌面歌词：Dart 侧通过该通道控制独立的桌面歌词窗口。
+  desktop_lyric_channel_ =
+      std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+          flutter_controller_->engine()->messenger(),
+          "com.mintmusic/desktop_lyric",
+          &flutter::StandardMethodCodec::GetInstance());
+  desktop_lyric_channel_->SetMethodCallHandler(
+      [this](const flutter::MethodCall<flutter::EncodableValue>& call,
+             std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>
+                 result) {
+        HandleDesktopLyricCall(call, std::move(result));
+      });
+
+  // 桌面歌词窗口被拖动后，把新位置回传给 Dart 侧持久化。
+  mintmusic::DesktopLyricWindow::Instance().SetPositionCallback(
+      [this](double x, double y) {
+        if (!desktop_lyric_channel_) {
+          return;
+        }
+        flutter::EncodableMap arguments;
+        arguments[flutter::EncodableValue(std::string("x"))] =
+            flutter::EncodableValue(x);
+        arguments[flutter::EncodableValue(std::string("y"))] =
+            flutter::EncodableValue(y);
+        desktop_lyric_channel_->InvokeMethod(
+            "onPositionChanged",
+            std::make_unique<flutter::EncodableValue>(arguments));
+      });
+
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
     this->Show();
   });
@@ -84,6 +205,96 @@ void FlutterWindow::SendToDart(const std::string& method) {
     return;
   }
   method_channel_->InvokeMethod(method, nullptr);
+}
+
+void FlutterWindow::HandleDesktopLyricCall(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  auto& window = mintmusic::DesktopLyricWindow::Instance();
+  const auto* arguments = std::get_if<flutter::EncodableMap>(call.arguments());
+
+  if (call.method_name() == "show") {
+    window.Show();
+    result->Success(window.IsShowing());
+    return;
+  }
+  if (call.method_name() == "hide") {
+    window.Hide();
+    result->Success();
+    return;
+  }
+  if (call.method_name() == "isShowing") {
+    result->Success(window.IsShowing());
+    return;
+  }
+  if (call.method_name() == "checkPermission") {
+    // Windows 的顶层窗口不需要额外授权。
+    result->Success(true);
+    return;
+  }
+  if (call.method_name() == "openPermissionSettings") {
+    // Windows 无需跳转系统授权页。
+    result->Success();
+    return;
+  }
+  if (call.method_name() == "updateConfig") {
+    const std::string align = GetStringUtf8(arguments, "textAlignX");
+    int align_value = 1;
+    if (align == "left") {
+      align_value = 0;
+    } else if (align == "right") {
+      align_value = 2;
+    }
+    window.UpdateConfig(
+        GetBool(arguments, "isLock", false),
+        GetInt(arguments, "maxLineNum", 1),
+        static_cast<int>(GetDouble(arguments, "fontSize", 18)),
+        GetInt(arguments, "opacityPercent", 100),
+        GetInt(arguments, "widthPercent", 30),
+        static_cast<unsigned int>(
+            GetInt(arguments, "playedColor", static_cast<int>(0xFFFFFFFF))),
+        static_cast<unsigned int>(
+            GetInt(arguments, "unplayColor", static_cast<int>(0xFFFFFFFF))),
+        static_cast<unsigned int>(
+            GetInt(arguments, "shadowColor", static_cast<int>(0xFF000000))),
+        GetDouble(arguments, "positionX", 50),
+        GetDouble(arguments, "positionY", 20), align_value);
+    result->Success();
+    return;
+  }
+  if (call.method_name() == "updateLyric") {
+    std::vector<mintmusic::DesktopLyricLine> lines;
+    const auto* lines_value = MapValue(arguments, "lines");
+    if (lines_value != nullptr) {
+      const auto* list = std::get_if<flutter::EncodableList>(lines_value);
+      if (list != nullptr) {
+        for (const auto& item : *list) {
+          const auto* line_map = std::get_if<flutter::EncodableMap>(&item);
+          if (line_map == nullptr) {
+            continue;
+          }
+          mintmusic::DesktopLyricLine line;
+          line.time_ms = GetInt(line_map, "time", 0);
+          line.text = Utf8ToWide(GetStringUtf8(line_map, "text"));
+          line.translation = Utf8ToWide(GetStringUtf8(line_map, "translation"));
+          line.roman = Utf8ToWide(GetStringUtf8(line_map, "roman"));
+          lines.push_back(line);
+        }
+      }
+    }
+    window.UpdateLyric(lines, GetInt(arguments, "activeIndex", 0),
+                       GetBool(arguments, "showTranslation", false),
+                       GetBool(arguments, "showRoman", false));
+    result->Success();
+    return;
+  }
+  if (call.method_name() == "setPlayState") {
+    window.SetPlayState(static_cast<long long>(GetInt(arguments, "positionMs", 0)),
+                        GetBool(arguments, "isPlaying", false));
+    result->Success();
+    return;
+  }
+  result->NotImplemented();
 }
 
 LRESULT

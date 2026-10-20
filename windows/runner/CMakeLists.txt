@@ -10,6 +10,7 @@ project(runner LANGUAGES CXX)
 #
 # Any new source files that you add to the application should be added here.
 add_executable(${RUNNER_TARGET_NAME} WIN32
+  "desktop_lyric_window.cpp"
   "flutter_window.cpp"
   "main.cpp"
   "thumbnail_toolbar.cpp"

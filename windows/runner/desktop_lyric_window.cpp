@@ -1,0 +1,483 @@
+#include "desktop_lyric_window.h"
+
+#include <windowsx.h>
+
+#include <algorithm>
+#include <cstring>
+
+namespace mintmusic {
+
+namespace {
+
+constexpr wchar_t kWindowClassName[] = L"MintMusicDesktopLyricWindow";
+constexpr UINT_PTR kTimerId = 1;
+constexpr int kTimerIntervalMs = 50;
+
+/// 注册窗口类（只注册一次）。
+ATOM RegisterLyricWindowClass() {
+  static ATOM atom = 0;
+  if (atom != 0) {
+    return atom;
+  }
+  WNDCLASSEXW wc{};
+  wc.cbSize = sizeof(WNDCLASSEXW);
+  wc.style = CS_HREDRAW | CS_VREDRAW;
+  wc.lpfnWndProc = &DesktopLyricWindow::WindowProc;
+  wc.hInstance = ::GetModuleHandle(nullptr);
+  wc.hCursor = ::LoadCursor(nullptr, IDC_ARROW);
+  wc.hbrBackground = nullptr;
+  wc.lpszClassName = kWindowClassName;
+  atom = ::RegisterClassExW(&wc);
+  return atom;
+}
+
+/// 虚拟屏幕尺寸与原点（多显示器时坐标可能为负）。
+void GetVirtualScreen(int* left, int* top, int* width, int* height) {
+  RECT desktop{};
+  ::GetWindowRect(::GetDesktopWindow(), &desktop);
+  *left = desktop.left;
+  *top = desktop.top;
+  *width = desktop.right - desktop.left;
+  *height = desktop.bottom - desktop.top;
+  if (*width <= 0) *width = ::GetSystemMetrics(SM_CXSCREEN);
+  if (*height <= 0) *height = ::GetSystemMetrics(SM_CYSCREEN);
+}
+
+}  // namespace
+
+DesktopLyricWindow& DesktopLyricWindow::Instance() {
+  static DesktopLyricWindow instance;
+  return instance;
+}
+
+int DesktopLyricWindow::GetLineHeight() const {
+  return font_size_ * 3 / 2;
+}
+
+void DesktopLyricWindow::SetPositionCallback(
+    std::function<void(double, double)> callback) {
+  position_callback_ = std::move(callback);
+}
+
+void DesktopLyricWindow::Show() {
+  CreateWindowIfNeeded();
+  if (window_ == nullptr) {
+    return;
+  }
+  ApplySizeAndPosition();
+  ::ShowWindow(window_, SW_SHOWNOACTIVATE);
+  ::UpdateWindow(window_);
+}
+
+void DesktopLyricWindow::Hide() {
+  DestroyWindowIfNeeded();
+}
+
+void DesktopLyricWindow::CreateWindowIfNeeded() {
+  if (window_ != nullptr) {
+    return;
+  }
+  if (RegisterLyricWindowClass() == 0) {
+    return;
+  }
+  window_ = ::CreateWindowExW(
+      WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+      kWindowClassName, L"", WS_POPUP, 0, 0, 400, 100, nullptr, nullptr,
+      ::GetModuleHandle(nullptr), nullptr);
+  if (window_ == nullptr) {
+    return;
+  }
+  ::SetTimer(window_, kTimerId, kTimerIntervalMs, nullptr);
+}
+
+void DesktopLyricWindow::DestroyWindowIfNeeded() {
+  if (window_ == nullptr) {
+    return;
+  }
+  ::DestroyWindow(window_);
+  window_ = nullptr;
+}
+
+void DesktopLyricWindow::UpdateConfig(bool is_lock,
+                                       int max_line_num,
+                                       int font_size,
+                                       int opacity_percent,
+                                       int width_percent,
+                                       unsigned int played_color,
+                                       unsigned int unplay_color,
+                                       unsigned int shadow_color,
+                                       double position_x,
+                                       double position_y,
+                                       int align) {
+  is_lock_ = is_lock;
+  max_line_num_ = std::max(1, max_line_num);
+  font_size_ = std::max(10, font_size);
+  opacity_percent_ = std::max(10, std::min(100, opacity_percent));
+  width_percent_ = std::max(10, std::min(100, width_percent));
+  played_color_ = played_color;
+  unplay_color_ = unplay_color;
+  shadow_color_ = shadow_color;
+  position_x_ = position_x;
+  position_y_ = position_y;
+  align_ = align;
+
+  if (font_ != nullptr) {
+    ::DeleteObject(font_);
+    font_ = nullptr;
+  }
+  if (window_ != nullptr) {
+    ApplySizeAndPosition();
+    Paint();
+  }
+}
+
+void DesktopLyricWindow::UpdateLyric(const std::vector<DesktopLyricLine>& lines,
+                                     int active_index,
+                                     bool show_translation,
+                                     bool show_roman) {
+  lines_ = lines;
+  active_index_ = active_index;
+  show_translation_ = show_translation;
+  show_roman_ = show_roman;
+  if (window_ != nullptr) {
+    ApplySizeAndPosition();
+    Paint();
+  }
+}
+
+void DesktopLyricWindow::SetPlayState(long long position_ms, bool is_playing) {
+  anchor_position_ms_ = position_ms;
+  anchor_tick_ = ::GetTickCount64();
+  is_playing_ = is_playing;
+}
+
+void DesktopLyricWindow::EnsureFont() {
+  if (font_ != nullptr) {
+    return;
+  }
+  font_ = ::CreateFontW(
+      -font_size_, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+      OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
+      DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
+  if (font_ == nullptr) {
+    font_ = ::CreateFontW(
+        -font_size_, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+        OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE, L"SimHei");
+  }
+}
+
+void DesktopLyricWindow::ApplySizeAndPosition() {
+  if (window_ == nullptr) {
+    return;
+  }
+  int screen_left = 0;
+  int screen_top = 0;
+  int screen_width = 0;
+  int screen_height = 0;
+  GetVirtualScreen(&screen_left, &screen_top, &screen_width, &screen_height);
+
+  const int width =
+      std::min(800, std::max(200, screen_width * width_percent_ / 100));
+  // 高度按当前会绘制的元素数量计算（最后几行歌词变少时窗口会略微变矮）。
+  int element_count = 0;
+  if (active_index_ >= 0 && active_index_ < static_cast<int>(lines_.size())) {
+    for (int i = active_index_;
+         i < static_cast<int>(lines_.size()) && element_count < max_line_num_;
+         i++) {
+      element_count++;
+      if (show_translation_ && !lines_[i].translation.empty()) {
+        element_count++;
+      }
+      if (show_roman_ && !lines_[i].roman.empty()) {
+        element_count++;
+      }
+    }
+  }
+  const int height = std::max(GetLineHeight(), element_count * GetLineHeight());
+
+  int x = screen_left + static_cast<int>(position_x_ / 100.0 *
+                                        std::max(0, screen_width - width));
+  int y = screen_top + static_cast<int>(position_y_ / 100.0 *
+                                        std::max(0, screen_height - height));
+  if (x < screen_left) x = screen_left;
+  if (y < screen_top) y = screen_top;
+
+  // 锁定：置顶显示，且鼠标点击穿透到下层内容。
+  LONG_PTR ex_style = WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
+  if (is_lock_) {
+    ex_style |= WS_EX_TRANSPARENT;
+  }
+  ::SetWindowLongPtrW(window_, GWL_EXSTYLE, ex_style);
+
+  ::SetWindowPos(window_, is_lock_ ? HWND_TOPMOST : HWND_NOTOPMOST, x, y, width,
+                 height, SWP_NOACTIVATE);
+}
+
+void DesktopLyricWindow::AdvanceActiveIndex() {
+  if (lines_.empty()) {
+    active_index_ = -1;
+    return;
+  }
+  if (!is_playing_) {
+    return;
+  }
+  const ULONGLONG now = ::GetTickCount64();
+  const long long position =
+      anchor_position_ms_ + static_cast<long long>(now - anchor_tick_);
+  int index = 0;
+  for (size_t i = 0; i < lines_.size(); i++) {
+    if (lines_[i].time_ms <= position) {
+      index = static_cast<int>(i);
+    } else {
+      break;
+    }
+  }
+  if (index != active_index_) {
+    active_index_ = index;
+    ApplySizeAndPosition();
+  }
+}
+
+void DesktopLyricWindow::Paint() {
+  if (window_ == nullptr) {
+    return;
+  }
+  RECT client{};
+  ::GetClientRect(window_, &client);
+  const int width = client.right - client.left;
+  const int height = client.bottom - client.top;
+  if (width <= 0 || height <= 0) {
+    return;
+  }
+
+  HDC screen_dc = ::GetDC(window_);
+  if (screen_dc == nullptr) {
+    return;
+  }
+
+  BITMAPINFO bitmap_info{};
+  bitmap_info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+  bitmap_info.bmiHeader.biWidth = width;
+  // 负数表示位图自上而下排列，方便按行绘制。
+  bitmap_info.bmiHeader.biHeight = -height;
+  bitmap_info.bmiHeader.biPlanes = 1;
+  bitmap_info.bmiHeader.biBitCount = 32;
+  bitmap_info.bmiHeader.biCompression = BI_RGB;
+
+  void* canvas_bits = nullptr;
+  HBITMAP canvas_bitmap = ::CreateDIBSection(screen_dc, &bitmap_info,
+                                             DIB_RGB_COLORS, &canvas_bits,
+                                             nullptr, 0);
+  void* mask_bits = nullptr;
+  HBITMAP mask_bitmap = ::CreateDIBSection(screen_dc, &bitmap_info, DIB_RGB_COLORS,
+                                           &mask_bits, nullptr, 0);
+  if (canvas_bitmap == nullptr || mask_bitmap == nullptr) {
+    if (canvas_bitmap != nullptr) ::DeleteObject(canvas_bitmap);
+    if (mask_bitmap != nullptr) ::DeleteObject(mask_bitmap);
+    ::ReleaseDC(window_, screen_dc);
+    return;
+  }
+
+  HDC canvas_dc = ::CreateCompatibleDC(screen_dc);
+  HDC mask_dc = ::CreateCompatibleDC(screen_dc);
+  HGDIOBJ old_canvas = ::SelectObject(canvas_dc, canvas_bitmap);
+  HGDIOBJ old_mask = ::SelectObject(mask_dc, mask_bitmap);
+
+  const size_t pixel_count =
+      static_cast<size_t>(width) * static_cast<size_t>(height);
+  std::memset(canvas_bits, 0, pixel_count * 4);
+  std::memset(mask_bits, 0, pixel_count * 4);
+
+  EnsureFont();
+  ::SelectObject(mask_dc, font_);
+  ::SetBkMode(mask_dc, TRANSPARENT);
+  ::SetTextColor(mask_dc, RGB(255, 255, 255));
+
+  auto* canvas = reinterpret_cast<uint32_t*>(canvas_bits);
+  auto* mask = reinterpret_cast<uint32_t*>(mask_bits);
+
+  const int line_height = GetLineHeight();
+  const int global_alpha = opacity_percent_ * 255 / 100;
+  UINT align_flag = DT_CENTER;
+  if (align_ == 0) {
+    align_flag = DT_LEFT;
+  } else if (align_ == 2) {
+    align_flag = DT_RIGHT;
+  }
+
+  // 把一段文字画到蒙版（黑底白字），再按颜色合成到画布。
+  auto draw_text = [&](const std::wstring& text, int y, unsigned int color,
+                       int alpha_scale, int offset_x, int offset_y) {
+    if (text.empty()) {
+      return;
+    }
+    std::memset(mask_bits, 0, pixel_count * 4);
+    ::SelectObject(mask_dc, font_);
+    RECT text_rect{offset_x, y + offset_y, width, y + offset_y + line_height};
+    ::DrawTextW(mask_dc, text.c_str(), -1, &text_rect,
+                static_cast<UINT>(DT_SINGLELINE | DT_NOPREFIX | DT_VCENTER |
+                                  align_flag));
+    const uint32_t alpha_base = ((color >> 24) & 0xFF) * alpha_scale / 100;
+    // 再乘上整体不透明度（设置里的「不透明度」）。
+    const uint32_t alpha_limit = alpha_base * global_alpha / 255;
+    for (size_t i = 0; i < pixel_count; i++) {
+      const uint32_t coverage = mask[i] & 0xFF;
+      if (coverage == 0) {
+        continue;
+      }
+      const uint32_t alpha = coverage * alpha_limit / 255;
+      if (alpha == 0) {
+        continue;
+      }
+      const uint32_t r = (color & 0x00FF0000) >> 16;
+      const uint32_t g = (color & 0x0000FF00) >> 8;
+      const uint32_t b = (color & 0x000000FF);
+      canvas[i] = (alpha << 24) | (((r * alpha / 255) & 0xFF) << 16) |
+                   (((g * alpha / 255) & 0xFF) << 8) | ((b * alpha / 255) & 0xFF);
+    }
+  };
+
+  // 逐行绘制：当前行用高亮色，其余用普通色；下方跟随几行。
+  int y = 0;
+  if (active_index_ >= 0 && active_index_ < static_cast<int>(lines_.size())) {
+    for (int i = active_index_;
+         i < static_cast<int>(lines_.size()) && (i - active_index_) < max_line_num_;
+         i++) {
+      const bool is_active = (i == active_index_);
+      const unsigned int color = is_active ? played_color_ : unplay_color_;
+      // 阴影：先在右下偏移 1 像素处画一遍。
+      if ((shadow_color_ >> 24) != 0) {
+        draw_text(lines_[i].text, y, shadow_color_, 60, 1, 1);
+      }
+      draw_text(lines_[i].text, y, color, 100, 0, 0);
+      y += line_height;
+      if (show_translation_ && !lines_[i].translation.empty()) {
+        draw_text(lines_[i].translation, y, unplay_color_, 80, 0, 0);
+        y += line_height;
+      }
+      if (show_roman_ && !lines_[i].roman.empty()) {
+        draw_text(lines_[i].roman, y, unplay_color_, 80, 0, 0);
+        y += line_height;
+      }
+    }
+  }
+
+  POINT origin{0, 0};
+  RECT window_rect{};
+  ::GetWindowRect(window_, &window_rect);
+  origin.x = window_rect.left;
+  origin.y = window_rect.top;
+  SIZE size{width, height};
+  POINT src{0, 0};
+  BLENDFUNCTION blend{AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
+  ::UpdateLayeredWindow(window_, screen_dc, &origin, &size, canvas_dc, &src, 0,
+                        &blend, ULW_ALPHA);
+
+  ::SelectObject(canvas_dc, old_canvas);
+  ::SelectObject(mask_dc, old_mask);
+  ::DeleteDC(canvas_dc);
+  ::DeleteDC(mask_dc);
+  ::DeleteObject(canvas_bitmap);
+  ::DeleteObject(mask_bitmap);
+  ::ReleaseDC(window_, screen_dc);
+}
+
+void DesktopLyricWindow::ReportPosition() {
+  if (!position_callback_ || window_ == nullptr) {
+    return;
+  }
+  RECT rect{};
+  ::GetWindowRect(window_, &rect);
+  int screen_left = 0;
+  int screen_top = 0;
+  int screen_width = 0;
+  int screen_height = 0;
+  GetVirtualScreen(&screen_left, &screen_top, &screen_width, &screen_height);
+  const double x = (rect.left - screen_left) * 100.0 /
+                   std::max(1, screen_width - (rect.right - rect.left));
+  const double y = (rect.top - screen_top) * 100.0 /
+                   std::max(1, screen_height - (rect.bottom - rect.top));
+  position_callback_(x, y);
+}
+
+LRESULT CALLBACK DesktopLyricWindow::WindowProc(HWND hwnd,
+                                                 UINT message,
+                                                 WPARAM wparam,
+                                                 LPARAM lparam) {
+  DesktopLyricWindow& self = Instance();
+  if (message == WM_NCCREATE) {
+    self.window_ = hwnd;
+    ::SetTimer(hwnd, kTimerId, kTimerIntervalMs, nullptr);
+    return TRUE;
+  }
+  return self.HandleMessage(hwnd, message, wparam, lparam);
+}
+
+LRESULT DesktopLyricWindow::HandleMessage(HWND hwnd,
+                                          UINT message,
+                                          WPARAM wparam,
+                                          LPARAM lparam) {
+  switch (message) {
+    case WM_TIMER:
+      AdvanceActiveIndex();
+      Paint();
+      return 0;
+    case WM_PAINT: {
+      PAINTSTRUCT ps{};
+      ::BeginPaint(hwnd, &ps);
+      ::EndPaint(hwnd, &ps);
+      return 0;
+    }
+    case WM_ERASEBKGND:
+      return 1;
+    case WM_LBUTTONDOWN: {
+      if (is_lock_) {
+        return 0;
+      }
+      RECT rect{};
+      ::GetWindowRect(hwnd, &rect);
+      drag_offset_x_ = GET_X_LPARAM(lparam) - rect.left;
+      drag_offset_y_ = GET_Y_LPARAM(lparam) - rect.top;
+      dragging_ = true;
+      ::SetCapture(hwnd);
+      return 0;
+    }
+    case WM_MOUSEMOVE: {
+      if (!dragging_) {
+        return 0;
+      }
+      RECT rect{};
+      ::GetWindowRect(hwnd, &rect);
+      const int x = GET_X_LPARAM(lparam) - drag_offset_x_;
+      const int y = GET_Y_LPARAM(lparam) - drag_offset_y_;
+      ::SetWindowPos(hwnd, nullptr, x, y, 0, 0,
+                     SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+      return 0;
+    }
+    case WM_LBUTTONUP: {
+      if (!dragging_) {
+        return 0;
+      }
+      dragging_ = false;
+      ::ReleaseCapture();
+      ReportPosition();
+      return 0;
+    }
+    case WM_RBUTTONUP: {
+      // 右键切换锁定（锁定后置顶且不可拖动）。
+      is_lock_ = !is_lock_;
+      ApplySizeAndPosition();
+      return 0;
+    }
+    case WM_DESTROY:
+      ::KillTimer(hwnd, kTimerId);
+      window_ = nullptr;
+      return 0;
+    default:
+      break;
+  }
+  return ::DefWindowProcW(hwnd, message, wparam, lparam);
+}
+
+}  // namespace mintmusic

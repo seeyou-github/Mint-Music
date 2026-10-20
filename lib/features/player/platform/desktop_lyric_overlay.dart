@@ -5,11 +5,15 @@ import 'package:flutter/services.dart';
 import '../../../features/player/domain/models/desktop_lyric_settings.dart';
 import '../domain/models/lyric_line.dart';
 
-/// Android 系统级悬浮歌词窗的通道封装。
+/// Android / Windows 系统级悬浮歌词窗的通道封装。
 ///
-/// 原生实现见
+/// Android 原生实现见
 /// `android/app/src/main/kotlin/.../DesktopLyricOverlayHandler.kt`,
 /// 其设计参考 lx-music-mobile 的 `LyricView.java`。
+///
+/// Windows 原生实现见 `windows/runner/desktop_lyric_window.cpp`：
+/// 一个独立的顶层窗口（无边框、背景透明、可置顶），不依赖 Flutter 视图，
+/// 因此应用最小化后依然显示在桌面上。
 class DesktopLyricOverlay {
   DesktopLyricOverlay._();
 
@@ -19,8 +23,11 @@ class DesktopLyricOverlay {
     'com.mintmusic/desktop_lyric',
   );
 
-  /// 悬浮窗只在 Android 上可用,其它平台回退到应用内悬浮层。
-  bool get supported => Platform.isAndroid;
+  /// 悬浮窗只在 Android / Windows 上可用,其它平台回退到应用内悬浮层。
+  bool get supported => Platform.isAndroid || Platform.isWindows;
+
+  /// 是否为 Windows（原生实现是独立桌面窗口,行为与 Android 悬浮窗不同）。
+  bool get isWindows => Platform.isWindows;
 
   /// 监听原生侧拖动结束后回传的位置(屏幕百分比)。
   void setPositionListener(void Function(double x, double y)? onChanged) {
@@ -40,6 +47,8 @@ class DesktopLyricOverlay {
 
   Future<bool> checkPermission() async {
     if (!supported) return false;
+    // Windows 的独立顶层窗口不需要额外授权。
+    if (isWindows) return true;
     try {
       return await _channel.invokeMethod<bool>('checkPermission') ?? false;
     } on PlatformException {
