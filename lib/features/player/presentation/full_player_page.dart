@@ -10,7 +10,6 @@ import '../../../shared/widgets/music_cover_image.dart';
 import '../application/playback_controller.dart';
 import '../application/full_player_visibility.dart';
 import '../application/lyric_controller.dart';
-import '../domain/models/play_mode.dart';
 import '../domain/models/song.dart';
 import '../domain/services/cover_color_extractor.dart';
 import '../../library/application/playlist_providers.dart';
@@ -474,28 +473,14 @@ class _PlayerHeader extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final playMode = ref.watch(
-      playbackControllerProvider.select((s) => s.playMode),
-    );
-    // 当前实际使用的音源：内置音源带「-内置」，插件音源带插件名。
+    // 当前实际使用的音源：内置音源带「-内置」，插件音源按自带音源数量显示
+    // 平台名或「平台名-插件名」。顶部只显示这个，不再显示播放模式。
     final sourceName = ref.watch(
       playbackControllerProvider.select((s) => s.currentSong?.source ?? ''),
     );
     final sourceLabel = sourceName.isEmpty
         ? ''
         : ref.read(musicSourceManagerProvider).sourceDisplayName(sourceName);
-    String modeTitle;
-    switch (playMode) {
-      case PlayMode.singleLoop:
-        modeTitle = context.tr('单曲循环');
-        break;
-      case PlayMode.shuffle:
-        modeTitle = context.tr('随机播放');
-        break;
-      case PlayMode.listLoop:
-        modeTitle = context.tr('列表循环');
-        break;
-    }
 
     return Padding(
       padding: EdgeInsets.only(
@@ -518,33 +503,22 @@ class _PlayerHeader extends ConsumerWidget {
             ),
           ),
           const Spacer(),
-          Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                modeTitle,
-                style: const TextStyle(
+          // 顶部只显示当前使用的音源。
+          if (sourceLabel.isNotEmpty)
+            Flexible(
+              child: Text(
+                sourceLabel,
+                textAlign: TextAlign.center,
+                style: TextStyle(
                   fontSize: 12,
-                  letterSpacing: 2,
-                  color: Color(0x80FFFFFF),
+                  color: Colors.white.withValues(alpha: 0.6),
                 ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
-              // 顶部显示当前正在使用的音源（内置源 / 插件源）。
-              if (sourceLabel.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(top: 2),
-                  child: Text(
-                    sourceLabel,
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: Colors.white.withValues(alpha: 0.55),
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-            ],
-          ),
+            )
+          else
+            const Spacer(),
           const Spacer(),
           IconButton(
             onPressed: onTogglePage,

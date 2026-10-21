@@ -685,6 +685,13 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
   /// 插件可以在分类 id 上加 `__pinned__` 前缀声明「置顶分类」（例如网易云插件
   /// 的「推荐」歌单），这时优先选中它；没有置顶分类就保持「热门」。
   Future<void> _applyDefaultTag() async {
+    // 切换音源后，分类 provider 的依赖变化是由 Riverpod 在微任务里失效的，
+    // 直接读 future 可能拿到上一个音源的旧分类（于是置顶分类没被选中，
+    // 列表显示成「热门」的内容）。这里先让出一次微任务再强制刷新，确保
+    // 拿到的是当前音源的分类。
+    await Future<void>.delayed(Duration.zero);
+    if (!mounted) return;
+    ref.invalidate(hotPlaylistTagsProvider);
     try {
       await ref.read(hotPlaylistTagsProvider.future);
     } catch (_) {}
