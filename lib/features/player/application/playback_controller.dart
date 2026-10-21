@@ -886,6 +886,9 @@ class PlaybackController extends StateNotifier<PlaybackState> {
             sourceQuality: result.quality.isEmpty ? null : result.quality,
             clearSourceHeaders: result.headers.isEmpty,
             clearSourceQuality: result.quality.isEmpty,
+            // 内置源的歌曲由插件解析地址，这里把音源标记成实际提供地址的插件，
+            // 播放详情页显示的就是真正正在使用的音源。
+            source: result.source ?? currentSongToPlay.source,
           );
           _replaceSongInQueue(index, currentSongToPlay);
           if (result.quality.isNotEmpty) {
@@ -969,6 +972,8 @@ class PlaybackController extends StateNotifier<PlaybackState> {
                 sourceQuality: candidate.quality.isEmpty
                     ? null
                     : candidate.quality,
+                // 标记实际提供地址的音源，界面上显示真正正在使用的音源。
+                source: candidate.source ?? currentSongToPlay.source,
                 clearSourceHeaders: candidate.headers.isEmpty,
                 clearSourceQuality: candidate.quality.isEmpty,
               );
@@ -1853,6 +1858,8 @@ class PlaybackController extends StateNotifier<PlaybackState> {
           sourceQuality: result.quality.isEmpty ? null : result.quality,
           clearSourceHeaders: result.headers.isEmpty,
           clearSourceQuality: result.quality.isEmpty,
+          // 标记实际提供地址的音源，界面上显示真正正在使用的音源。
+          source: result.source ?? candidate.source,
         );
         _replaceSongInQueue(index, switchedSong);
 

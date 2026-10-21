@@ -242,10 +242,17 @@ class PluginMusicUrlResult {
   final String quality;
   final Map<String, String> headers;
 
+  /// 实际提供这个地址的音源 id（`平台id@插件id`）。
+  ///
+  /// 内置源的歌曲最终也是由插件解析地址（内置源没有地址接口），带上这个
+  /// 字段就能在界面上显示真正正在使用的音源。
+  final String? source;
+
   const PluginMusicUrlResult({
     required this.url,
     this.quality = '',
     this.headers = const <String, String>{},
+    this.source,
   });
 }
 

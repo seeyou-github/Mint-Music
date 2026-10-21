@@ -326,6 +326,17 @@ class MusicSourceManager {
     return '$sourceName-$pluginName';
   }
 
+  /// 插件音源在应用层的 id（`平台id@插件id`）。
+  ///
+  /// 插件内部只认自己的音源 id（`wy` / `kw` …），应用层要用带插件 id 的
+  /// 变体 id 才能区分是哪个插件提供的。
+  String _pluginSourceAppId(PluginHost host, String pluginSourceId) {
+    final pluginId = _pluginService.getPluginIdForHost(host);
+    if (pluginId == null || pluginId.isEmpty) return pluginSourceId;
+    if (pluginSourceId.contains('@')) return pluginSourceId;
+    return '$pluginSourceId@$pluginId';
+  }
+
   /// 插件音源的唯一 id。
   ///
   /// 插件音源始终使用「平台id@插件id」：与内置源（平台 id）完全独立，两者可以
@@ -1482,6 +1493,8 @@ class MusicSourceManager {
             url: url,
             quality: result.quality.isEmpty ? candidateQuality : result.quality,
             headers: result.headers,
+            // 记录实际提供地址的音源（插件），界面上据此显示当前使用的音源。
+            source: _pluginSourceAppId(host, pluginSourceId),
           );
           print(
             '[MusicSourceManager] LX URL candidate: source=$sourceId '
@@ -1769,7 +1782,7 @@ class MusicSourceManager {
     );
     for (final candidate in candidates) {
       if (candidate.url.isEmpty) continue;
-      return (url: candidate.url, source: song.source ?? '');
+      return (url: candidate.url, source: candidate.source ?? song.source ?? '');
     }
 
     final source = song.source;
@@ -1786,7 +1799,7 @@ class MusicSourceManager {
       );
       for (final url in urls) {
         if (url.url.isEmpty) continue;
-        return (url: url.url, source: candidate.source ?? '');
+        return (url: url.url, source: url.source ?? candidate.source ?? '');
       }
     }
     return null;
