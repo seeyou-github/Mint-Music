@@ -129,7 +129,14 @@ class PluginHost {
 
       print('[PluginHost] 等待插件异步初始化...');
       final initDeadline = DateTime.now().add(const Duration(seconds: 30));
-      var sourceCount = -1;
+      // 落雪适配器会先用静态推断的音源占位，真正的音源列表要等插件上报
+      // inited 事件。这里最多只等 [lxSourceWait] 秒，避免插件的音源服务器
+      // 不可达时，导入插件要干等满 30 秒。
+      final lxSourceWait = DateTime.now().add(const Duration(seconds: 3));
+      // 普通插件的音源是静态声明的，等不到就是没有，不必空等 30 秒。
+      final staticSourceWait = DateTime.now().add(const Duration(seconds: 5));
+      var sourceCount = 0;
+      var isLxAdapter = false;
       while (DateTime.now().isBefore(initDeadline)) {
         _engine.executePendingJob();
         final countResult = _engine.evaluate(
@@ -137,7 +144,26 @@ class PluginHost {
         );
         if (!countResult.isError) {
           sourceCount = int.tryParse(countResult.stringResult) ?? 0;
+        }
+        // 落雪适配器暴露 __lxInited：插件上报过 inited 事件后就可以结束等待。
+        final lxResult = _engine.evaluate(
+          'typeof __lxInited === "undefined" ? 0 : 1',
+        );
+        if (!lxResult.isError) {
+          isLxAdapter = lxResult.stringResult.trim() == '1';
+          if (isLxAdapter) {
+            final initedResult = _engine.evaluate('__lxInited ? 1 : 0');
+            if (!initedResult.isError && initedResult.stringResult.trim() == '1') {
+              break;
+            }
+          }
+        }
+        final now = DateTime.now();
+        if (isLxAdapter) {
+          if (now.isAfter(lxSourceWait)) break;
+        } else {
           if (sourceCount > 0) break;
+          if (now.isAfter(staticSourceWait)) break;
         }
         await Future.delayed(const Duration(milliseconds: 100));
       }

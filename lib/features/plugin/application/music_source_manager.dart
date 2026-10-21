@@ -212,25 +212,50 @@ class MusicSourceManager {
 
   /// 插件提供的音源列表（发现页 / 搜索页共用同一份 id 与名称）。
   ///
-  /// * 名称只取插件声明的 platform（音源平台名，例如「网易云音乐」「bilibili」），
-  ///   不拼接插件名 / 作者等信息；
+  /// * 名称取插件声明的 platform（音源平台名，例如「网易云音乐」），并
+  ///   在后面附上插件名，方便区分接管同一平台的多个插件；
   /// * 同名同平台（不同作者）的插件都能显示，第二个及之后的用
-  ///   `平台id@插件id` 作为唯一 id，名称保持一致。
+  ///   `平台id@插件id` 作为唯一 id。
   List<SourceInfo> getPluginSupportedSources() {
     final sources = <SourceInfo>[];
     final seenIds = <String>{};
 
     for (final host in _pluginService.enabledPlugins) {
       final pluginId = _pluginService.getPluginIdForHost(host);
+      final pluginName = _pluginDisplayName(host);
       for (final source in host.sources) {
         // 名称 → id 的推导与 MusicFree 适配器保持一致（见 SourceIdMapping）。
+        // 注意要用插件原始的 platform 名推导，附加的插件名不能参与推导。
         final baseId = SourceIdMapping.deriveId(source.name);
         final id = _uniqueSourceId(baseId, pluginId, seenIds);
         seenIds.add(id);
-        sources.add(SourceInfo(id: id, name: source.name));
+        sources.add(
+          SourceInfo(id: id, name: _sourceDisplayName(source.name, pluginName)),
+        );
       }
     }
     return sources;
+  }
+
+  /// 插件名（用于区分接管同一平台的多个插件）。
+  String _pluginDisplayName(PluginHost host) {
+    final name = host.pluginInfo?.name?.trim() ?? '';
+    if (name.isEmpty) return '';
+    return name.length <= 12 ? name : '${name.substring(0, 12)}…';
+  }
+
+  /// 音源展示名：平台名 + 插件名。
+  String _sourceDisplayName(String sourceName, String pluginName) {
+    if (pluginName.isEmpty) return sourceName;
+    return '$sourceName · $pluginName';
+  }
+
+  /// 在列表里查找同 id 的音源下标。
+  static int _indexOfSource(List<SourceInfo> sources, String id) {
+    for (var i = 0; i < sources.length; i++) {
+      if (sources[i].id == id) return i;
+    }
+    return -1;
   }
 
   /// 同名同平台（不同作者）的插件需要唯一的 id。
@@ -266,9 +291,18 @@ class MusicSourceManager {
       }
     }
 
-    // 插件音源：与发现页共用同一份 id / 名称，这里只额外过滤掉不支持搜索的音源。
+    // 插件音源：与发现页共用同一份 id / 名称。
     for (final source in getPluginSupportedSources()) {
-      if (seenIds.contains(source.id)) continue;
+      final existing = _indexOfSource(sources, source.id);
+      if (existing >= 0) {
+        // 插件接管了同一个平台：浏览 / 搜索内容仍然来自内置源，播放地址由
+        // 插件解析；列表里换成插件的条目，方便看出当前是哪个插件在服务。
+        if (_pluginSourceCanResolveUrls(source.id)) {
+          sources[existing] = source;
+        }
+        continue;
+      }
+      // 新平台：插件必须自己实现搜索，否则搜不出东西。
       if (!_pluginSourceSupportsSearch(source.id)) continue;
       seenIds.add(source.id);
       sources.add(source);
@@ -299,6 +333,29 @@ class MusicSourceManager {
     return false;
   }
 
+  /// 插件音源是否能够解析播放链接（action 里带 musicUrl）。
+  ///
+  /// 落雪脚本通常只提供链接解析（没有搜索接口），这类插件接管平台后，
+  /// 搜索依然走内置源，播放地址由插件解析。
+  bool _pluginSourceCanResolveUrls(String sourceId) {
+    final (baseId, pluginId) = splitSourceId(sourceId);
+    for (final host in _pluginService.enabledPlugins) {
+      if (pluginId != null &&
+          _pluginService.getPluginIdForHost(host) != pluginId) {
+        continue;
+      }
+      final pluginSourceId = _getSourceIdForHost(host, baseId);
+      if (pluginSourceId == null) continue;
+      final actions = host.sourceActions[pluginSourceId] ?? const <String>[];
+      if (actions
+          .map((action) => action.toLowerCase())
+          .any((action) => action == 'musicurl')) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   List<String> getSupportedQualitiesForSourceId(String sourceId) {
     // 插件优先：返回 JS 插件定义的 qualities 列表
     final host = _findPluginForSource(sourceId);
@@ -315,7 +372,9 @@ class MusicSourceManager {
         for (final entry in host.sourceActions.entries) {
           if (entry.key == pluginSourceId) {
             final actions = entry.value;
-            if (actions.contains('musicUrl')) {
+            if (actions
+                .map((action) => action.toLowerCase())
+                .any((action) => action == 'musicurl')) {
               return _defaultQualities[sourceId] ?? ['128k', '320k', 'flac'];
             }
           }
@@ -1415,7 +1474,9 @@ class MusicSourceManager {
       albumId: read(['albumId', 'albumid']),
       albumMid: read(['albumMid', 'albummid']),
       strMediaMid: read(['strMediaMid']),
-      copyrightId: read(['copyrightId']),
+      copyrightId: readString(['copyrightId']) ??
+          // 咪咕的 copyrightId 就是歌曲 id（内置源搜索结果里没有 lx 元数据）。
+          (sourceId == 'mg' ? cleanId : null),
       source: sourceId,
       interval: interval,
       img: readString(['img', 'pic', 'picUrl', 'cover']) ?? song.coverUrl,
@@ -2269,11 +2330,19 @@ class MusicSourceManager {
       if (seenIds.add(source.id)) sources.add(source);
     }
 
-    // 插件音源：复用搜索音源列表的 id 推导（与适配器保持一致），再用
-    // `_findDiscoverHost` 过滤出真正实现了榜单 / 推荐歌单的插件——没有浏览接口
-    // 的音源出现在这里只会是空页面。
+    // 插件音源：复用搜索音源列表的 id 推导（与适配器保持一致）。
     for (final source in getPluginSupportedSources()) {
-      if (seenIds.contains(source.id)) continue;
+      final existing = _indexOfSource(sources, source.id);
+      if (existing >= 0) {
+        // 插件接管了同一个平台：浏览内容仍然来自内置源，播放地址由插件
+        // 解析；列表里换成插件的条目，方便看出当前是哪个插件在服务。
+        if (_pluginSourceCanResolveUrls(source.id)) {
+          sources[existing] = source;
+        }
+        continue;
+      }
+      // 新平台：只有实现了榜单 / 推荐歌单的插件才有浏览内容，没有浏览
+      // 接口的音源出现在这里只会是空页面。
       if (_findDiscoverHost(source.id) == null) continue;
       seenIds.add(source.id);
       sources.add(source);

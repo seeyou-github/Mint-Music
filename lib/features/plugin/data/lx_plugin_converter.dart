@@ -1,9 +1,40 @@
 import 'dart:convert';
 
 class LxPluginConverter {
+  /// 平台 id → 展示名。
+  ///
+  /// 与 `SourceIdMapping.idToName` 保持一致：适配器上报的音源名要能被
+  /// 宿主还原成平台 id，否则音源选择器里会出现一堆无法识别的音源。
+  static const Map<String, String> _platformNames = {
+    'kw': '酷我音乐',
+    'wy': '网易云音乐',
+    'tx': 'QQ音乐',
+    'kg': '酷狗音乐',
+    'mg': '咪咕音乐',
+    'qsvip': '汽水VIP',
+  };
+
+  /// 静态分析时能够识别的平台 id。
+  static const Set<String> _knownPlatformIds = {
+    'kw',
+    'wy',
+    'tx',
+    'kg',
+    'mg',
+    'qsvip',
+  };
+
+  /// 静态分析完全失败时的兜底平台（落雪脚本几乎都覆盖这几个平台）。
+  static const List<String> _fallbackPlatformIds = ['kw', 'wy', 'tx', 'kg', 'mg'];
+
+  /// 静态分析识别不出音质时的默认音质。
+  static const List<String> _defaultQualities = ['128k', '320k', 'flac'];
+
   String convert(String originalCode) {
     final info = _parseScriptInfo(originalCode);
     final pluginInfoJson = jsonEncode(info);
+    final inferredSourcesJson = jsonEncode(_inferSources(originalCode));
+    final platformNamesJson = jsonEncode(_platformNames);
 
     return '''
 var __lxInitError = null;
@@ -12,14 +43,42 @@ var __lxInitReported = false;
 var __lxRequestHandler = null;
 var __lxUpdateAlertSent = false;
 var __lxFallbackTimerIdCounter = 0;
+// 插件是否已经上报过 inited 事件（上报后音源列表才是插件自己声明的）。
+var __lxInited = false;
 
 var pluginInfo = $pluginInfoJson;
 // The original LX source is executed by PluginHost in a separate evaluate()
 // call. Keeping it out of this adapter avoids a large string literal and a
 // nested new Function compilation inside QuickJS.
 var originalPluginCode = '';
+// 静态推断出来的音源（脚本里能直接看出来的平台与音质）。
+var __lxInferredSources = $inferredSourcesJson;
+// 平台 id → 展示名，用于给没有 name 字段的音源补上可读的名字。
+var __lxPlatformNames = $platformNamesJson;
 var sources = {};
 var sourceActions = {};
+
+function __lxPlatformName(sourceId) {
+  if (__lxPlatformNames[sourceId]) return __lxPlatformNames[sourceId];
+  return sourceId;
+}
+
+// 先用静态推断的音源占位：落雪脚本的音源列表通常在运行时从作者的服务器
+// 拉取，服务器不可达时插件不会上报 inited 事件，宿主就会认为「插件没有
+// 声明任何音源」。运行时上报的列表仍然会覆盖这里的结果。
+(function() {
+  Object.keys(__lxInferredSources).forEach(function(sourceId) {
+    var qualities = __lxInferredSources[sourceId] || [];
+    sources[sourceId] = {
+      name: __lxPlatformName(sourceId),
+      type: 'music',
+      qualitys: qualities,
+      qualities: qualities,
+      actions: ['musicUrl']
+    };
+    sourceActions[sourceId] = ['musicUrl'];
+  });
+})();
 
 // Some LX scripts validate the runtime metadata against their canonical name
 // instead of the display name in the file header (for example, YNX-Pro).
@@ -69,6 +128,9 @@ function __lxEncodeForm(form) {
 function __lxNormalizeSources(data) {
   var nextSources = data && data.sources ? data.sources : data;
   if (!nextSources || typeof nextSources !== 'object') return;
+  // 插件没有上报音源列表（有些脚本 inited 时只发状态信息）：保留静态推断
+  // 出来的音源，避免插件变成「没有声明任何音源」。
+  if (!Object.keys(nextSources).length) return;
   Object.keys(sources).forEach(function(k) { delete sources[k]; });
   Object.keys(sourceActions).forEach(function(k) { delete sourceActions[k]; });
   Object.keys(nextSources).forEach(function(sourceId) {
@@ -76,7 +138,7 @@ function __lxNormalizeSources(data) {
     var qualities = item.qualitys || item.qualities || item.types || ['128k', '320k', 'flac'];
     var actions = item.actions || ['musicUrl'];
     sources[sourceId] = {
-      name: item.name || sourceId,
+      name: item.name || __lxPlatformName(sourceId),
       type: item.type || 'music',
       qualitys: qualities,
       qualities: qualities,
@@ -313,6 +375,7 @@ function __lxRequest(url, options, callback) {
       // required by the mobile LX contract for callers that await or chain it.
       if (__lxInitReported) return Promise.resolve();
       __lxInitReported = true;
+      __lxInited = true;
       __lxNormalizeSources(data);
       return Promise.resolve();
     }
@@ -535,9 +598,223 @@ module.exports = {
   search: search,
   getPic: getPic,
   getLyric: getLyric,
-  getLyricResult: getLyricResult
+  getLyricResult: getLyricResult,
+  // 插件是否已经上报过 inited 事件（宿主据此判断还要不要再等音源列表）。
+  isInited: function() { return __lxInited; }
 };
 ''';
+  }
+
+  /// 静态分析落雪脚本，推断它支持的平台与音质。
+  ///
+  /// 落雪脚本的音源列表有三种来源：
+  /// 1. 运行时通过 `inited` 事件上报（最常见，内容来自作者的服务器）；
+  /// 2. 直接写在脚本里的音源列表字面量（`kw|128k&wy|320k` 这种格式）；
+  /// 3. 请求处理里的分支判断（`case 'kw':`、`source === 'kw'`）。
+  ///
+  /// 第一种依赖作者的服务器，服务器不可达时插件就不会再上报 inited 事件，
+  /// 宿主只能得出「插件没有声明任何音源」的结论，插件既无法测试也无法
+  /// 出现在音源选择器里。这里对源码做一次静态分析，把能识别出来的平台
+  /// 与音质先写进适配器；运行时上报的列表仍然会覆盖推断结果。
+  Map<String, List<String>> _inferSources(String code) {
+    final decoded = _mergeConcatenations(_decodeStringLiterals(code));
+
+    final ids = <String>{};
+    final qualities = <String, List<String>>{};
+
+    // 1) 音源列表字面量：'kw|128k&wy|320k&...'
+    for (final match in RegExp(r"'([^'\n]*)'").allMatches(decoded)) {
+      final text = match.group(1) ?? '';
+      if (!text.contains('|')) continue;
+      final parsed = <String, List<String>>{};
+      var known = 0;
+      for (final group in text.split('&')) {
+        final parts = group.split('|');
+        if (parts.length < 2) continue;
+        final id = parts.first.trim();
+        if (!_looksLikeSourceId(id)) continue;
+        final list = parts
+            .skip(1)
+            .map((q) => q.trim())
+            .where((q) => q.isNotEmpty)
+            .toList();
+        // 音质必须是可识别的格式，否则多半是被拆散的字符串碎片。
+        if (!list.every(_looksLikeQuality)) continue;
+        parsed[id] = list;
+        if (_knownPlatformIds.contains(id)) known++;
+      }
+      // 至少命中一个已知平台才认为是音源列表，避免把普通字符串误判。
+      if (known == 0) continue;
+      parsed.forEach((id, list) {
+        ids.add(id);
+        qualities.putIfAbsent(id, () => list);
+      });
+    }
+
+    // 2) 分支判断：case 'kw': / source === 'kw'
+    for (final match in RegExp(r"case\s*'([^'\n]*)'").allMatches(decoded)) {
+      final id = match.group(1) ?? '';
+      if (_knownPlatformIds.contains(id)) ids.add(id);
+    }
+    for (final match in RegExp(
+      r"source\s*===?\s*'([^'\n]*)'",
+    ).allMatches(decoded)) {
+      final id = match.group(1) ?? '';
+      if (_knownPlatformIds.contains(id)) ids.add(id);
+    }
+
+    // 落雪脚本的音源列表通常给所有平台标相同的音质（例如整张列表都是
+    // 128k），只要识别出来的音质一致就统一套用到所有平台，避免出现
+    // 「一部分平台只有 128k、另一部分却有 flac」的不一致结果。
+    final listed = qualities.values.toList();
+    final unified = listed.length >= 2 &&
+        listed.every((q) => q.length == listed.first.length &&
+            List<String>.from(q).join() == listed.first.join());
+
+    // 完全识别不出来时退回常见平台，保证插件仍然可以被测试与选择。
+    if (ids.isEmpty) {
+      for (final id in _fallbackPlatformIds) {
+        ids.add(id);
+      }
+    }
+
+    final result = <String, List<String>>{};
+    for (final id in ids) {
+      final list = qualities[id];
+      if (list != null && list.isNotEmpty) {
+        result[id] = list;
+      } else if (unified) {
+        result[id] = List<String>.from(listed.first);
+      } else {
+        result[id] = List<String>.from(_defaultQualities);
+      }
+    }
+    return result;
+  }
+
+  /// 音质字符串是否合法（128k / 320k / flac / hires …）。
+  static bool _looksLikeQuality(String value) {
+    if (RegExp(r'^\d{2,4}k$').hasMatch(value)) return true;
+    return const [
+      'flac',
+      'flac24bit',
+      'hires',
+      'atmos',
+      'master',
+      'ape',
+      'wav',
+      'sq',
+      'dsd',
+    ].contains(value.toLowerCase());
+  }
+
+  /// 平台 id 是否像一个音源标识（短小的字母 / 数字组合）。
+  static bool _looksLikeSourceId(String value) {
+    return RegExp(r'^[A-Za-z][A-Za-z0-9_]{0,15}$').hasMatch(value);
+  }
+
+  /// 把源码里的字符串字面量解码成真实内容（处理 \xNN / \uNNNN 等转义）。
+  ///
+  /// 混淆过的落雪脚本会把平台 id 写成 `'\\x6b\\x77'` 这种转义形式，
+  /// 不解码就没法静态识别出音源。
+  String _decodeStringLiterals(String code) {
+    final pattern = RegExp(
+      r"'((?:[^'\\\n]|\\.)*)'|\x22((?:[^\x22\\\n]|\\.)*)\x22",
+    );
+    return code.replaceAllMapped(pattern, (match) {
+      final single = match.group(1);
+      final raw = single ?? match.group(2) ?? '';
+      final quote = single != null ? "'" : '"';
+      final decoded = _decodeJsEscapes(raw);
+      // 解码后的内容里可能带引号，转义回去避免破坏后续的正则匹配。
+      return '$quote${decoded.replaceAll("'", r"\'")}$quote';
+    });
+  }
+
+  /// 合并用 `+` 连接的相邻字符串字面量。
+  ///
+  /// 音源列表常被拆成 `'kw|128k&wy' + '|128k&mg|1' + ...` 这样拼接起来，
+  /// 合并之后才能看出完整的音源列表。
+  String _mergeConcatenations(String code) {
+    var result = code;
+    for (var i = 0; i < 8; i++) {
+      final next = result.replaceAllMapped(
+        RegExp(r"'([^']*)'\s*\+\s*'([^']*)'"),
+        (match) => "'${match.group(1)}${match.group(2)}'",
+      );
+      if (next == result) break;
+      result = next;
+    }
+    return result;
+  }
+
+  /// 解码 JS 字符串转义序列。
+  String _decodeJsEscapes(String raw) {
+    final buffer = StringBuffer();
+    for (var i = 0; i < raw.length; i++) {
+      final ch = raw[i];
+      if (ch != r'\' || i + 1 >= raw.length) {
+        buffer.write(ch);
+        continue;
+      }
+      final next = raw[++i];
+      if (next == 'x' && i + 2 < raw.length) {
+        final code = int.tryParse(raw.substring(i + 1, i + 3), radix: 16);
+        if (code != null) {
+          buffer.writeCharCode(code);
+          i += 2;
+          continue;
+        }
+      } else if (next == 'u') {
+        if (i + 1 < raw.length && raw[i + 1] == '{') {
+          final end = raw.indexOf('}', i);
+          if (end > i + 2) {
+            final code = int.tryParse(
+              raw.substring(i + 2, end),
+              radix: 16,
+            );
+            if (code != null) {
+              buffer.writeCharCode(code);
+              i = end;
+              continue;
+            }
+          }
+        } else if (i + 4 < raw.length) {
+          final code = int.tryParse(
+            raw.substring(i + 1, i + 5),
+            radix: 16,
+          );
+          if (code != null) {
+            buffer.writeCharCode(code);
+            i += 4;
+            continue;
+          }
+        }
+      } else if (next == 'n') {
+        buffer.write('\n');
+        continue;
+      } else if (next == 'r') {
+        buffer.write('\r');
+        continue;
+      } else if (next == 't') {
+        buffer.write('\t');
+        continue;
+      } else if (next == 'b') {
+        buffer.write('\b');
+        continue;
+      } else if (next == 'f') {
+        buffer.write('\f');
+        continue;
+      } else if (next == 'v') {
+        buffer.write('\v');
+        continue;
+      } else if (next == '0') {
+        buffer.write('\0');
+        continue;
+      }
+      buffer.write(next);
+    }
+    return buffer.toString();
   }
 
   Map<String, String> _parseScriptInfo(String code) {
