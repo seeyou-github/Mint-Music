@@ -1024,7 +1024,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
             // 未开启「当前音源播放失败自动切换音源」→ 停止播放，不跨源换源。
             if (!_autoSwitchSource) {
               // 内置音源本身没有地址接口：即使用户关掉了自动换源，也允许用
-              // 已安装的插件解析（同名插件优先，失败再试其它插件），且不弹提示。
+              // 已安装的插件解析（同名插件优先，失败再试其它平台），且不弹提示。
               final usedPlugin = await _tryPluginFallbackForBuiltIn(
                 song: song,
                 index: index,
@@ -1034,7 +1034,10 @@ class PlaybackController extends StateNotifier<PlaybackState> {
               if (usedPlugin) return;
 
               await _stopPlaybackOnFailure(
-                tr('当前音源播放失败，自动切换音源已关闭'),
+                _playbackFailureReason(
+                  song.source ?? '',
+                  autoSwitchEnabled: false,
+                ),
               );
               return;
             }
@@ -1042,6 +1045,10 @@ class PlaybackController extends StateNotifier<PlaybackState> {
             final candidates = await _autoSwitchService.getCandidateSongs(
               song,
               activeSourceIds: _activeSourceIds,
+              // 内置音源：把其它平台都试一遍（同名平台已在正常路径试过）。
+              candidateSources: (song.source ?? '').contains('@')
+                  ? null
+                  : _crossPlatformSourceIds(song.source ?? ''),
             );
             if (_currentPlayRequestId != requestId) return;
 
@@ -1101,7 +1108,12 @@ class PlaybackController extends StateNotifier<PlaybackState> {
             if (_currentPlayRequestId != requestId) return;
 
             if (!playSuccess) {
-              await _stopPlaybackOnFailure(tr('所有音源均无法播放'));
+              await _stopPlaybackOnFailure(
+                _playbackFailureReason(
+                  song.source ?? '',
+                  autoSwitchEnabled: true,
+                ),
+              );
             }
           } catch (e) {
             if (_currentPlayRequestId != requestId) return;
@@ -1125,8 +1137,19 @@ class PlaybackController extends StateNotifier<PlaybackState> {
       } else {
         try {
           if (!_autoSwitchSource) {
+            // 内置音源即使用户关掉了自动换源，也要先试已安装的插件。
+            final usedPlugin = await _tryPluginFallbackForBuiltIn(
+              song: song,
+              index: index,
+              requestId: requestId,
+              excludedUrls: const <String>{},
+            );
+            if (usedPlugin) return;
             await _stopPlaybackOnFailure(
-              tr('当前音源播放失败，自动切换音源已关闭'),
+              _playbackFailureReason(
+                song.source ?? '',
+                autoSwitchEnabled: false,
+              ),
             );
             return;
           }
@@ -1134,6 +1157,10 @@ class PlaybackController extends StateNotifier<PlaybackState> {
           final candidates = await _autoSwitchService.getCandidateSongs(
             song,
             activeSourceIds: _activeSourceIds,
+            // 内置音源：把其它平台都试一遍（同名平台已在正常路径试过）。
+            candidateSources: (song.source ?? '').contains('@')
+                ? null
+                : _crossPlatformSourceIds(song.source ?? ''),
           );
           if (_currentPlayRequestId != requestId) return;
 
@@ -1192,7 +1219,12 @@ class PlaybackController extends StateNotifier<PlaybackState> {
           if (_currentPlayRequestId != requestId) return;
 
           if (!playSuccess) {
-            await _stopPlaybackOnFailure(tr('所有音源均无法播放'));
+            await _stopPlaybackOnFailure(
+              _playbackFailureReason(
+                song.source ?? '',
+                autoSwitchEnabled: true,
+              ),
+            );
           }
         } catch (e) {
           if (_currentPlayRequestId != requestId) return;
@@ -1712,6 +1744,54 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     }
   }
 
+  /// 内置音源（平台 id）对应的其它平台，用于跨平台兜底。
+  static const List<String> _builtInPlatformIds = ['wy', 'tx', 'kg', 'kw', 'mg'];
+
+  /// 播放失败时的提示语。
+  ///
+  /// * **内置音源**：它自己没有播放地址接口，失败说明没有可用的第三方音源，
+  ///   提示用户去装对应平台的音源；
+  /// * **插件音源**：未开启自动换源时说明是用户主动关掉的；开启了但所有
+  ///   候选都失败则是所有音源都不可用。
+  String _playbackFailureReason(
+    String source, {
+    required bool autoSwitchEnabled,
+  }) {
+    if (source.isNotEmpty && !source.contains('@')) {
+      return _builtInSourceMissingMessage(source);
+    }
+    if (!autoSwitchEnabled) {
+      return tr('当前音源播放失败，自动切换音源已关闭');
+    }
+    return tr('所有音源均无法播放');
+  }
+
+  /// 内置音源缺少第三方音源时的提示。
+  String _builtInSourceMissingMessage(String source) {
+    // 用平台名（不带「-内置」后缀），提示语读起来更自然。
+    final (baseId, _) = MusicSourceManager.splitSourceId(source);
+    final name = _sourceIdToChineseName[baseId] ??
+        _getSourceName(source, _musicSourceManager);
+    return tr('没有第三方对应$name音源，请先安装$name音源');
+  }
+
+  /// 跨平台兜底时要尝试的音源：其它平台的内置源 + 其它平台的插件源。
+  ///
+  /// 内置源没有地址接口，只能靠插件解析，所以要把能用的平台都试一遍
+  /// （同名平台的多个插件在正常播放路径里已经依次试过了）。
+  List<String> _crossPlatformSourceIds(String currentSource) {
+    final result = <String>[];
+    for (final id in _builtInPlatformIds) {
+      if (id == currentSource) continue;
+      result.add(id);
+    }
+    for (final id in _musicSourceManager.pluginSourceIds) {
+      if (id.startsWith('$currentSource@')) continue;
+      result.add(id);
+    }
+    return result;
+  }
+
   /// 跨音源换源：遍历 `getCandidateSongs` 返回的候选并按顺序尝试播放。
   ///
   /// 仅在开启「当前音源播放失败自动切换音源」时生效；未开启（默认）时
@@ -1722,10 +1802,35 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     required int requestId,
     required String quality,
   }) async {
+    final source = originalSong.source ?? '';
+    // 内置音源自己没有地址接口，必须由插件解析：即使用户关掉了自动换源，
+    // 也要依次尝试其它已安装的音源，直到全部失败。
+    final isBuiltInSource = source.isNotEmpty && !source.contains('@');
+
+    // 内置源 + 一个可用的插件音源都没有 → 必然播不了，直接提示去装插件，
+    // 不用白跑一轮跨平台搜索。
+    if (isBuiltInSource && _musicSourceManager.pluginSourceIds.isEmpty) {
+      if (_currentPlayRequestId == requestId) {
+        await _stopPlaybackOnFailure(
+          _playbackFailureReason(source, autoSwitchEnabled: _autoSwitchSource),
+        );
+      }
+      return false;
+    }
+
     // 未开启「当前音源播放失败自动切换音源」→ 停止播放，不跨源换源。
+    if (!_autoSwitchSource && !isBuiltInSource) {
+      if (_currentPlayRequestId == requestId) {
+        await _stopPlaybackOnFailure(
+          _playbackFailureReason(source, autoSwitchEnabled: false),
+        );
+      }
+      return false;
+    }
+
     if (!_autoSwitchSource) {
       // 内置音源：即使用户关掉了自动换源，也允许用已安装的插件解析
-      // （同名插件优先，失败再试其它插件），且不弹任何提示。
+      // （同名插件优先，失败再试其它平台），且不弹任何提示。
       final usedPlugin = await _tryPluginFallbackForBuiltIn(
         song: originalSong,
         index: index,
@@ -1734,7 +1839,9 @@ class PlaybackController extends StateNotifier<PlaybackState> {
       );
       if (usedPlugin) return true;
       if (_currentPlayRequestId == requestId) {
-        await _stopPlaybackOnFailure(tr('当前音源播放失败，自动切换音源已关闭'));
+        await _stopPlaybackOnFailure(
+          _playbackFailureReason(source, autoSwitchEnabled: false),
+        );
       }
       return false;
     }
@@ -1743,6 +1850,10 @@ class PlaybackController extends StateNotifier<PlaybackState> {
       final candidates = await _autoSwitchService.getCandidateSongs(
         originalSong,
         activeSourceIds: _activeSourceIds,
+        // 内置音源：把其它平台都试一遍（同名平台已在正常路径试过）。
+        candidateSources: isBuiltInSource
+            ? _crossPlatformSourceIds(source)
+            : null,
       );
       if (_currentPlayRequestId != requestId) return false;
 
@@ -1791,7 +1902,9 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     }
 
     if (_currentPlayRequestId == requestId) {
-      await _stopPlaybackOnFailure(tr('所有音源均无法播放'));
+      await _stopPlaybackOnFailure(
+        _playbackFailureReason(source, autoSwitchEnabled: true),
+      );
     }
     return false;
   }
@@ -1799,8 +1912,9 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   /// 内置音源的歌曲改用已安装的插件解析播放地址。
   ///
   /// 内置源只负责搜索与元数据，本身没有地址接口，播放地址必须由插件解析：
-  /// * 同名插件优先（正常播放路径已经走过一遍）；
-  /// * 同名解析失败后，用其它已安装的插件重新搜同一首歌再解析。
+  /// * 同名插件优先（正常播放路径已经走过一遍：多个同名插件会依次试）；
+  /// * 同名插件全都不行时，用其它平台再搜同一首歌（优先用内置平台源搜索，
+  ///   再补上其它插件源），依次尝试，直到所有平台都失败。
   ///
   /// 即使关掉了「当前音源播放失败自动切换音源」也会走这个兜底，并且**不弹
   /// 任何提示**，实际使用的音源在播放详情页顶部显示。
@@ -1817,10 +1931,10 @@ class PlaybackController extends StateNotifier<PlaybackState> {
 
     final pluginIds = _musicSourceManager.pluginSourceIds;
     if (pluginIds.isEmpty) return false;
-    // 同名插件已经在正常播放路径里试过了，这里只兜底其它插件。
-    final others = pluginIds
-        .where((id) => !id.startsWith('$source@'))
-        .toList();
+    // 同名插件已经在正常播放路径里试过了，这里只兜底其它平台：
+    // 优先用内置平台源搜索（内置源一定有搜索接口，落雪「仅解析」脚本
+    // 之类的插件可能没有），再补上其它平台的插件源。
+    final others = _crossPlatformSourceIds(source);
     if (others.isEmpty) return false;
 
     List<Song> candidates;
@@ -2243,12 +2357,29 @@ class PlaybackController extends StateNotifier<PlaybackState> {
 
         // 2) 原源重试失败 → 按开关决定是否遍历候选源
         if (!_autoSwitchSource) {
-          await _stopPlaybackOnFailure(tr('当前音源播放失败，自动切换音源已关闭'));
+          // 内置音源即使用户关掉了自动换源，也要先试已安装的插件。
+          final usedPlugin = await _tryPluginFallbackForBuiltIn(
+            song: song,
+            index: index,
+            requestId: requestId,
+            excludedUrls: excludedUrls,
+          );
+          if (usedPlugin) return;
+          await _stopPlaybackOnFailure(
+            _playbackFailureReason(
+              song.source ?? '',
+              autoSwitchEnabled: false,
+            ),
+          );
           return;
         }
         final candidates = await _autoSwitchService.getCandidateSongs(
           song,
           activeSourceIds: _activeSourceIds,
+          // 内置音源：把其它平台都试一遍（同名平台已在正常路径试过）。
+          candidateSources: (song.source ?? '').contains('@')
+              ? null
+              : _crossPlatformSourceIds(song.source ?? ''),
         );
         if (_currentPlayRequestId != requestId) return;
 
@@ -2293,7 +2424,9 @@ class PlaybackController extends StateNotifier<PlaybackState> {
 
         // 3) 全部失败 → 停止播放（不自动跳歌）
         if (_currentPlayRequestId != requestId) return;
-        await _stopPlaybackOnFailure(tr('所有音源均无法播放'));
+        await _stopPlaybackOnFailure(
+          _playbackFailureReason(song.source ?? '', autoSwitchEnabled: true),
+        );
       } catch (e) {
         debugPrint('[PlaybackController] 处理播放错误时出错: $e');
         if (_currentPlayRequestId != requestId) return;

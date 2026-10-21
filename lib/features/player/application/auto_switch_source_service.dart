@@ -41,7 +41,7 @@ class AutoSwitchSourceService {
     bool silent = false,
   }) async {
     if (!silent) {
-      _showMessage(tr('当前源播放失败，正在尝试自动换源...'));
+      _showMessage(tr('当前音源播放失败，正在尝试自动换源...'));
     }
 
     var sources = candidateSources != null
