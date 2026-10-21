@@ -378,8 +378,12 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
         val index = activeIndex.coerceIn(0, lines.size - 1)
         val rows = mutableListOf<LyricRow>()
         val max = maxLineNum
+        // 按「页」显示：一页 max 行，播放到本页最后一行时才翻页。
+        // 显示 2 行时，第二行开始播放时第一行内容保持不变，进度直接显示在
+        // 第二行；第二行播完再整体更新成新的一页。
+        val pageStart = (index / max) * max
 
-        for (i in index until lines.size) {
+        for (i in pageStart until lines.size) {
             if (rows.size >= max) break
             val line = lines[i]
             if (line.text.isNotBlank()) {
@@ -409,7 +413,16 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
         switcher.ensureRowCount(target) { newRowTextView() }
         switcher.setPageGravity(Gravity.CENTER_HORIZONTAL or Gravity.CENTER_VERTICAL)
         val rows = buildRows()
-        switcher.showPage(animate) { page -> fillPage(page, rows) }
+        // 同一页内不翻页（不播动画），只有换页时才切。
+        switcher.showPage(animate, pageKey()) { page -> fillPage(page, rows) }
+    }
+
+    /// 当前页的起始行号（按行数分页）。
+    private fun pageKey(): Int {
+        val max = maxLineNum.coerceAtLeast(1)
+        if (lines.isEmpty()) return 0
+        val index = activeIndex.coerceIn(0, lines.size - 1)
+        return (index / max) * max
     }
 
     private fun newRowTextView(): TextView = TextView(appContext).apply {

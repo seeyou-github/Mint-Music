@@ -297,9 +297,13 @@ std::vector<DesktopLyricElement> DesktopLyricWindow::BuildElements() const {
       active_index_ >= static_cast<int>(lines_.size())) {
     return elements;
   }
-  for (int i = active_index_;
+  // 按「页」显示：一页 max_line_num_ 行，播放到本页最后一行时才翻页。
+  // 这样显示 2 行时，第二行开始播放时第一行的内容保持不变，进度直接显示在
+  // 第二行；等第二行播完再整体更新成新的一页。
+  const int page_start = (active_index_ / max_line_num_) * max_line_num_;
+  for (int i = page_start;
        i < static_cast<int>(lines_.size()) &&
-       (i - active_index_) < max_line_num_ &&
+       (i - page_start) < max_line_num_ &&
        static_cast<int>(elements.size()) < max_line_num_;
        i++) {
     const bool is_active = (i == active_index_);

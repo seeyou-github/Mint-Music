@@ -35,6 +35,9 @@ class LyricSwitchView(context: Context) : ViewSwitcher(context) {
 
     private var currentPageIndex = 0
 
+    /// 当前页的标识（用于判断是否需要翻页）。
+    private var currentKey: Any? = null
+
     init {
         pages = listOf(newPage(), newPage())
         for (page in pages) {
@@ -103,14 +106,17 @@ class LyricSwitchView(context: Context) : ViewSwitcher(context) {
      * [animate] 为 false 时直接改当前页，不切换、不播动画 —— 用于样式变更
      * （字号/颜色/对齐/行数），避免拖动设置滑块时疯狂播放动画。
      */
-    fun showPage(animate: Boolean, apply: (Page) -> Unit) {
-        if (animate) {
+    fun showPage(animate: Boolean, key: Any? = null, apply: (Page) -> Unit) {
+        // key 相同说明还是同一页：只更新内容，不翻页、不播动画。
+        val samePage = key != null && key == currentKey
+        if (animate && !samePage) {
             apply(nextPage())
             super.showNext()
             currentPageIndex = 1 - currentPageIndex
         } else {
             apply(currentPage())
         }
+        if (key != null) currentKey = key
     }
 
     /** 行数变化时同步重建两份布局里的 TextView。 */

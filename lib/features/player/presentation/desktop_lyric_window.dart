@@ -313,8 +313,10 @@ class DesktopLyricPanel extends StatelessWidget {
 
     final max = settings.maxLineNum;
     final rows = <_LyricRow>[];
+    // 按「页」显示：一页 max 行，播放到本页最后一行时才翻页。
+    final pageStart = (index ~/ max) * max;
 
-    for (var i = index; i < lines.length && rows.length < max; i++) {
+    for (var i = pageStart; i < lines.length && rows.length < max; i++) {
       final text = lines[i].plainText.trim();
       if (text.isNotEmpty) {
         rows.add(_LyricRow(text, active: i == index));
