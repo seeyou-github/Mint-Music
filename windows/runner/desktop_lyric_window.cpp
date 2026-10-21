@@ -369,6 +369,7 @@ bool DesktopLyricWindow::AdvanceActiveIndex() {
     }
     return false;
   }
+  // 暂停时不推进当前行：歌词停在当前这一行，等恢复播放后再继续。
   if (!is_playing_) {
     return false;
   }

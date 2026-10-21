@@ -79,6 +79,9 @@ class DesktopLyricSyncController extends StateNotifier<DesktopLyricStatus>
   /// 会把原生侧正在自行推进的时钟反复拉回去,导致歌词卡住不更新。
   int _lastObservedPositionMs = -1;
 
+  /// 上一次下发给原生侧的播放状态（暂停时原生侧会停止推进歌词行）。
+  bool? _lastPushedPlaying;
+
   /// 正在加载歌词的歌曲 id(用于检测卡死的加载)。
   String? _lyricLoadingSongId;
   DateTime? _lyricLoadingSince;
@@ -317,17 +320,25 @@ class DesktopLyricSyncController extends StateNotifier<DesktopLyricStatus>
 
   /// 下发一次进度锚点。
   ///
-  /// 非强制调用时,若观测到的进度与上次相同就跳过:这说明 Dart 侧进度已停止
-  /// 更新(应用退到后台被节流),此时应让原生侧的时钟继续自行推进。
+  /// 非强制调用时,若观测到的进度与上次相同**且播放状态也没变**就跳过:这说明
+  /// Dart 侧进度已停止更新(应用退到后台被节流),此时应让原生侧的时钟继续自行
+  /// 推进。播放 / 暂停状态变化时必须下发,否则原生侧会一直按「正在播放」推进
+  /// 歌词行,暂停后歌词仍在滚动。
   Future<void> pushPlayState({bool force = false}) async {
     if (!state.usingNativeOverlay) return;
     final playback = _ref.read(playbackControllerProvider);
     final positionMs = playback.position.inMilliseconds;
-    if (!force && positionMs == _lastObservedPositionMs) return;
+    final isPlaying = playback.isPlaying;
+    if (!force &&
+        positionMs == _lastObservedPositionMs &&
+        isPlaying == _lastPushedPlaying) {
+      return;
+    }
     _lastObservedPositionMs = positionMs;
+    _lastPushedPlaying = isPlaying;
     await _overlay.setPlayState(
       positionMs: positionMs,
-      isPlaying: playback.isPlaying,
+      isPlaying: isPlaying,
     );
   }
 

@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../core/theme/theme_provider.dart';
 
 /// 音源图标。
 ///
@@ -6,7 +9,7 @@ import 'package:flutter/material.dart';
 /// QQ「Q」、咪咕「咪」），插件音源没有内置图标时用音源名称首字生成中性色圆标。
 ///
 /// 发现页与搜索页的音源切换按钮共用本组件，保证两处样式完全一致。
-class SourceIcon extends StatelessWidget {
+class SourceIcon extends ConsumerWidget {
   const SourceIcon({
     super.key,
     required this.sourceId,
@@ -27,49 +30,58 @@ class SourceIcon extends StatelessWidget {
   static const double _glyphRatio = 0.45;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    // 圆标里的文字使用设置里的「第二字体颜色」。
+    final textColor = ref.watch(themeColorsProvider).textSecondary;
     switch (sourceId) {
       case 'wy':
         return _buildCircle(
           color: const Color(0xFFE60026),
           glyph: '网',
           size: size,
+          textColor: textColor,
         );
       case 'kg':
         return _buildCircle(
           color: const Color(0xFF2EADFB),
           glyph: '狗',
           size: size,
+          textColor: textColor,
         );
       case 'kw':
         return _buildCircle(
           color: const Color(0xFFFF8500),
           glyph: '我',
           size: size,
+          textColor: textColor,
         );
       case 'tx':
         return _buildCircle(
           color: const Color(0xFF31C27C),
           glyph: 'Q',
           size: size,
+          textColor: textColor,
         );
       case 'mg':
         return _buildCircle(
           color: const Color(0xFFFF7E00),
           glyph: '咪',
           size: size,
+          textColor: textColor,
         );
       case 'qsvip':
         return _buildCircle(
           color: const Color(0xFFFF4081),
           glyph: '汽',
           size: size,
+          textColor: textColor,
         );
       case 'all':
         return _buildCircle(
           color: const Color(0xFF6366F1),
           glyph: '聚',
           size: size,
+          textColor: textColor,
         );
       default:
         final glyph = (label ?? '').trim();
@@ -80,6 +92,7 @@ class SourceIcon extends StatelessWidget {
           color: Colors.blueGrey.shade500,
           glyph: glyph.substring(0, 1).toUpperCase(),
           size: size,
+          textColor: textColor,
         );
     }
   }
@@ -88,6 +101,7 @@ class SourceIcon extends StatelessWidget {
     required Color color,
     required String glyph,
     required double size,
+    required Color textColor,
   }) {
     return Container(
       width: size,
@@ -100,7 +114,7 @@ class SourceIcon extends StatelessWidget {
         child: Text(
           glyph,
           style: TextStyle(
-            color: Colors.white,
+            color: textColor,
             fontSize: size * _glyphRatio,
             fontWeight: FontWeight.bold,
             // height: 1 让行高等于字号，字形在圆标里严格居中。

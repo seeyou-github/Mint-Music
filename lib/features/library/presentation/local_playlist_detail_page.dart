@@ -13,9 +13,8 @@ import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../../../core/utils/scroll_locate.dart';
 import '../../../shared/services/playlist_cmpl_codec.dart';
-import '../../../shared/widgets/share_preview_dialog.dart';
-import '../../../shared/widgets/music_cover_image.dart';
 import '../../../shared/widgets/song_action_sheet.dart';
+import '../../../shared/widgets/music_cover_image.dart';
 import '../../../shared/widgets/song_list_item.dart';
 import '../../../shared/widgets/song_selection.dart';
 import '../application/playlist_providers.dart';
@@ -535,9 +534,7 @@ class _LocalPlaylistDetailPageState
               icon: Icon(Icons.more_horiz, size: 24, color: colors.textSecondary),
               color: colors.surface,
               onSelected: (value) {
-                if (value == 'share') {
-                  _sharePlaylist(context, ref, colors, playlist);
-                } else if (value == 'export') {
+                if (value == 'export') {
                   _exportPlaylist(context, ref, colors, playlist);
                 } else if (value == 'edit') {
                   _editPlaylist(context, ref, colors, playlist);
@@ -565,17 +562,6 @@ class _LocalPlaylistDetailPageState
                   value: 'edit',
                   child: Text(context.tr('编辑歌单'),
                       style: TextStyle(color: colors.textPrimary)),
-                ),
-                PopupMenuItem(
-                  value: 'share',
-                  child: Row(
-                    children: [
-                      Icon(Icons.share, size: 18, color: colors.textSecondary),
-                      const SizedBox(width: 8),
-                      Text(context.tr('分享歌单'),
-                          style: TextStyle(color: colors.textPrimary)),
-                    ],
-                  ),
                 ),
                 PopupMenuItem(
                   value: 'export',
@@ -1122,15 +1108,6 @@ class _LocalPlaylistDetailPageState
       ),
     );
     return confirmed ?? false;
-  }
-
-  void _sharePlaylist(
-    BuildContext context,
-    WidgetRef ref,
-    ThemeColors colors,
-    Playlist playlist,
-  ) {
-    SharePreviewDialog.show(context, playlist: playlist);
   }
 
   Future<void> _exportPlaylist(

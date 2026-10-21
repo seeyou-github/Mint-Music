@@ -19,7 +19,6 @@ import '../../features/settings/application/settings_providers.dart';
 import '../../features/settings/data/settings_service.dart';
 import '../services/amll_toggle_service.dart';
 import '../../features/plugin/application/plugin_providers.dart';
-import 'share_preview_dialog.dart';
 import 'music_cover_image.dart';
 import 'sleep_timer_picker.dart';
 
@@ -295,7 +294,6 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                     onTap: _download,
                     skipPop: true,
                   ),
-                  _buildShareItem(colors),
                   _buildSpeedItem(colors),
                   const SleepTimerMenuTile(),
                   _buildLyricSettingsItem(colors),
@@ -491,30 +489,6 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
     );
   }
 
-  Widget _buildShareItem(ThemeColors colors) {
-    return InkWell(
-      onTap: () {
-        Navigator.pop(context);
-        SharePreviewDialog.show(context, song: widget.song);
-      },
-      child: Padding(
-        padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.lg,
-          vertical: AppSpacing.md,
-        ),
-        child: Row(
-          children: [
-            Icon(Icons.share, size: 22, color: colors.textSecondary),
-            const SizedBox(width: AppSpacing.md),
-            Text(
-              context.tr('分享'),
-              style: TextStyle(fontSize: 15, color: colors.textPrimary),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 
   Widget _buildFavoriteItem(ThemeColors colors) {
     return InkWell(
