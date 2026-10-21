@@ -442,6 +442,12 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
           child: playlistsAsync.when(
             data: (playlists) {
               if (playlists.isEmpty) {
+                // 插件音源可能只提供搜索 / 播放地址，不提供歌单与榜单，
+                // 这时给出说明，避免用户以为是加载失败。
+                final sourceId = ref.read(discoverSourceIdProvider);
+                final hasDiscoverContent = ref
+                    .read(musicSourceManagerProvider)
+                    .sourceHasDiscoverContent(sourceId);
                 return Center(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -452,12 +458,19 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
                         color: colors.textHint,
                       ),
                       const SizedBox(height: AppSpacing.md),
-                      Text(context.tr('暂无歌单数据'), style: TextStyle(color: colors.textHint)),
-                      const SizedBox(height: AppSpacing.md),
-                      TextButton(
-                        onPressed: () => _loadPlaylists(),
-                        child: Text(context.tr('重试')),
+                      Text(
+                        hasDiscoverContent
+                            ? context.tr('暂无歌单数据')
+                            : context.tr('该音源不提供歌单和榜单'),
+                        style: TextStyle(color: colors.textHint),
                       ),
+                      if (hasDiscoverContent) ...[
+                        const SizedBox(height: AppSpacing.md),
+                        TextButton(
+                          onPressed: () => _loadPlaylists(),
+                          child: Text(context.tr('重试')),
+                        ),
+                      ],
                     ],
                   ),
                 );

@@ -2629,6 +2629,14 @@ class MusicSourceManager {
     return null;
   }
 
+  /// 该音源是否提供歌单 / 榜单内容。
+  ///
+  /// 插件只提供搜索与播放地址（落雪脚本就是这样）时没有浏览内容，发现页会
+  /// 给出「该音源不提供歌单和榜单」的提示。
+  bool sourceHasDiscoverContent(String sourceId) {
+    return _findDiscoverHost(sourceId) != null;
+  }
+
   List<SourceInfo> getDiscoverSupportedSources() {
     final sources = <SourceInfo>[];
     final seenIds = <String>{};
@@ -2637,11 +2645,13 @@ class MusicSourceManager {
       if (seenIds.add(source.id)) sources.add(_builtInSourceInfo(source.id));
     }
 
-    // 插件音源：与内置源完全独立。插件实现了浏览接口（榜单 / 推荐歌单）时
-    // 才有浏览内容，没有的话列进来只会是空页面。
+    // 插件音源：与内置源完全独立，一律列出。
+    //
+    // 插件没有浏览接口（榜单 / 推荐歌单）时，发现页的榜单 / 歌单会是空的，
+    // 但这个音源依然可以用于搜索与播放，所以要出现在切换音源列表里，
+    // 否则用户在主页就选不到它。
     for (final source in getPluginSupportedSources()) {
       if (seenIds.contains(source.id)) continue;
-      if (_findDiscoverHost(source.id) == null) continue;
       seenIds.add(source.id);
       sources.add(source);
     }
