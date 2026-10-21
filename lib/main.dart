@@ -6,6 +6,7 @@ import 'package:just_audio_media_kit/just_audio_media_kit.dart';
 import 'app/app.dart';
 import 'core/platform/taskbar_thumbnail_service.dart';
 import 'core/services/audio_service_init.dart';
+import 'core/storage/app_database.dart';
 import 'core/theme/app_font_manager.dart';
 import 'core/theme/app_typography.dart';
 import 'features/settings/application/font_providers.dart';
@@ -103,7 +104,53 @@ void main() async {
   }
 
   print('>>> main: 启动应用...');
-  runApp(UncontrolledProviderScope(container: container, child: const App()));
+  runApp(
+    UncontrolledProviderScope(
+      container: container,
+      child: const _AppLifecycleFlush(child: App()),
+    ),
+  );
+}
+
+/// 应用切后台 / 退出前，把「延迟写」的高频数据立刻落盘。
+///
+/// 本地歌曲列表、最近播放、下载列表、搜索历史这些数据在运行期只在内存里改，
+/// 攒够一批才写进数据库；如果不在这里强制落盘，进程被杀就会丢掉最近的一段。
+class _AppLifecycleFlush extends StatefulWidget {
+  const _AppLifecycleFlush({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_AppLifecycleFlush> createState() => _AppLifecycleFlushState();
+}
+
+class _AppLifecycleFlushState extends State<_AppLifecycleFlush>
+    with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.detached ||
+        state == AppLifecycleState.hidden) {
+      unawaited(AppDatabase.flushAll());
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }
 
 class _NeteaseImageHttpOverrides extends HttpOverrides {

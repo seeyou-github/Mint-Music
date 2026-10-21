@@ -9,6 +9,7 @@ import 'package:path/path.dart' as p;
 
 import '../../core/platform/app_paths.dart';
 import 'cache_paths.dart';
+import 'sqlite_cache_info_repository.dart';
 
 /// 网络图片磁盘缓存。
 ///
@@ -35,11 +36,10 @@ class AppImageCache {
           key,
           stalePeriod: const Duration(days: 30),
           maxNrOfCacheObjects: 800,
-          // 缓存信息（索引）文件也要放在缓存目录里：只指定 databaseName 时
-          // flutter_cache_manager 会把 <databaseName>.json 写到系统默认目录
-          // （Windows 上是漫游 AppData），会跑到 AppData 外面去。
-          repo: JsonCacheInfoRepository(
-            path: p.join(dir.path, '$key.json'),
+          // 缓存索引（索引 + 元数据）放进临时库：以前是一个 JSON 文件，
+          // 每新增 / 淘汰一张图片都要整个重写一遍。
+          repo: SqliteCacheInfoRepository(
+            legacyJsonPath: p.join(dir.path, '$key.json'),
           ),
           fileSystem: _CacheDirFileSystem(dir.path),
         ),

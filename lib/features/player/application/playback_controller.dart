@@ -1,9 +1,9 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:just_audio/just_audio.dart';
+import '../data/playback_state_store.dart';
 import '../domain/models/song.dart';
 import '../domain/models/playback_state.dart';
 import '../domain/models/play_mode.dart';
@@ -125,20 +125,15 @@ final playbackControllerProvider =
             controller.setAutoQualityDowngrade(svc.getAutoQualityDowngrade());
             controller.setAutoSwitchSource(svc.getAutoSwitchSource());
             unawaited(controller.setSpeed(svc.getPlaybackSpeed()));
+            // 播放状态每 5 秒就要存一次，属于高频写入，放在临时库里；
+            // 队列只有变化时才写那几十 KB，高频保存只动当前歌曲那一行。
+            final stateStore = PlaybackStateStore();
+            await stateStore.load();
             controller.onSavePlaybackState = (data) {
-              svc.setLastPlaybackStateJson(jsonEncode(data));
+              stateStore.save(data);
             };
-            controller.onRestorePlaybackState = () {
-              final raw = svc.getLastPlaybackStateJson();
-              if (raw == null || raw.isEmpty) return null;
-              try {
-                return jsonDecode(raw) as Map<String, dynamic>;
-              } catch (_) {
-                return null;
-              }
-            };
-            controller.onClearPlaybackState = () =>
-                svc.clearLastPlaybackState();
+            controller.onRestorePlaybackState = () => stateStore.restore();
+            controller.onClearPlaybackState = () => stateStore.clear();
             // 回调就绪后自动恢复上次播放会话
             // 直接从偏好设置读取音质，避免 provider 未初始化的竞态
             final persistedQuality = svc.getGlobalQuality();

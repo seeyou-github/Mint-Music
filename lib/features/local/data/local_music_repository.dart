@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:on_audio_query/on_audio_query.dart';
 import 'package:path/path.dart' as p;
 
+import '../../../core/storage/app_database.dart';
 import '../../../core/storage/app_preferences.dart';
 import '../../../shared/services/cover_cache_service.dart';
 import '../../player/domain/models/song.dart';
@@ -60,6 +61,11 @@ typedef ScanProgressCallback = void Function(ScanProgress progress);
 typedef BatchMatchProgressCallback = void Function(BatchMatchProgress progress);
 
 class LocalMusicRepository {
+  LocalMusicRepository() {
+    AppDatabase.registerWriter(_writer);
+  }
+
+  /// 旧版把扫描目录 / 本地歌曲列表存在设置文件里的键（首次启动时迁移）。
   static const _dirsKey = 'local_music_dirs';
   static const _songsKey = 'local_music_songs';
 
@@ -79,20 +85,38 @@ class LocalMusicRepository {
   ScanProgressCallback? onScanProgress;
   BatchMatchProgressCallback? onBatchMatchProgress;
 
+  /// 本地歌曲列表属于「丢了可以重新扫描」的高频数据，写入走合并延迟写，
+  /// 避免扫描 / 匹配过程中反复写盘。
+  late final DeferredWriter _writer = DeferredWriter(() => _persistIndex());
+
   Future<void> init() async {
     if (_initialized) return;
-    final prefs = await AppPreferences.getInstance();
-    final dirsJson = prefs.getStringList(_dirsKey) ?? [];
-    _scannedDirs.addAll(dirsJson);
+    final db = await AppDatabase.cacheDatabase();
 
-    final songsJson = prefs.getString(_songsKey);
-    if (songsJson != null) {
-      final list = jsonDecode(songsJson) as List;
-      for (final s in list) {
-        final song = Song.fromJson(s as Map<String, dynamic>);
+    final dirRows = await db.query('local_dirs', orderBy: 'added_at ASC');
+    for (final row in dirRows) {
+      _scannedDirs.add('${row['path']}');
+    }
+
+    final songRows = await db.query('local_songs');
+    for (final row in songRows) {
+      final data = AppDatabase.decodeMap(row['data']);
+      if (data.isEmpty) continue;
+      try {
+        final song = Song.fromJson(data);
         _songsMap[song.id] = song;
+      } catch (_) {
+        // 单条数据损坏就跳过
       }
     }
+
+    if (!await AppDatabase.isMigrated('local_music')) {
+      await _importLegacy();
+      if (AppDatabase.isPersistent) {
+        await AppDatabase.markMigrated('local_music');
+      }
+    }
+
     _initialized = true;
   }
 
@@ -158,7 +182,7 @@ class LocalMusicRepository {
     await init();
     if (_scannedDirs.contains(dirPath)) return;
     _scannedDirs.add(dirPath);
-    await _saveIndex();
+    await _flushIndex();
   }
 
   Future<void> removeDirectory(String dirPath) async {
@@ -169,14 +193,14 @@ class LocalMusicRepository {
       final fp = (s.filePath ?? '').replaceAll('\\', '/');
       return fp.startsWith(normalized);
     });
-    await _saveIndex();
+    await _flushIndex();
   }
 
   Future<void> setDirectories(List<String> dirs) async {
     await init();
     _scannedDirs.clear();
     _scannedDirs.addAll(dirs.where((d) => d.isNotEmpty));
-    await _saveDirs();
+    await _flushIndex();
   }
 
   Future<bool> requestPermission() async {
@@ -284,7 +308,7 @@ class LocalMusicRepository {
 
         _songsMap.clear();
         _songsMap.addAll(newSongsMap);
-        await _saveIndex();
+        await _flushIndex();
 
         final doneProgress = ScanProgress(processed: total, total: total, running: false);
         onScanProgress?.call(doneProgress);
@@ -380,7 +404,7 @@ class LocalMusicRepository {
 
       _songsMap.clear();
       _songsMap.addAll(newSongsMap);
-      await _saveIndex();
+      await _flushIndex();
 
       final doneProgress = ScanProgress(
         processed: total,
@@ -453,7 +477,7 @@ class LocalMusicRepository {
   Future<void> clearIndex() async {
     await init();
     _songsMap.clear();
-    await _saveIndex();
+    await _flushIndex();
   }
 
   /// [forceOverwrite] 为 true 时直接覆盖所有字段（用于精准匹配等用户主动操作），
@@ -480,7 +504,7 @@ class LocalMusicRepository {
     final song = _songsMap[id];
     if (song == null) return false;
     _songsMap.remove(id);
-    await _saveIndex();
+    await _flushIndex();
 
     final filePath = song.filePath;
     if (filePath != null && filePath.isNotEmpty) {
@@ -498,8 +522,8 @@ class LocalMusicRepository {
 
   /// 批量删除本地歌曲，返回实际从索引中移除的数量。
   ///
-  /// 与逐首调用 [deleteSong] 的区别：索引只写一次。索引是全量 JSON 落盘，
-  /// 批量删除时逐首写盘会让耗时随数量线性放大。
+  /// 与逐首调用 [deleteSong] 的区别：索引只写一次。批量删除时逐首写盘会让
+  /// 耗时随数量线性放大。
   Future<int> deleteSongs(Iterable<String> ids) async {
     await init();
     final filePaths = <String>[];
@@ -513,7 +537,7 @@ class LocalMusicRepository {
     }
     if (removed == 0) return 0;
 
-    await _saveIndex();
+    await _flushIndex();
     for (final filePath in filePaths) {
       try {
         final file = File(filePath);
@@ -556,15 +580,72 @@ class LocalMusicRepository {
     );
   }
 
+  /// 标记索引有变化（延迟落盘：攒一批再写，避免高频写盘）。
   Future<void> _saveIndex() async {
-    await _saveDirs();
-    final prefs = await AppPreferences.getInstance();
-    final songsJson = jsonEncode(_songsMap.values.map((s) => s.toJson()).toList());
-    await prefs.setString(_songsKey, songsJson);
+    _writer.schedule();
   }
 
-  Future<void> _saveDirs() async {
-    final prefs = await AppPreferences.getInstance();
-    await prefs.setStringList(_dirsKey, _scannedDirs.toList());
+  /// 立刻把索引写入数据库（扫描完成 / 用户主动操作后调用）。
+  Future<void> _flushIndex() async {
+    await _writer.writeNow();
+  }
+
+  Future<void> _persistIndex() async {
+    final db = await AppDatabase.cacheDatabase();
+    final songs = _songsMap.values.toList();
+    final dirs = _scannedDirs.toList();
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await db.transaction((txn) async {
+      await txn.delete('local_dirs');
+      final dirBatch = txn.batch();
+      for (final dir in dirs) {
+        dirBatch.insert('local_dirs', {'path': dir, 'added_at': now});
+      }
+      await dirBatch.commit(noResult: true);
+
+      await txn.delete('local_songs');
+      final batch = txn.batch();
+      for (final song in songs) {
+        batch.insert('local_songs', {
+          'id': song.id,
+          'title': song.title,
+          'artist': song.artist,
+          'album': song.album,
+          'file_path': song.filePath ?? '',
+          'source': song.source ?? 'local',
+          'updated_at': now,
+          'data': jsonEncode(song.toJson()),
+        });
+      }
+      await batch.commit(noResult: true);
+    });
+  }
+
+  /// 首次启动：把旧设置文件里的扫描目录 / 本地歌曲列表导入数据库。
+  Future<void> _importLegacy() async {
+    try {
+      final prefs = await AppPreferences.getInstance();
+      final dirsJson = prefs.getStringList(_dirsKey) ?? [];
+      _scannedDirs.addAll(dirsJson);
+
+      final songsJson = prefs.getString(_songsKey);
+      if (songsJson != null) {
+        final list = jsonDecode(songsJson) as List;
+        for (final s in list) {
+          final song = Song.fromJson(s as Map<String, dynamic>);
+          _songsMap[song.id] = song;
+        }
+      }
+
+      if (dirsJson.isNotEmpty || _songsMap.isNotEmpty) {
+        await _persistIndex();
+        // 只有真正落盘了才删旧数据，避免降级模式下索引丢失。
+        await AppDatabase.removeLegacyKey(_dirsKey);
+        await AppDatabase.removeLegacyKey(_songsKey);
+        debugPrint('[LocalMusic] 已从旧设置迁移本地音乐索引');
+      }
+    } catch (e) {
+      debugPrint('[LocalMusic] 迁移旧索引失败: $e');
+    }
   }
 }

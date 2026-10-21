@@ -145,12 +145,6 @@ class SettingsService {
   Future<void> setAutoSwitchSource(bool v) =>
       _prefs.setBool('auto_switch_source', v);
 
-  // -- last playback state (JSON) --
-  String? getLastPlaybackStateJson() => _prefs.getString('last_playback_state');
-  Future<void> setLastPlaybackStateJson(String json) =>
-      _prefs.setString('last_playback_state', json);
-  Future<void> clearLastPlaybackState() => _prefs.remove('last_playback_state');
-
   // -- notification enabled --
   bool getNotificationEnabled() =>
       _prefs.getBool('notification_enabled') ?? true;
@@ -418,6 +412,7 @@ class SettingsService {
       'covers',
       'image_cache',
       'audio_cache',
+      'lyric_cache',
     ];
     for (final root in roots) {
       for (final name in subDirectories) {

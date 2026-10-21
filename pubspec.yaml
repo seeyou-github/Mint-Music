@@ -44,6 +44,16 @@ dependencies:
 
   shared_preferences: ^2.5.3
 
+  # 本地数据库。
+  # - sqflite：Android / iOS 官方实现
+  # - sqflite_common_ffi：Windows / macOS / Linux 桌面端实现（SQLite 走 FFI）
+  # - sqlite3_flutter_libs：桌面端把 sqlite3.dll 随应用一起打包
+  # 固定 sqlite3 为 2.x：3.x 改用 native assets 构建，需要额外的工具链支持。
+  sqflite: ^2.4.2
+  sqflite_common_ffi: ^2.3.7
+  sqlite3: ^2.9.4
+  sqlite3_flutter_libs: ^0.5.42
+
   encrypt: ^5.0.3
   pointycastle: ^3.9.1
   crypto: ^3.0.6

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/storage/app_database.dart';
 import '../../../core/storage/app_preferences.dart';
 import '../../player/domain/models/song.dart';
 import '../../discover/domain/models/playlist.dart';
@@ -380,20 +381,40 @@ final searchHistoryProvider =
 
 class SearchHistoryNotifier extends StateNotifier<List<String>> {
   SearchHistoryNotifier() : super([]) {
+    AppDatabase.registerWriter(_writer);
     _loadPersisted();
   }
 
   /// 最多保留的搜索历史条数，超出时自动删除最旧的。
   static const int _maxHistory = 10;
 
+  /// 旧版把搜索历史存在设置文件里的键（首次启动时迁移）。
   static const String _storageKey = 'search_history';
 
-  /// 启动时从 AppPreferences 恢复搜索历史。
+  /// 搜索历史写得频繁但丢了无所谓，因此放在临时库，
+  /// 并且写入走合并延迟写，避免每搜一次就写一次硬盘。
+  late final DeferredWriter _writer = DeferredWriter(() => _persist());
+
+  /// 启动时从临时库恢复搜索历史。
   /// 若加载期间用户已新增搜索词，则合并去重，避免覆盖用户操作。
   Future<void> _loadPersisted() async {
     try {
-      final prefs = await AppPreferences.getInstance();
-      final stored = prefs.getStringList(_storageKey) ?? const [];
+      final db = await AppDatabase.cacheDatabase();
+      final rows = await db.query(
+        'search_history',
+        orderBy: 'searched_at DESC',
+        limit: _maxHistory,
+      );
+      var stored = rows.map((r) => '${r['keyword']}').toList();
+
+      if (stored.isEmpty &&
+          !await AppDatabase.isMigrated('search_history')) {
+        stored = await _importLegacy();
+        if (AppDatabase.isPersistent) {
+          await AppDatabase.markMigrated('search_history');
+        }
+      }
+
       final merged = [...state, ...stored.where((q) => !state.contains(q))];
       if (!mounted) return;
       state = merged.take(_maxHistory).toList();
@@ -402,12 +423,51 @@ class SearchHistoryNotifier extends StateNotifier<List<String>> {
     }
   }
 
+  /// 把历史写入临时库（延迟写）。
   Future<void> _persist() async {
+    if (!mounted) return;
     try {
-      final prefs = await AppPreferences.getInstance();
-      await prefs.setStringList(_storageKey, state);
+      final db = await AppDatabase.cacheDatabase();
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final keywords = state;
+      await db.transaction((txn) async {
+        await txn.delete('search_history');
+        final batch = txn.batch();
+        for (final keyword in keywords) {
+          batch.insert('search_history', {
+            'keyword': keyword,
+            'searched_at': now,
+          });
+        }
+        await batch.commit(noResult: true);
+      });
     } catch (_) {
       // 写入失败时仅丢失持久化，不影响内存中的历史
+    }
+  }
+
+  /// 首次启动：把旧设置文件里的搜索历史导入数据库。
+  Future<List<String>> _importLegacy() async {
+    try {
+      final prefs = await AppPreferences.getInstance();
+      final legacy = prefs.getStringList(_storageKey) ?? const <String>[];
+      if (legacy.isEmpty) return const <String>[];
+      final db = await AppDatabase.cacheDatabase();
+      final now = DateTime.now().millisecondsSinceEpoch;
+      await db.transaction((txn) async {
+        final batch = txn.batch();
+        for (final keyword in legacy) {
+          batch.insert('search_history', {
+            'keyword': keyword,
+            'searched_at': now,
+          });
+        }
+        await batch.commit(noResult: true);
+      });
+      await AppDatabase.removeLegacyKey(_storageKey);
+      return legacy;
+    } catch (_) {
+      return const <String>[];
     }
   }
 
@@ -416,17 +476,17 @@ class SearchHistoryNotifier extends StateNotifier<List<String>> {
     final trimmed = query.trim();
     final updated = [trimmed, ...state.where((q) => q != trimmed)];
     state = updated.take(_maxHistory).toList();
-    unawaited(_persist());
+    _writer.schedule();
   }
 
   void removeQuery(String query) {
     state = state.where((q) => q != query).toList();
-    unawaited(_persist());
+    unawaited(_writer.writeNow());
   }
 
   void clearHistory() {
     state = [];
-    unawaited(_persist());
+    unawaited(_writer.writeNow());
   }
 }
 

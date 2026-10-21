@@ -37,6 +37,9 @@ class AppPaths {
   /// 默认临时目录名。
   static const String tempFolderName = 'temp';
 
+  /// 重要数据库目录名（我的收藏、收藏歌单）。
+  static const String databaseFolderName = 'db';
+
   /// `薄荷音乐.exe` 所在目录（仅 Windows 返回）。
   static String? get executableDirectory {
     if (!Platform.isWindows) return null;
@@ -118,6 +121,30 @@ class AppPaths {
       return _subDirectory(tempFolderName);
     }
     return _ensureDirectory(await getApplicationCacheDirectory());
+  }
+
+  /// 重要数据库目录（Windows 为 `AppData\db`）。
+  ///
+  /// 存放「不能丢」的数据：我的收藏、收藏歌单。变更后立即落盘。
+  static Future<Directory> databaseDirectory() async {
+    if (Platform.isWindows) {
+      return _subDirectory(databaseFolderName);
+    }
+    final base = await getApplicationSupportDirectory();
+    return _ensureDirectory(Directory(p.join(base.path, databaseFolderName)));
+  }
+
+  /// 临时数据库目录（Windows 为 `AppData\temp\db`）。
+  ///
+  /// 存放「丢了可以重新生成」的高频数据：本地歌曲列表、最近播放、下载列表、
+  /// 搜索历史、缓存索引。写入会合并延迟落盘，减少 SSD 写入次数。
+  static Future<Directory> cacheDatabaseDirectory() async {
+    if (Platform.isWindows) {
+      final base = await _subDirectory(tempFolderName);
+      return _ensureDirectory(Directory(p.join(base.path, databaseFolderName)));
+    }
+    final base = await getApplicationCacheDirectory();
+    return _ensureDirectory(Directory(p.join(base.path, databaseFolderName)));
   }
 
   /// 数据根目录下的子目录（自动创建）。
