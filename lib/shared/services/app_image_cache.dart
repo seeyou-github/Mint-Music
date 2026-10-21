@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:path/path.dart' as p;
 
+import '../../core/platform/app_paths.dart';
 import 'cache_paths.dart';
 
 /// 网络图片磁盘缓存。
