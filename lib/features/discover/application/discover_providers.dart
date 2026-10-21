@@ -87,6 +87,10 @@ class CategoryPlaylistsNotifier extends StateNotifier<AsyncValue<List<Playlist>>
   bool _noMore = false;
   bool _loadingMore = false;
 
+  /// 请求序号：切歌 / 切分类时会同时有多个请求在飞，只认最后一次的结果，
+  /// 否则慢的旧请求会把新内容覆盖掉。
+  int _requestId = 0;
+
   bool get noMore => _noMore;
   bool get loadingMore => _loadingMore;
 
@@ -96,7 +100,11 @@ class CategoryPlaylistsNotifier extends StateNotifier<AsyncValue<List<Playlist>>
     String? sourceId,
     bool reset = false,
   }) async {
-    if (_loadingMore) return;
+    // 有请求在飞时，只有「重置」类请求（切歌 / 切分类）可以顶掉旧的继续发，
+    // 否则旧请求回来会把新内容覆盖掉。
+    if (_loadingMore && !reset) return;
+
+    final requestId = ++_requestId;
 
     if (reset) {
       _page = 1;
@@ -113,6 +121,7 @@ class CategoryPlaylistsNotifier extends StateNotifier<AsyncValue<List<Playlist>>
         limit: 30,
         sourceId: sourceId ?? 'wy',
       );
+      if (requestId != _requestId) return;
 
       final current = state.valueOrNull ?? [];
       // 去重：部分插件脚本的分页接口并不支持翻页（例如“推荐歌单”接口不接收
@@ -136,9 +145,12 @@ class CategoryPlaylistsNotifier extends StateNotifier<AsyncValue<List<Playlist>>
         _page++;
       }
     } catch (e, st) {
+      if (requestId != _requestId) return;
       state = AsyncValue.error(e, st);
     } finally {
-      _loadingMore = false;
+      if (requestId == _requestId) {
+        _loadingMore = false;
+      }
     }
   }
 }

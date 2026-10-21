@@ -372,14 +372,9 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
         );
         ref.read(activeTagIdProvider.notifier).state = '';
         ref.read(activeCategoryNameProvider.notifier).state = '热门';
-        ref
-            .read(categoryPlaylistsProvider.notifier)
-            .fetchPlaylists(
-              sortId: 'hot',
-              tagId: '',
-              sourceId: selectedId,
-              reset: true,
-            );
+        // 分类与歌单交给 discoverSourceIdProvider 的监听统一处理（会自动选中
+        // 置顶分类）。这里不要再发一次请求：两次请求会互相覆盖，导致
+        // 「推荐」分类里显示成「热门」的内容。
       }
     });
   }
