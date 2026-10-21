@@ -47,6 +47,20 @@ class AppDatabase {
   /// 临时库：本地歌曲列表、最近播放、下载列表、搜索历史、缓存索引。
   Database get cache => _cache;
 
+  /// 把 WAL 落盘（checkpoint）。
+  ///
+  /// Windows 关闭应用时是直接结束进程，不会给 Dart 任何收尾的机会，
+  /// 所以关键数据写完后要显式 checkpoint 一次，否则进程被强杀时
+  /// WAL 里还没落盘的数据会一起丢掉（表现为「刚写完就退出，重启后没了」）。
+  static Future<void> checkpoint() async {
+    try {
+      final db = await cacheDatabase();
+      await db.execute('PRAGMA wal_checkpoint(TRUNCATE)');
+    } catch (e) {
+      debugPrint('[AppDatabase] checkpoint 失败: $e');
+    }
+  }
+
   /// 清除临时库里的「缓存类」数据（歌词、图片缓存索引）。
   ///
   /// 「清除本地缓存」时调用：缓存文件被删了，索引也要一起清掉。
@@ -214,8 +228,10 @@ class AppDatabase {
       path,
       version: 2,
       onConfigure: (db) async {
-        // 临时库不需要绝对安全：NORMAL 足够，少一次 fsync。
         await db.execute('PRAGMA journal_mode=WAL');
+        // NORMAL：写 WAL 不用每次 fsync，浏览时缓存索引写入不至于卡顿。
+        // 关键数据（本地歌曲 / 最近播放 / 搜索历史）写完后会显式
+        // checkpoint 一次（见 [checkpoint]），保证进程被强杀也不丢。
         await db.execute('PRAGMA synchronous=NORMAL');
       },
       onCreate: (db, version) async {

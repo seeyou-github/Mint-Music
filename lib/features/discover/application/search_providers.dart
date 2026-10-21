@@ -476,7 +476,8 @@ class SearchHistoryNotifier extends StateNotifier<List<String>> {
     final trimmed = query.trim();
     final updated = [trimmed, ...state.where((q) => q != trimmed)];
     state = updated.take(_maxHistory).toList();
-    _writer.schedule();
+    // 立即写库：关闭应用时进程会被直接结束，延迟写会丢。
+    unawaited(_writer.writeNow().then((_) => AppDatabase.checkpoint()));
   }
 
   void removeQuery(String query) {

@@ -1,8 +1,11 @@
 import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/platform/file_manager_service.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_spacing.dart';
 import '../../core/theme/app_font_manager.dart';
@@ -347,6 +350,24 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                       onTap: () => context.push(
                         '${AppRoutes.tagEditor}?songId=${widget.song.id}',
                       ),
+                    ),
+                  // Windows：用系统文件管理器打开并定位这首歌曲
+                  if (Platform.isWindows &&
+                      (widget.song.filePath ?? '').isNotEmpty)
+                    _buildActionItem(
+                      colors: colors,
+                      icon: Icons.folder_open_outlined,
+                      label: context.tr('打开歌曲所在文件夹'),
+                      onTap: () async {
+                        Navigator.pop(context);
+                        final path = widget.song.filePath;
+                        if (path == null || path.isEmpty) return;
+                        final ok = await FileManagerService.revealFile(path);
+                        if (ok || !context.mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text(context.tr('无法打开所在文件夹'))),
+                        );
+                      },
                     ),
                 ],
                 const SizedBox(height: AppSpacing.lg),

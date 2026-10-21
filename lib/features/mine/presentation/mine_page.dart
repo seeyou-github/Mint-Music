@@ -39,6 +39,8 @@ class MinePage extends ConsumerWidget {
           ),
           children: [
             Row(
+              // 版本号在右上角，与标题顶部对齐。
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Expanded(
                   child: Text(

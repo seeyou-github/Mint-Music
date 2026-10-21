@@ -586,8 +586,12 @@ class LocalMusicRepository {
   }
 
   /// 立刻把索引写入数据库（扫描完成 / 用户主动操作后调用）。
+  ///
+  /// 写完再 checkpoint 一次：应用退出时进程会被直接结束，不 checkpoint
+  /// 的话刚扫描出来的歌曲会丢（重启后本地页面是空的）。
   Future<void> _flushIndex() async {
     await _writer.writeNow();
+    await AppDatabase.checkpoint();
   }
 
   Future<void> _persistIndex() async {
