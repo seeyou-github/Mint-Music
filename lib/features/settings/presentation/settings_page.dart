@@ -87,6 +87,7 @@ Future<void> _doPersist(
 
 enum SettingsCategory {
   appearance,
+  desktopLyric,
   playback,
   storage,
 }
@@ -110,8 +111,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
 
   static const _categoryConfig = {
     SettingsCategory.appearance: (icon: Icons.palette, label: '外观设置'),
+    SettingsCategory.desktopLyric: (icon: Icons.lyrics, label: '桌面歌词'),
     SettingsCategory.playback: (icon: Icons.play_circle, label: '播放设置'),
-    SettingsCategory.storage: (icon: Icons.storage, label: '存储管理'),
+    SettingsCategory.storage: (icon: Icons.storage, label: '缓存设置'),
   };
 
   @override
@@ -303,6 +305,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     switch (cat) {
       case SettingsCategory.appearance:
         return const _AppearanceContent();
+      case SettingsCategory.desktopLyric:
+        return const _DesktopLyricContent();
       case SettingsCategory.playback:
         return const _PlaybackContent();
       case SettingsCategory.storage:
@@ -646,7 +650,7 @@ class _AppearanceContent extends ConsumerWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _buildThemeGroup(context, ref, colors),
-        _buildDesktopLyricGroup(context, ref, colors),
+        _buildBackgroundModeGroup(context, ref, colors),
       ],
     );
   }
@@ -1398,6 +1402,89 @@ class _AppearanceContent extends ConsumerWidget {
               icon: Icon(Icons.delete_outline, size: 18, color: colors.error),
               tooltip: context.tr('删除'),
             ),
+    );
+  }
+
+  /// 播放详情页背景（原「全屏播放背景」）。
+  Widget _buildBackgroundModeGroup(
+    BuildContext context,
+    WidgetRef ref,
+    ThemeColors colors,
+  ) {
+    final bgMode = ref.watch(fullScreenBackgroundModeProvider);
+    final modeLabels = {
+      FullScreenBackgroundMode.theme: '跟随主题',
+      FullScreenBackgroundMode.cover: '封面模糊',
+      FullScreenBackgroundMode.dark: '纯黑背景',
+    };
+    final currentLabel = modeLabels[bgMode] ?? '纯黑背景';
+    return _SettingGroup(
+      title: '播放详情页背景',
+      subtitle: '播放详情页（歌词页 / 播放页）的背景模式',
+      colors: colors,
+      children: [
+        _SettingRow(
+          icon: Icons.wallpaper,
+          title: '背景模式',
+          subtitle: '当前: $currentLabel',
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                context.tr(currentLabel),
+                style: TextStyle(fontSize: 13, color: colors.textHint),
+              ),
+              const SizedBox(width: 4),
+              Icon(Icons.chevron_right, size: 18, color: colors.textHint),
+            ],
+          ),
+          colors: colors,
+          onTap: () => _showBottomPicker(
+            context,
+            colors,
+            '背景模式',
+            ['跟随主题', '封面模糊', '纯黑背景'],
+            currentLabel,
+            (v) {
+              final map = {
+                '跟随主题': FullScreenBackgroundMode.theme,
+                '封面模糊': FullScreenBackgroundMode.cover,
+                '纯黑背景': FullScreenBackgroundMode.dark,
+              };
+              final container = ProviderScope.containerOf(context);
+              container.read(fullScreenBackgroundModeProvider.notifier).state =
+                  map[v] ?? FullScreenBackgroundMode.dark;
+              unawaited(
+                _doPersist(
+                  container,
+                  (s) => s.setFullScreenBgMode(
+                    v == '纯黑背景'
+                        ? 'dark'
+                        : (v == '跟随主题' ? 'theme' : 'cover'),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ==================== Desktop Lyric ====================
+
+class _DesktopLyricContent extends ConsumerWidget {
+  const _DesktopLyricContent();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final colors = ref.watch(themeColorsProvider);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildDesktopLyricGroup(context, ref, colors),
+      ],
     );
   }
 
@@ -2824,6 +2911,7 @@ class _PlaybackContent extends ConsumerWidget {
 }
 
 // ==================== Storage ====================
+
 class _StorageContent extends ConsumerWidget {
   const _StorageContent();
 
