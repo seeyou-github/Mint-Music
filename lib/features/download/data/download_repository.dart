@@ -1045,12 +1045,10 @@ class DownloadRepository {
 
   // ==================== 持久化 ====================
 
-  /// 标记任务列表有变化（延迟落盘）。
+  /// 标记任务列表有变化。
   ///
-  /// 下载过程中的进度更新只改内存，不会每次都写数据库。
-  Future<void> _saveTasks() async {
-    _writer.schedule();
-  }
+  /// 下载列表只保存在运行内存里（退出应用即清空），这里不需要落库。
+  Future<void> _saveTasks() async {}
 
   /// 下载列表不落库（只保留在内存里），这里保留调用点是为了少改代码。
   Future<void> _flushTasks() async {}

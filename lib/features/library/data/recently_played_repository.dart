@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:sqflite/sqflite.dart';
 
 import '../../../core/storage/app_database.dart';
 import '../../../core/storage/app_preferences.dart';

@@ -206,6 +206,64 @@ class SongActionSheet extends ConsumerStatefulWidget {
     );
   }
 
+  /// 选择下载音质。
+  ///
+  /// 播放页顶部的下载按钮直接调用这个（不经过 ActionSheet）。
+  static void showDownloadQualityPicker(BuildContext context, Song song) {
+    final sourceId = song.source ?? 'wy';
+    final manager = ProviderScope.containerOf(
+      context,
+    ).read(musicSourceManagerProvider);
+    final qualities = manager.getSupportedQualitiesForSourceId(sourceId);
+
+    showModalBottomSheet(
+      context: context,
+      sheetAnimationStyle: _sheetAnimationStyle,
+      backgroundColor: AppColors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      isScrollControlled: true,
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).padding.bottom),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(ctx).size.height * 0.9,
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                const SizedBox(height: 12),
+                Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  ctx.tr('选择下载音质'),
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                ...qualities.map((q) => _buildQualityItem(ctx, q, song)),
+                const SizedBox(height: 16),
+              ],
+            ),
+          ),
+          ),
+        ),
+      ),
+    );
+  }
   @override
   ConsumerState<SongActionSheet> createState() => _SongActionSheetState();
 }
@@ -1126,67 +1184,10 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
   }
 
   void _showQualityDialog() {
-    showDownloadQualityPicker(context, widget.song);
+    SongActionSheet.showDownloadQualityPicker(context, widget.song);
   }
 
-  /// 选择下载音质。
-  ///
-  /// 播放页顶部的下载按钮直接调用这个（不经过 ActionSheet）。
-  static void showDownloadQualityPicker(BuildContext context, Song song) {
-    final sourceId = song.source ?? 'wy';
-    final manager = ProviderScope.containerOf(
-      context,
-    ).read(musicSourceManagerProvider);
-    final qualities = manager.getSupportedQualitiesForSourceId(sourceId);
 
-    showModalBottomSheet(
-      context: context,
-      sheetAnimationStyle: _sheetAnimationStyle,
-      backgroundColor: AppColors.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      isScrollControlled: true,
-      builder: (ctx) => SafeArea(
-        child: Padding(
-          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).padding.bottom),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              maxHeight: MediaQuery.of(ctx).size.height * 0.9,
-            ),
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                const SizedBox(height: 12),
-                Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  ctx.tr('选择下载音质'),
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.white,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                ...qualities.map((q) => _buildQualityItem(ctx, q, song)),
-                const SizedBox(height: 16),
-              ],
-            ),
-          ),
-          ),
-        ),
-      ),
-    );
-  }
 
   static Widget _buildQualityItem(BuildContext ctx, String q, Song song) {
     return InkWell(
@@ -1259,7 +1260,8 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
               action: SnackBarAction(
                 label: context.tr('重新选择'),
                 textColor: Colors.white,
-                onPressed: () => showDownloadQualityPicker(context, song),
+                onPressed: () =>
+                    SongActionSheet.showDownloadQualityPicker(context, song),
               ),
             ),
           );
