@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../core/l10n/app_locale.dart';
 import '../core/l10n/l10n.dart';
 import '../core/theme/app_theme.dart';
+import '../core/theme/app_typography.dart';
 import '../core/theme/theme_provider.dart';
 import '../core/router/app_router.dart';
 import '../core/theme/system_brightness_sync.dart';
@@ -106,11 +107,15 @@ class _AppState extends ConsumerState<App> {
     );
   }
 
-  /// 把导入的应用字体应用到主题的文字样式上。
+  /// 把应用字体应用到主题的文字样式上。
+  ///
+  /// 没有选择过字体时使用默认字体（内置的思源宋体）。
   ThemeData _applyAppFont(ThemeData theme, String? family) {
-    if (family == null || family.isEmpty) return theme;
+    final effective = (family == null || family.isEmpty)
+        ? AppTypography.defaultFontFamily
+        : family;
     return theme.copyWith(
-      textTheme: theme.textTheme.apply(fontFamily: family),
+      textTheme: theme.textTheme.apply(fontFamily: effective),
     );
   }
 

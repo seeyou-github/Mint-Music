@@ -66,12 +66,15 @@ void main() async {
   print('>>> main: AMLL toggle loaded: ${AmllToggleService().enabled}');
 
   // 加载导入的字体文件，并恢复上次选择的应用字体。
+  // 没有选择过就用内置的思源宋体。
   unawaited(
     AppFontManager.instance.load().then((_) {
       final selected = AppFontManager.instance.selectedFamily;
       container.read(appFontSelectedProvider.notifier).state = selected;
       AppTypography.fontFamily =
-          (selected == null || selected.isEmpty) ? 'PingFangSC' : selected;
+          (selected == null || selected.isEmpty)
+              ? AppTypography.defaultFontFamily
+              : selected;
       print('>>> main: 应用字体 -> ${AppTypography.fontFamily}');
     }),
   );

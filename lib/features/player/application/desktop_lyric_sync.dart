@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_font_manager.dart';
+import '../../../core/theme/app_typography.dart';
 import '../../settings/application/font_providers.dart';
 import '../../settings/application/settings_providers.dart';
 import '../domain/models/desktop_lyric_settings.dart';
@@ -201,18 +202,21 @@ class DesktopLyricSyncController extends StateNotifier<DesktopLyricStatus>
   /// 「设置 - 外观设置 - 应用字体」里选择的字体。
   Future<({String family, String path})?> _appFont() async {
     final selected = _ref.read(appFontSelectedProvider);
-    if (selected == null || selected.isEmpty) return null;
+    // 没有选择过 = 用默认字体（内置的思源宋体），桌面歌词要跟应用保持一致。
+    final wanted = (selected == null || selected.isEmpty)
+        ? AppTypography.defaultFontFamily
+        : selected;
 
     // 内置字体（随安装包打包）：路径是相对 flutter_assets 的相对路径，
     // 原生侧会基于程序目录解析。
     for (final bundled in AppFontManager.bundledFonts) {
-      if (bundled.family != selected) continue;
+      if (bundled.family != wanted) continue;
       return (family: bundled.family, path: bundled.asset);
     }
 
     final fonts = _ref.read(appFontsProvider);
     for (final font in fonts) {
-      if (font.family != selected) continue;
+      if (font.family != wanted) continue;
       try {
         final path = await AppFontManager.instance.pathOf(font);
         return (family: font.family, path: path);

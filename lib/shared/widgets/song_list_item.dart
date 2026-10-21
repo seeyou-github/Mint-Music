@@ -19,6 +19,10 @@ class SongListItem extends ConsumerWidget {
   final bool showIndex;
   final bool showCover;
   final bool showQuality;
+  /// 是否在歌曲名下方显示音源名称。
+  ///
+  /// 默认关闭：各处的歌曲列表（歌单、榜单、我的收藏、收藏的歌单、搜索结果、
+  /// 搜索的歌单、下载列表）都不再显示音源名。
   final bool showSource;
   final bool showDuration;
   final bool showMenuButton;
@@ -56,7 +60,7 @@ class SongListItem extends ConsumerWidget {
     this.showIndex = true,
     this.showCover = true,
     this.showQuality = true,
-    this.showSource = true,
+    this.showSource = false,
     this.showDuration = true,
     this.showMenuButton = true,
     this.onTap,

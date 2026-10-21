@@ -54,7 +54,7 @@ class AppFontManager {
 
   /// 随安装包内置的字体（无需导入即可使用）。
   ///
-  /// - `SourceHanSerif`：思源宋体
+  /// - `SourceHanSerif`：思源宋体（**应用默认字体**）
   /// - `FZLantingHei`：方正兰亭黑
   ///
   /// [asset] 是相对 `flutter_assets` 的资源路径，Windows 端桌面歌词需要
@@ -72,6 +72,12 @@ class AppFontManager {
       asset: 'assets/fonts/FZLantingHei.ttf'
     ),
   ];
+
+  /// 「系统默认字体」对应的字体族名。
+  ///
+  /// 这个族名并没有注册到引擎（Windows / Android 上都不存在），Flutter 会
+  /// 回退到平台默认字体，所以它就是「用系统字体渲染」的意思。
+  static const String systemFontFamily = 'PingFangSC';
 
   final List<AppFont> _fonts = [];
   String? _selectedFamily;

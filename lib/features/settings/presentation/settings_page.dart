@@ -14,6 +14,7 @@ import '../../../core/platform/app_paths.dart';
 import '../../../core/platform/download_paths.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/app_font_manager.dart';
+import '../../../core/theme/app_typography.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../../../shared/services/app_image_cache.dart';
@@ -674,7 +675,7 @@ class _AppearanceContent extends ConsumerWidget {
     // 已导入 / 选中的应用字体
     final importedFonts = ref.watch(appFontsProvider);
     final selectedFont = ref.watch(appFontSelectedProvider);
-    final fontName = selectedFont ?? '默认字体';
+    final fontName = _appFontDisplayName(selectedFont);
     final fontSubtitle =
         '内置 ${AppFontManager.bundledFonts.length} 个字体'
         '${importedFonts.isEmpty ? '' : '，已导入 ${importedFonts.length} 个'}，'
@@ -1223,6 +1224,24 @@ class _AppearanceContent extends ConsumerWidget {
     return '#${r.toUpperCase()}${g.toUpperCase()}${b.toUpperCase()}';
   }
 
+  /// 应用字体的展示名（内置字体显示中文名，导入的字体显示族名）。
+  static String _appFontDisplayName(String? family) {
+    if (family == null || family.isEmpty) {
+      // 没有选择过 = 用默认字体（内置的思源宋体）。
+      return AppFontManager.bundledFonts
+          .firstWhere(
+            (f) => f.family == AppTypography.defaultFontFamily,
+            orElse: () => AppFontManager.bundledFonts.first,
+          )
+          .label;
+    }
+    for (final font in AppFontManager.bundledFonts) {
+      if (font.family == family) return font.label;
+    }
+    if (family == AppFontManager.systemFontFamily) return '系统默认字体';
+    return family;
+  }
+
   /// 应用字体：导入字体文件（可多选）并选择其中之一。
   Future<void> _showAppFontSheet(
     BuildContext context,
@@ -1277,27 +1296,35 @@ class _AppearanceContent extends ConsumerWidget {
                     const SizedBox(height: AppSpacing.md),
                     // 内置字体（随安装包提供，无需导入）
                     ...AppFontManager.bundledFonts.map((font) {
+                      final isDefaultFont =
+                          font.family == AppTypography.defaultFontFamily;
                       return _buildFontOption(
                         sheetContext,
                         colors,
                         title: context.tr(font.label),
-                        subtitle: context.tr('内置字体'),
-                        isSelected: selected == font.family,
+                        subtitle: isDefaultFont
+                            ? context.tr('内置字体（默认）')
+                            : context.tr('内置字体'),
+                        isSelected:
+                            (selected == null && isDefaultFont) ||
+                            selected == font.family,
                         onTap: () async {
                           await notifier.select(font.family);
                           if (sheetContext.mounted) Navigator.pop(sheetContext);
                         },
                       );
                     }),
-                    // 默认字体
+                    // 系统默认字体（未注册到引擎，用平台默认字体渲染）
                     _buildFontOption(
                       sheetContext,
                       colors,
-                      title: context.tr('默认字体'),
-                      subtitle: context.tr('使用系统默认字体'),
-                      isSelected: selected == null,
+                      title: context.tr('系统默认字体'),
+                      subtitle: context.tr('使用系统字体'),
+                      isSelected: selected == AppFontManager.systemFontFamily,
                       onTap: () async {
-                        await notifier.select(null);
+                        await notifier.select(
+                          AppFontManager.systemFontFamily,
+                        );
                         if (sheetContext.mounted) Navigator.pop(sheetContext);
                       },
                     ),

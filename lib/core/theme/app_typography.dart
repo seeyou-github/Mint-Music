@@ -3,9 +3,12 @@ import 'package:flutter/material.dart';
 class AppTypography {
   AppTypography._();
 
-  /// 应用字体族。默认为内置的 PingFangSC，可在「设置 - 外观设置 - 应用字体」
-  /// 里切换成导入的字体。
-  static String fontFamily = 'PingFangSC';
+  /// 默认的应用字体：随安装包内置的「思源宋体」。
+  static const String defaultFontFamily = 'SourceHanSerif';
+
+  /// 应用字体族。默认为内置的思源宋体，可在「设置 - 外观设置 - 应用字体」
+  /// 里切换成内置的方正兰亭黑或导入的字体。
+  static String fontFamily = defaultFontFamily;
 
   static TextStyle get displayLarge => TextStyle(
         fontFamily: fontFamily,

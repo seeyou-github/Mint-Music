@@ -960,7 +960,6 @@ class _SearchPageState extends ConsumerState<SearchPage> {
               song: song,
               index: index,
               showIndex: true,
-              showSource: true,
               showCover: true,
               showQuality: true,
               showDuration: true,
@@ -1016,7 +1015,6 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         return SongListItem(
           song: song,
           index: index,
-          showSource: false,
           // 正在播放的歌曲高亮显示。
           isPlaying: currentSongId != null && currentSongId == song.id,
           onPlayTap: () async {
@@ -1087,7 +1085,6 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           song: song,
           index: index,
           showIndex: true,
-          showSource: true,
           showCover: true,
           showQuality: true,
           showDuration: true,

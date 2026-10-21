@@ -63,6 +63,8 @@ class AppFontsNotifier extends StateNotifier<List<AppFont>> {
   /// 把选中的字体应用到全局排版。
   static void _applyFontFamily(String? family) {
     AppTypography.fontFamily =
-        (family == null || family.isEmpty) ? 'PingFangSC' : family;
+        (family == null || family.isEmpty)
+            ? AppTypography.defaultFontFamily
+            : family;
   }
 }
