@@ -1744,9 +1744,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     }
   }
 
-  /// 内置音源（平台 id）对应的其它平台，用于跨平台兜底。
-  static const List<String> _builtInPlatformIds = ['wy', 'tx', 'kg', 'kw', 'mg'];
-
   /// 播放失败时的提示语。
   ///
   /// * **内置音源**：它自己没有播放地址接口，失败说明没有可用的第三方音源，
@@ -1780,16 +1777,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   /// 内置源没有地址接口，只能靠插件解析，所以要把能用的平台都试一遍
   /// （同名平台的多个插件在正常播放路径里已经依次试过了）。
   List<String> _crossPlatformSourceIds(String currentSource) {
-    final result = <String>[];
-    for (final id in _builtInPlatformIds) {
-      if (id == currentSource) continue;
-      result.add(id);
-    }
-    for (final id in _musicSourceManager.pluginSourceIds) {
-      if (id.startsWith('$currentSource@')) continue;
-      result.add(id);
-    }
-    return result;
+    return _musicSourceManager.crossPlatformSourceIds(currentSource);
   }
 
   /// 跨音源换源：遍历 `getCandidateSongs` 返回的候选并按顺序尝试播放。

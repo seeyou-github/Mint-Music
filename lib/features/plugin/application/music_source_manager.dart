@@ -1806,9 +1806,9 @@ class MusicSourceManager {
 
     final source = song.source;
     if (source == null || source.isEmpty || source.contains('@')) return null;
-    final others = pluginSourceIds
-        .where((id) => !id.startsWith('$source@'))
-        .toList();
+    // 跨平台兜底：优先用内置平台源搜索（内置源一定有搜索接口），再补上
+    // 其它平台的插件源。
+    final others = crossPlatformSourceIds(source);
     if (others.isEmpty) return null;
 
     for (final candidate in await matchSongsInSources(song, others)) {
@@ -1823,6 +1823,30 @@ class MusicSourceManager {
     }
     return null;
   }
+
+  /// 跨平台兜底时要尝试的音源 id：其它平台的内置源 + 其它平台的插件源。
+  ///
+  /// 内置源没有地址接口，只能靠插件解析，所以跨平台兜底时要把能用的平台
+  /// 都试一遍。内置平台源放在前面：内置源一定有搜索接口，而落雪「仅解析」
+  /// 这类脚本可能没有 search action。
+  ///
+  /// 同名平台（[currentSource]）的插件不在列表里 —— 正常播放路径已经按顺序
+  /// 逐个试过了。
+  List<String> crossPlatformSourceIds(String currentSource) {
+    final result = <String>[];
+    for (final id in builtInPlatformIds) {
+      if (id == currentSource) continue;
+      result.add(id);
+    }
+    for (final id in pluginSourceIds) {
+      if (id.startsWith('$currentSource@')) continue;
+      result.add(id);
+    }
+    return result;
+  }
+
+  /// 内置音源（平台 id）对应的其它平台，用于跨平台兜底。
+  static const List<String> builtInPlatformIds = ['wy', 'tx', 'kg', 'kw', 'mg'];
 
   Future<LyricResult?> getLyricResult(Song song) async {
     final sourceId = song.source;

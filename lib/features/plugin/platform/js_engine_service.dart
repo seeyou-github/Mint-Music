@@ -116,13 +116,19 @@ class JsEngineService {
 
   bool get isRuntimeHealthy => _initialized && !_runtimeFaulted;
 
+  /// 判断这次执行失败是否「伤到了引擎本身」。
+  ///
+  /// QuickJS 的执行超时（interrupted / timeout）只是**中断了本次执行**，
+  /// 引擎本身还能继续用（插件里一个慢请求或一段重的同步计算就会触发）。
+  /// 之前把这类错误也当成硬故障，会把整个插件隔离卸载，后果是用户突然
+  /// 失去这个音源：播放页显示成「内置音源」、下载失败、换源也找不到插件，
+  /// 只能重启应用才能恢复。
+  ///
+  /// 只有内存 / 栈这类真正会破坏引擎的错误才需要隔离。
   bool _isHardExecutionFailure(JsEvalResult result) {
     if (!result.isError) return false;
     final message = result.stringResult.toLowerCase();
-    return message.contains('interrupted') ||
-        message.contains('timeout') ||
-        message.contains('timed out') ||
-        message.contains('execution limit') ||
+    return message.contains('execution limit') ||
         message.contains('out of memory') ||
         message.contains('memory limit');
   }

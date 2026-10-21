@@ -475,8 +475,14 @@ class _PlayerHeader extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     // 当前实际使用的音源：内置音源本身没有地址接口，播放地址由插件解析，
     // 这里显示真正在提供地址的那个音源（内置源带「-内置」，插件源用平台名）。
-    final songSource = ref.watch(
-      playbackControllerProvider.select((s) => s.currentSong?.source ?? ''),
+    //
+    // 注意：音源标签要跟着「歌曲」一起变。只 watch source 的话，同一个平台
+    // 的两首歌切换时 source 字符串没变化，组件不会重建，标签会停在上一次
+    // 的结果上（看起来就是「音源显示错了」）。
+    final (songSource, _) = ref.watch(
+      playbackControllerProvider.select(
+        (s) => (s.currentSong?.source ?? '', s.currentSong?.id ?? ''),
+      ),
     );
     var sourceLabel = '';
     if (songSource.isNotEmpty) {

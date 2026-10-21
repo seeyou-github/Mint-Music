@@ -40,6 +40,12 @@ class PluginService {
   final Map<String, PluginHost> _loadedPlugins = {};
   final Map<String, JsEngineService> _engines = {};
 
+  /// 插件自动重载的冷却时间（同一个插件两次重载的最小间隔）。
+  static const Duration _reloadCooldown = Duration(seconds: 30);
+
+  /// 每个插件上次自动重载的时间。
+  final Map<String, DateTime> _lastReloadAt = {};
+
   /// Broadcast stream that merges update notices from ALL loaded plugin engines.
   final _updateNoticeController =
       StreamController<Map<String, dynamic>>.broadcast();
@@ -538,11 +544,47 @@ class PluginService {
   PluginHost? getPluginById(String pluginId) {
     final host = _loadedPlugins[pluginId];
     if (host != null && !host.isRuntimeHealthy) {
-      print('[PluginService] 插件运行时已故障，隔离并卸载: $pluginId');
-      _unloadPlugin(pluginId);
+      _quarantinePlugin(pluginId);
       return null;
     }
     return host;
+  }
+
+  /// 运行时故障的插件：隔离后自动重新加载。
+  ///
+  /// 之前这里只是把插件卸载掉，结果是用户会「莫名其妙」地失去这个音源：
+  /// 播放页显示成内置音源、下载失败、换源也找不到插件，只能重启应用才能恢复。
+  /// 现在隔离之后自动重新加载一次（重新加载失败就保持卸载状态）。
+  void _quarantinePlugin(String pluginId) {
+    print('[PluginService] 插件运行时已故障，隔离并自动重载: $pluginId');
+    _unloadPlugin(pluginId);
+    unawaited(_reloadPlugin(pluginId));
+  }
+
+  /// 自动重载插件（带冷却，避免插件一装载就故障时反复重载）。
+  Future<void> _reloadPlugin(String pluginId) async {
+    final now = DateTime.now();
+    final last = _lastReloadAt[pluginId];
+    if (last != null && now.difference(last) < _reloadCooldown) return;
+    _lastReloadAt[pluginId] = now;
+    try {
+      final plugins = await loadPlugins();
+      PluginInfo? target;
+      for (final plugin in plugins) {
+        if (plugin.id == pluginId) {
+          target = plugin;
+          break;
+        }
+      }
+      if (target == null || !target.isEnabled) return;
+      // 稍等一下，避免和刚刚失败的那次调用撞车。
+      await Future.delayed(const Duration(milliseconds: 300));
+      if (_loadedPlugins.containsKey(pluginId)) return;
+      await _loadPlugin(target);
+      print('[PluginService] 插件 $pluginId 已自动重新加载');
+    } catch (e) {
+      print('[PluginService] 插件 $pluginId 自动重载失败: $e');
+    }
   }
 
   /// 插件测试专用：为指定插件创建运行时。
@@ -840,7 +882,7 @@ class PluginService {
         .toList();
     for (final id in faultedIds) {
       print('[PluginService] 自动隔离故障插件运行时: $id');
-      _unloadPlugin(id);
+      _quarantinePlugin(id);
     }
     return _loadedPlugins.values.toList();
   }
