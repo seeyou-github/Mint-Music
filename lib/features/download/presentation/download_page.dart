@@ -5,11 +5,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/l10n/l10n.dart';
+import '../../../core/platform/file_manager_service.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../../../shared/widgets/song_list_item.dart';
 import '../../player/application/playback_controller.dart';
+import '../../settings/application/settings_providers.dart';
 import '../application/download_providers.dart';
 import '../data/download_repository.dart';
 import '../domain/models/download_task.dart';
@@ -103,7 +105,109 @@ class DownloadPage extends ConsumerWidget {
               ),
             ),
           ),
+          _buildOpenFolderButton(context, ref, colors),
+          const SizedBox(width: AppSpacing.xs),
           _buildClearButton(context, ref, colors, tasks.isEmpty),
+        ],
+      ),
+    );
+  }
+
+  /// 「打开目录」按钮（Windows）/「显示路径」按钮（Android）。
+  ///
+  /// Windows 上直接用系统文件管理器打开下载目录；Android 没有这个能力，
+  /// 改成把当前歌曲的下载路径显示出来。
+  Widget _buildOpenFolderButton(
+    BuildContext context,
+    WidgetRef ref,
+    ThemeColors colors,
+  ) {
+    final isAndroid = Platform.isAndroid;
+    final label = isAndroid ? context.tr('显示路径') : context.tr('打开目录');
+    return GestureDetector(
+      onTap: () => _handleOpenFolder(context, ref, colors),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+        decoration: BoxDecoration(
+          color: colors.surface,
+          borderRadius: BorderRadius.circular(AppRadius.full),
+          border: Border.all(color: colors.divider),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              isAndroid ? Icons.info_outline : Icons.folder_open_outlined,
+              size: 16,
+              color: colors.textSecondary,
+            ),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: TextStyle(fontSize: 12, color: colors.textSecondary),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 打开下载目录；打不开（Android / 失败）就把路径显示出来。
+  Future<void> _handleOpenFolder(
+    BuildContext context,
+    WidgetRef ref,
+    ThemeColors colors,
+  ) async {
+    final dir = ref.read(downloadDirProvider);
+    if (dir.trim().isNotEmpty) {
+      final opened = await FileManagerService.openFolder(dir);
+      if (opened) return;
+    }
+    if (!context.mounted) return;
+    await _showDownloadPathDialog(context, ref, colors);
+  }
+
+  /// 把当前歌曲的下载路径显示出来。
+  Future<void> _showDownloadPathDialog(
+    BuildContext context,
+    WidgetRef ref,
+    ThemeColors colors,
+  ) async {
+    final dir = ref.read(downloadDirProvider);
+    final song = ref.read(playbackControllerProvider).currentSong;
+    final filePath = song?.filePath ?? '';
+    final lines = <String>[
+      if (filePath.isNotEmpty) ...[
+        '${context.tr('当前歌曲')}：${song?.title ?? ''}',
+        filePath,
+        '',
+      ],
+      '${context.tr('下载目录')}：',
+      dir.isEmpty ? context.tr('（未设置）') : dir,
+    ];
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: colors.surface,
+        title: Text(
+          context.tr('下载路径'),
+          style: TextStyle(color: colors.textPrimary),
+        ),
+        content: SingleChildScrollView(
+          child: SelectableText(
+            lines.join('\n'),
+            style: TextStyle(fontSize: 13, color: colors.textSecondary),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(
+              context.tr('关闭'),
+              style: TextStyle(color: colors.textHint),
+            ),
+          ),
         ],
       ),
     );
@@ -132,7 +236,7 @@ class DownloadPage extends ConsumerWidget {
               Icon(Icons.delete_sweep_outlined, size: 16, color: colors.textSecondary),
               const SizedBox(width: 4),
               Text(
-                context.tr('清除下载列表'),
+                context.tr('清除'),
                 style: TextStyle(fontSize: 12, color: colors.textSecondary),
               ),
             ],
@@ -326,6 +430,10 @@ class _DownloadTaskItemState extends ConsumerState<_DownloadTaskItem> {
             ),
           ],
           const SizedBox(width: AppSpacing.xs),
+          if (FileManagerService.isSupported) ...[
+            _buildRevealButton(context, colors),
+            const SizedBox(width: AppSpacing.xs),
+          ],
           _buildDeleteButton(context, colors, repo),
         ],
       );
@@ -359,6 +467,25 @@ class _DownloadTaskItemState extends ConsumerState<_DownloadTaskItem> {
 
     // 下载中：只显示删除按钮（进度信息在行下方）。
     return _buildDeleteButton(context, colors, repo);
+  }
+
+  /// 「打开所在文件夹」按钮（仅 Windows）：用资源管理器打开该歌曲所在目录
+  /// 并选中歌曲文件。
+  Widget _buildRevealButton(BuildContext context, ThemeColors colors) {
+    return IconButton(
+      visualDensity: VisualDensity.compact,
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+      icon: Icon(Icons.folder_open_outlined, size: 19, color: colors.textSecondary),
+      tooltip: context.tr('打开所在文件夹'),
+      onPressed: () async {
+        final ok = await FileManagerService.revealFile(task.filePath);
+        if (ok || !context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(context.tr('无法打开所在文件夹'))),
+        );
+      },
+    );
   }
 
   /// 删除按钮：删除歌曲文件与该条下载记录。

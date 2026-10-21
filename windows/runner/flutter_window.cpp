@@ -3,6 +3,7 @@
 #include <optional>
 #include <windows.h>
 
+#include <shellapi.h>
 #include <shobjidl.h>
 
 #include "flutter/generated_plugin_registrant.h"
@@ -164,6 +165,19 @@ bool FlutterWindow::OnCreate() {
         HandleDesktopLyricCall(call, std::move(result));
       });
 
+  // 文件管理器：Dart 侧请求用系统文件管理器打开目录 / 定位文件。
+  file_manager_channel_ =
+      std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+          flutter_controller_->engine()->messenger(),
+          "com.mintmusic/file_manager",
+          &flutter::StandardMethodCodec::GetInstance());
+  file_manager_channel_->SetMethodCallHandler(
+      [this](const flutter::MethodCall<flutter::EncodableValue>& call,
+             std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>
+                 result) {
+        HandleFileManagerCall(call, std::move(result));
+      });
+
   // 桌面歌词窗口被拖动后，把新位置回传给 Dart 侧持久化。
   mintmusic::DesktopLyricWindow::Instance().SetPositionCallback(
       [this](double x, double y) {
@@ -205,6 +219,47 @@ void FlutterWindow::SendToDart(const std::string& method) {
     return;
   }
   method_channel_->InvokeMethod(method, nullptr);
+}
+
+// 用系统文件管理器打开目录 / 定位文件。
+//
+// * openFolder：直接打开该目录；
+// * revealFile：打开文件所在目录并选中该文件（explorer /select）。
+void FlutterWindow::HandleFileManagerCall(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  const auto* arguments = std::get_if<flutter::EncodableMap>(call.arguments());
+  const std::string path = GetStringUtf8(arguments, "path");
+  if (path.empty()) {
+    result->Error("path is required");
+    return;
+  }
+  const std::wstring wide_path = Utf8ToWide(path);
+  if (wide_path.empty()) {
+    result->Error("invalid path");
+    return;
+  }
+
+  if (call.method_name() == "openFolder") {
+    // explorer.exe "<dir>"：用系统文件管理器打开目录。
+    const std::wstring command = L"explorer.exe \"" + wide_path + L"\"";
+    const HINSTANCE ret = ::ShellExecuteW(nullptr, L"open", command.c_str(),
+                                          nullptr, nullptr, SW_SHOWNORMAL);
+    result->Success(static_cast<int64_t>(reinterpret_cast<intptr_t>(ret)) > 32);
+    return;
+  }
+
+  if (call.method_name() == "revealFile") {
+    // explorer.exe /select,"<file>"：打开所在目录并选中该文件。
+    const std::wstring command =
+        L"explorer.exe /select,\"" + wide_path + L"\"";
+    const HINSTANCE ret = ::ShellExecuteW(nullptr, L"open", command.c_str(),
+                                          nullptr, nullptr, SW_SHOWNORMAL);
+    result->Success(static_cast<int64_t>(reinterpret_cast<intptr_t>(ret)) > 32);
+    return;
+  }
+
+  result->NotImplemented();
 }
 
 void FlutterWindow::HandleDesktopLyricCall(
