@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -5,8 +6,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/l10n/l10n.dart';
+import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../../../shared/widgets/music_cover_image.dart';
+import '../application/desktop_lyric_sync.dart';
 import '../application/playback_controller.dart';
 import '../application/full_player_visibility.dart';
 import '../application/lyric_controller.dart';
@@ -473,24 +476,6 @@ class _PlayerHeader extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // 当前实际使用的音源：内置音源本身没有地址接口，播放地址由插件解析，
-    // 这里显示真正在提供地址的那个音源（内置源带「-内置」，插件源用平台名）。
-    //
-    // 注意：音源标签要跟着「歌曲」一起变。只 watch source 的话，同一个平台
-    // 的两首歌切换时 source 字符串没变化，组件不会重建，标签会停在上一次
-    // 的结果上（看起来就是「音源显示错了」）。
-    final (songSource, _) = ref.watch(
-      playbackControllerProvider.select(
-        (s) => (s.currentSong?.source ?? '', s.currentSong?.id ?? ''),
-      ),
-    );
-    var sourceLabel = '';
-    if (songSource.isNotEmpty) {
-      final manager = ref.read(musicSourceManagerProvider);
-      final effective = manager.resolvingSourceIdFor(songSource) ?? songSource;
-      sourceLabel = manager.sourceDisplayName(effective);
-    }
-
     return Padding(
       padding: EdgeInsets.only(
         top: compact ? 2 : 8,
@@ -512,38 +497,23 @@ class _PlayerHeader extends ConsumerWidget {
             ),
           ),
           const Spacer(),
-          // 顶部只显示当前使用的音源。
-          if (sourceLabel.isNotEmpty)
-            Flexible(
-              child: Text(
-                sourceLabel,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Colors.white.withValues(alpha: 0.6),
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+          // Windows 上没有「切换全屏歌词」这个形态，直接隐藏该按钮。
+          if (!Platform.isWindows)
+            IconButton(
+              onPressed: onTogglePage,
+              icon: Icon(
+                currentPage == 0 ? Icons.lyrics : Icons.album,
+                size: compact ? 18 : 20,
               ),
-            )
-          else
-            const Spacer(),
-          const Spacer(),
-          IconButton(
-            onPressed: onTogglePage,
-            icon: Icon(
-              currentPage == 0 ? Icons.lyrics : Icons.album,
-              size: compact ? 18 : 20,
+              color: Colors.white.withValues(alpha: 0.6),
+              padding: compact ? EdgeInsets.zero : null,
+              constraints: compact
+                  ? const BoxConstraints.tightFor(width: 32, height: 32)
+                  : null,
+              style: IconButton.styleFrom(
+                backgroundColor: Colors.white.withValues(alpha: 0.05),
+              ),
             ),
-            color: Colors.white.withValues(alpha: 0.6),
-            padding: compact ? EdgeInsets.zero : null,
-            constraints: compact
-                ? const BoxConstraints.tightFor(width: 32, height: 32)
-                : null,
-            style: IconButton.styleFrom(
-              backgroundColor: Colors.white.withValues(alpha: 0.05),
-            ),
-          ),
         ],
       ),
     );
@@ -578,40 +548,62 @@ class _PlayerCoverPage extends ConsumerWidget {
     final radius = ResponsiveLayout.isTablet(context) ? 28.0 : 24.0;
     final borderRadius = math.min(radius, coverSize * 0.12);
 
+    // 音源名称放在封面图正上方，与封面水平居中。
+    final sourceLabel = currentSourceLabel(ref);
+
     return Center(
-      child: GestureDetector(
-        onTap: onTapCover,
-        child: AnimatedScale(
-          duration: const Duration(milliseconds: 500),
-          scale: isPlaying ? 1.0 : 0.95,
-          curve: Curves.easeOutCubic,
-          child: Container(
-            width: coverSize,
-            height: coverSize,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(borderRadius),
-              boxShadow: [
-                BoxShadow(
-                  color:
-                      bgMode == FullScreenBackgroundMode.theme &&
-                          dominantColor != null
-                      ? HSLColor.fromColor(dominantColor)
-                            .withLightness(
-                              (HSLColor.fromColor(dominantColor).lightness - 0.2)
-                                  .clamp(0.0, 0.5),
-                            )
-                            .toColor()
-                            .withValues(alpha: 0.4)
-                      : Colors.black.withValues(alpha: 0.5),
-                  blurRadius: math.min(50, coverSize * 0.16),
-                  offset: Offset(0, math.min(25, coverSize * 0.08)),
-                ),
-              ],
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (sourceLabel != null) ...[
+            Text(
+              sourceLabel,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.white.withValues(alpha: 0.6),
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
-            clipBehavior: Clip.antiAlias,
-            child: _buildCoverImage(song, coverSize),
+            const SizedBox(height: 10),
+          ],
+          GestureDetector(
+            onTap: onTapCover,
+            child: AnimatedScale(
+              duration: const Duration(milliseconds: 500),
+              scale: isPlaying ? 1.0 : 0.95,
+              curve: Curves.easeOutCubic,
+              child: Container(
+                width: coverSize,
+                height: coverSize,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(borderRadius),
+                  boxShadow: [
+                    BoxShadow(
+                      color:
+                          bgMode == FullScreenBackgroundMode.theme &&
+                              dominantColor != null
+                          ? HSLColor.fromColor(dominantColor)
+                                .withLightness(
+                                  (HSLColor.fromColor(dominantColor).lightness -
+                                          0.2)
+                                      .clamp(0.0, 0.5),
+                                )
+                                .toColor()
+                                .withValues(alpha: 0.4)
+                          : Colors.black.withValues(alpha: 0.5),
+                      blurRadius: math.min(50, coverSize * 0.16),
+                      offset: Offset(0, math.min(25, coverSize * 0.08)),
+                    ),
+                  ],
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: _buildCoverImage(song, coverSize),
+              ),
+            ),
           ),
-        ),
+        ],
       ),
     );
   }
@@ -908,6 +900,47 @@ class _PlayerSongInfo extends ConsumerWidget {
       padding: compact ? EdgeInsets.zero : null,
       constraints: buttonConstraints,
     );
+    // 下载：只显示图标，点击后选择音质。
+    final downloadButton = IconButton(
+      onPressed: song == null
+          ? null
+          : () => SongActionSheet.showDownloadQualityPicker(context, song!),
+      icon: Icon(
+        Icons.download_outlined,
+        size: compact ? 18 : 22,
+        color: Colors.white.withValues(alpha: 0.7),
+      ),
+      padding: compact ? EdgeInsets.zero : null,
+      constraints: buttonConstraints,
+    );
+    // 桌面歌词：图标是文字「词」，开启后文字用主题色。
+    final desktopLyricEnabled = ref.watch(
+      desktopLyricSettingsProvider.select((s) => s.enable),
+    );
+    final themeColors = ref.watch(themeColorsProvider);
+    final desktopLyricButton = IconButton(
+      onPressed: () {
+        final sync = ref.read(desktopLyricSyncProvider.notifier);
+        if (desktopLyricEnabled) {
+          unawaited(sync.disableDesktopLyric());
+        } else {
+          unawaited(sync.enableDesktopLyric());
+        }
+      },
+      icon: Text(
+        '词',
+        style: TextStyle(
+          fontSize: compact ? 15 : 18,
+          fontWeight: FontWeight.w600,
+          color: desktopLyricEnabled
+              ? themeColors.primary
+              : Colors.white.withValues(alpha: 0.7),
+        ),
+      ),
+      padding: compact ? EdgeInsets.zero : null,
+      constraints: buttonConstraints,
+      tooltip: context.tr('启用桌面歌词'),
+    );
     final moreButton = IconButton(
       onPressed: song != null
           ? () => SongActionSheet.showPlayerMenu(context, song: song)
@@ -943,6 +976,10 @@ class _PlayerSongInfo extends ConsumerWidget {
     final actions = Row(
       mainAxisSize: MainAxisSize.min,
       children: [
+        desktopLyricButton,
+        SizedBox(width: compact ? 10 : 18),
+        downloadButton,
+        SizedBox(width: compact ? 10 : 18),
         favoriteButton,
         SizedBox(width: compact ? 18 : 28),
         moreButton,
@@ -1322,4 +1359,27 @@ class _KeepAlivePageState extends State<_KeepAlivePage>
     super.build(context);
     return widget.child;
   }
+}
+
+/// 当前实际使用的音源名称。
+///
+/// 内置音源本身没有地址接口，播放地址由插件解析，这里显示真正在提供地址的
+/// 那个音源（内置源带「-内置」，插件源用平台名）。
+///
+/// 注意：音源标签要跟着「歌曲」一起变。只 watch source 的话，同一个平台的
+/// 两首歌切换时 source 字符串没变化，组件不会重建，标签会停在上一次的
+/// 结果上（看起来就是「音源显示错了」）。
+String? currentSourceLabel(WidgetRef ref) {
+  final songSource = ref
+      .watch(
+        playbackControllerProvider.select(
+          (s) => (s.currentSong?.source ?? '', s.currentSong?.id ?? ''),
+        ),
+      )
+      .$1;
+  if (songSource.isEmpty) return null;
+  final manager = ref.read(musicSourceManagerProvider);
+  final effective = manager.resolvingSourceIdFor(songSource) ?? songSource;
+  final label = manager.sourceDisplayName(effective);
+  return label.isEmpty ? null : label;
 }

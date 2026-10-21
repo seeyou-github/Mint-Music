@@ -134,10 +134,15 @@ class _LyricScrollViewState extends State<LyricScrollView>
     }
   }
 
+  /// 进入页面时把正在播放的那一行滚到中间。
+  ///
+  /// 首帧之后歌词行可能还没排版好（拿不到 RenderBox），这时用估算位置会
+  /// 偏掉，所以这里最多重试几帧，等真正拿到行位置再精确定位。
   void _queueInitialScroll() {
     if (_initialScrollQueued) return;
     _initialScrollQueued = true;
     _pendingAutoScroll = true;
+    _initialScrollRetry = 0;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -148,6 +153,9 @@ class _LyricScrollViewState extends State<LyricScrollView>
       });
     });
   }
+
+  /// 初始定位的重试次数（等歌词行排版完成）。
+  int _initialScrollRetry = 0;
 
   int _makeLinesSignature(List<LyricLine> lines) {
     return Object.hashAll(
@@ -183,12 +191,17 @@ class _LyricScrollViewState extends State<LyricScrollView>
       _anchorWallMs = now;
       _clock.setTime(positionMs);
 
-      // 大幅位置跳跃（切歌、后台切回等）→ 重置签名 & 用户滚动状态，强制定位
+      // 大幅位置跳跃（切歌、拖动进度条、后台切回等）→ 重置签名 & 用户滚动
+      // 状态，并把正在播放的那一行立刻滚到中间。
       if (drift > 500) {
         _activeSignature = 0;
         _userScrolling = false;
         _userScrollTimer?.cancel();
         _scrollTargetIndex = -1;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          _scrollToActiveLine(force: true);
+        });
       }
     }
 
@@ -312,9 +325,20 @@ class _LyricScrollViewState extends State<LyricScrollView>
 
     final lineContext = _lineKeys[targetIndex].currentContext;
     if (lineContext == null) {
+      // 歌词行还没排版好（拿不到 RenderBox）：稍后再试几帧，
+      // 否则只能用估算位置，会偏掉，导致「正在播放的那一行」没在中间。
+      if (_initialScrollRetry < 10) {
+        _initialScrollRetry++;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          _scrollToActiveLine(force: true, preferJump: preferJump);
+        });
+        return;
+      }
       _estimateScrollToIndex(targetIndex);
       return;
     }
+    _initialScrollRetry = 0;
 
     final lineBox = lineContext.findRenderObject() as RenderBox?;
     final scrollBox =
@@ -333,8 +357,48 @@ class _LyricScrollViewState extends State<LyricScrollView>
         lineOffset.dy -
         (scrollBox.size.height - lineBox.size.height) * 0.5;
 
-    _animateToOffset(targetOffset, preferJumpIfFar: preferJump);
+    // 平滑滚动：按当前行内的播放进度，在「本行居中」与「下一行居中」之间
+    // 做一点插值。这样正在播放的歌词会一直保持在接近垂直居中的位置，
+    // 而不是每到下一句就「啪」地跳一下。
+    final smoothOffset = _smoothedOffset(
+      targetOffset: targetOffset,
+      lineIndex: targetIndex,
+      scrollBox: scrollBox,
+    );
+
+    _animateToOffset(smoothOffset, preferJumpIfFar: preferJump);
     _scrollTargetIndex = targetIndex;
+  }
+
+  /// 目标偏移的平滑插值。
+  ///
+  /// 当前行播放到一半时，滚动位置从「本行居中」向「下一行居中」移动一小段
+  /// （最多 35%），让歌词始终接近垂直居中，同时滚动是连续的。
+  double _smoothedOffset({
+    required double targetOffset,
+    required int lineIndex,
+    required RenderBox scrollBox,
+  }) {
+    if (lineIndex + 1 >= widget.lines.length) return targetOffset;
+    if (!widget.isPlaying) return targetOffset;
+
+    final nextContext = _lineKeys[lineIndex + 1].currentContext;
+    if (nextContext == null) return targetOffset;
+    final nextBox = nextContext.findRenderObject() as RenderBox?;
+    if (nextBox == null || !nextBox.hasSize) return targetOffset;
+
+    final line = widget.lines[lineIndex];
+    final durationMs = line.endTimeMs - line.startTimeMs;
+    if (durationMs <= 0) return targetOffset;
+    final progress =
+        ((_clock.timeMs - line.startTimeMs) / durationMs).clamp(0.0, 1.0);
+
+    final nextOffset = nextBox.localToGlobal(Offset.zero, ancestor: scrollBox);
+    final nextCentered =
+        _scrollController.offset +
+        nextOffset.dy -
+        (scrollBox.size.height - nextBox.size.height) * 0.5;
+    return targetOffset + (nextCentered - targetOffset) * progress * 0.35;
   }
 
   void _estimateScrollToIndex(int index) {

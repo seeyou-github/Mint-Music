@@ -11,7 +11,6 @@ import '../../core/constants/app_routes.dart';
 import '../../core/l10n/l10n.dart';
 import '../../features/library/application/playlist_providers.dart';
 import '../../features/library/domain/models/playlist.dart';
-import '../../features/player/application/desktop_lyric_sync.dart';
 import '../../features/player/application/playback_controller.dart';
 import '../../features/player/domain/models/song.dart';
 import '../../features/download/application/download_providers.dart';
@@ -288,18 +287,10 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                     onTap: () => _showAddToPlaylist(colors, playlistsAsync),
                     skipPop: true,
                   ),
-                  _buildActionItem(
-                    colors: colors,
-                    icon: Icons.download_outlined,
-                    label: context.tr('下载'),
-                    onTap: _download,
-                    skipPop: true,
-                  ),
+                  // 「下载」「启用桌面歌词」已经挪到播放页顶部的图标按钮上了。
                   _buildSpeedItem(colors),
                   const SleepTimerMenuTile(),
                   _buildLyricSettingsItem(colors),
-                  // 「启用桌面歌词」从设置页搬到了播放页的更多菜单里。
-                  _buildDesktopLyricToggleItem(colors),
                 ],
                 // --- Full mode (song context menu) ---
                 if (!widget.compactMode) ...[
@@ -633,56 +624,10 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
   /// 「启用桌面歌词」开关（播放页更多菜单）。
   ///
   /// 设置页不再提供这个开关，改由播放页随手开关。
-  Widget _buildDesktopLyricToggleItem(ThemeColors colors) {
-    final status = ref.watch(desktopLyricSyncProvider);
-    if (!status.supported) return const SizedBox.shrink();
-    final enabled = ref.watch(desktopLyricSettingsProvider).enable;
-
-    return InkWell(
-      onTap: () {
-        final sync = ref.read(desktopLyricSyncProvider.notifier);
-        if (enabled) {
-          unawaited(sync.disableDesktopLyric());
-        } else {
-          unawaited(sync.enableDesktopLyric());
-        }
-      },
-      child: Padding(
-        padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.lg,
-          vertical: AppSpacing.md,
-        ),
-        child: Row(
-          children: [
-            Icon(
-              enabled ? Icons.desktop_windows : Icons.desktop_windows_outlined,
-              size: 22,
-              color: colors.textSecondary,
-            ),
-            const SizedBox(width: AppSpacing.md),
-            Expanded(
-              child: Text(
-                context.tr('启用桌面歌词'),
-                style: TextStyle(fontSize: 15, color: colors.textSecondary),
-              ),
-            ),
-            Switch(
-              value: enabled,
-              onChanged: (v) {
-                final sync = ref.read(desktopLyricSyncProvider.notifier);
-                if (v) {
-                  unawaited(sync.enableDesktopLyric());
-                } else {
-                  unawaited(sync.disableDesktopLyric());
-                }
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
+  /// 「歌词设置」弹层。
+  ///
+  /// 原来这里的显示翻译 / 罗马音 / 模糊 / 缩放 / 居中 / Apple Music 风格
+  /// 等开关都已移除（行为固定），字体相关三项直接放在这一层。
   void _showLyricSettings() {
     showModalBottomSheet(
       context: context,
@@ -696,391 +641,85 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
           padding: EdgeInsets.only(
             bottom: MediaQuery.of(ctx).viewInsets.bottom,
           ),
-          child: _ScrollableSheet(
-            title: ctx.tr('歌词设置'),
-            children: [
-                // 字体设置行
-                _lyricSettingRow(
-                  ctx,
-                  container,
-                  icon: Icons.font_download,
-                  title: ctx.tr('字体设置'),
-                  subtitle: ctx.tr('字体、大小、字重'),
-                  onTap: () => _showFontPicker(ctx, container),
-                ),
-                const Divider(
-                  height: 1,
-                  indent: 16,
-                  endIndent: 16,
-                  color: AppColors.divider,
-                ),
-                // 显示翻译
-                _lyricSettingSwitch(
-                  ctx,
-                  container,
-                  icon: Icons.translate,
-                  title: ctx.tr('显示翻译'),
-                  provider: lyricShowTranslationProvider,
-                  getter: (c) => c.read(lyricShowTranslationProvider),
-                  setter: (c, v) =>
-                      c.read(lyricShowTranslationProvider.notifier).state = v,
-                ),
-                const Divider(
-                  height: 1,
-                  indent: 16,
-                  endIndent: 16,
-                  color: AppColors.divider,
-                ),
-                // 显示罗马音
-                _lyricSettingSwitch(
-                  ctx,
-                  container,
-                  icon: Icons.abc,
-                  title: ctx.tr('显示罗马音'),
-                  provider: lyricShowRomanProvider,
-                  getter: (c) => c.read(lyricShowRomanProvider),
-                  setter: (c, v) =>
-                      c.read(lyricShowRomanProvider.notifier).state = v,
-                ),
-                const Divider(
-                  height: 1,
-                  indent: 16,
-                  endIndent: 16,
-                  color: AppColors.divider,
-                ),
-                // 模糊效果
-                _lyricSettingSwitch(
-                  ctx,
-                  container,
-                  icon: Icons.blur_on,
-                  title: ctx.tr('模糊效果'),
-                  provider: lyricEnableBlurProvider,
-                  getter: (c) => c.read(lyricEnableBlurProvider),
-                  setter: (c, v) =>
-                      c.read(lyricEnableBlurProvider.notifier).state = v,
-                ),
-                const Divider(
-                  height: 1,
-                  indent: 16,
-                  endIndent: 16,
-                  color: AppColors.divider,
-                ),
-                // 缩放效果
-                _lyricSettingSwitch(
-                  ctx,
-                  container,
-                  icon: Icons.zoom_out_map,
-                  title: ctx.tr('缩放效果'),
-                  provider: lyricEnableScaleProvider,
-                  getter: (c) => c.read(lyricEnableScaleProvider),
-                  setter: (c, v) =>
-                      c.read(lyricEnableScaleProvider.notifier).state = v,
-                ),
-                const Divider(
-                  height: 1,
-                  indent: 16,
-                  endIndent: 16,
-                  color: AppColors.divider,
-                ),
-                // 歌词居中：普通逐字与 AMLL 分别持久化，默认普通居中、AMLL 左对齐
-                ListenableBuilder(
-                  listenable: AmllToggleService(),
-                  builder: (context, _) {
-                    final amll = AmllToggleService().isActive;
-                    final provider = amll
-                        ? amllCenterAlignProvider
-                        : lyricCenterAlignProvider;
-                    return _lyricSettingSwitch(
-                      ctx,
-                      container,
-                      icon: Icons.format_align_center,
-                      title: ctx.tr('歌词居中'),
-                      provider: provider,
-                      getter: (c) => c.read(provider),
-                      setter: (c, v) => c.read(provider.notifier).state = v,
-                    );
-                  },
-                ),
-                const Divider(
-                  height: 1,
-                  indent: 16,
-                  endIndent: 16,
-                  color: AppColors.divider,
-                ),
-                // Apple Music 风格歌词
-                _buildAmllToggle(ctx, container),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _lyricSettingRow(
-    BuildContext ctx,
-    ProviderContainer container, {
-    required IconData icon,
-    required String title,
-    String? subtitle,
-    VoidCallback? onTap,
-  }) {
-    return InkWell(
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.lg,
-          vertical: AppSpacing.md,
-        ),
-        child: Row(
-          children: [
-            Icon(icon, size: 22, color: AppColors.textSecondary),
-            const SizedBox(width: AppSpacing.md),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+          child: StatefulBuilder(
+            builder: (context, setSheetState) {
+              // 在 StatefulBuilder 内部读取，选择器关闭后能刷新显示值。
+              final family = container.read(lyricFontFamilyProvider);
+              final rate = container.read(lyricFontRateProvider);
+              final weight = container.read(lyricFontWeightProvider);
+              return _ScrollableSheet(
+                title: context.tr('歌词设置'),
                 children: [
-                  Text(
-                    title,
-                    style: const TextStyle(
-                      fontSize: 15,
-                      color: AppColors.textPrimary,
-                    ),
+                  // 选择字体
+                  _fontSettingRow(
+                    context,
+                    container,
+                    context.tr('选择字体'),
+                    _lyricFontLabel(family),
+                    () {
+                      _showFontFamilyPicker(context, container).then((_) {
+                        setSheetState(() {});
+                      });
+                    },
                   ),
-                  if (subtitle != null)
-                    Text(
-                      subtitle,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: AppColors.textHint,
-                      ),
-                    ),
+                  const Divider(
+                    height: 1,
+                    indent: 16,
+                    endIndent: 16,
+                    color: AppColors.divider,
+                  ),
+                  // 字体大小
+                  _fontSettingRow(
+                    context,
+                    container,
+                    context.tr('字体大小'),
+                    '${(rate * 100).toInt()}%',
+                    () {
+                      _showFontRatePicker(context, container).then((_) {
+                        setSheetState(() {});
+                      });
+                    },
+                  ),
+                  const Divider(
+                    height: 1,
+                    indent: 16,
+                    endIndent: 16,
+                    color: AppColors.divider,
+                  ),
+                  // 字重
+                  _fontSettingRow(
+                    context,
+                    container,
+                    context.tr('字重'),
+                    '$weight',
+                    () {
+                      _showFontWeightPicker(context, container).then((_) {
+                        setSheetState(() {});
+                      });
+                    },
+                  ),
                 ],
-              ),
-            ),
-            if (onTap != null)
-              const Icon(
-                Icons.chevron_right,
-                size: 20,
-                color: AppColors.textHint,
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _lyricSettingSwitch(
-    BuildContext ctx,
-    ProviderContainer container, {
-    required IconData icon,
-    required String title,
-    required StateProvider<bool> provider,
-    required bool Function(ProviderContainer) getter,
-    required void Function(ProviderContainer, bool) setter,
-  }) {
-    final value = getter(container);
-    return Padding(
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.lg,
-        vertical: AppSpacing.sm,
-      ),
-      child: Row(
-        children: [
-          Icon(icon, size: 22, color: AppColors.textSecondary),
-          const SizedBox(width: AppSpacing.md),
-          Expanded(
-            child: Text(
-              title,
-              style: const TextStyle(
-                fontSize: 15,
-                color: AppColors.textPrimary,
-              ),
-            ),
-          ),
-          Switch(
-            value: value,
-            onChanged: (v) {
-              setter(container, v);
-              _persistSetting(container, provider, v);
-              (ctx as Element).markNeedsBuild();
+              );
             },
-            activeTrackColor: AppColors.primary.withValues(alpha: 0.3),
-            activeThumbColor: AppColors.primary,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildAmllToggle(BuildContext ctx, ProviderContainer container) {
-    // Windows 端 AMLL 依赖的 WebView 合成异常（应用内歌词无法显示），
-    // 该选项置灰并提示，避免用户打开后没有效果。
-    final supported = AmllToggleService.isPlatformSupported;
-    return ListenableBuilder(
-      listenable: AmllToggleService(),
-      builder: (context, _) {
-        final amll = AmllToggleService().enabled;
-        return Padding(
-          padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.lg,
-            vertical: AppSpacing.sm,
-          ),
-          child: Row(
-            children: [
-              Icon(
-                Icons.music_video,
-                size: 22,
-                color: supported
-                    ? AppColors.textSecondary
-                    : AppColors.textSecondary.withValues(alpha: 0.4),
-              ),
-              const SizedBox(width: AppSpacing.md),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      context.tr('Apple Music 风格歌词'),
-                      style: TextStyle(
-                        fontSize: 15,
-                        color: supported
-                            ? AppColors.textPrimary
-                            : AppColors.textPrimary.withValues(alpha: 0.4),
-                      ),
-                    ),
-                    if (!supported)
-                      Text(
-                        context.tr('当前系统缺少 WebView 运行时，已使用原生歌词渲染'),
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: AppColors.textSecondary.withValues(alpha: 0.6),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-              Switch(
-                value: supported && amll,
-                onChanged: supported
-                    ? (v) => AmllToggleService().setAndPersist(v)
-                    : null,
-                activeTrackColor: AppColors.primary.withValues(alpha: 0.3),
-                activeThumbColor: AppColors.primary,
-              ),
-            ],
           ),
         );
       },
     );
   }
 
-  void _persistSetting(
-    ProviderContainer container,
-    StateProvider<bool> provider,
-    bool value,
-  ) {
-    container.read(provider.notifier).state = value;
-    unawaited(_doPersistSetting(container, provider, value));
-  }
-
-  Future<void> _doPersistSetting(
-    ProviderContainer container,
-    StateProvider<bool> provider,
-    bool value,
-  ) async {
-    try {
-      final svc = await container.read(settingsServiceProvider.future);
-      // Map provider names to settings service methods
-      if (provider == lyricShowTranslationProvider)
-        await svc.setLyricShowTranslation(value);
-      else if (provider == lyricShowRomanProvider)
-        await svc.setLyricShowRoman(value);
-      else if (provider == lyricEnableBlurProvider)
-        await svc.setLyricEnableBlur(value);
-      else if (provider == lyricEnableScaleProvider)
-        await svc.setLyricEnableScale(value);
-      else if (provider == lyricCenterAlignProvider)
-        await svc.setLyricCenterAlign(value);
-      else if (provider == amllCenterAlignProvider)
-        await svc.setAmllCenterAlign(value);
-      debugPrint(
-        '[Settings] saved bool ${provider.name ?? provider.runtimeType} = $value',
-      );
-    } catch (e) {
-      debugPrint('[Settings] persistBool error: $e');
-    }
-  }
-
-  void _showFontPicker(BuildContext ctx, ProviderContainer container) {
-    const fontNameMap = {
+  /// 歌词字体的显示名。
+  String _lyricFontLabel(String family) {
+    const map = {
       '': '系统默认',
       'lyricfont': '阿里巴巴圆润体',
       'PingFangSC-Semibold': '苹方-简 中粗体',
     };
-
-    showModalBottomSheet(
-      context: ctx,
-      sheetAnimationStyle: _sheetAnimationStyle,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (ctx2) {
-        final c2 = ProviderScope.containerOf(ctx2);
-        return StatefulBuilder(
-          builder: (context, setSheetState) {
-            // 所有 provider 都必须在 StatefulBuilder.builder 内部读取，
-            // 这样 setSheetState 触发重建时才能拿到最新的值
-            final storedFamily = ProviderScope.containerOf(
-              context,
-            ).read(lyricFontFamilyProvider);
-            final familyDisplay =
-                context.tr(fontNameMap[storedFamily] ?? '系统默认');
-            final storedRate = ProviderScope.containerOf(
-              context,
-            ).read(lyricFontRateProvider);
-            final rateDisplay = '${(storedRate * 100).toInt()}%';
-            final storedWeight = ProviderScope.containerOf(
-              context,
-            ).read(lyricFontWeightProvider);
-            return _ScrollableSheet(
-              title: context.tr('字体设置'),
-              children: [
-                // 字体选择
-                _fontSettingRow(ctx2, c2, ctx2.tr('选择字体'), familyDisplay, () {
-                  _showFontFamilyPicker(ctx2, c2).then((_) {
-                    setSheetState(() {});
-                  });
-                }),
-                const Divider(
-                  height: 1,
-                  indent: 16,
-                  endIndent: 16,
-                  color: AppColors.divider,
-                ),
-                // 字体大小
-                _fontSettingRow(ctx2, c2, ctx2.tr('字体大小'), rateDisplay, () {
-                  _showFontRatePicker(ctx2, c2).then((_) {
-                    setSheetState(() {});
-                  });
-                }),
-                const Divider(
-                  height: 1,
-                  indent: 16,
-                  endIndent: 16,
-                  color: AppColors.divider,
-                ),
-                // 字重
-                _fontSettingRow(ctx2, c2, ctx2.tr('字重'), '$storedWeight', () {
-                  _showFontWeightPicker(ctx2, c2).then((_) {
-                    setSheetState(() {});
-                  });
-                }),
-              ],
-            );
-          },
-        );
-      },
-    );
+    final label = map[family];
+    if (label != null) return label;
+    for (final font in AppFontManager.bundledFonts) {
+      if (font.family == family) return font.label;
+    }
+    return family;
   }
 
   Widget _fontSettingRow(
@@ -1466,7 +1105,14 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
   }
 
   void _showQualityDialog() {
-    final sourceId = widget.song.source ?? 'wy';
+    showDownloadQualityPicker(context, widget.song);
+  }
+
+  /// 选择下载音质。
+  ///
+  /// 播放页顶部的下载按钮直接调用这个（不经过 ActionSheet）。
+  static void showDownloadQualityPicker(BuildContext context, Song song) {
+    final sourceId = song.source ?? 'wy';
     final manager = ProviderScope.containerOf(
       context,
     ).read(musicSourceManagerProvider);
@@ -1510,7 +1156,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                   ),
                 ),
                 const SizedBox(height: 8),
-                ...qualities.map((q) => _buildQualityItem(ctx, q)),
+                ...qualities.map((q) => _buildQualityItem(ctx, q, song)),
                 const SizedBox(height: 16),
               ],
             ),
@@ -1521,11 +1167,11 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
     );
   }
 
-  Widget _buildQualityItem(BuildContext ctx, String q) {
+  static Widget _buildQualityItem(BuildContext ctx, String q, Song song) {
     return InkWell(
       onTap: () {
         Navigator.pop(ctx);
-        _startDownload(q);
+        startDownload(ctx, song, q);
       },
       borderRadius: BorderRadius.circular(8),
       child: Padding(
@@ -1546,7 +1192,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    '${ctx.tr(kQualityDescription[q] ?? '')}  ${_estimateSize(q, widget.song.duration)}',
+                    '${ctx.tr(kQualityDescription[q] ?? '')}  ${_estimateSize(q, song.duration)}',
                     style: TextStyle(
                       color: Colors.white.withValues(alpha: 0.5),
                       fontSize: 12,
@@ -1566,17 +1212,24 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
     );
   }
 
-  void _startDownload(String quality) async {
+  /// 开始下载（静态版，供播放页的下载按钮复用）。
+  static Future<void> startDownload(
+    BuildContext context,
+    Song song,
+    String quality,
+  ) async {
     Navigator.pop(context);
     try {
-      final repo = ref.read(downloadRepositoryProvider);
-      await repo.addTask(song: widget.song, quality: quality);
+      final repo = ProviderScope.containerOf(context).read(
+        downloadRepositoryProvider,
+      );
+      await repo.addTask(song: song, quality: quality);
       // onTaskStarted 回调会显示 "开始下载 xxx" 通知
     } catch (e) {
       final err = e.toString();
       if (err.contains('UNSUPPORTED_QUALITY')) {
         final q = err.split(':').last;
-        if (mounted) {
+        if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(context.tr('音质 $q 不受当前音源支持，请选择其他音质')),
@@ -1585,14 +1238,14 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
               action: SnackBarAction(
                 label: context.tr('重新选择'),
                 textColor: Colors.white,
-                onPressed: _showQualityDialog,
+                onPressed: () => showDownloadQualityPicker(context, song),
               ),
             ),
           );
         }
         return;
       }
-      if (mounted) {
+      if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(context.tr('下载失败: $e')),

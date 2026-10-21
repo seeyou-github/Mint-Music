@@ -208,19 +208,38 @@ final equalizerCustomPresetsProvider =
     StateProvider<List<Map<String, dynamic>>>((ref) => []);
 
 // -- lyric display --
+//
+// 这些开关已经从「歌词设置」里去掉了，行为固定下来：
+// 显示翻译=开、显示罗马音=关、模糊=关、缩放=关、歌词居中=开、
+// Apple Music 风格歌词=关。
 final lyricFontSizeProvider = StateProvider<double>((ref) => 1.0);
 final lyricShowTranslationProvider = StateProvider<bool>((ref) => true);
-final lyricShowRomanProvider = StateProvider<bool>((ref) => true);
-final lyricEnableBlurProvider = StateProvider<bool>((ref) => true);
-final lyricEnableScaleProvider = StateProvider<bool>((ref) => true);
+final lyricShowRomanProvider = StateProvider<bool>((ref) => false);
+final lyricEnableBlurProvider = StateProvider<bool>((ref) => false);
+final lyricEnableScaleProvider = StateProvider<bool>((ref) => false);
 final lyricCenterAlignProvider = StateProvider<bool>((ref) => true);
 final amllCenterAlignProvider = StateProvider<bool>((ref) => false);
 final lyricImmersiveColorProvider = StateProvider<bool>((ref) => true);
 
+/// 固定的歌词显示行为（不再由用户设置）。
+class LyricDisplayDefaults {
+  const LyricDisplayDefaults._();
+
+  static const bool showTranslation = true;
+  static const bool showRoman = false;
+  static const bool enableBlur = false;
+  static const bool enableScale = false;
+  static const bool centerAlign = true;
+  static const bool amllStyle = false;
+}
+
 // -- lyric font --
-final lyricFontFamilyProvider = StateProvider<String>((ref) => 'system');
-final lyricFontRateProvider = StateProvider<double>((ref) => 1.0);
-final lyricFontWeightProvider = StateProvider<int>((ref) => 700);
+// 默认：思源宋体 / 90% / 字重 500。
+final lyricFontFamilyProvider = StateProvider<String>(
+  (ref) => 'SourceHanSerif',
+);
+final lyricFontRateProvider = StateProvider<double>((ref) => 0.9);
+final lyricFontWeightProvider = StateProvider<int>((ref) => 500);
 
 /// 歌词字体颜色（hex ARGB 字符串，空表示使用默认/沉浸色）
 final lyricFontColorProvider = StateProvider<String>((ref) => '');
@@ -415,18 +434,25 @@ final settingsInitProvider = FutureProvider<void>((ref) async {
   ref.read(balanceEnabledProvider.notifier).state = svc.getBalanceEnabled();
   ref.read(balanceValueProvider.notifier).state = svc.getBalanceValue();
   ref.read(lyricFontSizeProvider.notifier).state = svc.getLyricFontSize();
-  ref.read(lyricShowTranslationProvider.notifier).state = svc
-      .getLyricShowTranslation();
-  ref.read(lyricShowRomanProvider.notifier).state = svc.getLyricShowRoman();
-  ref.read(lyricEnableBlurProvider.notifier).state = svc.getLyricEnableBlur();
-  ref.read(lyricEnableScaleProvider.notifier).state = svc.getLyricEnableScale();
-  ref.read(lyricCenterAlignProvider.notifier).state = svc.getLyricCenterAlign();
-  ref.read(amllCenterAlignProvider.notifier).state = svc.getAmllCenterAlign();
+  // 这些开关已从「歌词设置」移除，行为固定（不再读取用户旧设置）。
+  ref.read(lyricShowTranslationProvider.notifier).state =
+      LyricDisplayDefaults.showTranslation;
+  ref.read(lyricShowRomanProvider.notifier).state =
+      LyricDisplayDefaults.showRoman;
+  ref.read(lyricEnableBlurProvider.notifier).state =
+      LyricDisplayDefaults.enableBlur;
+  ref.read(lyricEnableScaleProvider.notifier).state =
+      LyricDisplayDefaults.enableScale;
+  ref.read(lyricCenterAlignProvider.notifier).state =
+      LyricDisplayDefaults.centerAlign;
+  ref.read(amllCenterAlignProvider.notifier).state =
+      LyricDisplayDefaults.amllStyle;
   ref.read(lyricImmersiveColorProvider.notifier).state = svc
       .getLyricImmersiveColor();
   ref.read(lyricFontFamilyProvider.notifier).state = svc.getLyricFontFamily();
   ref.read(lyricFontRateProvider.notifier).state = svc.getLyricFontRate();
   ref.read(lyricFontWeightProvider.notifier).state = svc.getLyricFontWeight();
+
   ref.read(lyricFontColorProvider.notifier).state = svc.getLyricFontColor();
   ref.read(appearanceJumpLyricProvider.notifier).state = svc
       .getAppearanceJumpLyric();

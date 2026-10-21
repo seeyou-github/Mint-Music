@@ -122,24 +122,45 @@ class RecentlyPlayedPage extends ConsumerWidget {
             ref.read(recentlyPlayedProvider.notifier).removeFromHistory(song.id);
           },
           child: ListTile(
-            leading: Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                color: colors.surfaceVariant,
-                borderRadius: BorderRadius.circular(AppRadius.sm),
-              ),
-              child: song.coverUrl != null
-                  ? ClipRRect(
-                      borderRadius: BorderRadius.circular(AppRadius.sm),
-                      child: MusicCoverImage(
-                        url: song.coverUrl,
-                        fit: BoxFit.cover,
-                        errorWidget:
-                            Icon(Icons.music_note, size: 20, color: colors.primary),
-                      ),
-                    )
-                  : Icon(Icons.music_note, size: 20, color: colors.primary),
+            // 序号 + 封面
+            leading: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  width: 26,
+                  child: Text(
+                    '${index + 1}',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                      color: colors.textHint,
+                    ),
+                  ),
+                ),
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: colors.surfaceVariant,
+                    borderRadius: BorderRadius.circular(AppRadius.sm),
+                  ),
+                  child: song.coverUrl != null
+                      ? ClipRRect(
+                          borderRadius: BorderRadius.circular(AppRadius.sm),
+                          child: MusicCoverImage(
+                            url: song.coverUrl,
+                            fit: BoxFit.cover,
+                            errorWidget: Icon(
+                              Icons.music_note,
+                              size: 20,
+                              color: colors.primary,
+                            ),
+                          ),
+                        )
+                      : Icon(Icons.music_note, size: 20, color: colors.primary),
+                ),
+              ],
             ),
             title: Text(
               song.title,

@@ -24,6 +24,8 @@ class MinePage extends ConsumerWidget {
     final isTablet = ResponsiveLayout.isTablet(context);
     final hPadding = ResponsiveLayout.horizontalPadding(context);
 
+    final versionAsync = ref.watch(appVersionProvider);
+
     return Scaffold(
       backgroundColor: colors.background,
       body: SafeArea(
@@ -36,68 +38,19 @@ class MinePage extends ConsumerWidget {
             AppSpacing.miniPlayerHeight + AppSpacing.xxxl,
           ),
           children: [
-            Text(
-              context.tr('我的'),
-              style: TextStyle(
-                fontSize: isTablet ? 26 : 22,
-                fontWeight: FontWeight.bold,
-                color: colors.textPrimary,
-              ),
-            ),
-            const SizedBox(height: AppSpacing.lg),
-            _buildProfileCard(context, ref, colors),
-            const SizedBox(height: AppSpacing.lg),
-            _buildEntryCard(context, colors),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildProfileCard(
-    BuildContext context,
-    WidgetRef ref,
-    ThemeColors colors,
-  ) {
-    final versionAsync = ref.watch(appVersionProvider);
-    return Container(
-      padding: const EdgeInsets.all(AppSpacing.lg),
-      decoration: BoxDecoration(
-        color: colors.surface,
-        borderRadius: BorderRadius.circular(AppRadius.lg),
-        border: Border.all(color: colors.divider.withValues(alpha: 0.5)),
-      ),
-      child: Row(
-        children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(AppRadius.md),
-            child: Image.asset(
-              'assets/images/MintMusicLogo.png',
-              width: 56,
-              height: 56,
-              fit: BoxFit.cover,
-            ),
-          ),
-          const SizedBox(width: AppSpacing.md),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            Row(
               children: [
-                Text(
-                  context.tr('薄荷音乐'),
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600,
-                    color: colors.textPrimary,
+                Expanded(
+                  child: Text(
+                    context.tr('我的'),
+                    style: TextStyle(
+                      fontSize: isTablet ? 26 : 22,
+                      fontWeight: FontWeight.bold,
+                      color: colors.textPrimary,
+                    ),
                   ),
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  context.tr('发现、收藏并播放你喜欢的音乐'),
-                  style: TextStyle(fontSize: 12, color: colors.textHint),
-                ),
-                const SizedBox(height: 4),
-                // 应用版本号
+                // 应用版本号放在标题栏右侧
                 versionAsync.when(
                   data: (version) => Text(
                     'v$version',
@@ -112,48 +65,62 @@ class MinePage extends ConsumerWidget {
                 ),
               ],
             ),
-          ),
-        ],
+            const SizedBox(height: AppSpacing.lg),
+            // 插件管理 + 设置
+            _buildEntryGroup(context, colors, [
+              _MineEntry(
+                icon: Icons.extension_outlined,
+                title: '插件管理',
+                subtitle: '插件的安装、启用与更新',
+                route: AppRoutes.pluginManagement,
+              ),
+              _MineEntry(
+                icon: Icons.settings_outlined,
+                title: '设置',
+                subtitle: '外观、播放与存储管理',
+                route: AppRoutes.settings,
+              ),
+            ]),
+            const SizedBox(height: AppSpacing.md),
+            // 下载 + 最近播放
+            _buildEntryGroup(context, colors, [
+              _MineEntry(
+                icon: Icons.download_outlined,
+                title: '下载',
+                subtitle: '下载管理与下载记录',
+                route: AppRoutes.download,
+              ),
+              _MineEntry(
+                icon: Icons.history,
+                title: '最近播放',
+                subtitle: '查看最近听过的歌曲',
+                route: AppRoutes.recentlyPlayed,
+              ),
+            ]),
+            // 听歌识曲的音频指纹模块依赖 WebView 运行时，Windows 端不可用，隐藏入口。
+            if (!Platform.isWindows) ...[
+              const SizedBox(height: AppSpacing.md),
+              _buildEntryGroup(context, colors, [
+                _MineEntry(
+                  icon: Icons.mic_none,
+                  title: '听歌识曲',
+                  subtitle: '识别周围正在播放的音乐',
+                  route: AppRoutes.recognize,
+                ),
+              ]),
+            ],
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildEntryCard(BuildContext context, ThemeColors colors) {
-    final entries = <_MineEntry>[
-      _MineEntry(
-        icon: Icons.extension_outlined,
-        title: '插件管理',
-        subtitle: '插件的安装、启用与更新',
-        route: AppRoutes.pluginManagement,
-      ),
-      _MineEntry(
-        icon: Icons.settings_outlined,
-        title: '设置',
-        subtitle: '外观、播放与存储管理',
-        route: AppRoutes.settings,
-      ),
-      _MineEntry(
-        icon: Icons.download_outlined,
-        title: '下载',
-        subtitle: '下载管理与下载记录',
-        route: AppRoutes.download,
-      ),
-      _MineEntry(
-        icon: Icons.history,
-        title: '最近播放',
-        subtitle: '查看最近听过的歌曲',
-        route: AppRoutes.recentlyPlayed,
-      ),
-      // 听歌识曲的音频指纹模块依赖 WebView 运行时，Windows 端不可用，隐藏入口。
-      if (!Platform.isWindows)
-        _MineEntry(
-          icon: Icons.mic_none,
-          title: '听歌识曲',
-          subtitle: '识别周围正在播放的音乐',
-          route: AppRoutes.recognize,
-        ),
-    ];
-
+  /// 一组入口（组内用分割线隔开，组与组之间由调用方留间距）。
+  Widget _buildEntryGroup(
+    BuildContext context,
+    ThemeColors colors,
+    List<_MineEntry> entries,
+  ) {
     return Container(
       decoration: BoxDecoration(
         color: colors.surface,
