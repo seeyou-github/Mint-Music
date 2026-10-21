@@ -247,6 +247,8 @@ class MusicSourceManager {
   /// 音源展示名：平台名 + 插件名。
   String _sourceDisplayName(String sourceName, String pluginName) {
     if (pluginName.isEmpty) return sourceName;
+    // MusicFree 插件的插件名往往就是平台名（如「元力KW」），重复拼接没有意义。
+    if (pluginName == sourceName) return sourceName;
     return '$sourceName · $pluginName';
   }
 

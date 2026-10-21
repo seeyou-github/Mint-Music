@@ -85,14 +85,23 @@ class PluginRepository {
     return await addPlugin(pluginCode, fileName, type);
   }
 
+  /// 插件代码的静态粗筛（真正的判定在运行时）。
+  ///
+  /// 混淆过的插件不会把 `module.exports`、`lx` 之类的关键字原样写出来，
+  /// 只靠关键字判断会把能正常运行的插件挡在门外，因此这里放宽条件。
   void _validatePluginCode(String code, String type) {
+    final lower = code.toLowerCase();
+    final looksLikeJsModule =
+        lower.contains('module') ||
+        lower.contains('exports') ||
+        lower.contains('require(');
     if (type == 'cr') {
-      if (!code.toLowerCase().contains('cerumusic')) {
-        throw Exception('澜音插件格式校验失败：代码中未找到cerumusic关键字');
+      if (!lower.contains('cerumusic') && !looksLikeJsModule) {
+        throw Exception('澜音插件格式校验失败：代码中未找到cerumusic或exports');
       }
     } else if (type == 'lx') {
-      if (!code.toLowerCase().contains('lx')) {
-        throw Exception('洛雪插件格式校验失败：代码中未找到lx关键字');
+      if (!lower.contains('lx') && !looksLikeJsModule) {
+        throw Exception('洛雪插件格式校验失败：代码中未找到lx关键字或module.exports');
       }
     }
   }

@@ -1571,9 +1571,9 @@ class _AddPluginSheetState extends State<_AddPluginSheet> {
                 Text(
                   context.tr(
                     switch (_pluginType) {
-                      'lx' => '代码中需包含 lx 关键字',
-                      'mf' => '代码中需声明 module.exports 与 platform',
-                      _ => '代码中需包含 cerumusic 关键字',
+                      'lx' => '脚本需注册 request 事件（支持混淆插件）',
+                      'mf' => '脚本需导出插件对象（支持混淆插件）',
+                      _ => '脚本需包含 cerumusic 接口（支持混淆插件）',
                     },
                   ),
                   style: TextStyle(fontSize: 11, color: colors.textHint),

@@ -87,6 +87,10 @@ function __mfLooksLikePlugin(value) {
  *   2. `exports.foo = ...` 风格写入的对象；
  *   3. `module.exports.default = {...}`（ESM 互操作写法）写入契约的 default。
  * 每种情况都额外识别一层 `{ default: {...} }` 包装。
+ *
+ * 混淆过的插件依然会走 `module.exports` 赋值（只是写法被混淆），因此捕获器
+ * 依然有效；一个对象都找不到时说明这根本不是 MusicFree 插件，直接报错，
+ * 免得装出一个没有音源的空插件。
  */
 function __mfPluginObject() {
   var candidates = [__mfCapturedExports, __mfLegacyExports, __mfContract.default];
@@ -103,7 +107,12 @@ function __mfPluginObject() {
     }
     if (!fallback && __mfLooksLikePlugin(candidate)) fallback = candidate;
   }
-  return fallback || {};
+  if (!fallback) {
+    throw new Error(
+      '未找到 MusicFree 插件导出（module.exports）：该脚本可能不是 MusicFree 插件'
+    );
+  }
+  return fallback;
 }
 
 function __mfText(value, fallback) {

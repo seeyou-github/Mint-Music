@@ -336,33 +336,48 @@ class PluginService {
     return url;
   }
 
+  /// 插件代码的静态粗筛。
+  ///
+  /// 真正的格式判定放在运行时（执行脚本后检查导出的插件对象），与
+  /// MusicFree 官方一致。这里只做非常宽松的筛查：混淆过的插件不会把
+  /// `module.exports`、`platform` 之类的关键字原样写出来（可能写成
+  /// `module['exports']`，甚至经由变量间接赋值），只靠关键字判断会把
+  /// 能正常运行的插件挡在门外。
   void _validatePluginCode(String code, String type) {
+    final lower = code.toLowerCase();
+    final looksLikeJsModule =
+        lower.contains('module') ||
+        lower.contains('exports') ||
+        lower.contains('require(');
+
     if (type == 'cr') {
-      if (!code.toLowerCase().contains('cerumusic')) {
-        throw Exception('澜音插件格式校验失败：代码中未找到cerumusic关键字');
+      if (!lower.contains('cerumusic') && !looksLikeJsModule) {
+        throw Exception('澜音插件格式校验失败：代码中未找到cerumusic或exports');
       }
     } else if (type == 'lx') {
       // LX plugins typically contain lx-related identifiers.
       // Check multiple common patterns to be more lenient.
-      final lowerCode = code.toLowerCase();
-      final hasLxKeyword = lowerCode.contains('lx');
-      final hasModuleExports = lowerCode.contains('module.exports');
+      final hasLxKeyword = lower.contains('lx');
+      final hasModuleExports = lower.contains('module.exports');
       final hasLxComment = RegExp(r'/\*[\s\S]*@name[\s\S]*\*/').hasMatch(code);
-      if (!hasLxKeyword && !hasModuleExports && !hasLxComment) {
+      if (!hasLxKeyword && !hasModuleExports && !hasLxComment && !looksLikeJsModule) {
         throw Exception(
           '洛雪插件格式校验失败：代码中未找到lx关键字或module.exports',
         );
       }
     } else if (type == 'mf') {
-      // MusicFree 插件是打包后的 CommonJS 模块，必然导出 module.exports，
-      // 且声明 platform 与（getMediaSource 或 search）中的至少一个。
-      final lowerCode = code.toLowerCase();
-      final hasModuleExports = lowerCode.contains('module.exports');
-      final hasPlatform = lowerCode.contains('platform');
-      final hasMediaSource = lowerCode.contains('getmediasource');
-      if (!hasModuleExports || (!hasPlatform && !hasMediaSource)) {
+      // MusicFree 插件是打包后的 CommonJS 模块。混淆后的插件不会把
+      // `module.exports` 原样写出来，因此不再要求出现该字面量，能不能用
+      // 由运行时的插件对象检查决定（找不到导出的插件对象会直接报错）。
+      final hasPluginFeature =
+          lower.contains('platform') ||
+          lower.contains('getmediasource') ||
+          lower.contains('supportedsearchtype') ||
+          lower.contains('gettoplists') ||
+          lower.contains('getmusicinfo');
+      if (!hasPluginFeature && !looksLikeJsModule) {
         throw Exception(
-          'MusicFree 插件格式校验失败：代码中未找到module.exports或platform/getMediaSource',
+          'MusicFree 插件格式校验失败：代码中未找到platform/getMediaSource等插件特征',
         );
       }
     }

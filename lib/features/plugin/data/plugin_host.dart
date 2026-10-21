@@ -169,6 +169,17 @@ class PluginHost {
       }
       print('[PluginHost] 插件初始化完成，解析到 $sourceCount 个源');
 
+      // 洛雪脚本必须在运行时注册 request 事件，否则无法解析播放地址。
+      // 混淆过的洛雪脚本无法靠静态关键字判断，只能在这里检查运行时状态。
+      if (isLxAdapter) {
+        final handlerResult = _engine.evaluate(
+          'typeof __lxRequestHandler === "function" ? 1 : 0',
+        );
+        if (!handlerResult.isError && handlerResult.stringResult.trim() == '0') {
+          throw Exception('洛雪脚本没有注册 request 事件，无法解析播放地址');
+        }
+      }
+
       print('[PluginHost] 获取插件导出...');
       final exportsResult = _engine.evaluate('''
 JSON.stringify((function() {
@@ -202,6 +213,14 @@ JSON.stringify((function() {
         _sources = sourcesResult['sources'] as List<PluginSourceInfo>;
         _sourceActions = sourcesResult['actions'] as Map<String, List<String>>;
         _capabilities = _parseCapabilities(exports['capabilities']);
+
+        // 插件必须真的导出了内容：既没有插件信息也没有音源，说明这根本不是
+        // 一个可用的插件脚本（混淆插件无法靠静态关键字判断，只能运行时查）。
+        if (_pluginInfo == null &&
+            _sources.isEmpty &&
+            _sourceActions.isEmpty) {
+          throw Exception('插件没有导出任何内容（module.exports 缺失或为空）');
+        }
 
         if (_sources.isEmpty && _sourceActions.isNotEmpty) {
           for (final entry in _sourceActions.entries) {
