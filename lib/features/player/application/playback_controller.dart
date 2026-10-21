@@ -1608,6 +1608,8 @@ class PlaybackController extends StateNotifier<PlaybackState> {
         sourceHeaders: result.headers.isEmpty ? null : result.headers,
         sourceQuality: result.quality.isEmpty ? quality : result.quality,
         clearSourceHeaders: result.headers.isEmpty,
+        // 标记实际提供地址的音源，界面上显示真正正在使用的音源。
+        source: result.source ?? currentSong.source,
       );
       await _audioHandler.setAudioSource(result.url, song: updatedSong);
       await _audioHandler.seek(currentPosition);

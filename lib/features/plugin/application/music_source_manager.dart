@@ -375,6 +375,25 @@ class MusicSourceManager {
     return SourceInfo(id: id, name: '$name$builtInSourceSuffix');
   }
 
+  /// 某个音源实际由哪个插件提供服务。
+  ///
+  /// 内置源没有地址接口，播放地址一定是由插件解析的：歌曲的音源字段可能还是
+  /// 内置源的平台 id（例如从搜索结果直接播放时），这里给出真正提供地址的
+  /// 插件音源 id（`平台id@插件id`）。
+  String? resolvingSourceIdFor(String sourceId) {
+    if (sourceId.isEmpty) return null;
+    // 已经是插件音源就直接用它。
+    final (_, pluginId) = splitSourceId(sourceId);
+    if (pluginId != null) return sourceId;
+    // 内置源：找提供该平台的插件。
+    for (final host in _pluginService.enabledPlugins) {
+      final pluginSourceId = _getSourceIdForHost(host, sourceId);
+      if (pluginSourceId == null) continue;
+      return _pluginSourceAppId(host, pluginSourceId);
+    }
+    return null;
+  }
+
   /// 音源的展示名。
   ///
   /// * 内置音源：平台名 + 「-内置」；

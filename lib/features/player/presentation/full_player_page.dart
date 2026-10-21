@@ -473,14 +473,17 @@ class _PlayerHeader extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // 当前实际使用的音源：内置音源带「-内置」，插件音源按自带音源数量显示
-    // 平台名或「平台名-插件名」。顶部只显示这个，不再显示播放模式。
-    final sourceName = ref.watch(
+    // 当前实际使用的音源：内置音源本身没有地址接口，播放地址由插件解析，
+    // 这里显示真正在提供地址的那个音源（内置源带「-内置」，插件源用平台名）。
+    final songSource = ref.watch(
       playbackControllerProvider.select((s) => s.currentSong?.source ?? ''),
     );
-    final sourceLabel = sourceName.isEmpty
-        ? ''
-        : ref.read(musicSourceManagerProvider).sourceDisplayName(sourceName);
+    var sourceLabel = '';
+    if (songSource.isNotEmpty) {
+      final manager = ref.read(musicSourceManagerProvider);
+      final effective = manager.resolvingSourceIdFor(songSource) ?? songSource;
+      sourceLabel = manager.sourceDisplayName(effective);
+    }
 
     return Padding(
       padding: EdgeInsets.only(
