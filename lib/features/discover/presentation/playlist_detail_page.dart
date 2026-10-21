@@ -705,15 +705,6 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
                     _toggleMultiSelectMode();
                   },
                 ),
-                _buildMenuItem(
-                  colors,
-                  icon: Icons.save_alt,
-                  label: context.tr('保存到本地'),
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    _saveToLocal(playlist);
-                  },
-                ),
                 const SizedBox(height: AppSpacing.lg),
               ],
             ),
@@ -803,31 +794,4 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
     }
   }
 
-  void _saveToLocal(playlist) async {
-    final localPlaylist = local.Playlist(
-      id: 'local_${DateTime.now().millisecondsSinceEpoch}',
-      name: playlist.title,
-      description: playlist.description,
-      coverImgUrl: playlist.coverUrl ?? '',
-      source: playlist.source,
-      createTime: DateTime.now(),
-      updateTime: DateTime.now(),
-      songs: _songs,
-      meta: {
-        'discoverId': widget.playlistId,
-        'type': 'saved_playlist',
-      },
-    );
-
-    await ref.read(playlistsProvider.notifier).createPlaylistFromModel(localPlaylist);
-
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(context.tr('已保存"${playlist.title}"到本地歌单')),
-          duration: const Duration(seconds: 2),
-        ),
-      );
-    }
-  }
 }

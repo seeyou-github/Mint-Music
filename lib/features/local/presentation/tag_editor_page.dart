@@ -7,6 +7,8 @@ import '../../../core/theme/theme_provider.dart';
 import '../application/local_providers.dart';
 import '../../player/domain/models/song.dart';
 import '../../plugin/application/plugin_providers.dart';
+import '../../../shared/widgets/music_cover_image.dart';
+import 'song_compare_dialog.dart';
 
 class TagEditorPage extends ConsumerStatefulWidget {
   const TagEditorPage({super.key, this.songId});
@@ -65,7 +67,8 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
         _yearController.text = song.year?.toString() ?? '';
         _genreController.text = '';
         _lrcController.text = song.lrc ?? '';
-        _searchController.text = song.title;
+        // 搜索词带上歌手名，匹配更准。
+    _searchController.text = _searchKeywordFor(song);
       });
     }
   }
@@ -256,26 +259,41 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
             decoration: BoxDecoration(
               color: colors.surfaceVariant,
               borderRadius: BorderRadius.circular(AppRadius.lg),
-              image: _song?.coverUrl != null
-                  ? DecorationImage(
-                      image: NetworkImage(_song!.coverUrl!),
-                      fit: BoxFit.cover,
-                    )
-                  : null,
             ),
-            child: _song?.coverUrl == null
-                ? Column(
+            clipBehavior: Clip.antiAlias,
+            // 有封面就直接显示封面：网络封面用 coverUrl，本地内嵌封面
+            // 走 MusicCoverImage（从 MediaStore / 文件里取）。
+            child: _song != null &&
+                    (_song!.coverUrl != null || _song!.hasCover)
+                ? MusicCoverImage(
+                    url: _song!.coverUrl,
+                    songId: _song!.id,
+                    mediaStoreId: _song!.mediaStoreId,
+                    width: 160,
+                    height: 160,
+                    fit: BoxFit.cover,
+                    errorWidget: Container(
+                      width: 160,
+                      height: 160,
+                      color: colors.surfaceVariant,
+                      child: Icon(
+                        Icons.music_note,
+                        size: 48,
+                        color: colors.primary.withValues(alpha: 0.5),
+                      ),
+                    ),
+                  )
+                : Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Icon(Icons.music_note, size: 48, color: colors.primary.withValues(alpha: 0.5)),
                       const SizedBox(height: AppSpacing.xs),
                       Text(
-                        context.tr(_song?.hasCover == true ? '有封面' : '无封面'),
+                        context.tr('无封面'),
                         style: TextStyle(fontSize: 11, color: colors.textHint),
                       ),
                     ],
-                  )
-                : null,
+                  ),
           ),
           const SizedBox(height: AppSpacing.sm),
           if (_song?.filePath != null)
@@ -630,25 +648,49 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
     }
   }
 
+  /// 搜索关键词：歌曲名 + 歌手名。
+  static String _searchKeywordFor(Song song) {
+    final title = song.title.trim();
+    final artist = song.artist.trim();
+    if (artist.isEmpty) return title;
+    if (title.isEmpty) return artist;
+    return '$title $artist';
+  }
+
   Future<void> _applyResult(Song result) async {
+    // 弹出「歌曲信息对比」页：左边原歌曲、右边下载的版本，
+    // 中间的箭头逐项选择采用哪一版（封面 / 歌曲信息 / 歌词）。
+    final original = _song;
+    final merged = await showSongCompareDialog(
+      context,
+      original: original ?? result,
+      candidate: result,
+    );
+    if (merged == null || !mounted) return;
+
     setState(() => _saving = true);
 
     try {
-      _titleController.text = result.title.isNotEmpty ? result.title : _titleController.text;
-      _artistController.text = result.artist.isNotEmpty ? result.artist : _artistController.text;
-      _albumController.text = result.album.isNotEmpty ? result.album : _albumController.text;
+      _titleController.text = merged.title.isNotEmpty
+          ? merged.title
+          : _titleController.text;
+      _artistController.text = merged.artist.isNotEmpty
+          ? merged.artist
+          : _artistController.text;
+      _albumController.text = merged.album.isNotEmpty
+          ? merged.album
+          : _albumController.text;
 
-      if (result.coverUrl != null && result.coverUrl!.isNotEmpty) {
+      if (merged.coverUrl != null && merged.coverUrl!.isNotEmpty) {
         setState(() {
           _song = _song?.copyWith(
-            coverUrl: result.coverUrl,
+            coverUrl: merged.coverUrl,
             hasCover: true,
           );
         });
       }
 
-      final source = ref.read(musicSourceProvider);
-      final lyric = await source.getLyric(result.id);
+      final lyric = merged.lrc;
       if (lyric != null && lyric.isNotEmpty) {
         _lrcController.text = lyric;
       }

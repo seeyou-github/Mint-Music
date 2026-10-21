@@ -1,12 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import 'package:share_plus/share_plus.dart';
-import '../../../core/platform/app_paths.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
@@ -1147,17 +1146,34 @@ class _LocalPlaylistDetailPageState
       final json = jsonEncode(ceruSongs);
       final cmplBytes = encodeCmpl(json);
 
-      // Write to a temp file
-      final tempDir = await AppPaths.tempDirectory();
+      // 直接弹出系统「保存文件」对话框，让用户自己选保存位置
+      // （Windows 是系统另存为对话框，Android 是系统文件选择界面）。
       final safeName = playlist.name.replaceAll(RegExp(r'[^\w\u4e00-\u9fff\- ]'), '_');
-      final file = File('${tempDir.path}/$safeName.cmpl');
-      await file.writeAsBytes(cmplBytes);
-
-      // Share the .cmpl file
+      final savedPath = await FilePicker.platform.saveFile(
+        dialogTitle: context.tr('保存歌单'),
+        fileName: '$safeName.cmpl',
+        type: FileType.any,
+        bytes: cmplBytes,
+      );
+      if (savedPath == null) {
+        // 用户取消了保存
+        return;
+      }
+      // 部分平台（返回的是 content URI）不会自动写内容，这里对真实路径再兜底写一次
+      try {
+        final file = File(savedPath);
+        if (!await file.exists() || await file.length() != cmplBytes.length) {
+          await file.writeAsBytes(cmplBytes, flush: true);
+        }
+      } catch (_) {
+        // Android 返回的是 content URI，内容已由系统文件选择器写入
+      }
       if (context.mounted) {
-        await Share.shareXFiles(
-          [XFile(file.path, mimeType: 'application/octet-stream')],
-          text: context.tr('分享歌单：${playlist.name}'),
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(context.tr('歌单已保存')),
+            duration: const Duration(seconds: 2),
+          ),
         );
       }
     } catch (e) {
