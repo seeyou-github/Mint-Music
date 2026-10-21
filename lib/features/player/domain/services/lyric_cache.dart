@@ -71,12 +71,15 @@ class LyricCache {
   /// 迁移标记用的模块名。
   static const String _migrationModule = 'lyric_cache';
 
-  /// 缓存键：音源 + 歌曲 id 的 md5。
+  /// 缓存键：平台 + 歌曲 id 的 md5。
   ///
-  /// 音源 id 里可能带 `@插件id`（插件音源），这样不同插件的歌词不会串。
-  /// 用 md5 是为了跟旧版缓存的文件名保持一致，方便直接迁移。
+  /// 音源 id 里可能带 `@插件id`（插件音源；或者内置源的地址被插件解析后，
+  /// 队列里歌曲的 source 被标记成了插件变体 id）。这里只取平台部分：
+  /// 同一首歌在「内置源」和「插件源」下的歌词缓存要能对上，否则歌曲在
+  /// 两种来源之间切换时缓存全部失效（每次都要重新联网取词）。
   static String keyFor(Song song) {
-    final raw = '${song.source ?? ''}_${song.id}';
+    final source = (song.source ?? '').split('@').first;
+    final raw = '${source}_${song.id}';
     return md5.convert(utf8.encode(raw)).toString();
   }
 

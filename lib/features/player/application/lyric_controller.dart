@@ -121,6 +121,16 @@ class LyricController extends StateNotifier<LyricState> {
     return result;
   }
 
+  /// 取音源 id 里的平台部分。
+  ///
+  /// `平台id@插件id` → `平台id`；没有插件后缀时原样返回。
+  static String? _baseSourceOf(String? source) {
+    if (source == null || source.isEmpty) return null;
+    final index = source.indexOf('@');
+    if (index <= 0 || index >= source.length - 1) return source;
+    return source.substring(0, index);
+  }
+
   Future<void> loadLyrics(Song? song) async {
     if (song == null) {
       debugPrint('[LyricController] song is null, clearing lyrics');
@@ -175,22 +185,24 @@ class LyricController extends StateNotifier<LyricState> {
           ttmlLines = lines.isEmpty ? null : lines;
         }
       } else {
-        // Step 1 / 2 并行：TTML 词库与在线歌词各是一次网络请求，串行等待会
-        // 让歌词出现得很慢（切歌时尤其明显），这里让两个请求同时发出。
+        // 歌曲的 source 可能带 `@插件id`（插件音源；或者内置源的地址被插件
+        // 解析后，队列里歌曲的 source 被标记成了插件变体 id）。TTML 词库只
+        // 按平台提供，这里要取平台部分，否则切歌回来就取不到逐字歌词了。
+        final baseSource = _baseSourceOf(song.source) ?? '';
         final sourceSupportsWordLyric =
-            song.source == 'tx' ||
-            song.source == 'wy' ||
-            song.source == 'kw' ||
-            song.source == 'kg';
+            baseSource == 'tx' ||
+            baseSource == 'wy' ||
+            baseSource == 'kw' ||
+            baseSource == 'kg';
         final needOnlineLyric =
             (lrc == null || lrc.isEmpty) || sourceSupportsWordLyric;
 
         Future<String?>? ttmlTextFuture;
         Future<List<LyricLine>?>? ttmlFuture;
-        if (song.source == 'wy' || song.source == 'tx') {
+        if (baseSource == 'wy' || baseSource == 'tx') {
           final cleanId = song.id.replaceAll('wy_', '').replaceAll('tx_', '');
           ttmlTextFuture = _ttmlDbService
-              .fetchTtmlText(song.source!, cleanId)
+              .fetchTtmlText(baseSource, cleanId)
               .timeout(_lyricFetchTimeout);
           ttmlFuture = ttmlTextFuture.then((text) {
             if (text == null) return null;

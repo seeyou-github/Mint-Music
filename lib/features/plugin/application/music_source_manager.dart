@@ -1880,6 +1880,24 @@ class MusicSourceManager {
     if (pluginFallback != null) return pluginFallback;
     if (builtInFallback != null) return builtInFallback;
 
+    // 2.5 插件变体音源（`平台id@插件id`）没歌词时，退回同名内置源。
+    //
+    // 典型场景：用户选的是内置源，但地址是插件解析的，队列里歌曲的 source
+    // 被标记成了插件变体 id；插件自己不一定提供歌词（比如落雪的「仅解析」
+    // 脚本就没有歌词 action），这时内置源的歌词仍然可用。
+    if (builtIn == null) {
+      final (baseId, _) = splitSourceId(sourceId);
+      final baseSource = _builtInSources[baseId];
+      if (baseSource != null) {
+        try {
+          final result = await baseSource.getLyricResult(song.id);
+          if (_hasLyric(result)) return result;
+        } catch (e) {
+          print('[MusicSourceManager] getLyricResult: $baseId built-in fallback error: $e');
+        }
+      }
+    }
+
     // 3. 其它已安装插件的歌词（完全匹配才采用）
     final otherPluginLyric = await _lyricFromOtherPlugins(song);
     if (otherPluginLyric != null) return otherPluginLyric;
