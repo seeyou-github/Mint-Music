@@ -278,9 +278,9 @@ class MusicSourceManager {
 
   /// 插件提供的音源列表（发现页 / 搜索页共用同一份 id 与名称）。
   ///
-  /// * 名称取插件声明的 platform（音源平台名，例如「网易云音乐」），并
-  ///   在后面附上插件名，方便区分接管同一平台的多个插件；
-  /// * 同名同平台（不同作者）的插件都能显示，第二个及之后的用
+  /// * 名称取插件声明的 platform（音源平台名，例如「网易云音乐」），不再追加
+  ///   插件名——插件名通常就包含平台名，追加会重复；
+  /// * 同名同平台（不同作者）的插件都能显示，每个插件的音源用
   ///   `平台id@插件id` 作为唯一 id。
   List<SourceInfo> getPluginSupportedSources() {
     final sources = <SourceInfo>[];
@@ -288,7 +288,6 @@ class MusicSourceManager {
 
     for (final host in _pluginService.enabledPlugins) {
       final pluginId = _pluginService.getPluginIdForHost(host);
-      final pluginName = _pluginDisplayName(host);
       for (final source in host.sources) {
         // 名称 → id 的推导与 MusicFree 适配器保持一致（见 SourceIdMapping）。
         // 注意要用插件原始的 platform 名推导，附加的插件名不能参与推导。
@@ -297,27 +296,18 @@ class MusicSourceManager {
         if (!isPluginSourceEnabled(pluginId, baseId)) continue;
         final id = _uniqueSourceId(baseId, pluginId, seenIds);
         seenIds.add(id);
-        sources.add(
-          SourceInfo(id: id, name: _sourceDisplayName(source.name, pluginName)),
-        );
+        sources.add(SourceInfo(id: id, name: _sourceDisplayName(source.name)));
       }
     }
     return sources;
   }
 
-  /// 插件名（用于区分接管同一平台的多个插件）。
-  String _pluginDisplayName(PluginHost host) {
-    final name = host.pluginInfo?.name?.trim() ?? '';
-    if (name.isEmpty) return '';
-    return name.length <= 12 ? name : '${name.substring(0, 12)}…';
-  }
-
-  /// 音源展示名：平台名 + 来源后缀。
+  /// 音源展示名。
   ///
-  /// 内置音源带「-内置」，插件音源带「-插件名」，两者在列表里不会混淆。
-  String _sourceDisplayName(String sourceName, String pluginName) {
-    if (pluginName.isEmpty) return sourceName;
-    return '$sourceName-$pluginName';
+  /// 插件音源直接用插件自己声明的平台名，不追加插件名——插件名往往就包含
+  /// 平台名，追加会出现「元力KW-元力KW」这种重复。
+  String _sourceDisplayName(String sourceName) {
+    return sourceName;
   }
 
   /// 插件音源的唯一 id。
@@ -360,25 +350,25 @@ class MusicSourceManager {
 
   /// 音源的展示名。
   ///
-  /// 内置音源带「-内置」后缀，插件音源带插件名后缀，用来在播放详情页等位置
-  /// 说明当前实际用的是哪个音源。
+  /// 内置音源带「-内置」后缀，插件音源用插件自己声明的平台名（不加插件名，
+  /// 否则会和平台名重复）。
   String sourceDisplayName(String sourceId) {
     final (baseId, pluginId) = splitSourceId(sourceId);
-    final platformName = _sourceIdToName[baseId];
-    if (platformName == null) {
-      // 未知平台（例如本地音乐）直接用原 id。
-      return sourceId;
-    }
     if (pluginId == null) {
+      final platformName = _sourceIdToName[baseId];
+      if (platformName == null) return sourceId;
       return '$platformName$builtInSourceSuffix';
     }
     for (final host in _pluginService.enabledPlugins) {
       if (_pluginService.getPluginIdForHost(host) != pluginId) continue;
-      final pluginName = _pluginDisplayName(host);
-      if (pluginName.isEmpty) return platformName;
-      return '$platformName-$pluginName';
+      for (final source in host.sources) {
+        if (SourceIdMapping.deriveId(source.name) == baseId) {
+          return source.name;
+        }
+      }
     }
-    return platformName;
+    final platformName = _sourceIdToName[baseId];
+    return platformName ?? baseId;
   }
 
   /// 已启用的插件音源 id 列表（`平台id@插件id`）。
