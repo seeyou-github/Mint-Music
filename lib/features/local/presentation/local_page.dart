@@ -1061,7 +1061,7 @@ class _LocalPageState extends ConsumerState<LocalPage> {
               ),
             ),
             GestureDetector(
-              onTap: () {
+              onTap: () async {
                 // 关闭搜索结果弹窗，然后打开确认弹窗
                 Navigator.of(context, rootNavigator: true).pop();
                 // 弹出「歌曲信息对比」页：左边原歌曲、右边下载的版本，

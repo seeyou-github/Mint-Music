@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -1144,7 +1145,7 @@ class _LocalPlaylistDetailPageState
 
       // Encode the array to .cmpl format (AES encrypt + gzip compress)
       final json = jsonEncode(ceruSongs);
-      final cmplBytes = encodeCmpl(json);
+      final cmplBytes = Uint8List.fromList(encodeCmpl(json));
 
       // 直接弹出系统「保存文件」对话框，让用户自己选保存位置
       // （Windows 是系统另存为对话框，Android 是系统文件选择界面）。

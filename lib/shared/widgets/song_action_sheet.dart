@@ -264,6 +264,97 @@ class SongActionSheet extends ConsumerStatefulWidget {
       ),
     );
   }
+  static Widget _buildQualityItem(BuildContext ctx, String q, Song song) {
+    return InkWell(
+      // startDownload 内部会关闭这个弹层，这里不要再 pop 一次。
+      onTap: () {
+        startDownload(ctx, song, q);
+      },
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    getQualityDisplayName(q),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '${ctx.tr(kQualityDescription[q] ?? '')}  ${_estimateSize(q, song.duration)}',
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.5),
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Icon(
+              Icons.download_outlined,
+              color: Colors.white.withValues(alpha: 0.4),
+              size: 20,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+
+  /// 开始下载（静态版，供播放页的下载按钮复用）。
+  static Future<void> startDownload(
+    BuildContext context,
+    Song song,
+    String quality,
+  ) async {
+    // 先拿到 messenger：下面会关闭当前弹层，context 随即失效。
+    final messenger = ScaffoldMessenger.of(context);
+    Navigator.pop(context);
+    try {
+      final repo = ProviderScope.containerOf(context).read(
+        downloadRepositoryProvider,
+      );
+      await repo.addTask(song: song, quality: quality);
+      // onTaskStarted 回调会显示 "开始下载 xxx" 通知
+    } catch (e) {
+      final err = e.toString();
+      if (err.contains('UNSUPPORTED_QUALITY')) {
+        final q = err.split(':').last;
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(context.tr('音质 $q 不受当前音源支持，请选择其他音质')),
+            duration: const Duration(seconds: 3),
+            backgroundColor: Colors.orange,
+            action: SnackBarAction(
+              label: context.tr('重新选择'),
+              textColor: Colors.white,
+              onPressed: () =>
+                  SongActionSheet.showDownloadQualityPicker(context, song),
+            ),
+          ),
+        );
+        return;
+      }
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(context.tr('下载失败: $e')),
+          duration: const Duration(seconds: 2),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+
   @override
   ConsumerState<SongActionSheet> createState() => _SongActionSheetState();
 }
@@ -1188,97 +1279,6 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
   }
 
 
-
-  static Widget _buildQualityItem(BuildContext ctx, String q, Song song) {
-    return InkWell(
-      onTap: () {
-        Navigator.pop(ctx);
-        startDownload(ctx, song, q);
-      },
-      borderRadius: BorderRadius.circular(8),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        child: Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    getQualityDisplayName(q),
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    '${ctx.tr(kQualityDescription[q] ?? '')}  ${_estimateSize(q, song.duration)}',
-                    style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.5),
-                      fontSize: 12,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Icon(
-              Icons.download_outlined,
-              color: Colors.white.withValues(alpha: 0.4),
-              size: 20,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// 开始下载（静态版，供播放页的下载按钮复用）。
-  static Future<void> startDownload(
-    BuildContext context,
-    Song song,
-    String quality,
-  ) async {
-    Navigator.pop(context);
-    try {
-      final repo = ProviderScope.containerOf(context).read(
-        downloadRepositoryProvider,
-      );
-      await repo.addTask(song: song, quality: quality);
-      // onTaskStarted 回调会显示 "开始下载 xxx" 通知
-    } catch (e) {
-      final err = e.toString();
-      if (err.contains('UNSUPPORTED_QUALITY')) {
-        final q = err.split(':').last;
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(context.tr('音质 $q 不受当前音源支持，请选择其他音质')),
-              duration: const Duration(seconds: 3),
-              backgroundColor: Colors.orange,
-              action: SnackBarAction(
-                label: context.tr('重新选择'),
-                textColor: Colors.white,
-                onPressed: () =>
-                    SongActionSheet.showDownloadQualityPicker(context, song),
-              ),
-            ),
-          );
-        }
-        return;
-      }
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(context.tr('下载失败: $e')),
-            duration: const Duration(seconds: 2),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
-  }
 
   void _showAddToPlaylist(
     ThemeColors colors,
