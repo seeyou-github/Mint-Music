@@ -16,4 +16,13 @@ std::string Utf8FromUtf16(const wchar_t* utf16_string);
 // encoded in UTF-8. Returns an empty std::vector<std::string> on failure.
 std::vector<std::string> GetCommandLineArguments();
 
+// Points the WebView2 user data folder at the app's own
+// `<exe directory>\AppData\temp\webview2`.
+//
+// WebView2 creates the user data folder next to the executable by default
+// (`<exe>.WebView2\`), which fails when the app is installed under
+// Program Files (no write permission). It also means the browser cache
+// would end up outside the app's own AppData folder.
+void PrepareWebView2UserDataFolder();
+
 #endif  // RUNNER_UTILS_H_

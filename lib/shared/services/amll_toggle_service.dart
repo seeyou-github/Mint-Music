@@ -1,7 +1,7 @@
 import 'package:flutter/foundation.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import 'webview_availability.dart';
+import '../../core/storage/app_preferences.dart';
 
 /// 全局 AMLL 歌词引擎开关（单例）
 ///
@@ -19,7 +19,7 @@ class AmllToggleService extends ChangeNotifier {
   static const String _prefsKey = 'amll_lyric_enabled';
 
   bool _enabled = true;
-  SharedPreferences? _prefs;
+  AppPreferences? _prefs;
 
   /// 当前是否启用了 AMLL 歌词引擎
   bool get enabled => _enabled;
@@ -41,10 +41,10 @@ class AmllToggleService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 从 SharedPreferences 初始化（用于启动时）
+  /// 从 AppPreferences 初始化（用于启动时）
   Future<void> loadFromPrefs() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
+      final prefs = await AppPreferences.getInstance();
       _prefs = prefs;
       _enabled = prefs.getBool(_prefsKey) ?? true;
       notifyListeners();
@@ -54,10 +54,10 @@ class AmllToggleService extends ChangeNotifier {
     }
   }
 
-  /// 持久化到 SharedPreferences
+  /// 持久化到 AppPreferences
   Future<void> saveToPrefs() async {
     try {
-      final prefs = _prefs ??= await SharedPreferences.getInstance();
+      final prefs = _prefs ??= await AppPreferences.getInstance();
       await prefs.setBool(_prefsKey, _enabled);
       debugPrint('[AmllToggle] saved: $_enabled');
     } catch (e) {

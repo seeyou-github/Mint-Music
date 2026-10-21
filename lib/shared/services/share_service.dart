@@ -2,8 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:dio/dio.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import '../../core/platform/app_paths.dart';
 import '../../core/l10n/l10n.dart';
 import '../../features/player/domain/models/song.dart';
 import '../../features/library/domain/models/playlist.dart';
@@ -72,7 +72,7 @@ class ShareService {
 
     final json = playlist.toJson();
     final content = jsonEncode(json);
-    final tempDir = await getTemporaryDirectory();
+    final tempDir = await AppPaths.tempDirectory();
     final file = File(
       '${tempDir.path}/playlist_${playlist.id.replaceAll(RegExp(r'[^\w]'), '_')}.json',
     );
@@ -181,7 +181,7 @@ class ShareService {
     String filename,
   ) async {
     try {
-      final tempDir = await getTemporaryDirectory();
+      final tempDir = await AppPaths.tempDirectory();
       final file = File('${tempDir.path}/$filename');
       await file.writeAsBytes(bytes);
       await Share.shareXFiles([XFile(file.path)], text: text);

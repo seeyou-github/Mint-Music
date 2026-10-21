@@ -1,5 +1,5 @@
 import 'dart:convert';
-import 'package:shared_preferences/shared_preferences.dart';
+import '../../../core/storage/app_preferences.dart';
 import '../domain/models/playlist.dart';
 import '../../player/domain/models/song.dart';
 
@@ -9,7 +9,7 @@ class PlaylistRepository {
 
   Future<List<Playlist>> loadPlaylists() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
+      final prefs = await AppPreferences.getInstance();
       final data = prefs.getString(_key);
       List<Playlist> playlists = [];
       if (data != null && data.isNotEmpty) {
@@ -40,7 +40,7 @@ class PlaylistRepository {
 
   Future<void> savePlaylists(List<Playlist> playlists) async {
     try {
-      final prefs = await SharedPreferences.getInstance();
+      final prefs = await AppPreferences.getInstance();
       final data = jsonEncode(playlists.map((p) => p.toJson()).toList());
       await prefs.setString(_key, data);
     } catch (e) {

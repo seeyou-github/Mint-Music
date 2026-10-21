@@ -6,7 +6,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show FontLoader;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+
+import '../platform/app_paths.dart';
+import '../storage/app_preferences.dart';
 
 /// 导入到应用的字体。
 class AppFont {
@@ -84,12 +86,37 @@ class AppFontManager {
 
   /// 字体文件的存放目录。
   Future<Directory> fontDirectory() async {
-    final support = await getApplicationSupportDirectory();
-    final dir = Directory(p.join(support.path, 'fonts'));
-    if (!await dir.exists()) {
-      await dir.create(recursive: true);
-    }
+    final dir = await AppPaths.fontDirectory();
+    await _migrateLegacyFonts(dir);
     return dir;
+  }
+
+  /// 把旧版字体目录（漫游 AppData 下的 `fonts`）里的字体复制过来。
+  ///
+  /// 字体清单存在设置里（会随设置一起迁移），字体文件也要一起搬过去，
+  /// 否则导入过的字体会因为找不到文件而无法使用。
+  Future<void> _migrateLegacyFonts(Directory target) async {
+    if (!Platform.isWindows) return;
+    try {
+      final legacyRoot = await getApplicationSupportDirectory();
+      final legacyDir = Directory(p.join(legacyRoot.path, 'fonts'));
+      if (!await legacyDir.exists()) return;
+      if (identical(legacyDir.path, target.path)) return;
+
+      final files = legacyDir
+          .listSync(followLinks: false)
+          .whereType<File>()
+          .toList();
+      if (files.isEmpty) return;
+      for (final file in files) {
+        final dest = File(p.join(target.path, p.basename(file.path)));
+        if (await dest.exists()) continue;
+        await file.copy(dest.path);
+      }
+      print('[AppFontManager] 已迁移旧字体目录: ${legacyDir.path}');
+    } catch (e) {
+      print('[AppFontManager] 迁移旧字体目录失败: $e');
+    }
   }
 
   /// 启动时加载：读出已导入的字体并注册到引擎。
@@ -97,7 +124,7 @@ class AppFontManager {
     if (_loaded) return;
     _loaded = true;
     try {
-      final prefs = await SharedPreferences.getInstance();
+      final prefs = await AppPreferences.getInstance();
       final raw = prefs.getStringList(_listKey) ?? const <String>[];
       final dir = await fontDirectory();
       for (final item in raw) {
@@ -165,7 +192,7 @@ class AppFontManager {
   Future<void> select(String? family) async {
     _selectedFamily = (family == null || family.isEmpty) ? null : family;
     try {
-      final prefs = await SharedPreferences.getInstance();
+      final prefs = await AppPreferences.getInstance();
       if (_selectedFamily == null) {
         await prefs.remove(_selectedKey);
       } else {
@@ -187,7 +214,7 @@ class AppFontManager {
       _fonts.removeWhere((f) => f.family == font.family);
       if (_selectedFamily == font.family) {
         _selectedFamily = null;
-        final prefs = await SharedPreferences.getInstance();
+        final prefs = await AppPreferences.getInstance();
         await prefs.remove(_selectedKey);
       }
       await _persistList();
@@ -198,7 +225,7 @@ class AppFontManager {
 
   Future<void> _persistList() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
+      final prefs = await AppPreferences.getInstance();
       await prefs.setStringList(
         _listKey,
         _fonts.map((f) => jsonEncode(f.toJson())).toList(),

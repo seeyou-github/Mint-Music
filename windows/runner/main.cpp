@@ -18,6 +18,11 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   // plugins.
   ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
+  // WebView2 的用户数据目录默认建在 exe 同级（`<exe>.WebView2\`），程序装在
+  // Program Files 下没有写权限时会直接初始化失败。这里统一指到应用自己的
+  // AppData\temp\webview2 下，保证应用产生的文件都集中在 AppData 里。
+  PrepareWebView2UserDataFolder();
+
   flutter::DartProject project(L"data");
 
   // 启动耗时诊断结论：Flutter 3.47 起 Windows 默认启用 Impeller，而

@@ -1,5 +1,5 @@
 import 'dart:convert';
-import 'package:shared_preferences/shared_preferences.dart';
+import '../../../core/storage/app_preferences.dart';
 import '../domain/models/recently_played.dart';
 import '../../player/domain/models/song.dart';
 
@@ -8,7 +8,7 @@ class RecentlyPlayedRepository {
   static const int _maxItems = 100;
 
   Future<List<RecentlyPlayedItem>> loadHistory() async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await AppPreferences.getInstance();
     final data = prefs.getString(_key);
     if (data == null) return [];
     final list = jsonDecode(data) as List<dynamic>;
@@ -18,7 +18,7 @@ class RecentlyPlayedRepository {
   }
 
   Future<void> saveHistory(List<RecentlyPlayedItem> history) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await AppPreferences.getInstance();
     final data = jsonEncode(history.map((h) => h.toJson()).toList());
     await prefs.setString(_key, data);
   }
@@ -48,7 +48,7 @@ class RecentlyPlayedRepository {
   }
 
   Future<void> clearHistory() async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await AppPreferences.getInstance();
     await prefs.remove(_key);
   }
 

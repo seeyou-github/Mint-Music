@@ -140,7 +140,7 @@ final playbackControllerProvider =
             controller.onClearPlaybackState = () =>
                 svc.clearLastPlaybackState();
             // 回调就绪后自动恢复上次播放会话
-            // 直接从 SharedPreferences 读取音质，避免 provider 未初始化的竞态
+            // 直接从偏好设置读取音质，避免 provider 未初始化的竞态
             final persistedQuality = svc.getGlobalQuality();
             final persistedSourceQuality = svc.getSourceQuality();
             await controller.restoreLastSession(

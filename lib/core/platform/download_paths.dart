@@ -4,6 +4,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../constants/app_constants.dart';
+import 'app_paths.dart';
 
 /// Android 公共音乐目录（MediaStore 可见）。
 const String _androidMusicDir = '/storage/emulated/0/Music';
@@ -23,9 +24,19 @@ String defaultDownloadDirSync() {
   if (Platform.isAndroid) {
     return p.posix.join(_androidMusicDir, AppConstants.downloadDirName);
   }
-  final home = Platform.isWindows
-      ? Platform.environment['USERPROFILE']
-      : Platform.environment['HOME'];
+  if (Platform.isWindows) {
+    // Windows：默认下载目录放在应用自己的 AppData\music 下。
+    final base = AppPaths.executableDirectory;
+    if (base != null && base.isNotEmpty) {
+      return p.join(
+        base,
+        AppPaths.rootFolderName,
+        AppPaths.musicFolderName,
+      );
+    }
+  }
+  final home = Platform.environment['USERPROFILE'] ??
+      Platform.environment['HOME'];
   if (home != null && home.isNotEmpty) {
     return p.join(home, 'Downloads', AppConstants.downloadDirName);
   }
@@ -36,9 +47,17 @@ String defaultDownloadDirSync() {
 ///
 /// - Android：`/storage/emulated/0/Music/MintMusic`
 /// - iOS：应用 Documents 下的 `MintMusic`
-/// - Windows/macOS/Linux：系统「下载」目录下的 `MintMusic`
+/// - Windows：`<exe 所在目录>\AppData\music`
+/// - macOS/Linux：系统「下载」目录下的 `MintMusic`
 Future<String> defaultDownloadDir() async {
   if (Platform.isAndroid) return defaultDownloadDirSync();
+
+  if (Platform.isWindows) {
+    try {
+      final dir = await AppPaths.musicDirectory();
+      return dir.path;
+    } catch (_) {}
+  }
 
   try {
     if (Platform.isIOS) {

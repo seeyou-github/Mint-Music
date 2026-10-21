@@ -4,8 +4,11 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/services.dart' show rootBundle;
+import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+
+import '../../../core/platform/app_paths.dart';
+import '../../../core/storage/app_preferences.dart';
 import '../platform/js_engine_service.dart';
 import '../data/plugin_host.dart';
 import '../data/lx_plugin_converter.dart';
@@ -72,7 +75,7 @@ class PluginService {
   }
 
   Future<List<PluginInfo>> loadPlugins() async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await AppPreferences.getInstance();
     final data = prefs.getString(_prefsKey);
     if (data == null) return [];
     final list = jsonDecode(data) as List<dynamic>;
@@ -82,18 +85,45 @@ class PluginService {
   }
 
   Future<void> savePlugins(List<PluginInfo> plugins) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await AppPreferences.getInstance();
     final data = jsonEncode(plugins.map((p) => p.toJson()).toList());
     await prefs.setString(_prefsKey, data);
   }
 
   Future<String> _getPluginsDir() async {
-    final appDir = await getApplicationDocumentsDirectory();
-    final pluginsDir = Directory('${appDir.path}/plugins');
-    if (!await pluginsDir.exists()) {
-      await pluginsDir.create(recursive: true);
-    }
+    final pluginsDir = await AppPaths.pluginDirectory();
+    await _migrateLegacyPlugins(pluginsDir);
     return pluginsDir.path;
+  }
+
+  /// 把旧版插件目录（`文档\plugins`）里的插件文件复制到新的插件目录。
+  ///
+  /// 插件列表存在设置里（会随设置一起迁移），文件也要一起搬过去，否则插件
+  /// 会被标记为已安装却加载失败。文件名带插件 id，复制后无需改动设置。
+  Future<void> _migrateLegacyPlugins(Directory target) async {
+    if (!Platform.isWindows) return;
+    try {
+      final legacyRoot = await getApplicationDocumentsDirectory();
+      final legacyDir = Directory(
+        p.join(legacyRoot.path, AppPaths.pluginFolderName),
+      );
+      if (!await legacyDir.exists()) return;
+      if (identical(legacyDir.path, target.path)) return;
+
+      final files = legacyDir
+          .listSync(followLinks: false)
+          .whereType<File>()
+          .toList();
+      if (files.isEmpty) return;
+      for (final file in files) {
+        final dest = File(p.join(target.path, p.basename(file.path)));
+        if (await dest.exists()) continue;
+        await file.copy(dest.path);
+      }
+      print('[PluginService] 已迁移旧插件目录: ${legacyDir.path}');
+    } catch (e) {
+      print('[PluginService] 迁移旧插件目录失败: $e');
+    }
   }
 
   Future<PluginInfo> selectAndAddPlugin(String type) async {

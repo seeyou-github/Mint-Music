@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+
+import '../../../core/storage/app_preferences.dart';
 import '../../player/domain/models/song.dart';
 import '../../discover/domain/models/playlist.dart';
 import '../../plugin/application/plugin_providers.dart';
@@ -387,11 +388,11 @@ class SearchHistoryNotifier extends StateNotifier<List<String>> {
 
   static const String _storageKey = 'search_history';
 
-  /// 启动时从 SharedPreferences 恢复搜索历史。
+  /// 启动时从 AppPreferences 恢复搜索历史。
   /// 若加载期间用户已新增搜索词，则合并去重，避免覆盖用户操作。
   Future<void> _loadPersisted() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
+      final prefs = await AppPreferences.getInstance();
       final stored = prefs.getStringList(_storageKey) ?? const [];
       final merged = [...state, ...stored.where((q) => !state.contains(q))];
       if (!mounted) return;
@@ -403,7 +404,7 @@ class SearchHistoryNotifier extends StateNotifier<List<String>> {
 
   Future<void> _persist() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
+      final prefs = await AppPreferences.getInstance();
       await prefs.setStringList(_storageKey, state);
     } catch (_) {
       // 写入失败时仅丢失持久化，不影响内存中的历史

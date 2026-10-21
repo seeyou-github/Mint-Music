@@ -37,6 +37,18 @@
 - Android 端开始播放时检测通知权限，缺少权限时弹框提醒用户开启
 
 ### 变更
+- Windows：应用产生的文件全部收拢到 `薄荷音乐.exe` 所在目录的 `AppData` 下
+  - `AppData\config`：全部配置文件（设置 `settings.json`、均衡器配置等）与导入的字体
+  - `AppData\plugin`：插件文件
+  - `AppData\music`：默认下载目录
+  - `AppData\temp`：默认临时文件目录（分享/导出的临时文件、默认缓存、WebView2 数据）
+  - 「设置 - 下载目录 / 缓存目录」依旧可以自定义到其它目录，自定义后按自定义路径存放；
+    除这两个目录外，应用生成的其它文件、文件夹都放在 `AppData` 的子目录里
+  - 设置存储不再使用 shared_preferences，改用应用自己的
+    `AppData\config\settings.json`；首次启动会自动把旧的 `shared_preferences.json`
+    迁移过来，插件文件与导入的字体也会从旧目录自动复制过来
+  - WebView2 的用户数据目录改到 `AppData\temp\webview2`（默认会建在 exe 同级的
+    `<exe>.WebView2\`，装在 Program Files 下会因没有写权限而初始化失败）
 - 支持导入混淆过的 MusicFree / 洛雪插件（jsjiami 等混淆器处理过的脚本）
   - 插件格式校验由「关键字匹配」改为宽松粗筛：混淆插件不会把 `module.exports`、
     `platform`、`lx` 之类关键字原样写出来（可能写成 `module['exports']`，

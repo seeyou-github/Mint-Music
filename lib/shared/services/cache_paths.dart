@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import 'package:path_provider/path_provider.dart';
+import '../../core/platform/app_paths.dart';
 
 /// 全局缓存目录配置。
 ///
@@ -26,13 +26,14 @@ class CachePaths {
   /// 缓存根目录：优先使用用户指定的目录，否则使用应用缓存目录。
   static Future<Directory> rootDirectory() async {
     final root = _root;
-    final dir = root != null
-        ? Directory(root)
-        : await getApplicationCacheDirectory();
-    if (!await dir.exists()) {
-      await dir.create(recursive: true);
+    if (root != null && root.trim().isNotEmpty) {
+      final dir = Directory(root);
+      if (!await dir.exists()) {
+        await dir.create(recursive: true);
+      }
+      return dir;
     }
-    return dir;
+    return AppPaths.cacheRootDirectory();
   }
 
   /// 缓存根目录下的子目录（会自动创建）。

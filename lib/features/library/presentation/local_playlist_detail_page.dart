@@ -5,8 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import '../../../core/platform/app_paths.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
@@ -1148,7 +1148,7 @@ class _LocalPlaylistDetailPageState
       final cmplBytes = encodeCmpl(json);
 
       // Write to a temp file
-      final tempDir = await getTemporaryDirectory();
+      final tempDir = await AppPaths.tempDirectory();
       final safeName = playlist.name.replaceAll(RegExp(r'[^\w\u4e00-\u9fff\- ]'), '_');
       final file = File('${tempDir.path}/$safeName.cmpl');
       await file.writeAsBytes(cmplBytes);

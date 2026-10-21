@@ -6,7 +6,8 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:on_audio_query/on_audio_query.dart';
 import 'package:path/path.dart' as p;
-import 'package:shared_preferences/shared_preferences.dart';
+
+import '../../../core/storage/app_preferences.dart';
 import '../../../shared/services/cover_cache_service.dart';
 import '../../player/domain/models/song.dart';
 import 'local_metadata_reader.dart';
@@ -80,7 +81,7 @@ class LocalMusicRepository {
 
   Future<void> init() async {
     if (_initialized) return;
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await AppPreferences.getInstance();
     final dirsJson = prefs.getStringList(_dirsKey) ?? [];
     _scannedDirs.addAll(dirsJson);
 
@@ -557,13 +558,13 @@ class LocalMusicRepository {
 
   Future<void> _saveIndex() async {
     await _saveDirs();
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await AppPreferences.getInstance();
     final songsJson = jsonEncode(_songsMap.values.map((s) => s.toJson()).toList());
     await prefs.setString(_songsKey, songsJson);
   }
 
   Future<void> _saveDirs() async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await AppPreferences.getInstance();
     await prefs.setStringList(_dirsKey, _scannedDirs.toList());
   }
 }

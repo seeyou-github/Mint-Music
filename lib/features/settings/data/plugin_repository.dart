@@ -2,8 +2,9 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+
+import '../../../core/platform/app_paths.dart';
+import '../../../core/storage/app_preferences.dart';
 import '../domain/models/plugin_info.dart';
 
 class PluginRepository {
@@ -11,7 +12,7 @@ class PluginRepository {
   final Dio _dio = Dio();
 
   Future<List<PluginInfo>> loadPlugins() async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await AppPreferences.getInstance();
     final data = prefs.getString(_key);
     if (data == null) return [];
     final list = jsonDecode(data) as List<dynamic>;
@@ -21,17 +22,14 @@ class PluginRepository {
   }
 
   Future<void> savePlugins(List<PluginInfo> plugins) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await AppPreferences.getInstance();
     final data = jsonEncode(plugins.map((p) => p.toJson()).toList());
     await prefs.setString(_key, data);
   }
 
   Future<String> _getPluginsDir() async {
-    final appDir = await getApplicationDocumentsDirectory();
-    final pluginsDir = Directory('${appDir.path}/plugins');
-    if (!await pluginsDir.exists()) {
-      await pluginsDir.create(recursive: true);
-    }
+    final appDir = await AppPaths.pluginDirectory();
+    final pluginsDir = Directory(appDir.path);
     return pluginsDir.path;
   }
 

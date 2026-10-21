@@ -7,7 +7,8 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+
+import '../../../core/storage/app_preferences.dart';
 import '../../../core/platform/download_paths.dart';
 import '../../../core/platform/media_scanner.dart';
 import '../../../core/platform/permission_helper.dart';
@@ -127,9 +128,9 @@ class DownloadRepository {
     if (wifiOnly != null) _wifiOnly = wifiOnly;
     if (maxConcurrent != null) _maxConcurrent = maxConcurrent;
 
-    SharedPreferences? prefs;
+    AppPreferences? prefs;
     try {
-      prefs = await SharedPreferences.getInstance();
+      prefs = await AppPreferences.getInstance();
     } catch (e) {
       debugPrint('[DownloadRepository] 读取任务记录失败: $e');
     }
@@ -195,7 +196,7 @@ class DownloadRepository {
 
   Future<String> _readPersistedDownloadDir() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
+      final prefs = await AppPreferences.getInstance();
       final persisted = prefs.getString('download_dir');
       if (persisted != null && persisted.isNotEmpty) return persisted;
     } catch (e) {
@@ -1052,7 +1053,7 @@ class DownloadRepository {
 
   Future<void> _saveTasks() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
+      final prefs = await AppPreferences.getInstance();
       final tasksJson = jsonEncode(_tasks.map((t) => t.toJson()).toList());
       await prefs.setString(_tasksKey, tasksJson);
     } catch (e) {

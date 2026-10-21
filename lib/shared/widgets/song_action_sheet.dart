@@ -604,7 +604,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
         // 注意：不要在这里 Navigator.pop(context)！
         // 如果先关闭 SongActionSheet，_SongActionSheetState（ConsumerState）会被 dispose，
         // 后续 _persist* 方法中任何基于 widget ref / context 的操作都会失效，
-        // SharedPreferences 写入会静默失败。
+        // 偏好设置写入会静默失败。
         // 改为在当前 ActionSheet 之上再叠加一层歌词设置 BottomSheet。
         _showLyricSettings();
       },

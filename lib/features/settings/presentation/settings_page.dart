@@ -6,10 +6,11 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
+
 import '../../../core/constants/app_constants.dart';
 import '../../../core/l10n/l10n.dart';
+import '../../../core/platform/app_paths.dart';
 import '../../../core/platform/download_paths.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/app_font_manager.dart';
@@ -2512,7 +2513,7 @@ class _PlaybackContent extends ConsumerWidget {
         'gains': container.read(equalizerBandsProvider),
         'enabled': container.read(equalizerEnabledProvider),
       });
-      final dir = await getApplicationDocumentsDirectory();
+      final dir = await AppPaths.configDirectory();
       await File('${dir.path}/mintmusic_eq_config.json').writeAsString(data);
       if (context.mounted)
         ScaffoldMessenger.of(context).showSnackBar(
@@ -3222,7 +3223,7 @@ class _StorageContent extends ConsumerWidget {
               final container = ProviderScope.containerOf(context);
               final defaultDownload = await defaultDownloadDir();
               // 默认缓存目录使用应用缓存目录，不再指向系统临时目录。
-              final appCacheDir = await getApplicationCacheDirectory();
+              final appCacheDir = await AppPaths.cacheRootDirectory();
               container.read(downloadDirProvider.notifier).state =
                   defaultDownload;
               container.read(cacheDirProvider.notifier).state =

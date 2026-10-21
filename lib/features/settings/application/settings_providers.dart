@@ -1,7 +1,8 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+
+import '../../../core/storage/app_preferences.dart';
 import '../../../core/l10n/app_locale.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/platform/download_paths.dart';
@@ -12,7 +13,7 @@ import '../../player/domain/models/desktop_lyric_settings.dart';
 import '../data/settings_service.dart';
 
 final settingsServiceProvider = FutureProvider<SettingsService>((ref) async {
-  final prefs = await SharedPreferences.getInstance();
+  final prefs = await AppPreferences.getInstance();
   return SettingsService(prefs);
 });
 

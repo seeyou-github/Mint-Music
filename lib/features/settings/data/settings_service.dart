@@ -1,10 +1,11 @@
 import 'dart:io';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:path_provider/path_provider.dart';
+
+import '../../../core/platform/app_paths.dart';
+import '../../../core/storage/app_preferences.dart';
 import '../../../core/platform/download_paths.dart';
 
 class SettingsService {
-  final SharedPreferences _prefs;
+  final AppPreferences _prefs;
 
   SettingsService(this._prefs);
 
@@ -359,7 +360,7 @@ class SettingsService {
     final persisted = _prefs.getString('cache_dir');
     if (persisted != null && persisted.isNotEmpty) return persisted;
     // 默认使用应用自己的缓存目录，避免把缓存写进系统共享临时目录。
-    final cache = await getApplicationCacheDirectory();
+    final cache = await AppPaths.cacheRootDirectory();
     return cache.path;
   }
 
@@ -409,7 +410,7 @@ class SettingsService {
       roots.add(Directory(configured));
     }
     try {
-      roots.add(await getApplicationCacheDirectory());
+      roots.add(await AppPaths.cacheRootDirectory());
     } catch (_) {}
 
     const subDirectories = [
