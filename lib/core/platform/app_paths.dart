@@ -45,6 +45,19 @@ class AppPaths {
     return File(exe).parent.path;
   }
 
+  /// 旧版设置目录（Windows 漫游 AppData 下的应用目录）。
+  ///
+  /// 只用于迁移旧数据。这里直接拼路径，**不调用 path_provider**：
+  /// `getApplicationSupportDirectory()` 会顺手把目录创建出来，那样即使只是
+  /// 读旧文件，也会在系统目录里留下一个空文件夹。
+  static String? get legacySupportDirectoryPath {
+    if (!Platform.isWindows) return null;
+    final appData = Platform.environment['APPDATA'];
+    if (appData == null || appData.isEmpty) return null;
+    // 与 windows/runner/Runner.rc 里的 CompanyName / ProductName 保持一致。
+    return p.join(appData, 'com.kingmc.mintmusic', '薄荷音乐');
+  }
+
   /// 应用数据根目录（Windows 为 `<exe 目录>\AppData`）。
   static Future<Directory> rootDirectory() async {
     if (Platform.isWindows) {

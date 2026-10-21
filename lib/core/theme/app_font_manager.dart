@@ -5,7 +5,6 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show FontLoader;
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 
 import '../platform/app_paths.dart';
 import '../storage/app_preferences.dart';
@@ -98,8 +97,11 @@ class AppFontManager {
   Future<void> _migrateLegacyFonts(Directory target) async {
     if (!Platform.isWindows) return;
     try {
-      final legacyRoot = await getApplicationSupportDirectory();
-      final legacyDir = Directory(p.join(legacyRoot.path, 'fonts'));
+      // 直接拼旧目录的路径，不调用 path_provider：否则只是读旧字体就会在
+      // 系统漫游目录里创建出一个空文件夹。
+      final legacyRoot = AppPaths.legacySupportDirectoryPath;
+      if (legacyRoot == null) return;
+      final legacyDir = Directory(p.join(legacyRoot, 'fonts'));
       if (!await legacyDir.exists()) return;
       if (legacyDir.path == target.path) return;
 

@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../platform/app_paths.dart';
@@ -96,13 +95,11 @@ class AppPreferences {
 
   /// 把旧版 shared_preferences.json 的内容迁移过来（只迁移一次）。
   static Future<void> _migrateLegacy(Map<String, Object> values) async {
-    late final File legacy;
-    try {
-      final support = await getApplicationSupportDirectory();
-      legacy = File(p.join(support.path, _legacyFileName));
-    } catch (_) {
-      return;
-    }
+    // 直接拼旧目录的路径，不调用 path_provider：否则为了读旧文件又会在
+    // 系统漫游目录里创建出一个空文件夹。
+    final legacyDir = AppPaths.legacySupportDirectoryPath;
+    if (legacyDir == null) return;
+    final legacy = File(p.join(legacyDir, _legacyFileName));
     if (!await legacy.exists()) return;
 
     try {

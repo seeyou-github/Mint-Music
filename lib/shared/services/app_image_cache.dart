@@ -6,7 +6,6 @@ import 'package:file/local.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 
 import 'cache_paths.dart';
 
@@ -60,10 +59,13 @@ class AppImageCache {
   /// （Windows 上是 `%APPDATA%\com.kingmc.mintmusic\薄荷音乐\`）。
   static Future<void> _cleanupLegacyIndex() async {
     try {
-      final support = await getApplicationSupportDirectory();
+      // 直接拼旧目录的路径，不调用 path_provider：否则只是清理旧文件就会在
+      // 系统漫游目录里创建出一个空文件夹。
+      final legacyRoot = AppPaths.legacySupportDirectoryPath;
+      if (legacyRoot == null) return;
       // 注意：本文件同时引入了 package:file（缓存管理器用的是它的 File 类型），
       // 这里的目录要用 dart:io 的实现。
-      final dir = io.Directory(support.path);
+      final dir = io.Directory(legacyRoot);
       if (!await dir.exists()) return;
       await for (final entity in dir.list(followLinks: false)) {
         if (entity is! io.File) continue;
