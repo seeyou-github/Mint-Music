@@ -44,7 +44,7 @@ class AutoSwitchSourceService {
       _showMessage(tr('当前源播放失败，正在尝试自动换源...'));
     }
 
-    final sources = candidateSources != null
+    var sources = candidateSources != null
         ? List<String>.from(candidateSources)
         : (activeSourceIds != null && activeSourceIds.isNotEmpty
             ? List<String>.from(activeSourceIds)

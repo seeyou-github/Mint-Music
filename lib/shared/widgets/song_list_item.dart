@@ -216,7 +216,7 @@ class SongListItem extends ConsumerWidget {
           children: [
             if (showQuality) _buildQualityTag(colors, context),
             if (showSource && song.source != null)
-              _buildSourceTag(colors, context),
+              _buildSourceTag(colors, context, ref),
             Expanded(
               child: Text(
                 song.artist,
@@ -253,8 +253,8 @@ class SongListItem extends ConsumerWidget {
     );
   }
 
-  Widget _buildSourceTag(ThemeColors colors, BuildContext context) {
-    final sourceName = _getSourceName(song.source!);
+  Widget _buildSourceTag(ThemeColors colors, BuildContext context, WidgetRef ref) {
+    final sourceName = _getSourceName(song.source!, ref);
     return Container(
       margin: const EdgeInsets.only(right: 4),
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
@@ -272,7 +272,6 @@ class SongListItem extends ConsumerWidget {
       ),
     );
   }
-
   Widget _buildDuration(ThemeColors colors) {
     if (song.duration <= 0) return const SizedBox.shrink();
     return Padding(
@@ -352,7 +351,7 @@ class SongListItem extends ConsumerWidget {
     }
   }
 
-  String _getSourceName(String source) {
+  String _getSourceName(String source, WidgetRef ref) {
     // 插件音源（平台id@插件id）显示为「平台名-插件名」，内置音源带「-内置」。
     final display = ref
         .read(musicSourceManagerProvider)

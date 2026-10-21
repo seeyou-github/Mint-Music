@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:io';
+import 'dart:io' as io;
 
 import 'package:file/file.dart' hide FileSystem;
 import 'package:file/local.dart';
@@ -61,10 +61,12 @@ class AppImageCache {
   static Future<void> _cleanupLegacyIndex() async {
     try {
       final support = await getApplicationSupportDirectory();
-      final dir = Directory(support.path);
+      // 注意：本文件同时引入了 package:file（缓存管理器用的是它的 File 类型），
+      // 这里的目录要用 dart:io 的实现。
+      final dir = io.Directory(support.path);
       if (!await dir.exists()) return;
       await for (final entity in dir.list(followLinks: false)) {
-        if (entity is! File) continue;
+        if (entity is! io.File) continue;
         final name = p.basename(entity.path);
         if (!name.startsWith(_key) || !name.endsWith('.json')) continue;
         await entity.delete();
