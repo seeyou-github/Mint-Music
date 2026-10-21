@@ -30,17 +30,25 @@ class AutoSwitchSourceService {
   /// - [originalSong]: 需要换源的歌曲
   /// - [activeSourceIds]: 用户配置的音源 ID 列表（来自 sourceQualityMap 的 keys）
   ///   如果为空/null，使用默认全部音源
+  /// - [candidateSources]: 直接指定候选音源（例如只试已安装的插件音源）
+  /// - [silent]: 不弹出「正在尝试自动换源」提示（内置音源静默兜底时用）
   ///
   /// 返回按匹配度排序的候选歌曲列表
   Future<List<Song>> getCandidateSongs(
     Song originalSong, {
     List<String>? activeSourceIds,
+    List<String>? candidateSources,
+    bool silent = false,
   }) async {
-    _showMessage(tr('当前源播放失败，正在尝试自动换源...'));
+    if (!silent) {
+      _showMessage(tr('当前源播放失败，正在尝试自动换源...'));
+    }
 
-    var sources = activeSourceIds != null && activeSourceIds.isNotEmpty
-        ? List<String>.from(activeSourceIds)
-        : List<String>.from(_fallbackSources);
+    final sources = candidateSources != null
+        ? List<String>.from(candidateSources)
+        : (activeSourceIds != null && activeSourceIds.isNotEmpty
+            ? List<String>.from(activeSourceIds)
+            : List<String>.from(_fallbackSources));
 
     // CeruMusic: 移除当前源
     sources = sources.where((s) => s != originalSong.source).toList();

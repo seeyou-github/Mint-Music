@@ -14,6 +14,7 @@ import '../domain/models/play_mode.dart';
 import '../domain/models/song.dart';
 import '../domain/services/cover_color_extractor.dart';
 import '../../library/application/playlist_providers.dart';
+import '../../plugin/application/plugin_providers.dart';
 import '../../settings/application/settings_providers.dart';
 import '../../../shared/widgets/song_action_sheet.dart';
 import '../../../shared/services/amll_toggle_service.dart';
@@ -476,6 +477,13 @@ class _PlayerHeader extends ConsumerWidget {
     final playMode = ref.watch(
       playbackControllerProvider.select((s) => s.playMode),
     );
+    // 当前实际使用的音源：内置音源带「-内置」，插件音源带插件名。
+    final sourceName = ref.watch(
+      playbackControllerProvider.select((s) => s.currentSong?.source ?? ''),
+    );
+    final sourceLabel = sourceName.isEmpty
+        ? ''
+        : ref.read(musicSourceManagerProvider).sourceDisplayName(sourceName);
     String modeTitle;
     switch (playMode) {
       case PlayMode.singleLoop:
@@ -510,13 +518,32 @@ class _PlayerHeader extends ConsumerWidget {
             ),
           ),
           const Spacer(),
-          Text(
-            modeTitle,
-            style: const TextStyle(
-              fontSize: 12,
-              letterSpacing: 2,
-              color: Color(0x80FFFFFF),
-            ),
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                modeTitle,
+                style: const TextStyle(
+                  fontSize: 12,
+                  letterSpacing: 2,
+                  color: Color(0x80FFFFFF),
+                ),
+              ),
+              // 顶部显示当前正在使用的音源（内置源 / 插件源）。
+              if (sourceLabel.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Text(
+                    sourceLabel,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.white.withValues(alpha: 0.55),
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+            ],
           ),
           const Spacer(),
           IconButton(

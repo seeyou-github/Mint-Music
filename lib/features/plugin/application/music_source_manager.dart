@@ -358,6 +358,29 @@ class MusicSourceManager {
     return SourceInfo(id: id, name: '$name$builtInSourceSuffix');
   }
 
+  /// 音源的展示名。
+  ///
+  /// 内置音源带「-内置」后缀，插件音源带插件名后缀，用来在播放详情页等位置
+  /// 说明当前实际用的是哪个音源。
+  String sourceDisplayName(String sourceId) {
+    final (baseId, pluginId) = splitSourceId(sourceId);
+    final platformName = _sourceIdToName[baseId] ?? baseId;
+    if (pluginId == null) {
+      return '$platformName$builtInSourceSuffix';
+    }
+    for (final host in _pluginService.enabledPlugins) {
+      if (_pluginService.getPluginIdForHost(host) != pluginId) continue;
+      final pluginName = _pluginDisplayName(host);
+      if (pluginName.isEmpty) return platformName;
+      return '$platformName-$pluginName';
+    }
+    return platformName;
+  }
+
+  /// 已启用的插件音源 id 列表（`平台id@插件id`）。
+  List<String> get pluginSourceIds =>
+      getPluginSupportedSources().map((source) => source.id).toList();
+
   List<SourceInfo> getSearchSupportedSources() {
     final sources = <SourceInfo>[];
     final seenIds = <String>{};

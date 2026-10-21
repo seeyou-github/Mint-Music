@@ -194,10 +194,16 @@ const _sourceIdToChineseName = {
   'local': '本地音乐',
 };
 
-String _getSourceName(String sourceId) {
+/// 音源展示名：内置音源带「-内置」，插件音源带插件名。
+///
+/// 播放地址由插件解析时，歌曲的音源字段可能还是内置源的平台 id，这里统一
+/// 交给音源管理器给出与切换列表一致的名称。
+String _getSourceName(String sourceId, MusicSourceManager manager) {
+  if (sourceId.isEmpty) return sourceId;
+  final name = manager.sourceDisplayName(sourceId);
+  if (name.isNotEmpty) return name;
   return _sourceIdToChineseName[sourceId] ?? sourceId;
 }
-
 List<String> _chineseNamesToSourceIds(List<String> names) {
   return names
       .map((n) => _chineseNameToSourceId[n] ?? '')
@@ -1017,6 +1023,16 @@ class PlaybackController extends StateNotifier<PlaybackState> {
 
             // 未开启「当前音源播放失败自动切换音源」→ 停止播放，不跨源换源。
             if (!_autoSwitchSource) {
+              // 内置音源本身没有地址接口：即使用户关掉了自动换源，也允许用
+              // 已安装的插件解析（同名插件优先，失败再试其它插件），且不弹提示。
+              final usedPlugin = await _tryPluginFallbackForBuiltIn(
+                song: song,
+                index: index,
+                requestId: requestId,
+                excludedUrls: failedUrls,
+              );
+              if (usedPlugin) return;
+
               await _stopPlaybackOnFailure(
                 tr('当前音源播放失败，自动切换音源已关闭'),
               );
@@ -1062,7 +1078,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
                 // CeruMusic：只有播放成功后（waitForAudioReady/setAudioSource 成功）
                 // 才显示切换成功消息，避免切换消息显示后播放又失败
                 onMessage?.call(
-                  tr('已自动切换到 ${_getSourceName(candidate.source ?? '')} 源播放'),
+                  tr('已自动切换到 ${_getSourceName(candidate.source ?? '', _musicSourceManager)} 源播放'),
                 );
                 playSuccess = true;
                 // CeruMusic: 不乐观设 isPlaying, 由播放器事件驱动
@@ -1153,7 +1169,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
               await _restoreAndPlay(switchedSong);
 
               onMessage?.call(
-                tr('已自动切换到 ${_getSourceName(candidate.source ?? '')} 源播放'),
+                tr('已自动切换到 ${_getSourceName(candidate.source ?? '', _musicSourceManager)} 源播放'),
               );
               playSuccess = true;
               // CeruMusic: 不乐观设 isPlaying
@@ -1706,6 +1722,15 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   }) async {
     // 未开启「当前音源播放失败自动切换音源」→ 停止播放，不跨源换源。
     if (!_autoSwitchSource) {
+      // 内置音源：即使用户关掉了自动换源，也允许用已安装的插件解析
+      // （同名插件优先，失败再试其它插件），且不弹任何提示。
+      final usedPlugin = await _tryPluginFallbackForBuiltIn(
+        song: originalSong,
+        index: index,
+        requestId: requestId,
+        excludedUrls: const <String>{},
+      );
+      if (usedPlugin) return true;
       if (_currentPlayRequestId == requestId) {
         await _stopPlaybackOnFailure(tr('当前音源播放失败，自动切换音源已关闭'));
       }
@@ -1746,7 +1771,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
             isLoading: false,
           );
           onMessage?.call(
-            tr('已自动切换到 ${_getSourceName(candidate.source ?? '')} 源播放'),
+            tr('已自动切换到 ${_getSourceName(candidate.source ?? '', _musicSourceManager)} 源播放'),
           );
           onSongPlayed?.call(switchedSong);
           _errorListenerSub = _mountOneTimeErrorListener(
@@ -1765,6 +1790,99 @@ class PlaybackController extends StateNotifier<PlaybackState> {
 
     if (_currentPlayRequestId == requestId) {
       await _stopPlaybackOnFailure(tr('所有音源均无法播放'));
+    }
+    return false;
+  }
+
+  /// 内置音源的歌曲改用已安装的插件解析播放地址。
+  ///
+  /// 内置源只负责搜索与元数据，本身没有地址接口，播放地址必须由插件解析：
+  /// * 同名插件优先（正常播放路径已经走过一遍）；
+  /// * 同名解析失败后，用其它已安装的插件重新搜同一首歌再解析。
+  ///
+  /// 即使关掉了「当前音源播放失败自动切换音源」也会走这个兜底，并且**不弹
+  /// 任何提示**，实际使用的音源在播放详情页顶部显示。
+  Future<bool> _tryPluginFallbackForBuiltIn({
+    required Song song,
+    required int index,
+    required int requestId,
+    required Set<String> excludedUrls,
+  }) async {
+    final source = song.source;
+    if (source == null || source.isEmpty) return false;
+    // 只有内置音源（平台 id）需要这个兜底；插件音源自己就能解析地址。
+    if (source.contains('@')) return false;
+
+    final pluginIds = _musicSourceManager.pluginSourceIds;
+    if (pluginIds.isEmpty) return false;
+    // 同名插件已经在正常播放路径里试过了，这里只兜底其它插件。
+    final others = pluginIds
+        .where((id) => !id.startsWith('$source@'))
+        .toList();
+    if (others.isEmpty) return false;
+
+    List<Song> candidates;
+    try {
+      candidates = await _autoSwitchService.getCandidateSongs(
+        song,
+        candidateSources: others,
+        silent: true,
+      );
+    } catch (e) {
+      debugPrint('[PlaybackController] 内置源插件兜底搜索失败: $e');
+      return false;
+    }
+    if (_currentPlayRequestId != requestId) return false;
+
+    for (final candidate in candidates) {
+      if (_currentPlayRequestId != requestId) return false;
+      try {
+        final result = await _musicSourceManager
+            .getMusicUrlResult(candidate, quality: state.currentQuality)
+            .timeout(_urlFetchTimeout);
+        if (_currentPlayRequestId != requestId) return false;
+        if (result == null || result.url.isEmpty) continue;
+        final url = result.url;
+        if (excludedUrls.contains(url)) continue;
+
+        // 保留原始 song 的 id，确保队列索引一致。
+        final switchedSong = candidate.copyWith(
+          id: song.id,
+          sourceUrl: url,
+          sourceHeaders: result.headers.isEmpty ? null : result.headers,
+          sourceQuality: result.quality.isEmpty ? null : result.quality,
+          clearSourceHeaders: result.headers.isEmpty,
+          clearSourceQuality: result.quality.isEmpty,
+        );
+        _replaceSongInQueue(index, switchedSong);
+
+        await _audioHandler
+            .setAudioSource(url, song: switchedSong)
+            .timeout(_audioSetTimeout);
+        await _restoreAndPlay(switchedSong);
+
+        debugPrint(
+          '[PlaybackController] 内置源改用插件解析播放: '
+          'source=${candidate.source}',
+        );
+        state = state.copyWith(
+          isLoading: false,
+          currentSong: switchedSong,
+        );
+        onSongPlayed?.call(switchedSong);
+        _errorListenerSub = _mountOneTimeErrorListener(
+          requestId,
+          index,
+          switchedSong,
+        );
+        return true;
+      } catch (e) {
+        debugPrint(
+          '[PlaybackController] 内置源插件兜底解析失败: '
+          'source=${candidate.source} error=$e',
+        );
+        continue;
+      }
     }
     return false;
   }
@@ -2094,7 +2212,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
             await _resumeFromPosition(resumePosition);
             state = state.copyWith(currentSong: resolved, isLoading: false);
             onMessage?.call(
-              tr('已重新获取 ${_getSourceName(resolved.source ?? '')} 源 URL，继续播放'),
+              tr('已重新获取 ${_getSourceName(resolved.source ?? '', _musicSourceManager)} 源 URL，继续播放'),
             );
             return;
           } catch (_) {
@@ -2160,7 +2278,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
             await _resumeFromPosition(resumePosition);
 
             onMessage?.call(
-              tr('已自动切换到 ${_getSourceName(candidate.source ?? '')} 源播放'),
+              tr('已自动切换到 ${_getSourceName(candidate.source ?? '', _musicSourceManager)} 源播放'),
             );
             state = state.copyWith(currentSong: switchedSong, isLoading: false);
             return;
