@@ -112,7 +112,7 @@ class SongListItem extends ConsumerWidget {
                     _buildCover(colors, ref),
                   ],
                   const SizedBox(width: AppSpacing.sm),
-                  Expanded(child: _buildSongInfo(colors, context)),
+                  Expanded(child: _buildSongInfo(colors, context, ref)),
                   if (trailing != null)
                     trailing!
                   else ...[
@@ -196,7 +196,7 @@ class SongListItem extends ConsumerWidget {
     );
   }
 
-  Widget _buildSongInfo(ThemeColors colors, BuildContext context) {
+  Widget _buildSongInfo(ThemeColors colors, BuildContext context, WidgetRef ref) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
