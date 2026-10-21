@@ -2178,7 +2178,10 @@ class MusicSourceManager {
     required int limit,
     String sourceId = 'wy',
   }) async {
-    final builtIn = _builtInSourceFor(sourceId);
+    // 置顶分类（`__pinned__` 前缀）是插件自定义的，内置源没有对应分类，
+    // 直接走插件，避免拿插件的分类 id 去问内置源。
+    final isPluginTag = tagId.startsWith(PlaylistTag.pinnedIdPrefix);
+    final builtIn = isPluginTag ? null : _builtInSourceFor(sourceId);
     if (builtIn != null && isBuiltInSourceAvailable(sourceId)) {
       try {
         final playlists = await builtIn.getCategoryPlaylists(

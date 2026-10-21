@@ -501,6 +501,11 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
     String activeCategoryName,
   ) {
     final hotTags = hotTagsAsync.valueOrNull ?? const <PlaylistTag>[];
+    // 置顶分类（插件可用 `__pinned__` 前缀标记）排在「热门」之前。
+    final pinnedTags =
+        hotTags.where((tag) => tag.isPinned).toList(growable: false);
+    final normalTags =
+        hotTags.where((tag) => !tag.isPinned).toList(growable: false);
     return SizedBox(
       height: 36,
       child: Row(
@@ -513,13 +518,23 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.only(left: AppSpacing.lg),
                 children: [
+                  for (final tag in pinnedTags)
+                    Padding(
+                      padding: const EdgeInsets.only(right: AppSpacing.sm),
+                      child: _buildTagChip(
+                        label: tag.name,
+                        isActive: activeTagId == tag.id,
+                        colors: colors,
+                        onTap: () => _onSelectTag(tag.id, tag.name),
+                      ),
+                    ),
                   _buildTagChip(
                     label: context.tr('热门'),
                     isActive: activeTagId.isEmpty,
                     colors: colors,
                     onTap: () => _onSelectTag('', '热门'),
                   ),
-                  for (final tag in hotTags)
+                  for (final tag in normalTags)
                     Padding(
                       padding: const EdgeInsets.only(left: AppSpacing.sm),
                       child: _buildTagChip(
