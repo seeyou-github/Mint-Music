@@ -145,6 +145,7 @@ void DesktopLyricWindow::Show() {
     return;
   }
   marquee_start_tick_ = ::GetTickCount64();
+  marquee_pause_tick_ = marquee_start_tick_;
   marquee_overflow_px_ = 0;
   ApplySizeAndPosition();
   ::ShowWindow(window_, SW_SHOWNOACTIVATE);
@@ -237,6 +238,7 @@ void DesktopLyricWindow::UpdateLyric(const std::vector<DesktopLyricLine>& lines,
   show_roman_ = show_roman;
   // 换行后从头开始滚动。
   marquee_start_tick_ = ::GetTickCount64();
+  marquee_pause_tick_ = marquee_start_tick_;
   marquee_overflow_px_ = 0;
   if (window_ != nullptr) {
     ApplySizeAndPosition();
@@ -247,6 +249,23 @@ void DesktopLyricWindow::UpdateLyric(const std::vector<DesktopLyricLine>& lines,
 void DesktopLyricWindow::SetPlayState(long long position_ms, bool is_playing) {
   anchor_position_ms_ = position_ms;
   anchor_tick_ = ::GetTickCount64();
+  if (is_playing_ != is_playing) {
+    const ULONGLONG now = ::GetTickCount64();
+    if (is_playing) {
+      // 恢复播放：把暂停期间的时间从跑马灯计时里扣掉，长句歌词不会因为
+      // 暂停期间的时间而跳过一段。
+      marquee_start_tick_ += (now - marquee_pause_tick_);
+    } else {
+      // 暂停：记下暂停时刻，滚动动画随之停住。
+      marquee_pause_tick_ = now;
+    }
+    is_playing_ = is_playing;
+    // 暂停/恢复时重绘一次，让滚动位置立刻停住 / 继续。
+    if (window_ != nullptr) {
+      Paint();
+    }
+    return;
+  }
   is_playing_ = is_playing;
 }
 
@@ -390,6 +409,7 @@ bool DesktopLyricWindow::AdvanceActiveIndex() {
   active_index_ = index;
   // 换行后从头开始滚动。
   marquee_start_tick_ = ::GetTickCount64();
+  marquee_pause_tick_ = marquee_start_tick_;
   marquee_overflow_px_ = 0;
   ApplySizeAndPosition();
   return true;
@@ -622,8 +642,8 @@ LRESULT DesktopLyricWindow::HandleMessage(HWND hwnd,
   switch (message) {
     case WM_TIMER:
       // 只在当前歌词行变化、或当前行需要横向滚动时重绘，
-      // 避免拖动时反复刷新导致闪烁。
-      if (AdvanceActiveIndex() || marquee_overflow_px_ > 0) {
+      // 避免拖动时反复刷新导致闪烁。暂停时不再滚动，也不必重绘。
+      if (AdvanceActiveIndex() || (marquee_overflow_px_ > 0 && is_playing_)) {
         Paint();
       }
       return 0;

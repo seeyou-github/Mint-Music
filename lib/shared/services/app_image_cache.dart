@@ -1,7 +1,12 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:file/file.dart' hide FileSystem;
 import 'package:file/local.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 
 import 'cache_paths.dart';
 
@@ -30,10 +35,16 @@ class AppImageCache {
           key,
           stalePeriod: const Duration(days: 30),
           maxNrOfCacheObjects: 800,
-          repo: JsonCacheInfoRepository(databaseName: key),
+          // 缓存信息（索引）文件也要放在缓存目录里：只指定 databaseName 时
+          // flutter_cache_manager 会把 <databaseName>.json 写到系统默认目录
+          // （Windows 上是漫游 AppData），会跑到 AppData 外面去。
+          repo: JsonCacheInfoRepository(
+            path: p.join(dir.path, '$key.json'),
+          ),
           fileSystem: _CacheDirFileSystem(dir.path),
         ),
       );
+      unawaited(_cleanupLegacyIndex());
     } catch (e) {
       // 初始化失败时退回默认缓存管理器，不影响页面功能。
       debugPrint('[AppImageCache] 配置缓存目录失败: $e');
@@ -42,6 +53,24 @@ class AppImageCache {
 
   /// 主题 / 列表 / 歌词页共用的缓存管理器。
   static BaseCacheManager get manager => _manager ?? DefaultCacheManager();
+
+  /// 清理旧版遗留在系统目录里的缓存索引文件。
+  ///
+  /// 旧版本只指定了 databaseName，索引文件会被写到系统默认目录
+  /// （Windows 上是 `%APPDATA%\com.kingmc.mintmusic\薄荷音乐\`）。
+  static Future<void> _cleanupLegacyIndex() async {
+    try {
+      final support = await getApplicationSupportDirectory();
+      final dir = Directory(support.path);
+      if (!await dir.exists()) return;
+      await for (final entity in dir.list(followLinks: false)) {
+        if (entity is! File) continue;
+        final name = p.basename(entity.path);
+        if (!name.startsWith(_key) || !name.endsWith('.json')) continue;
+        await entity.delete();
+      }
+    } catch (_) {}
+  }
 }
 
 /// 把文件固定写到指定目录的 [FileSystem] 实现。

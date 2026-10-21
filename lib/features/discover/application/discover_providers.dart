@@ -52,12 +52,16 @@ final playlistDetailProvider = FutureProvider.family<PlaylistPage, String>((ref,
 });
 
 final playlistTagsProvider = FutureProvider<List<PlaylistTagGroup>>((ref) async {
+  // 插件接管平台时，分类由插件提供（插件可能带「置顶分类」）；必须等插件加载
+  // 完成再取，否则重启后只能拿到内置源的分类。
+  await ref.watch(pluginInitializedProvider.future);
   final repo = ref.watch(discoverRepositoryProvider);
   final sourceId = ref.watch(discoverSourceIdProvider);
   return repo.getPlaylistTags(sourceId: sourceId);
 });
 
 final hotPlaylistTagsProvider = FutureProvider<List<PlaylistTag>>((ref) async {
+  await ref.watch(pluginInitializedProvider.future);
   final repo = ref.watch(discoverRepositoryProvider);
   final sourceId = ref.watch(discoverSourceIdProvider);
   return repo.getHotPlaylistTags(sourceId: sourceId);

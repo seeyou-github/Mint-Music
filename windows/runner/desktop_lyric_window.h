@@ -130,6 +130,9 @@ class DesktopLyricWindow {
 
   // 当前播放行超出窗口宽度时的横向滚动
   ULONGLONG marquee_start_tick_ = 0;
+  // 暂停时记下的时间点：恢复播放时把暂停的这段时间从滚动计时里扣掉，
+  // 这样长句歌词在暂停期间不会继续横向滚动。
+  ULONGLONG marquee_pause_tick_ = 0;
   int marquee_overflow_px_ = 0;
 
   // 播放进度锚点

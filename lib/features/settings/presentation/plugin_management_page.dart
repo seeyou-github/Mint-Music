@@ -683,20 +683,10 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
     String sourceId,
     bool enabled,
   ) async {
+    // 开关本身就是反馈，不再弹提示。
     await ref
         .read(pluginSourceStateProvider.notifier)
         .setEnabled(plugin.id, sourceId, enabled);
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          enabled
-              ? context.tr('已启用 ${source.name}')
-              : context.tr('已关闭 ${source.name}'),
-        ),
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
   }
 
   Widget _buildPluginSectionHeader(ThemeColors colors, int pluginCount) {
@@ -1000,7 +990,8 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
                 overflow: TextOverflow.ellipsis,
               ),
             ),
-          if (plugin.supportedSources.isNotEmpty) ...[
+          // 只有一个音源时不需要单独开关（插件总开关已经够用）。
+          if (plugin.supportedSources.length > 1) ...[
             const SizedBox(height: AppSpacing.sm),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
@@ -1203,19 +1194,8 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
           TextButton(
             onPressed: () {
               ref.read(pluginsProvider.notifier).uninstallPlugin(plugin.id);
-              // 转换文案需在 pop 之前捕获（ctx 在 pop 后失效）
-              final msg = ctx.tr('插件${plugin.name}卸载成功');
+              // 卸载成功不再弹提示。
               Navigator.pop(ctx);
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(
-                    msg,
-                    style: TextStyle(color: colors.textOnPrimary),
-                  ),
-                  backgroundColor: colors.primary,
-                  behavior: SnackBarBehavior.floating,
-                ),
-              );
             },
             child: Text(
               ctx.tr('卸载'),
@@ -1759,18 +1739,12 @@ class _AddPluginSheetState extends State<_AddPluginSheet> {
   Future<void> _handleFileImport() async {
     setState(() => _isLoading = true);
     try {
-      final plugin = await widget.ref
+      await widget.ref
           .read(pluginsProvider.notifier)
           .selectAndAddPlugin(_pluginType);
       if (mounted) {
+        // 安装成功不再弹提示（插件卡片上就能看到）。
         Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(context.tr('"${plugin.name} v${plugin.version}" 安装成功')),
-            backgroundColor: widget.colors.primary,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
       }
     } catch (e) {
       if (mounted) {
@@ -1826,18 +1800,12 @@ class _AddPluginSheetState extends State<_AddPluginSheet> {
 
     setState(() => _isLoading = true);
     try {
-      final plugin = await widget.ref
+      await widget.ref
           .read(pluginsProvider.notifier)
           .downloadAndAddPlugin(url, _pluginType);
       if (mounted) {
+        // 安装成功不再弹提示（插件卡片上就能看到）。
         Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(context.tr('"${plugin.name} v${plugin.version}" 安装成功')),
-            backgroundColor: widget.colors.primary,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
       }
     } catch (e) {
       if (mounted) {

@@ -2059,8 +2059,8 @@ class MusicSourceManager {
       return cached.data;
     }
 
-    final builtIn = _builtInSourceFor(sourceId);
-    if (builtIn != null && isBuiltInSourceAvailable(sourceId)) {
+    final builtIn = _discoverBuiltIn(sourceId);
+    if (builtIn != null) {
       try {
         final hot = await builtIn.getHotPlaylists();
         if (hot.isNotEmpty) {
@@ -2119,6 +2119,19 @@ class MusicSourceManager {
     return pluginHot;
   }
 
+  /// 浏览内容（歌单 / 榜单）用的内置源。
+  ///
+  /// 内置源被用户在插件管理里关掉后，列表里不再显示它；但如果这个平台被
+  /// 插件接管了，而插件又没有提供浏览接口（落雪脚本就是这种情况），仍然用
+  /// 内置源的内容兜底，避免歌单 / 榜单页面空白。
+  MusicSourceProvider? _discoverBuiltIn(String sourceId) {
+    final builtIn = _builtInSourceFor(sourceId);
+    if (builtIn == null) return null;
+    if (isBuiltInSourceAvailable(sourceId)) return builtIn;
+    if (_findPluginHostsForSource(sourceId).isNotEmpty) return builtIn;
+    return null;
+  }
+
   Future<List<PlaylistTagGroup>> getPlaylistTags({
     String sourceId = 'wy',
   }) async {
@@ -2138,8 +2151,8 @@ class MusicSourceManager {
       }
     }
 
-    final builtIn = _builtInSourceFor(sourceId);
-    if (builtIn != null && isBuiltInSourceAvailable(sourceId)) {
+    final builtIn = _discoverBuiltIn(sourceId);
+    if (builtIn != null) {
       try {
         return await builtIn.getPlaylistTags();
       } catch (e) {
@@ -2152,12 +2165,25 @@ class MusicSourceManager {
   }
 
   Future<List<PlaylistTag>> getHotPlaylistTags({String sourceId = 'wy'}) async {
-    // 插件音源没有单独的「热门标签」接口，取推荐分类里的前几个当作标签栏。
-    final groups = await getPlaylistTags(sourceId: sourceId);
-    if (groups.isNotEmpty) {
-      return groups.expand((group) => group.tags).take(8).toList();
+    // 插件接管平台时用插件的推荐分类当标签栏（插件没有浏览接口时用内置源兜底）。
+    final host = _findDiscoverHost(sourceId, needSheets: true);
+    if (host != null) {
+      try {
+        final groups = _pluginTagGroupsFromJson(
+          sourceId,
+          _decodePluginJson(await host.getRecommendSheetTags()),
+        );
+        if (groups.isNotEmpty) {
+          return groups.expand((group) => group.tags).take(8).toList();
+        }
+      } catch (e) {
+        print('[MusicSourceManager] 插件歌单分类获取失败 source=$sourceId: $e');
+      }
+      return const [];
     }
 
+    // 内置源用它自己的热门标签，不要用「分类」列表：酷狗的分类里带了一个 id
+    // 为空的「全部」标签，会和「热门」撞在一起，导致两个分类同时高亮。
     final builtIn = _builtInSourceFor(sourceId);
     if (builtIn != null && isBuiltInSourceAvailable(sourceId)) {
       try {
@@ -2190,8 +2216,8 @@ class MusicSourceManager {
     // 置顶分类（`__pinned__` 前缀）是插件自定义的，内置源没有对应分类，
     // 直接走插件，避免拿插件的分类 id 去问内置源。
     final isPluginTag = tagId.startsWith(PlaylistTag.pinnedIdPrefix);
-    final builtIn = isPluginTag ? null : _builtInSourceFor(sourceId);
-    if (builtIn != null && isBuiltInSourceAvailable(sourceId)) {
+    final builtIn = isPluginTag ? null : _discoverBuiltIn(sourceId);
+    if (builtIn != null) {
       try {
         final playlists = await builtIn.getCategoryPlaylists(
           sortId: sortId,
@@ -2269,8 +2295,8 @@ class MusicSourceManager {
   }
 
   Future<List<Leaderboard>> getLeaderboards({String sourceId = 'wy'}) async {
-    final builtIn = _builtInSourceFor(sourceId);
-    if (builtIn != null && isBuiltInSourceAvailable(sourceId)) {
+    final builtIn = _discoverBuiltIn(sourceId);
+    if (builtIn != null) {
       try {
         return await builtIn.getLeaderboards();
       } catch (e) {

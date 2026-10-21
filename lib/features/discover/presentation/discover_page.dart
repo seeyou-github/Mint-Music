@@ -104,18 +104,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
     ref.listen<String>(discoverSourceIdProvider, (previous, next) {
       if (previous != null && previous != next) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) {
-            ref.read(activeTagIdProvider.notifier).state = '';
-            ref.read(activeCategoryNameProvider.notifier).state = '热门';
-            ref
-                .read(categoryPlaylistsProvider.notifier)
-                .fetchPlaylists(
-                  sortId: 'hot',
-                  tagId: '',
-                  sourceId: next,
-                  reset: true,
-                );
-          }
+          unawaited(_reloadAfterSourceChange(next));
         });
       }
     });
@@ -156,6 +145,10 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
   /// 避免用户必须手动点「重试」才能看到内容。
   Future<void> _loadPlaylists() async {
     await _waitForPlugins();
+    if (!mounted) return;
+
+    // 插件自带「置顶分类」时优先选中它，而不是「热门」。
+    await _applyDefaultTag();
     if (!mounted) return;
 
     await ref
@@ -667,6 +660,42 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
         );
       },
     );
+  }
+
+  /// 切换音源后重新加载歌单。
+  Future<void> _reloadAfterSourceChange(String sourceId) async {
+    if (!mounted) return;
+    ref.read(activeTagIdProvider.notifier).state = '';
+    ref.read(activeCategoryNameProvider.notifier).state = '热门';
+    // 插件自带「置顶分类」时优先选中它，而不是「热门」。
+    await _applyDefaultTag();
+    if (!mounted) return;
+    ref
+        .read(categoryPlaylistsProvider.notifier)
+        .fetchPlaylists(
+          sortId: 'hot',
+          tagId: ref.read(activeTagIdProvider),
+          sourceId: sourceId,
+          reset: true,
+        );
+  }
+
+  /// 选中默认分类。
+  ///
+  /// 插件可以在分类 id 上加 `__pinned__` 前缀声明「置顶分类」（例如网易云插件
+  /// 的「推荐」歌单），这时优先选中它；没有置顶分类就保持「热门」。
+  Future<void> _applyDefaultTag() async {
+    try {
+      await ref.read(hotPlaylistTagsProvider.future);
+    } catch (_) {}
+    if (!mounted) return;
+    final tags =
+        ref.read(hotPlaylistTagsProvider).valueOrNull ?? const <PlaylistTag>[];
+    final pinned = tags.where((tag) => tag.isPinned).toList();
+    if (pinned.isEmpty) return;
+    final tag = pinned.first;
+    ref.read(activeTagIdProvider.notifier).state = tag.id;
+    ref.read(activeCategoryNameProvider.notifier).state = tag.name;
   }
 
   void _onSelectTag(String tagId, String name) {
