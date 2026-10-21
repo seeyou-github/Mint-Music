@@ -47,6 +47,20 @@ class AppDatabase {
   /// 临时库：本地歌曲列表、最近播放、下载列表、搜索历史、缓存索引。
   Database get cache => _cache;
 
+  /// 清除临时库里的「缓存类」数据（歌词、图片缓存索引）。
+  ///
+  /// 「清除本地缓存」时调用：缓存文件被删了，索引也要一起清掉。
+  /// 不影响本地歌曲列表、最近播放、下载列表这些数据。
+  static Future<void> clearCacheData() async {
+    try {
+      final db = await cacheDatabase();
+      await db.delete('lyrics');
+      await db.delete('cache_index');
+    } catch (e) {
+      debugPrint('[AppDatabase] 清除缓存数据失败: $e');
+    }
+  }
+
   static AppDatabase? _instance;
   static Future<AppDatabase>? _pending;
 
@@ -221,6 +235,17 @@ class AppDatabase {
           CREATE TABLE search_history (
             keyword TEXT PRIMARY KEY,
             searched_at INTEGER NOT NULL DEFAULT 0
+          )
+        ''');
+        await db.execute('''
+          CREATE TABLE lyrics (
+            cache_key TEXT PRIMARY KEY,
+            lrc TEXT,
+            crlyric TEXT,
+            tlyric TEXT,
+            rlyric TEXT,
+            ttml TEXT,
+            updated_at INTEGER NOT NULL DEFAULT 0
           )
         ''');
         await db.execute('''

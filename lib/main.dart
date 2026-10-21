@@ -14,6 +14,7 @@ import 'features/settings/application/settings_providers.dart';
 import 'shared/services/amll_toggle_service.dart';
 import 'shared/services/app_image_cache.dart';
 import 'shared/services/cache_paths.dart';
+import 'features/player/domain/services/lyric_cache.dart';
 import 'features/player/presentation/widgets/amll_lyric_player.dart';
 
 void main() async {
@@ -86,6 +87,9 @@ void main() async {
   } catch (e) {
     print('>>> main: 缓存目录初始化失败: $e');
   }
+
+  // 旧版把歌词缓存成「一首歌一个 JSON 文件」，现在搬进临时库。
+  unawaited(LyricCache.migrateLegacyFiles());
 
   // Route preload is an idle-time optimization controlled by settings. It
   // only prepares the cached AMLL document; no WebView or audio resource is

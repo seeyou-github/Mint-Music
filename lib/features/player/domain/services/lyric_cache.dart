@@ -4,20 +4,32 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
+import 'package:sqflite/sqflite.dart';
 
+import '../../../../core/storage/app_database.dart';
 import '../../../../shared/services/cache_paths.dart';
 import '../models/song.dart';
 
 /// 歌词磁盘缓存。
 ///
 /// 歌词来自网络（TTML 词库 + 在线歌词），每次播放都重新请求会明显拖慢切歌，
-/// 也重复消耗流量。缓存放在「缓存目录」下（Windows 即
-/// `AppData\temp\lyric_cache`），跟着缓存目录的清理策略一起被清掉。
+/// 也重复消耗流量。
+///
+/// 缓存放在**临时库**（Windows：`AppData\temp\db\mintmusic_cache.db` 的
+/// `lyrics` 表）里：
+///
+/// * 一首歌一行，读写都是行级操作，不用开文件、少一次文件 IO；
+/// * 不用再产生「一首歌一个小文件」，几千首歌也就多几千行数据，
+///   不会在缓存目录里堆几千个碎片文件；
+/// * 跟其它高频数据一样属于「丢了可以重新取回」的缓存。
 class LyricCache {
   const LyricCache._();
 
-  /// 缓存子目录名（同时登记到缓存管理的子目录列表里）。
+  /// 旧版把歌词缓存成「一首歌一个 JSON 文件」的目录名（首次启动时迁移）。
   static const String folderName = 'lyric_cache';
+
+  /// 迁移标记用的模块名。
+  static const String _migrationModule = 'lyric_cache';
 
   /// 一首歌的歌词缓存内容。
   static class Entry {
@@ -37,7 +49,7 @@ class LyricCache {
       this.ttml,
     });
 
-    /// 缓存里是否什么都没有（没有就不写文件）。
+    /// 缓存里是否什么都没有（没有就不写）。
     bool get isEmpty =>
         (lrc?.isEmpty ?? true) &&
         (crlyric?.isEmpty ?? true) &&
@@ -45,44 +57,39 @@ class LyricCache {
         (rlyric?.isEmpty ?? true) &&
         (ttml?.isEmpty ?? true);
 
-    Map<String, dynamic> toJson() => {
-          if (lrc != null) 'lrc': lrc,
-          if (crlyric != null) 'crlyric': crlyric,
-          if (tlyric != null) 'tlyric': tlyric,
-          if (rlyric != null) 'rlyric': rlyric,
-          if (ttml != null) 'ttml': ttml,
-        };
-
-    factory Entry.fromJson(Map<String, dynamic> json) {
+    factory Entry.fromRow(Map<String, Object?> row) {
       return Entry(
-        lrc: json['lrc'] as String?,
-        crlyric: json['crlyric'] as String?,
-        tlyric: json['tlyric'] as String?,
-        rlyric: json['rlyric'] as String?,
-        ttml: json['ttml'] as String?,
+        lrc: row['lrc'] as String?,
+        crlyric: row['crlyric'] as String?,
+        tlyric: row['tlyric'] as String?,
+        rlyric: row['rlyric'] as String?,
+        ttml: row['ttml'] as String?,
       );
     }
   }
 
-  /// 缓存键：音源 + 歌曲 id。
+  /// 缓存键：音源 + 歌曲 id 的 md5。
   ///
   /// 音源 id 里可能带 `@插件id`（插件音源），这样不同插件的歌词不会串。
-  static String keyFor(Song song) => '${song.source ?? ''}_${song.id}';
-
-  static String _fileName(String key) =>
-      '${md5.convert(utf8.encode(key)).toString()}.json';
+  /// 用 md5 是为了跟旧版缓存的文件名保持一致，方便直接迁移。
+  static String keyFor(Song song) {
+    final raw = '${song.source ?? ''}_${song.id}';
+    return md5.convert(utf8.encode(raw)).toString();
+  }
 
   /// 读取缓存（没有缓存或读取失败返回 null）。
   static Future<Entry?> read(Song song) async {
     try {
-      final dir = await CachePaths.subDirectory(folderName);
-      final file = File(p.join(dir.path, _fileName(keyFor(song))));
-      if (!await file.exists()) return null;
-      final raw = await file.readAsString();
-      if (raw.trim().isEmpty) return null;
-      final decoded = jsonDecode(raw);
-      if (decoded is! Map) return null;
-      final entry = Entry.fromJson(decoded.map((k, v) => MapEntry('$k', v)));
+      await _ensureMigrated();
+      final db = await AppDatabase.cacheDatabase();
+      final rows = await db.query(
+        'lyrics',
+        where: 'cache_key = ?',
+        whereArgs: [keyFor(song)],
+        limit: 1,
+      );
+      if (rows.isEmpty) return null;
+      final entry = Entry.fromRow(rows.first);
       if (entry.isEmpty) return null;
       return entry;
     } catch (e) {
@@ -109,17 +116,90 @@ class LyricCache {
     );
     if (entry.isEmpty) return;
     try {
-      final dir = await CachePaths.subDirectory(folderName);
-      final file = File(p.join(dir.path, _fileName(keyFor(song))));
-      // 先写临时文件再替换，避免中途退出留下半截的缓存文件。
-      final temp = File('${file.path}.tmp');
-      await temp.writeAsString(jsonEncode(entry.toJson()), flush: true);
-      if (await file.exists()) {
-        await file.delete();
-      }
-      await temp.rename(file.path);
+      await _ensureMigrated();
+      final db = await AppDatabase.cacheDatabase();
+      await db.insert(
+        'lyrics',
+        {
+          'cache_key': keyFor(song),
+          'lrc': entry.lrc,
+          'crlyric': entry.crlyric,
+          'tlyric': entry.tlyric,
+          'rlyric': entry.rlyric,
+          'ttml': entry.ttml,
+          'updated_at': DateTime.now().millisecondsSinceEpoch,
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
     } catch (e) {
       debugPrint('[LyricCache] 写入缓存失败: $e');
     }
+  }
+
+  // ---------------------------------------------------------------- 迁移
+
+  static bool? _migrated;
+
+  /// 把旧版「一首歌一个 JSON 文件」的缓存导入数据库，然后删掉那个目录。
+  ///
+  /// 旧文件名就是 `md5(音源id_歌曲id)`，正好可以直接当主键用。
+  static Future<void> migrateLegacyFiles() async {
+    await _ensureMigrated();
+  }
+
+  static Future<void> _ensureMigrated() async {
+    if (_migrated == true) return;
+    if (await AppDatabase.isMigrated(_migrationModule)) {
+      _migrated = true;
+      return;
+    }
+    try {
+      final dir = await CachePaths.subDirectory(folderName);
+      final entities = await dir.list().toList();
+      var migrated = 0;
+      final db = await AppDatabase.cacheDatabase();
+      final batch = db.batch();
+      for (final entity in entities) {
+        if (entity is! File) continue;
+        final name = p.basename(entity.path);
+        if (!name.endsWith('.json')) continue;
+        try {
+          final raw = await entity.readAsString();
+          if (raw.trim().isEmpty) continue;
+          final decoded = jsonDecode(raw);
+          if (decoded is! Map) continue;
+          batch.insert(
+            'lyrics',
+            {
+              'cache_key': p.basenameWithoutExtension(name),
+              'lrc': decoded['lrc'] as String?,
+              'crlyric': decoded['crlyric'] as String?,
+              'tlyric': decoded['tlyric'] as String?,
+              'rlyric': decoded['rlyric'] as String?,
+              'ttml': decoded['ttml'] as String?,
+              'updated_at': DateTime.now().millisecondsSinceEpoch,
+            },
+            conflictAlgorithm: ConflictAlgorithm.ignore,
+          );
+          migrated++;
+        } catch (_) {
+          // 单个文件损坏就跳过
+        }
+      }
+      await batch.commit(noResult: true);
+      // 迁完删掉旧目录，避免缓存目录里还留着一堆碎片文件。
+      if (await dir.exists()) {
+        await dir.delete(recursive: true);
+      }
+      if (migrated > 0) {
+        debugPrint('[LyricCache] 已迁移 $migrated 条旧歌词缓存到临时库');
+      }
+    } catch (e) {
+      debugPrint('[LyricCache] 迁移旧歌词缓存失败: $e');
+    }
+    if (AppDatabase.isPersistent) {
+      await AppDatabase.markMigrated(_migrationModule);
+    }
+    _migrated = true;
   }
 }

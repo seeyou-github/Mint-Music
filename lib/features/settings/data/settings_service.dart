@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import '../../../core/platform/app_paths.dart';
+import '../../../core/storage/app_database.dart';
 import '../../../core/storage/app_preferences.dart';
 import '../../../core/platform/download_paths.dart';
 
@@ -426,6 +427,8 @@ class SettingsService {
         } catch (_) {}
       }
     }
+    // 歌词缓存与图片缓存索引已经放进临时库，这里一起清掉。
+    await AppDatabase.clearCacheData();
     return total;
   }
 }
