@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/l10n/app_locale.dart';
@@ -7,6 +9,7 @@ import '../../settings/application/settings_providers.dart';
 import '../domain/models/song.dart';
 import '../domain/models/lyric_line.dart';
 import '../domain/models/playback_state.dart';
+import '../domain/services/lyric_cache.dart';
 import '../domain/services/lyric_parser.dart';
 import '../domain/services/embedded_lyrics_extractor.dart';
 import '../domain/services/ttml_db_service.dart';
@@ -151,64 +154,114 @@ class LyricController extends StateNotifier<LyricState> {
       String? crlyric;
       String? tlyric;
       String? rlyric;
-
-      // Step 1 / 2 并行：TTML 词库与在线歌词各是一次网络请求，串行等待会让
-      // 歌词出现得很慢（切歌时尤其明显），这里让两个请求同时发出。
-      final sourceSupportsWordLyric =
-          song.source == 'tx' ||
-          song.source == 'wy' ||
-          song.source == 'kw' ||
-          song.source == 'kg';
-      final needOnlineLyric =
-          (lrc == null || lrc.isEmpty) || sourceSupportsWordLyric;
-
-      Future<List<LyricLine>?>? ttmlFuture;
-      if (song.source == 'wy' || song.source == 'tx') {
-        final cleanId = song.id.replaceAll('wy_', '').replaceAll('tx_', '');
-        ttmlFuture = _ttmlDbService
-            .fetchTtmlLyrics(song.source!, cleanId)
-            .timeout(_lyricFetchTimeout);
-      }
-
-      Future<LyricResult?>? onlineFuture;
-      if (needOnlineLyric && song.source != null && song.source != 'local') {
-        onlineFuture = _musicSourceManager
-            .getLyricResult(song)
-            .timeout(_lyricFetchTimeout);
-      }
-
-      // Step 1: TTML 词库（wy / tx）
+      String? ttmlText;
       List<LyricLine>? ttmlLines;
-      if (ttmlFuture != null) {
-        try {
-          ttmlLines = await ttmlFuture;
-        } catch (_) {
-          ttmlLines = null;
+
+      // Step 0: 本地缓存。歌词来自网络，命中缓存就不用再请求，切歌时歌词
+      // 立刻出现。
+      final cached = await LyricCache.read(song);
+      if (requestId != _requestId) return;
+
+      if (cached != null) {
+        // 缓存命中：直接用缓存里的歌词，不再请求网络。
+        if (cached.lrc?.isNotEmpty ?? false) lrc = cached.lrc;
+        crlyric = cached.crlyric;
+        tlyric = cached.tlyric;
+        rlyric = cached.rlyric;
+        ttmlText = cached.ttml;
+        if (ttmlText != null) {
+          final lines = parseTtml(ttmlText);
+          ttmlLines = lines.isEmpty ? null : lines;
         }
-        if (requestId != _requestId) return;
+      } else {
+        // Step 1 / 2 并行：TTML 词库与在线歌词各是一次网络请求，串行等待会
+        // 让歌词出现得很慢（切歌时尤其明显），这里让两个请求同时发出。
+        final sourceSupportsWordLyric =
+            song.source == 'tx' ||
+            song.source == 'wy' ||
+            song.source == 'kw' ||
+            song.source == 'kg';
+        final needOnlineLyric =
+            (lrc == null || lrc.isEmpty) || sourceSupportsWordLyric;
+
+        Future<String?>? ttmlTextFuture;
+        Future<List<LyricLine>?>? ttmlFuture;
+        if (song.source == 'wy' || song.source == 'tx') {
+          final cleanId = song.id.replaceAll('wy_', '').replaceAll('tx_', '');
+          ttmlTextFuture = _ttmlDbService
+              .fetchTtmlText(song.source!, cleanId)
+              .timeout(_lyricFetchTimeout);
+          ttmlFuture = ttmlTextFuture.then((text) {
+            if (text == null) return null;
+            final lines = parseTtml(text);
+            return lines.isEmpty ? null : lines;
+          });
+        }
+
+        Future<LyricResult?>? onlineFuture;
+        if (needOnlineLyric && song.source != null && song.source != 'local') {
+          onlineFuture = _musicSourceManager
+              .getLyricResult(song)
+              .timeout(_lyricFetchTimeout);
+        }
+
+        // Step 1: TTML 词库（wy / tx）
+        if (ttmlFuture != null) {
+          try {
+            ttmlLines = await ttmlFuture;
+          } catch (_) {
+            ttmlLines = null;
+          }
+          if (requestId != _requestId) return;
+        }
+
+        // Step 2: 在线歌词（普通 LRC / 逐字歌词 / 翻译 / 音译）
+        if (onlineFuture != null) {
+          LyricResult? result;
+          try {
+            result = await onlineFuture;
+          } catch (_) {
+            result = null;
+          }
+          if (requestId != _requestId) return;
+          if (result != null) {
+            if (result.crlyric?.trim().isNotEmpty ?? false) {
+              crlyric = result.crlyric;
+            }
+            if ((lrc == null || lrc.isEmpty) &&
+                (result.lrc?.trim().isNotEmpty ?? false)) {
+              lrc = result.lrc;
+            }
+            tlyric = result.tlyric;
+            rlyric = result.rlyric;
+          }
+        }
+
+        if (ttmlTextFuture != null) {
+          try {
+            ttmlText = await ttmlTextFuture;
+          } catch (_) {
+            ttmlText = null;
+          }
+        }
+      }
+      if (requestId != _requestId) return;
+
+      // 拿到歌词后写入缓存，下次播放直接命中（命中缓存时不用重复写）。
+      if (cached == null) {
+        unawaited(
+          LyricCache.write(
+            song,
+            lrc: lrc,
+            crlyric: crlyric,
+            tlyric: tlyric,
+            rlyric: rlyric,
+            ttml: ttmlText,
+          ),
+        );
       }
 
-      // Step 2: 在线歌词（普通 LRC / 逐字歌词 / 翻译 / 音译）
-      if (onlineFuture != null) {
-        LyricResult? result;
-        try {
-          result = await onlineFuture;
-        } catch (_) {
-          result = null;
-        }
-        if (requestId != _requestId) return;
-        if (result != null) {
-          if (result.crlyric?.trim().isNotEmpty ?? false) {
-            crlyric = result.crlyric;
-          }
-          if ((lrc == null || lrc.isEmpty) &&
-              (result.lrc?.trim().isNotEmpty ?? false)) {
-            lrc = result.lrc;
-          }
-          tlyric = result.tlyric;
-          rlyric = result.rlyric;
-        }
-      } else if (song.isLocal && (lrc == null || lrc.isEmpty)) {
+      if (song.isLocal && (lrc == null || lrc.isEmpty)) {
         try {
           lrc = await EmbeddedLyricsExtractor.extract(
             song.filePath!,

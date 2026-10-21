@@ -52,6 +52,7 @@ class CachePaths {
     'covers',
     'image_cache',
     'audio_cache',
+    'lyric_cache',
   ];
 
   /// 按最大缓存大小清理应用自己的缓存子目录（三个目录合计，只删最旧的文件）。
