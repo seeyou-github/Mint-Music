@@ -18,7 +18,12 @@ import '../domain/services/tag_write_service.dart';
 import '../../player/domain/models/song.dart';
 import '../../player/domain/models/lyric_line.dart';
 
-typedef UrlFetcher = Future<String?> Function(DownloadTask task);
+/// 下载地址获取器。
+///
+/// 返回地址以及实际使用的音源 id（内置源会由插件解析地址，换源后下载列表
+/// 里显示的来源也跟着变）。
+typedef UrlFetcher =
+    Future<({String url, String? source})?> Function(DownloadTask task);
 typedef TagWriteOptionsFetcher = TagWriteOptions Function();
 typedef LyricFetcher = Future<String?> Function(Song song);
 typedef LyricResultFetcher = Future<LyricResult?> Function(Song song);
@@ -385,6 +390,7 @@ class DownloadRepository {
 
     // 照搬 CeruMusic downloadSingleSong：先获取 URL，再创建任务
     String resolvedUrl = url ?? '';
+    var taskSong = song;
     if (resolvedUrl.isEmpty && _urlFetcher != null) {
       final tempTask = DownloadTask(
         id: '',
@@ -395,15 +401,22 @@ class DownloadRepository {
         priority: priority,
         createdAt: DateTime.now().millisecondsSinceEpoch,
       );
-      final fetchedUrl = await _urlFetcher!(tempTask);
-      if (fetchedUrl != null && fetchedUrl.isNotEmpty) {
-        resolvedUrl = fetchedUrl;
+      final fetched = await _urlFetcher!(tempTask);
+      if (fetched != null && fetched.url.isNotEmpty) {
+        resolvedUrl = fetched.url;
+        // 换源后（内置源改用其它插件解析）同步歌曲来源，下载列表里显示出来。
+        final resolvedSource = fetched.source;
+        if (resolvedSource != null &&
+            resolvedSource.isNotEmpty &&
+            resolvedSource != song.source) {
+          taskSong = song.copyWith(source: resolvedSource);
+        }
       }
     }
 
     final task = DownloadTask(
       id: DownloadTask.generateId(),
-      song: song,
+      song: taskSong,
       url: resolvedUrl,
       quality: quality,
       filePath: filePath,
@@ -686,14 +699,20 @@ class DownloadRepository {
       var task = _tasks[index];
       String url = task.url;
       if (url.isEmpty && _urlFetcher != null) {
-        final fetchedUrl = await _urlFetcher!(task);
-        if (fetchedUrl == null || fetchedUrl.isEmpty) {
+        final fetched = await _urlFetcher!(task);
+        if (fetched == null || fetched.url.isEmpty) {
           _initializingTasks.remove(taskId);
           _markError(taskId, '无法获取播放链接');
           return;
         }
-        url = fetchedUrl;
+        url = fetched.url;
         task = task.copyWith(url: url);
+        final resolvedSource = fetched.source;
+        if (resolvedSource != null &&
+            resolvedSource.isNotEmpty &&
+            resolvedSource != task.song.source) {
+          task = task.copyWith(song: task.song.copyWith(source: resolvedSource));
+        }
         _tasks[index] = task;
       }
 

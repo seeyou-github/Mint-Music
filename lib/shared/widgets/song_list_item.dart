@@ -7,6 +7,7 @@ import '../../core/theme/theme_provider.dart';
 import '../../features/player/domain/models/song.dart';
 import '../../shared/services/app_image_cache.dart';
 import '../../features/plugin/application/music_source_manager.dart';
+import '../../features/plugin/domain/plugin_types.dart';
 import '../../features/plugin/application/plugin_providers.dart';
 import 'song_action_sheet.dart';
 
@@ -333,7 +334,7 @@ class SongListItem extends ConsumerWidget {
   }
 
   Color _getSourceColor(String source) {
-    switch (source) {
+    switch (SourceInfo.baseIdOf(source)) {
       case 'wy':
         return const Color(0xFFE60026);
       case 'kg':
@@ -352,6 +353,11 @@ class SongListItem extends ConsumerWidget {
   }
 
   String _getSourceName(String source) {
+    // 插件音源（平台id@插件id）显示为「平台名-插件名」，内置音源带「-内置」。
+    final display = ref
+        .read(musicSourceManagerProvider)
+        .sourceDisplayName(source);
+    if (display.isNotEmpty && display != source) return display;
     switch (source) {
       case 'wy':
         return '网易';

@@ -364,7 +364,11 @@ class MusicSourceManager {
   /// 说明当前实际用的是哪个音源。
   String sourceDisplayName(String sourceId) {
     final (baseId, pluginId) = splitSourceId(sourceId);
-    final platformName = _sourceIdToName[baseId] ?? baseId;
+    final platformName = _sourceIdToName[baseId];
+    if (platformName == null) {
+      // 未知平台（例如本地音乐）直接用原 id。
+      return sourceId;
+    }
     if (pluginId == null) {
       return '$platformName$builtInSourceSuffix';
     }
@@ -1674,6 +1678,107 @@ class MusicSourceManager {
     }
 
     print('[MusicSourceManager] getLyric: no source available');
+    // 内置源且同名插件没给到歌词时，再用其它已安装的插件找同一首歌的歌词。
+    final otherLyric = await _lyricFromOtherPlugins(song);
+    if (otherLyric == null) return null;
+    final lrc = (otherLyric.lrc ?? '').trim();
+    if (lrc.isNotEmpty) return lrc;
+    final wordLrc = (otherLyric.crlyric ?? '').trim();
+    return wordLrc.isEmpty ? null : wordLrc;
+  }
+
+  /// 其它已安装插件的歌词（只有完全匹配的歌才采用）。
+  ///
+  /// 内置源本身没有歌词接口时，同名插件也拿不到歌词，就换其它已安装的插件
+  /// 重新找同一首歌；歌名 / 歌手对不上时不用它的歌词，避免显示错歌的词。
+  Future<LyricResult?> _lyricFromOtherPlugins(Song song) async {
+    final source = song.source;
+    if (source == null || source.isEmpty || source.contains('@')) return null;
+    final others = pluginSourceIds
+        .where((id) => !id.startsWith('$source@'))
+        .toList();
+    if (others.isEmpty) return null;
+
+    for (final candidate in await matchSongsInSources(song, others)) {
+      try {
+        final result = await getLyricResult(candidate);
+        if (result != null && _hasLyric(result)) return result;
+      } catch (e) {
+        print('[MusicSourceManager] 其它插件歌词获取失败: $e');
+      }
+    }
+    return null;
+  }
+
+  /// 在指定音源里找与 [song] 完全匹配的歌（用于换源 / 换歌词）。
+  ///
+  /// 只保留歌名与歌手都一致的结果，避免把别的歌的地址 / 歌词用过来。
+  Future<List<Song>> matchSongsInSources(
+    Song song,
+    List<String> sourceIds,
+  ) async {
+    final keyword = '${song.title} ${song.artist}'.trim();
+    final matched = <Song>[];
+    for (final sourceId in sourceIds) {
+      try {
+        final songs = await search(
+          keyword,
+          sourceId: sourceId,
+          page: 1,
+          limit: 15,
+        );
+        for (final item in songs) {
+          if (_isSameSong(song, item)) matched.add(item);
+        }
+      } catch (e) {
+        print('[MusicSourceManager] 匹配歌曲失败 source=$sourceId: $e');
+      }
+    }
+    return matched;
+  }
+
+  /// 两首歌是否完全一致（歌名 + 歌手，忽略大小写与空白）。
+  static bool _isSameSong(Song a, Song b) {
+    String norm(String value) =>
+        value.trim().toLowerCase().replaceAll(RegExp(r'\s+'), '');
+    return norm(a.title) == norm(b.title) && norm(a.artist) == norm(b.artist);
+  }
+
+  /// 解析下载用的播放地址。
+  ///
+  /// 内置源本身没有地址接口：优先用同名插件解析，失败再改用其它已安装的
+  /// 插件（重新找同一首歌后解析）。返回实际使用的音源 id，下载列表里会显示
+  /// 出来源。
+  Future<({String url, String source})?> getMusicUrlForDownload(
+    Song song, {
+    String quality = '320k',
+  }) async {
+    final candidates = await getMusicUrlResultCandidates(
+      song,
+      quality: quality,
+    );
+    for (final candidate in candidates) {
+      if (candidate.url.isEmpty) continue;
+      return (url: candidate.url, source: song.source ?? '');
+    }
+
+    final source = song.source;
+    if (source == null || source.isEmpty || source.contains('@')) return null;
+    final others = pluginSourceIds
+        .where((id) => !id.startsWith('$source@'))
+        .toList();
+    if (others.isEmpty) return null;
+
+    for (final candidate in await matchSongsInSources(song, others)) {
+      final urls = await getMusicUrlResultCandidates(
+        candidate,
+        quality: quality,
+      );
+      for (final url in urls) {
+        if (url.url.isEmpty) continue;
+        return (url: url.url, source: candidate.source ?? '');
+      }
+    }
     return null;
   }
 
@@ -1733,7 +1838,11 @@ class MusicSourceManager {
     if (pluginFallback != null) return pluginFallback;
     if (builtInFallback != null) return builtInFallback;
 
-    // 3. 纯文本回退
+    // 3. 其它已安装插件的歌词（完全匹配才采用）
+    final otherPluginLyric = await _lyricFromOtherPlugins(song);
+    if (otherPluginLyric != null) return otherPluginLyric;
+
+    // 4. 纯文本回退
     final rawLyric = await getLyric(song);
     if (rawLyric == null || rawLyric.isEmpty) return null;
     return LyricResult(lrc: rawLyric);

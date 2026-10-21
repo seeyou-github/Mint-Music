@@ -53,7 +53,14 @@ final downloadRepositoryProvider = Provider<DownloadRepository>((ref) {
   // 设置 URL 获取器
   final musicSourceManager = ref.read(musicSourceManagerProvider);
   repo.setUrlFetcher((task) async {
-    return await musicSourceManager.getMusicUrl(task.song, quality: task.quality);
+    // 内置源没有地址接口：由同名插件解析，失败再换其它已安装的插件，
+    // 实际使用的音源会写进下载任务里（下载列表里显示出来源）。
+    final resolved = await musicSourceManager.getMusicUrlForDownload(
+      task.song,
+      quality: task.quality,
+    );
+    if (resolved == null) return null;
+    return (url: resolved.url, source: resolved.source);
   });
 
   // 设置标签写入选项获取器（对齐 CeruMusic tagWriteOptions）
