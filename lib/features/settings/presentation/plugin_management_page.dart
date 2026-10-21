@@ -711,20 +711,10 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
   }
 
   Future<void> _setBuiltInSourceEnabled(SourceInfo info, bool enabled) async {
+    // 开关本身就是反馈，不再弹提示。
     await ref
         .read(builtInSourceStateProvider.notifier)
         .setEnabled(info.id, enabled);
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          enabled
-              ? context.tr('已启用 ${info.name}')
-              : context.tr('已关闭 ${info.name}'),
-        ),
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
   }
 
   Future<void> _removeBuiltInSource(SourceInfo info) async {
@@ -755,25 +745,12 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
     );
     if (confirmed != true) return;
 
+    // 卸载结果在列表里直接可见，不再弹提示。
     await ref.read(builtInSourceStateProvider.notifier).remove(info.id);
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(context.tr('已卸载 ${info.name}')),
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
   }
 
   Future<void> _restoreBuiltInSources() async {
     await ref.read(builtInSourceStateProvider.notifier).restoreAll();
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(context.tr('已恢复所有内置音源')),
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
   }
 
   Widget _buildEmptyState(ThemeColors colors) {
