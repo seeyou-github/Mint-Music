@@ -312,37 +312,50 @@ class MusicSourceManager {
     return name.length <= 12 ? name : '${name.substring(0, 12)}…';
   }
 
-  /// 音源展示名：平台名 + 插件名。
+  /// 音源展示名：平台名 + 来源后缀。
+  ///
+  /// 内置音源带「-内置」，插件音源带「-插件名」，两者在列表里不会混淆。
   String _sourceDisplayName(String sourceName, String pluginName) {
     if (pluginName.isEmpty) return sourceName;
-    // MusicFree 插件的插件名往往就是平台名（如「元力KW」），重复拼接没有意义。
-    if (pluginName == sourceName) return sourceName;
-    return '$sourceName · $pluginName';
+    return '$sourceName-$pluginName';
   }
 
-  /// 在列表里查找同 id 的音源下标。
-  static int _indexOfSource(List<SourceInfo> sources, String id) {
-    for (var i = 0; i < sources.length; i++) {
-      if (sources[i].id == id) return i;
-    }
-    return -1;
-  }
-
-  /// 同名同平台（不同作者）的插件需要唯一的 id。
+  /// 插件音源的唯一 id。
+  ///
+  /// 插件音源始终使用「平台id@插件id」：与内置源（平台 id）完全独立，两者可以
+  /// 同时出现在音源切换列表里（即使平台名、作者、版本完全相同也不会互相
+  /// 覆盖）。
   static String _uniqueSourceId(
     String baseId,
     String? pluginId,
     Set<String> seenIds,
   ) {
+    if (pluginId != null && pluginId.isNotEmpty) {
+      var id = '$baseId@$pluginId';
+      var counter = 2;
+      while (seenIds.contains(id)) {
+        id = '$baseId@$pluginId$counter';
+        counter++;
+      }
+      return id;
+    }
     if (!seenIds.contains(baseId)) return baseId;
-    var id =
-        pluginId != null ? '$baseId@$pluginId' : '$baseId@${seenIds.length}';
+    var id = '$baseId@${seenIds.length}';
     var counter = 2;
     while (seenIds.contains(id)) {
       id = '$baseId@${pluginId ?? 'plugin'}$counter';
       counter++;
     }
     return id;
+  }
+
+  /// 内置音源名称的后缀（与插件音源区分开）。
+  static const String builtInSourceSuffix = '-内置';
+
+  /// 内置音源的展示条目（名称带「-内置」后缀）。
+  SourceInfo _builtInSourceInfo(String id) {
+    final name = _sourceIdToName[id] ?? id;
+    return SourceInfo(id: id, name: '$name$builtInSourceSuffix');
   }
 
   List<SourceInfo> getSearchSupportedSources() {
@@ -352,28 +365,14 @@ class MusicSourceManager {
     // 内置音源（与发现页顺序一致：内置在前）。
     for (final entry in _availableBuiltInSources) {
       if (seenIds.add(entry.key)) {
-        sources.add(
-          SourceInfo(
-            id: entry.key,
-            name: _sourceIdToName[entry.key] ?? entry.key,
-          ),
-        );
+        sources.add(_builtInSourceInfo(entry.key));
       }
     }
 
-    // 插件音源：与发现页共用同一份 id / 名称。
+    // 插件音源：与内置源完全独立，各自成条（同名同平台也各显示一条）。
     for (final source in getPluginSupportedSources()) {
-      final existing = _indexOfSource(sources, source.id);
-      if (existing >= 0) {
-        // 插件接管了同一个平台：浏览 / 搜索内容仍然来自内置源，播放地址由
-        // 插件解析；列表里换成插件的条目，方便看出当前是哪个插件在服务。
-        if (_pluginSourceCanResolveUrls(source.id)) {
-          sources[existing] = source;
-        }
-        continue;
-      }
-      // 新平台：插件只要能解析播放地址（搜索可以回落到内置源）就应当出现，
-      // 否则这个平台既搜不到也放不了。
+      if (seenIds.contains(source.id)) continue;
+      // 插件要么能解析播放地址，要么能搜索，否则既搜不到也放不了。
       if (!_pluginSourceCanResolveUrls(source.id) &&
           !_pluginSourceSupportsSearch(source.id)) {
         continue;
@@ -802,16 +801,25 @@ class MusicSourceManager {
       }
     }
 
-    final builtIn = _builtInSourceFor(effectiveSourceId);
-    if (builtIn != null) {
+    // 插件音源没有自己的搜索接口时（例如落雪脚本只解析播放地址），
+    // 用内置源搜索同一平台的歌曲，但把结果的音源标记为当前选中的插件音源，
+    // 这样播放时仍然由该插件解析地址。
+    final (baseId, pluginId) = splitSourceId(effectiveSourceId);
+    final builtIn = _builtInSources[baseId];
+    if (builtIn != null && isBuiltInSourceAvailable(baseId)) {
       try {
         print('[MusicSourceManager] 使用内置源搜索: source=$sourceId, query=$query');
         final results = await builtIn.search(query, page: page, limit: limit);
         print(
           '[MusicSourceManager] 内置源搜索完成: source=$sourceId, 结果数量=${results.length}',
         );
-        _searchPageCache[cacheKey] = _CacheEntry(results, _searchResultsTTL);
-        return results;
+        final tagged = pluginId == null
+            ? results
+            : results
+                .map((song) => song.copyWith(source: effectiveSourceId))
+                .toList();
+        _searchPageCache[cacheKey] = _CacheEntry(tagged, _searchResultsTTL);
+        return tagged;
       } catch (e) {
         print('[MusicSourceManager] Built-in search failed for $sourceId: $e');
         return [];
@@ -1856,12 +1864,17 @@ class MusicSourceManager {
   }
 
   /// 找到能处理 [sourceId] 且具备所需发现能力的插件宿主。
+  ///
+  /// 只有插件自己的变体 id（`平台id@插件id`）才会走插件：平台 id 属于内置源，
+  /// 不借用插件的浏览内容。
   PluginHost? _findDiscoverHost(
     String sourceId, {
     bool needTopList = false,
     bool needSheets = false,
     bool needSheetDetail = false,
   }) {
+    final (baseId, pluginId) = splitSourceId(sourceId);
+    if (pluginId == null) return null;
     for (final host in _findPluginHostsForSource(sourceId)) {
       if (!host.supportsDiscover) continue;
       if (needTopList && !host.supportsTopLists) continue;
@@ -2121,15 +2134,13 @@ class MusicSourceManager {
 
   /// 浏览内容（歌单 / 榜单）用的内置源。
   ///
-  /// 内置源被用户在插件管理里关掉后，列表里不再显示它；但如果这个平台被
-  /// 插件接管了，而插件又没有提供浏览接口（落雪脚本就是这种情况），仍然用
-  /// 内置源的内容兜底，避免歌单 / 榜单页面空白。
+  /// 内置源与插件音源完全独立：平台 id（内置源）只由内置源提供浏览内容，
+  /// 插件的变体 id 只由插件提供，互不借用、也不做失败兜底。
   MusicSourceProvider? _discoverBuiltIn(String sourceId) {
-    final builtIn = _builtInSourceFor(sourceId);
-    if (builtIn == null) return null;
-    if (isBuiltInSourceAvailable(sourceId)) return builtIn;
-    if (_findPluginHostsForSource(sourceId).isNotEmpty) return builtIn;
-    return null;
+    final (baseId, pluginId) = splitSourceId(sourceId);
+    if (pluginId != null) return null;
+    if (!isBuiltInSourceAvailable(sourceId)) return null;
+    return _builtInSourceFor(sourceId);
   }
 
   Future<List<PlaylistTagGroup>> getPlaylistTags({
@@ -2481,26 +2492,14 @@ class MusicSourceManager {
     final seenIds = <String>{};
 
     for (final source in enabledBuiltInSourceInfos) {
-      if (seenIds.add(source.id)) sources.add(source);
+      if (seenIds.add(source.id)) sources.add(_builtInSourceInfo(source.id));
     }
 
-    // 插件音源：复用搜索音源列表的 id 推导（与适配器保持一致）。
+    // 插件音源：与内置源完全独立。插件实现了浏览接口（榜单 / 推荐歌单）时
+    // 才有浏览内容，没有的话列进来只会是空页面。
     for (final source in getPluginSupportedSources()) {
-      final existing = _indexOfSource(sources, source.id);
-      if (existing >= 0) {
-        // 插件接管了同一个平台：浏览内容仍然来自内置源，播放地址由插件
-        // 解析；列表里换成插件的条目，方便看出当前是哪个插件在服务。
-        if (_pluginSourceCanResolveUrls(source.id)) {
-          sources[existing] = source;
-        }
-        continue;
-      }
-      // 新平台：实现了榜单 / 推荐歌单的插件自带浏览内容；只提供链接解析
-      // 的插件（如落雪脚本）也能出现——浏览内容仍由同名内置源提供。
-      if (_findDiscoverHost(source.id) == null &&
-          !_pluginSourceCanResolveUrls(source.id)) {
-        continue;
-      }
+      if (seenIds.contains(source.id)) continue;
+      if (_findDiscoverHost(source.id) == null) continue;
       seenIds.add(source.id);
       sources.add(source);
     }

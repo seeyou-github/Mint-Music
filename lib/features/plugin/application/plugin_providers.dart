@@ -83,11 +83,13 @@ final pluginSupportedSourcesProvider = Provider<List<SourceInfo>>((ref) {
 
 /// 插件管理里第一个启用的音源 id。
 ///
-/// 没有插件音源时回落到内置音源「网易云音乐」；插件加载完成后会自动
-/// 重新计算（默认音源随之切换到插件提供的第一个音源）。
+/// 没有记录时使用第一个可用的内置音源（内置源与插件音源完全独立，默认用
+/// 内置源更稳妥；插件音源可以在切换音源里手动选择）。
 final firstEnabledSourceIdProvider = Provider<String>((ref) {
   ref.watch(pluginInitializedProvider);
   final manager = ref.watch(musicSourceManagerProvider);
+  final builtIns = manager.enabledBuiltInSourceInfos;
+  if (builtIns.isNotEmpty) return builtIns.first.id;
   final sources = manager.getPluginSupportedSources();
   if (sources.isNotEmpty) return sources.first.id;
   return 'wy';
