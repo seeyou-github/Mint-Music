@@ -1,4 +1,11 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../../core/backup/playlist_sync_service.dart';
+import '../../../core/backup/webdav_service.dart';
+import '../../settings/application/settings_providers.dart';
 import '../data/playlist_repository.dart';
 import '../domain/models/playlist.dart';
 import '../../player/domain/models/song.dart';
@@ -22,6 +29,7 @@ class PlaylistsNotifier extends AsyncNotifier<List<Playlist>> {
     final repo = ref.read(playlistRepositoryProvider);
     await repo.createPlaylist(name, description: description);
     ref.invalidateSelf();
+    _syncToRemote();
   }
 
   Future<void> createPlaylistWithSongs(
@@ -32,24 +40,41 @@ class PlaylistsNotifier extends AsyncNotifier<List<Playlist>> {
     final repo = ref.read(playlistRepositoryProvider);
     await repo.createPlaylistWithSongs(name, songsData, description: description);
     ref.invalidateSelf();
+    _syncToRemote();
   }
 
   Future<void> createPlaylistFromModel(Playlist playlist) async {
     final repo = ref.read(playlistRepositoryProvider);
     await repo.savePlaylist(playlist);
     ref.invalidateSelf();
+    _syncToRemote();
   }
 
   Future<void> updatePlaylist(Playlist playlist) async {
     final repo = ref.read(playlistRepositoryProvider);
     await repo.updatePlaylist(playlist);
     ref.invalidateSelf();
+    _syncToRemote();
   }
 
   Future<void> deletePlaylist(String id) async {
     final repo = ref.read(playlistRepositoryProvider);
     await repo.deletePlaylist(id);
     ref.invalidateSelf();
+    _syncToRemote();
+  }
+
+  /// 把本地歌单推送到 WebDAV 远端（开启了「歌单实时同步」时）。
+  void _syncToRemote() {
+    final config = ref.read(webDavConfigProvider);
+    if (!config.playlistSyncEnabled || !config.isConfigured) return;
+    unawaited(() async {
+      try {
+        await PlaylistSyncService.push(WebDavService(config));
+      } catch (e) {
+        debugPrint('[PlaylistsNotifier] 歌单同步到远端失败: $e');
+      }
+    }());
   }
 
   /// Returns true if the song was actually added (not a duplicate).
@@ -58,6 +83,7 @@ class PlaylistsNotifier extends AsyncNotifier<List<Playlist>> {
     try {
       final added = await repo.addSongToPlaylist(playlistId, song);
       ref.invalidateSelf();
+      if (added) _syncToRemote();
       return added;
     } catch (e) {
       // ignore: avoid_print
@@ -95,6 +121,7 @@ class PlaylistsNotifier extends AsyncNotifier<List<Playlist>> {
       print('removeSongFromPlaylist error: $e');
     } finally {
       ref.invalidateSelf();
+      _syncToRemote();
     }
   }
 
@@ -104,6 +131,7 @@ class PlaylistsNotifier extends AsyncNotifier<List<Playlist>> {
       await repo.addSongToPlaylist(playlistId, song);
     }
     ref.invalidateSelf();
+    _syncToRemote();
   }
 
   Future<String> exportPlaylist(Playlist playlist) async {

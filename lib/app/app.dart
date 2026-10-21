@@ -15,6 +15,9 @@ import '../features/plugin/application/plugin_providers.dart';
 import '../features/settings/application/font_providers.dart';
 import '../features/settings/application/plugin_providers.dart';
 import '../features/settings/application/settings_providers.dart';
+import '../core/backup/playlist_sync_service.dart';
+import '../core/backup/webdav_service.dart';
+import '../features/library/application/playlist_providers.dart';
 import '../features/settings/data/plugin_repository.dart';
 import 'app_desktop_shell.dart';
 
@@ -27,6 +30,62 @@ class App extends ConsumerStatefulWidget {
 
 class _AppState extends ConsumerState<App> {
   bool _hasCheckedUpdates = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // 开启「歌单实时同步」时，进入应用先与远端同步一次歌单。
+    WidgetsBinding.instance.addPostFrameCallback((_) => _syncPlaylistsOnStartup());
+  }
+
+  /// 启动时从 WebDAV 同步歌单；失败时弹框提示原因并提供「重新同步」。
+  Future<void> _syncPlaylistsOnStartup() async {
+    if (!mounted) return;
+    final config = ref.read(webDavConfigProvider);
+    if (!config.playlistSyncEnabled || !config.isConfigured) return;
+    try {
+      await PlaylistSyncService.pullAndMerge(WebDavService(config));
+      if (!mounted) return;
+      ref.invalidate(playlistsProvider);
+    } catch (e) {
+      if (!mounted) return;
+      await _showSyncFailedDialog('$e');
+    }
+  }
+
+  Future<void> _showSyncFailedDialog(String reason) async {
+    if (!mounted) return;
+    final colors = ref.read(themeColorsProvider);
+    final retry = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: colors.surface,
+        title: Text(
+          tr('歌单同步失败'),
+          style: TextStyle(color: colors.textPrimary),
+        ),
+        content: Text(
+          tr('同步远端歌单失败：$reason'),
+          style: TextStyle(color: colors.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(tr('取消'), style: TextStyle(color: colors.textHint)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(
+              tr('重新同步'),
+              style: TextStyle(color: colors.primary),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (retry != true || !mounted) return;
+    await _syncPlaylistsOnStartup();
+  }
 
   @override
   Widget build(BuildContext context) {

@@ -17,6 +17,7 @@ import '../../../core/theme/app_font_manager.dart';
 import '../../../core/theme/app_typography.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
+import 'backup_restore_content.dart';
 import '../../../shared/services/app_image_cache.dart';
 import '../../../shared/services/cache_paths.dart';
 import '../../../shared/widgets/hsv_color_picker.dart';
@@ -91,6 +92,7 @@ enum SettingsCategory {
   appearance,
   playback,
   storage,
+  backupRestore,
 }
 
 class SettingsPage extends ConsumerStatefulWidget {
@@ -114,6 +116,10 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     SettingsCategory.appearance: (icon: Icons.palette, label: '外观设置'),
     SettingsCategory.playback: (icon: Icons.play_circle, label: '播放设置'),
     SettingsCategory.storage: (icon: Icons.storage, label: '缓存设置'),
+    SettingsCategory.backupRestore: (
+      icon: Icons.backup_outlined,
+      label: '备份还原',
+    ),
   };
 
   @override
@@ -309,17 +315,19 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
         return const _PlaybackContent();
       case SettingsCategory.storage:
         return const _StorageContent();
+      case SettingsCategory.backupRestore:
+        return const BackupRestoreContent();
     }
   }
 
 }
 
-class _SettingGroup extends StatelessWidget {
+class SettingGroup extends StatelessWidget {
   final String title;
   final String? subtitle;
   final ThemeColors colors;
   final List<Widget> children;
-  const _SettingGroup({
+  const SettingGroup({
     required this.title,
     this.subtitle,
     required this.colors,
@@ -368,14 +376,14 @@ class _SettingGroup extends StatelessWidget {
   }
 }
 
-class _SettingRow extends StatelessWidget {
+class SettingRow extends StatelessWidget {
   final IconData icon;
   final String title;
   final String? subtitle;
   final Widget trailing;
   final ThemeColors colors;
   final VoidCallback? onTap;
-  const _SettingRow({
+  const SettingRow({
     required this.icon,
     required this.title,
     this.subtitle,
@@ -418,9 +426,9 @@ class _SettingRow extends StatelessWidget {
   }
 }
 
-class _SettingDivider extends StatelessWidget {
+class SettingDivider extends StatelessWidget {
   final ThemeColors colors;
-  const _SettingDivider({required this.colors});
+  const SettingDivider({required this.colors});
   @override
   Widget build(BuildContext context) => Divider(
     height: 1,
@@ -678,12 +686,12 @@ class _AppearanceContent extends ConsumerWidget {
         '内置 ${AppFontManager.bundledFonts.length} 个字体'
         '${importedFonts.isEmpty ? '' : '，已导入 ${importedFonts.length} 个'}，'
         '当前使用：$fontName';
-    return _SettingGroup(
+    return SettingGroup(
       title: '基础外观',
       subtitle: '主题和外观配置',
       colors: colors,
       children: [
-        _SettingRow(
+        SettingRow(
           icon: Icons.palette,
           title: '应用主题',
           subtitle: themeSubtitle,
@@ -718,8 +726,8 @@ class _AppearanceContent extends ConsumerWidget {
             },
           ),
         ),
-        _SettingDivider(colors: colors),
-        _SettingRow(
+        SettingDivider(colors: colors),
+        SettingRow(
           icon: Icons.color_lens,
           title: '主题色',
           subtitle:
@@ -744,8 +752,8 @@ class _AppearanceContent extends ConsumerWidget {
             persistCustom: (s, list) => s.setCustomThemeColors(list),
           ),
         ),
-        _SettingDivider(colors: colors),
-        _SettingRow(
+        SettingDivider(colors: colors),
+        SettingRow(
           icon: Icons.text_fields,
           title: '字体颜色',
           subtitle: fontColorHex.isEmpty
@@ -776,8 +784,8 @@ class _AppearanceContent extends ConsumerWidget {
             resetValue: defaultThemeFontColor,
           ),
         ),
-        _SettingDivider(colors: colors),
-        _SettingRow(
+        SettingDivider(colors: colors),
+        SettingRow(
           icon: Icons.text_fields_outlined,
           title: '第二字体颜色',
           subtitle: secondaryFontColorHex.isEmpty
@@ -807,8 +815,8 @@ class _AppearanceContent extends ConsumerWidget {
             emptyInitialColor: colors.textSecondary,
           ),
         ),
-        _SettingDivider(colors: colors),
-        _SettingRow(
+        SettingDivider(colors: colors),
+        SettingRow(
           icon: Icons.font_download_outlined,
           title: '应用字体',
           subtitle: fontSubtitle,
@@ -1133,7 +1141,7 @@ class _AppearanceContent extends ConsumerWidget {
                 ],
               ),
             ),
-            _SettingDivider(colors: colors),
+            SettingDivider(colors: colors),
             ListTile(
               leading: Icon(Icons.edit_outlined, color: colors.textSecondary),
               title: Text(
@@ -1447,12 +1455,12 @@ class _AppearanceContent extends ConsumerWidget {
       FullScreenBackgroundMode.dark: '纯黑背景',
     };
     final currentLabel = modeLabels[bgMode] ?? '纯黑背景';
-    return _SettingGroup(
+    return SettingGroup(
       title: '播放详情页背景',
       subtitle: '播放详情页（歌词页 / 播放页）的背景模式',
       colors: colors,
       children: [
-        _SettingRow(
+        SettingRow(
           icon: Icons.wallpaper,
           title: '背景模式',
           subtitle: '当前: $currentLabel',
@@ -1509,14 +1517,14 @@ class _AppearanceContent extends ConsumerWidget {
     void update(DesktopLyricSettings Function(DesktopLyricSettings) fn) =>
         updateDesktopLyricSettings(ref.read, fn);
 
-    return _SettingGroup(
+    return SettingGroup(
       title: '桌面歌词',
       subtitle: Platform.isWindows
           ? '独立的桌面歌词窗口（始终置顶），应用最小化后仍显示在桌面上，可拖动'
           : '悬浮在页面之上的歌词窗，可拖动位置，锁定后点击穿透',
       colors: colors,
       children: [
-        _SettingRow(
+        SettingRow(
           icon: s.isLock ? Icons.lock : Icons.lock_open,
           title: '锁定歌词窗',
           subtitle: '锁定后不再响应触摸，可穿透点击下层内容',
@@ -1528,7 +1536,7 @@ class _AppearanceContent extends ConsumerWidget {
           ),
           colors: colors,
         ),
-        _SettingDivider(colors: colors),
+        SettingDivider(colors: colors),
         _SettingSlider(
           icon: Icons.format_list_numbered,
           title: '显示行数',
@@ -1541,7 +1549,7 @@ class _AppearanceContent extends ConsumerWidget {
           colors: colors,
           onChanged: (v) => update((cur) => cur.copyWith(maxLineNum: v.round())),
         ),
-        _SettingDivider(colors: colors),
+        SettingDivider(colors: colors),
         _SettingSlider(
           icon: Icons.format_size,
           title: '字体大小',
@@ -1553,7 +1561,7 @@ class _AppearanceContent extends ConsumerWidget {
           colors: colors,
           onChanged: (v) => update((cur) => cur.copyWith(fontSize: v)),
         ),
-        _SettingDivider(colors: colors),
+        SettingDivider(colors: colors),
         _SettingSlider(
           icon: Icons.opacity,
           title: '不透明度',
@@ -1566,8 +1574,8 @@ class _AppearanceContent extends ConsumerWidget {
           onChanged: (v) =>
               update((cur) => cur.copyWith(opacityPercent: v.round())),
         ),
-        _SettingDivider(colors: colors),
-        _SettingRow(
+        SettingDivider(colors: colors),
+        SettingRow(
           icon: Icons.colorize,
           title: '已播放颜色',
           subtitle: '当前歌词行的颜色',
@@ -1582,8 +1590,8 @@ class _AppearanceContent extends ConsumerWidget {
             (v) => update((cur) => cur.copyWith(playedColor: v)),
           ),
         ),
-        _SettingDivider(colors: colors),
-        _SettingRow(
+        SettingDivider(colors: colors),
+        SettingRow(
           icon: Icons.text_fields,
           title: '未播放颜色',
           subtitle: '非当前歌词行的颜色',
@@ -1598,8 +1606,8 @@ class _AppearanceContent extends ConsumerWidget {
             (v) => update((cur) => cur.copyWith(unplayColor: v)),
           ),
         ),
-        _SettingDivider(colors: colors),
-        _SettingRow(
+        SettingDivider(colors: colors),
+        SettingRow(
           icon: Icons.blur_on,
           title: '阴影颜色',
           subtitle: '歌词描边阴影，增强在浅色背景上的可读性',
@@ -1875,12 +1883,12 @@ class _PlaybackContent extends ConsumerWidget {
   ) {
     final autoQualityDowngrade = ref.watch(autoQualityDowngradeProvider);
     final autoSwitchSource = ref.watch(autoSwitchSourceProvider);
-    return _SettingGroup(
+    return SettingGroup(
       title: '播放设置',
       subtitle: '播放行为和音频输出配置',
       colors: colors,
       children: [
-        _SettingRow(
+        SettingRow(
           icon: Icons.trending_down,
           title: '音质自动降级',
           subtitle: '当前音质失败时依次尝试更低音质',
@@ -1897,8 +1905,8 @@ class _PlaybackContent extends ConsumerWidget {
           ),
           colors: colors,
         ),
-        _SettingDivider(colors: colors),
-        _SettingRow(
+        SettingDivider(colors: colors),
+        SettingRow(
           icon: Icons.swap_horiz,
           title: '当前音源播放失败自动切换音源',
           subtitle: '关闭后播放失败将停止，不切换音源、不自动播放下一首',
@@ -1933,12 +1941,12 @@ class _PlaybackContent extends ConsumerWidget {
       ...customPresets.map((p) => p['name'] as String),
     ];
     final isCustom = customPresets.any((p) => p['name'] == eqPreset);
-    return _SettingGroup(
+    return SettingGroup(
       title: '音频均衡器',
       subtitle: '调节音频频段增益 (Professional EQ)',
       colors: colors,
       children: [
-        _SettingRow(
+        SettingRow(
           icon: Icons.tune,
           title: '均衡器',
           subtitle: equalizerEnabled ? '开启' : '关闭',
@@ -1970,8 +1978,8 @@ class _PlaybackContent extends ConsumerWidget {
         ),
         // 均衡器关闭时隐藏详细设置（预设、频段滑条、导入导出等）
         if (equalizerEnabled) ...[
-          _SettingDivider(colors: colors),
-          _SettingRow(
+          SettingDivider(colors: colors),
+          SettingRow(
             icon: Icons.graphic_eq,
             title: '均衡器预设',
           subtitle: '选择预设均衡器方案',
@@ -1996,13 +2004,13 @@ class _PlaybackContent extends ConsumerWidget {
             (v) => _applyEqPreset(context, v),
           ),
         ),
-        _SettingDivider(colors: colors),
+        SettingDivider(colors: colors),
         ...List.generate(10, (i) {
           final freq = kEqFrequencies[i];
           final freqLabel = freq >= 1000 ? '${freq ~/ 1000}k' : '$freq';
           return Column(
             children: [
-              _SettingRow(
+              SettingRow(
                 icon: Icons.equalizer,
                 title: '$freqLabel Hz',
                 subtitle: '${eqBands[i].toStringAsFixed(1)}dB',
@@ -2037,7 +2045,7 @@ class _PlaybackContent extends ConsumerWidget {
                 ),
                 colors: colors,
               ),
-              if (i < 9) _SettingDivider(colors: colors),
+              if (i < 9) SettingDivider(colors: colors),
             ],
           );
         }),
@@ -2461,12 +2469,12 @@ class _PlaybackContent extends ConsumerWidget {
     final balanceValue = ref.watch(balanceValueProvider);
     final surroundLabels = {'small': '小房间', 'medium': '中厅堂', 'large': '大教堂'};
     final bassPresetLabels = {'light': '轻度', 'medium': '中度', 'heavy': '重度'};
-    return _SettingGroup(
+    return SettingGroup(
       title: '高级音效处理',
       subtitle: '低音增强、环绕音效、声道平衡',
       colors: colors,
       children: [
-        _SettingRow(
+        SettingRow(
           icon: Icons.graphic_eq,
           title: '音效增强',
           subtitle: '启用高级音效处理',
@@ -2497,8 +2505,8 @@ class _PlaybackContent extends ConsumerWidget {
         ),
         // 音效增强关闭时隐藏低音增强 / 环绕音效 / 声道平衡等子项
         if (audioEffect) ...[
-          _SettingDivider(colors: colors),
-          _SettingRow(
+          SettingDivider(colors: colors),
+          SettingRow(
             icon: Icons.speaker,
             title: '低音增强 (Bass Boost)',
           subtitle: bassBoostEnabled
@@ -2518,8 +2526,8 @@ class _PlaybackContent extends ConsumerWidget {
           colors: colors,
         ),
         if (bassBoostEnabled) ...[
-          _SettingDivider(colors: colors),
-          _SettingRow(
+          SettingDivider(colors: colors),
+          SettingRow(
             icon: Icons.speaker,
             title: '低频增益',
             subtitle: '${bassBoostGain.toInt()}dB',
@@ -2541,8 +2549,8 @@ class _PlaybackContent extends ConsumerWidget {
             ),
             colors: colors,
           ),
-          _SettingDivider(colors: colors),
-          _SettingRow(
+          SettingDivider(colors: colors),
+          SettingRow(
             icon: Icons.tune,
             title: '低音预设',
             subtitle: '选择低音增强预设',
@@ -2583,8 +2591,8 @@ class _PlaybackContent extends ConsumerWidget {
             ),
           ),
         ],
-        _SettingDivider(colors: colors),
-        _SettingRow(
+        SettingDivider(colors: colors),
+        SettingRow(
           icon: Icons.surround_sound,
           title: '环绕音效 (Surround)',
           subtitle: surroundEnabled
@@ -2604,8 +2612,8 @@ class _PlaybackContent extends ConsumerWidget {
           colors: colors,
         ),
         if (surroundEnabled) ...[
-          _SettingDivider(colors: colors),
-          _SettingRow(
+          SettingDivider(colors: colors),
+          SettingRow(
             icon: Icons.surround_sound,
             title: '环境模拟',
             subtitle: '模拟 5.1/7.1 虚拟声场与环境混响',
@@ -2643,8 +2651,8 @@ class _PlaybackContent extends ConsumerWidget {
             ),
           ),
         ],
-        _SettingDivider(colors: colors),
-        _SettingRow(
+        SettingDivider(colors: colors),
+        SettingRow(
           icon: Icons.balance,
           title: '声道平衡 (Balance)',
           subtitle: balanceEnabled
@@ -2668,8 +2676,8 @@ class _PlaybackContent extends ConsumerWidget {
           colors: colors,
         ),
         if (balanceEnabled) ...[
-          _SettingDivider(colors: colors),
-          _SettingRow(
+          SettingDivider(colors: colors),
+          SettingRow(
             icon: Icons.balance,
             title: '平衡调节',
             subtitle: balanceValue == 0
@@ -2794,7 +2802,7 @@ class _StorageContent extends ConsumerWidget {
     final maxMb = ref.watch(maxCacheSizeMbProvider);
     final maxLabel = _formatCacheLimit(maxMb);
 
-    return _SettingGroup(
+    return SettingGroup(
       title: '缓存目录',
       subtitle: '用于存储歌曲缓存文件，提高播放速度',
       colors: colors,
@@ -2922,7 +2930,7 @@ class _StorageContent extends ConsumerWidget {
     final downloadDir = ref.watch(downloadDirProvider);
     final downloadDirSize = ref.watch(downloadDirSizeProvider);
 
-    return _SettingGroup(
+    return SettingGroup(
       title: '下载目录',
       subtitle: '用于存储下载的音乐文件',
       colors: colors,

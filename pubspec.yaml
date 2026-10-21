@@ -59,6 +59,8 @@ dependencies:
   crypto: ^3.0.6
   convert: ^3.1.2
   archive: ^4.0.4
+  # WebDAV 备份（备份 / 还原 / 歌单同步）
+  webdav_client: ^1.2.2
   on_audio_query: ^2.9.0
   flutter_js: ^0.8.7
   xml: ^6.5.0

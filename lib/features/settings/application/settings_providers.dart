@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/backup/webdav_service.dart';
 import '../../../core/storage/app_preferences.dart';
 import '../../../core/l10n/app_locale.dart';
 import '../../../core/l10n/l10n.dart';
@@ -244,6 +245,13 @@ final lyricFontWeightProvider = StateProvider<int>((ref) => 500);
 /// 歌词字体颜色（hex ARGB 字符串，空表示使用默认/沉浸色）
 final lyricFontColorProvider = StateProvider<String>((ref) => '');
 
+// -- 备份还原 / WebDAV --
+
+/// WebDAV 备份配置（地址 / 账号 / 设备名 / 歌单同步开关）。
+final webDavConfigProvider = StateProvider<WebDavConfig>((ref) {
+  return const WebDavConfig();
+});
+
 // -- appearance --
 final appearanceJumpLyricProvider = StateProvider<bool>((ref) => false);
 final appearanceBgAnimationProvider = StateProvider<bool>((ref) => false);
@@ -458,6 +466,20 @@ final settingsInitProvider = FutureProvider<void>((ref) async {
       .getAppearanceJumpLyric();
   ref.read(appearanceBgAnimationProvider.notifier).state = svc
       .getAppearanceBgAnimation();
+  // WebDAV / 备份配置
+  try {
+    final raw = svc.getWebDavConfigJson();
+    if (raw.isNotEmpty) {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) {
+        ref.read(webDavConfigProvider.notifier).state = WebDavConfig.fromJson(
+          decoded.map((k, v) => MapEntry('$k', v)),
+        );
+      }
+    }
+  } catch (e) {
+    debugPrint('[SettingsProviders] 读取 WebDAV 配置失败: $e');
+  }
   ref.read(desktopLyricSettingsProvider.notifier).state =
       DesktopLyricSettings.decode(svc.getDesktopLyricSettings());
   ref.read(autoCacheMusicProvider.notifier).state = true;

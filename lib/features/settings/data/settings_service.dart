@@ -148,6 +148,11 @@ class SettingsService {
   Future<void> setAutoSwitchSource(bool v) =>
       _prefs.setBool('auto_switch_source', v);
 
+  // -- 备份还原 / WebDAV --
+  String getWebDavConfigJson() => _prefs.getString('webdav_config') ?? '';
+  Future<void> setWebDavConfigJson(String v) =>
+      _prefs.setString('webdav_config', v);
+
   // -- notification enabled --
   bool getNotificationEnabled() =>
       _prefs.getBool('notification_enabled') ?? true;
