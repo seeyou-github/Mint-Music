@@ -1,13 +1,24 @@
 class PluginSourceInfo {
+  /// 插件声明的音源 id（宿主解析出的键，例如 'wy' / 'qs'）。
+  final String? id;
   final String name;
   final List<String> qualities;
 
-  const PluginSourceInfo({required this.name, required this.qualities});
+  const PluginSourceInfo({
+    this.id,
+    required this.name,
+    required this.qualities,
+  });
 
-  Map<String, dynamic> toJson() => {'name': name, 'qualities': qualities};
+  Map<String, dynamic> toJson() => {
+        if (id != null) 'id': id,
+        'name': name,
+        'qualities': qualities,
+      };
 
   factory PluginSourceInfo.fromJson(Map<String, dynamic> json) {
     return PluginSourceInfo(
+      id: json['id'] as String?,
       name: json['name'] as String,
       qualities: List<String>.from(json['qualities'] as List),
     );

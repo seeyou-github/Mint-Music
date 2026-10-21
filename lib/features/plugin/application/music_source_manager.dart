@@ -8,7 +8,9 @@ import '../domain/music_source_provider.dart';
 import '../domain/plugin_types.dart';
 import '../domain/source_id_mapping.dart';
 import '../domain/builtin_source_states.dart';
+import '../domain/plugin_source_states.dart';
 import '../data/builtin_source_preferences.dart';
+import '../data/plugin_source_preferences.dart';
 import '../data/plugin_service.dart';
 import '../data/plugin_host.dart';
 import '../data/netease_music_source.dart';
@@ -187,6 +189,70 @@ class MusicSourceManager {
     await _builtInSourcePreferences.save(next);
   }
 
+  /* ------------------------------------------------------------------ *
+   * 插件自带音源的启用/关闭状态
+   *
+   * 一个插件文件可能同时提供多个音源，用户可以在插件管理页逐个开关。
+   * ------------------------------------------------------------------ */
+
+  final PluginSourcePreferences _pluginSourcePreferences =
+      PluginSourcePreferences();
+  PluginSourceStates _pluginSourceStates = const PluginSourceStates();
+  bool _pluginSourceStatesLoaded = false;
+
+  PluginSourceStates get pluginSourceStates => _pluginSourceStates;
+
+  bool get pluginSourceStatesLoaded => _pluginSourceStatesLoaded;
+
+  /// 插件的某个音源是否启用（未记录过时默认启用）。
+  bool isPluginSourceEnabled(String? pluginId, String sourceId) {
+    if (pluginId == null || pluginId.isEmpty) return true;
+    return _pluginSourceStates.isEnabled(pluginId, sourceId);
+  }
+
+  Future<void> loadPluginSourceStates() async {
+    if (_pluginSourceStatesLoaded) return;
+    _pluginSourceStates = await _pluginSourcePreferences.load();
+    _pluginSourceStatesLoaded = true;
+  }
+
+  /// 开启/关闭插件自带的某个音源。
+  Future<void> setPluginSourceEnabled(
+    String pluginId,
+    String sourceId,
+    bool enabled,
+  ) async {
+    await loadPluginSourceStates();
+    final disabled = <String>{..._pluginSourceStates.disabled};
+    final key = PluginSourceStates.key(pluginId, sourceId);
+    if (enabled) {
+      disabled.remove(key);
+    } else {
+      disabled.add(key);
+    }
+    await _applyPluginSourceStates(
+      _pluginSourceStates.copyWith(disabled: disabled),
+    );
+  }
+
+  /// 清空某个插件的全部音源开关（恢复默认：全部启用）。
+  Future<void> resetPluginSources(String pluginId) async {
+    await loadPluginSourceStates();
+    final disabled = <String>{..._pluginSourceStates.disabled}
+      ..removeWhere((key) => key.startsWith('$pluginId:'));
+    await _applyPluginSourceStates(
+      _pluginSourceStates.copyWith(disabled: disabled),
+    );
+  }
+
+  Future<void> _applyPluginSourceStates(PluginSourceStates next) async {
+    _pluginSourceStates = next;
+    _pluginSourceStatesLoaded = true;
+    // 音源集合变了，之前缓存的搜索结果/歌单可能包含已关闭的音源，直接丢弃。
+    clearAllCaches();
+    await _pluginSourcePreferences.save(next);
+  }
+
   void dispose() {
     for (final entry in _builtInSources.entries) {
       final source = entry.value;
@@ -227,6 +293,8 @@ class MusicSourceManager {
         // 名称 → id 的推导与 MusicFree 适配器保持一致（见 SourceIdMapping）。
         // 注意要用插件原始的 platform 名推导，附加的插件名不能参与推导。
         final baseId = SourceIdMapping.deriveId(source.name);
+        // 用户在插件管理页关掉的音源不再出现在音源列表里。
+        if (!isPluginSourceEnabled(pluginId, baseId)) continue;
         final id = _uniqueSourceId(baseId, pluginId, seenIds);
         seenIds.add(id);
         sources.add(
@@ -304,8 +372,12 @@ class MusicSourceManager {
         }
         continue;
       }
-      // 新平台：插件必须自己实现搜索，否则搜不出东西。
-      if (!_pluginSourceSupportsSearch(source.id)) continue;
+      // 新平台：插件只要能解析播放地址（搜索可以回落到内置源）就应当出现，
+      // 否则这个平台既搜不到也放不了。
+      if (!_pluginSourceCanResolveUrls(source.id) &&
+          !_pluginSourceSupportsSearch(source.id)) {
+        continue;
+      }
       seenIds.add(source.id);
       sources.add(source);
     }
@@ -549,13 +621,33 @@ class MusicSourceManager {
     final hosts = <PluginHost>[];
     for (final host in _pluginService.enabledPlugins) {
       // 指定了插件（同名同平台的变体）时只使用该插件提供的音源。
-      if (pluginId != null &&
-          _pluginService.getPluginIdForHost(host) != pluginId) {
+      final hostPluginId = _pluginService.getPluginIdForHost(host);
+      if (pluginId != null && hostPluginId != pluginId) {
         continue;
       }
-      if (_getSourceIdForHost(host, baseId) != null) hosts.add(host);
+      final pluginSourceId = _getSourceIdForHost(host, baseId);
+      if (pluginSourceId == null) continue;
+      // 用户在插件管理页关掉的音源不再参与解析（改由内置源负责）。
+      final sourceKey = _pluginSourceKey(host, pluginSourceId);
+      if (!isPluginSourceEnabled(hostPluginId, sourceKey)) {
+        continue;
+      }
+      hosts.add(host);
     }
     return hosts;
+  }
+
+  /// 插件音源开关使用的键。
+  ///
+  /// 统一按音源的展示名推导（与 [getPluginSupportedSources] 一致），
+  /// 这样插件管理页的开关与运行时解析用的是同一个键。
+  String _pluginSourceKey(PluginHost host, String pluginSourceId) {
+    for (final source in host.sources) {
+      if (source.id == pluginSourceId) {
+        return SourceIdMapping.deriveId(source.name);
+      }
+    }
+    return SourceIdMapping.deriveId(pluginSourceId);
   }
 
   String? _getSourceIdForHost(PluginHost host, String sourceId) {
@@ -2343,9 +2435,12 @@ class MusicSourceManager {
         }
         continue;
       }
-      // 新平台：只有实现了榜单 / 推荐歌单的插件才有浏览内容，没有浏览
-      // 接口的音源出现在这里只会是空页面。
-      if (_findDiscoverHost(source.id) == null) continue;
+      // 新平台：实现了榜单 / 推荐歌单的插件自带浏览内容；只提供链接解析
+      // 的插件（如落雪脚本）也能出现——浏览内容仍由同名内置源提供。
+      if (_findDiscoverHost(source.id) == null &&
+          !_pluginSourceCanResolveUrls(source.id)) {
+        continue;
+      }
       seenIds.add(source.id);
       sources.add(source);
     }

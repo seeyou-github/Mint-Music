@@ -50,6 +50,8 @@ class SourceIdMapping {
     '汽水': 'qsvip',
     '汽水音乐': 'qsvip',
     '汽水vip': 'qsvip',
+    // 落雪脚本用 'qs' 表示汽水音乐。
+    'qs': 'qsvip',
   };
 
   /// 关键字（模糊）别名表，顺序敏感：先命中者优先。

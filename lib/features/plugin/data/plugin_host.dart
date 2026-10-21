@@ -227,6 +227,7 @@ JSON.stringify((function() {
             final sourceId = entry.key;
             _sources.add(
               PluginSourceInfo(
+                id: sourceId,
                 name: _getSourceDisplayName(sourceId),
                 qualities: ['128k', '320k', 'flac'],
               ),
@@ -350,7 +351,13 @@ JSON.stringify((function() {
                   .map((e) => e.toLowerCase())
                   .toList();
 
-          sources.add(PluginSourceInfo(name: name, qualities: qualitys));
+          sources.add(
+            PluginSourceInfo(
+              id: key.toString(),
+              name: name,
+              qualities: qualitys,
+            ),
+          );
           actions[key.toString()] = sourceActions;
         }
       });

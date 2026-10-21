@@ -8,7 +8,8 @@ export '../../plugin/application/plugin_providers.dart'
         musicSourceManagerProvider,
         pluginServiceProvider,
         pluginInitializedProvider,
-        builtInSourceStateProvider;
+        builtInSourceStateProvider,
+        pluginSourceStateProvider;
 
 final pluginRepositoryProvider = Provider<PluginRepository>((ref) {
   return PluginRepository();

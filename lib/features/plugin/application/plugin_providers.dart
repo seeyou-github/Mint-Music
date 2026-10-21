@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../domain/music_source_provider.dart';
 import '../domain/plugin_types.dart';
 import '../domain/builtin_source_states.dart';
+import '../domain/plugin_source_states.dart';
 import '../data/plugin_service.dart';
 import '../data/netease_music_source.dart';
 import '../data/kugou_music_source.dart';
@@ -36,6 +37,8 @@ final pluginInitializedProvider = FutureProvider<void>((ref) async {
   print('[PluginProviders] 开始初始化插件系统...');
   // 内置音源的启用 / 卸载状态必须先于任何音源枚举读取。
   await manager.loadBuiltInSourceStates();
+  // 插件自带音源的开关同样要先加载，否则插件刚启用时状态还是空的。
+  await manager.loadPluginSourceStates();
   await pluginService.initializePlugins();
   print('[PluginProviders] 插件系统初始化完成');
   print('[PluginProviders] 已加载插件数量: ${pluginService.enabledPlugins.length}');
@@ -94,6 +97,8 @@ final searchSupportedSourcesProvider = Provider<List<SourceInfo>>((ref) {
   ref.watch(pluginInitializedProvider);
   // 内置音源的启用 / 卸载状态变化后需要重算音源列表。
   ref.watch(builtInSourceStateProvider);
+  // 插件自带音源的开关变化后同样需要重算。
+  ref.watch(pluginSourceStateProvider);
 
   final manager = ref.watch(musicSourceManagerProvider);
   final sources = manager.getSearchSupportedSources();
@@ -142,5 +147,46 @@ class BuiltInSourceStateNotifier extends Notifier<BuiltInSourceStates> {
   void _sync() {
     // 依赖 builtInSourceStateProvider 的音源列表会自动重算。
     state = _manager.builtInSourceStates;
+  }
+}
+
+/// 插件自带音源的启用 / 关闭状态。
+///
+/// 一个插件文件可能同时提供多个音源（落雪脚本常有五六个），用户可以在
+/// 插件管理页逐个开关。真正的状态保存在 [MusicSourceManager]，这里只做
+/// 一个 Riverpod 侧的可观察快照。
+final pluginSourceStateProvider =
+    NotifierProvider<PluginSourceStateNotifier, PluginSourceStates>(
+  PluginSourceStateNotifier.new,
+);
+
+class PluginSourceStateNotifier extends Notifier<PluginSourceStates> {
+  @override
+  PluginSourceStates build() {
+    // 初始化完成后才有持久化状态可读；Future 完成时会重新执行 build()。
+    ref.watch(pluginInitializedProvider);
+    final manager = ref.watch(musicSourceManagerProvider);
+    return manager.pluginSourceStates;
+  }
+
+  MusicSourceManager get _manager => ref.read(musicSourceManagerProvider);
+
+  Future<void> setEnabled(
+    String pluginId,
+    String sourceId,
+    bool enabled,
+  ) async {
+    await _manager.setPluginSourceEnabled(pluginId, sourceId, enabled);
+    _sync();
+  }
+
+  Future<void> resetPlugin(String pluginId) async {
+    await _manager.resetPluginSources(pluginId);
+    _sync();
+  }
+
+  void _sync() {
+    // 依赖 pluginSourceStateProvider 的音源列表会自动重算。
+    state = _manager.pluginSourceStates;
   }
 }

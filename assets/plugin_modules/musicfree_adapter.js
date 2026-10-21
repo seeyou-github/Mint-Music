@@ -171,7 +171,7 @@ function __mfSourceIdFromName(name) {
     known = 'tx';
   } else if (lower.indexOf('\u54aa\u5495') >= 0 || lower.indexOf('migu') >= 0) {
     known = 'mg';
-  } else if (lower.indexOf('\u6c7d\u6c34') >= 0 || lower.indexOf('qsvip') >= 0) {
+  } else if (lower.indexOf('\u6c7d\u6c34') >= 0 || lower.indexOf('qsvip') >= 0 || lower === 'qs') {
     known = 'qsvip';
   }
   if (known) return known;

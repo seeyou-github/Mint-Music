@@ -12,7 +12,9 @@ import '../../../../core/theme/theme_provider.dart';
 import '../../plugin/application/music_source_manager.dart';
 import '../../plugin/data/plugin_service.dart';
 import '../../plugin/domain/builtin_source_states.dart';
+import '../../plugin/domain/plugin_source_states.dart';
 import '../../plugin/domain/plugin_types.dart';
+import '../../plugin/domain/source_id_mapping.dart';
 import '../application/plugin_providers.dart';
 import '../application/settings_providers.dart';
 import '../data/plugin_repository.dart';
@@ -629,6 +631,74 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
     );
   }
 
+  Widget _buildPluginSourceRow(
+    PluginInfo plugin,
+    PluginSource source,
+    ThemeColors colors,
+    PluginSourceStates states,
+  ) {
+    // 开关的键统一按音源展示名推导（与运行时解析保持一致）。
+    final sourceId = SourceIdMapping.deriveId(source.name);
+    final enabled = states.isEnabled(plugin.id, sourceId);
+    final qualities = source.qualities.isNotEmpty
+        ? ' · ${source.qualities.join("/")}'
+        : '';
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 2),
+      child: Row(
+        children: [
+          Icon(
+            enabled ? Icons.check_circle : Icons.remove_circle_outline,
+            size: 14,
+            color: enabled ? colors.primary : colors.textHint,
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              '${source.name}$qualities',
+              style: TextStyle(
+                fontSize: 12,
+                color: enabled ? colors.textSecondary : colors.textHint,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          Switch(
+            value: enabled,
+            activeThumbColor: colors.primary,
+            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            onChanged: (value) =>
+                _setPluginSourceEnabled(plugin, source, sourceId, value),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _setPluginSourceEnabled(
+    PluginInfo plugin,
+    PluginSource source,
+    String sourceId,
+    bool enabled,
+  ) async {
+    await ref
+        .read(pluginSourceStateProvider.notifier)
+        .setEnabled(plugin.id, sourceId, enabled);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          enabled
+              ? context.tr('已启用 ${source.name}')
+              : context.tr('已关闭 ${source.name}'),
+        ),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
   Widget _buildPluginSectionHeader(ThemeColors colors, int pluginCount) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -777,6 +847,7 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
     PluginInfo plugin,
     List<PluginUpdateResult> updateResults,
   ) {
+    final sourceStates = ref.watch(pluginSourceStateProvider);
     final typeLabel = PluginService.pluginTypeLabel(plugin.type);
     final typeColor = switch (plugin.type) {
       'lx' => const Color(0xFF4FC3F7),
@@ -933,28 +1004,23 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
             const SizedBox(height: AppSpacing.sm),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-              child: Wrap(
-                spacing: 6,
-                runSpacing: 4,
-                children: plugin.supportedSources.map((source) {
-                  return Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 3,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    context.tr('插件自带音源（可单独开关）'),
+                    style: TextStyle(fontSize: 11, color: colors.textHint),
+                  ),
+                  const SizedBox(height: 2),
+                  ...plugin.supportedSources.map(
+                    (source) => _buildPluginSourceRow(
+                      plugin,
+                      source,
+                      colors,
+                      sourceStates,
                     ),
-                    decoration: BoxDecoration(
-                      color: colors.surfaceVariant,
-                      borderRadius: BorderRadius.circular(AppRadius.full),
-                    ),
-                    child: Text(
-                      '${source.name} ${source.qualities.isNotEmpty ? "· ${source.qualities.join("/")}" : ""}',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: colors.textSecondary,
-                      ),
-                    ),
-                  );
-                }).toList(),
+                  ),
+                ],
               ),
             ),
           ],

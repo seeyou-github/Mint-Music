@@ -433,7 +433,13 @@ class PluginService {
       }
 
       final sources = host.sources
-          .map((s) => PluginSource(name: s.name, qualities: s.qualities))
+          .map(
+            (s) => PluginSource(
+              id: s.id,
+              name: s.name,
+              qualities: s.qualities,
+            ),
+          )
           .toList();
 
       final plugin = PluginInfo(
