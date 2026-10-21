@@ -10,6 +10,46 @@ import '../../../../core/storage/app_database.dart';
 import '../../../../shared/services/cache_paths.dart';
 import '../models/song.dart';
 
+/// 一首歌的歌词缓存内容。
+///
+/// 注意：Dart 不支持嵌套类（`class` 声明在另一个 `class` 里是语法错误），
+/// 所以这个类必须放在顶层。
+class LyricCacheEntry {
+  final String? lrc;
+  final String? crlyric;
+  final String? tlyric;
+  final String? rlyric;
+
+  /// TTML 词库原文（缓存原文，命中后本地重新解析成逐字歌词）。
+  final String? ttml;
+
+  const LyricCacheEntry({
+    this.lrc,
+    this.crlyric,
+    this.tlyric,
+    this.rlyric,
+    this.ttml,
+  });
+
+  /// 缓存里是否什么都没有（没有就不写）。
+  bool get isEmpty =>
+      (lrc?.isEmpty ?? true) &&
+      (crlyric?.isEmpty ?? true) &&
+      (tlyric?.isEmpty ?? true) &&
+      (rlyric?.isEmpty ?? true) &&
+      (ttml?.isEmpty ?? true);
+
+  factory LyricCacheEntry.fromRow(Map<String, Object?> row) {
+    return LyricCacheEntry(
+      lrc: row['lrc'] as String?,
+      crlyric: row['crlyric'] as String?,
+      tlyric: row['tlyric'] as String?,
+      rlyric: row['rlyric'] as String?,
+      ttml: row['ttml'] as String?,
+    );
+  }
+}
+
 /// 歌词磁盘缓存。
 ///
 /// 歌词来自网络（TTML 词库 + 在线歌词），每次播放都重新请求会明显拖慢切歌，
@@ -31,45 +71,6 @@ class LyricCache {
   /// 迁移标记用的模块名。
   static const String _migrationModule = 'lyric_cache';
 
-  /// 一首歌的歌词缓存内容。
-  ///
-  /// 注意：嵌套类本身隐式就是 static，不能再写 `static class`（Dart 不允许）。
-  class Entry {
-    final String? lrc;
-    final String? crlyric;
-    final String? tlyric;
-    final String? rlyric;
-
-    /// TTML 词库原文（缓存原文，命中后本地重新解析成逐字歌词）。
-    final String? ttml;
-
-    const Entry({
-      this.lrc,
-      this.crlyric,
-      this.tlyric,
-      this.rlyric,
-      this.ttml,
-    });
-
-    /// 缓存里是否什么都没有（没有就不写）。
-    bool get isEmpty =>
-        (lrc?.isEmpty ?? true) &&
-        (crlyric?.isEmpty ?? true) &&
-        (tlyric?.isEmpty ?? true) &&
-        (rlyric?.isEmpty ?? true) &&
-        (ttml?.isEmpty ?? true);
-
-    factory Entry.fromRow(Map<String, Object?> row) {
-      return Entry(
-        lrc: row['lrc'] as String?,
-        crlyric: row['crlyric'] as String?,
-        tlyric: row['tlyric'] as String?,
-        rlyric: row['rlyric'] as String?,
-        ttml: row['ttml'] as String?,
-      );
-    }
-  }
-
   /// 缓存键：音源 + 歌曲 id 的 md5。
   ///
   /// 音源 id 里可能带 `@插件id`（插件音源），这样不同插件的歌词不会串。
@@ -80,7 +81,7 @@ class LyricCache {
   }
 
   /// 读取缓存（没有缓存或读取失败返回 null）。
-  static Future<Entry?> read(Song song) async {
+  static Future<LyricCacheEntry?> read(Song song) async {
     try {
       await _ensureMigrated();
       final db = await AppDatabase.cacheDatabase();
@@ -91,7 +92,7 @@ class LyricCache {
         limit: 1,
       );
       if (rows.isEmpty) return null;
-      final entry = Entry.fromRow(rows.first);
+      final entry = LyricCacheEntry.fromRow(rows.first);
       if (entry.isEmpty) return null;
       return entry;
     } catch (e) {
@@ -109,7 +110,7 @@ class LyricCache {
     String? rlyric,
     String? ttml,
   }) async {
-    final entry = Entry(
+    final entry = LyricCacheEntry(
       lrc: lrc,
       crlyric: crlyric,
       tlyric: tlyric,
