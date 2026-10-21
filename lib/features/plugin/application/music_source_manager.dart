@@ -2122,6 +2122,22 @@ class MusicSourceManager {
   Future<List<PlaylistTagGroup>> getPlaylistTags({
     String sourceId = 'wy',
   }) async {
+    // 插件接管了同一个平台时（音源切换列表里插件的条目会替换内置源条目），
+    // 分类也一并交给插件：插件自带的分类（例如网易云插件的「推荐」歌单）
+    // 只有在插件接管时才会出现。插件没有浏览接口时仍用内置源的分类。
+    final host = _findDiscoverHost(sourceId, needSheets: true);
+    if (host != null) {
+      try {
+        final groups = _pluginTagGroupsFromJson(
+          sourceId,
+          _decodePluginJson(await host.getRecommendSheetTags()),
+        );
+        if (groups.isNotEmpty) return groups;
+      } catch (e) {
+        print('[MusicSourceManager] 插件歌单分类获取失败 source=$sourceId: $e');
+      }
+    }
+
     final builtIn = _builtInSourceFor(sourceId);
     if (builtIn != null && isBuiltInSourceAvailable(sourceId)) {
       try {
@@ -2132,21 +2148,16 @@ class MusicSourceManager {
       }
     }
 
-    final host = _findDiscoverHost(sourceId, needSheets: true);
-    if (host != null) {
-      try {
-        return _pluginTagGroupsFromJson(
-          sourceId,
-          _decodePluginJson(await host.getRecommendSheetTags()),
-        );
-      } catch (e) {
-        print('[MusicSourceManager] 插件歌单分类获取失败 source=$sourceId: $e');
-      }
-    }
     return [];
   }
 
   Future<List<PlaylistTag>> getHotPlaylistTags({String sourceId = 'wy'}) async {
+    // 插件音源没有单独的「热门标签」接口，取推荐分类里的前几个当作标签栏。
+    final groups = await getPlaylistTags(sourceId: sourceId);
+    if (groups.isNotEmpty) {
+      return groups.expand((group) => group.tags).take(8).toList();
+    }
+
     final builtIn = _builtInSourceFor(sourceId);
     if (builtIn != null && isBuiltInSourceAvailable(sourceId)) {
       try {
@@ -2159,9 +2170,7 @@ class MusicSourceManager {
       }
     }
 
-    // 插件音源没有单独的「热门标签」接口，取推荐分类里的前几个当作标签栏。
-    final groups = await getPlaylistTags(sourceId: sourceId);
-    return groups.expand((group) => group.tags).take(8).toList();
+    return [];
   }
 
   /// 分类歌单分页。
