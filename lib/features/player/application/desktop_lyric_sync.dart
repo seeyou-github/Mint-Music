@@ -259,17 +259,17 @@ class DesktopLyricSyncController extends StateNotifier<DesktopLyricStatus>
     final lyric = _ref.read(lyricControllerProvider);
 
     if (lyric.isLoading) {
-      if (_lyricLoadingSongId != song.id) {
-        _lyricLoadingSongId = song.id;
-        _lyricLoadingSince = DateTime.now();
-        return;
+      // 正在加载：如果加载的就是当前这首歌，等它完成即可；如果还在加载的是
+      // 上一首歌（旧请求还没结束），必须为新歌重新发起一次加载，否则新歌的
+      // 歌词永远等不到。
+      if (_lyricLoadingSongId == song.id) {
+        final since = _lyricLoadingSince;
+        if (since == null ||
+            DateTime.now().difference(since) < _lyricStuckTimeout) {
+          return;
+        }
+        // 卡住了:强制重跑一次。
       }
-      final since = _lyricLoadingSince;
-      if (since == null ||
-          DateTime.now().difference(since) < _lyricStuckTimeout) {
-        return;
-      }
-      // 卡住了:强制重跑一次。
     } else if (lyric.currentSongId == song.id) {
       // 这首歌已经加载过(有歌词 / 无歌词 / 解析失败都算完成)。
       _lyricLoadingSongId = null;

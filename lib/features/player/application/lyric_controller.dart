@@ -137,14 +137,13 @@ class LyricController extends StateNotifier<LyricState> {
 
     final requestId = ++_requestId;
     state = LyricState(
-      // Preserve the last rendered lyrics while the next song is loading.
-      // This keeps AMLL's platform view mounted and avoids a full-screen
-      // black/transparent flash between previous/next tracks.
-      lines: state.lines,
+      // 换歌时先清空上一首歌的歌词：新歌歌词还在加载时继续显示上一首的词，
+      // 会让人以为歌词没换。
+      lines: const [],
       isLoading: true,
       currentSongId: song.id,
       currentSongSource: song.source,
-      hasYrc: state.hasYrc,
+      hasYrc: false,
     );
 
     try {
@@ -153,50 +152,61 @@ class LyricController extends StateNotifier<LyricState> {
       String? tlyric;
       String? rlyric;
 
-      // Step 1: Try TTML DB for wy/tx sources
-      List<LyricLine>? ttmlLines;
+      // Step 1 / 2 并行：TTML 词库与在线歌词各是一次网络请求，串行等待会让
+      // 歌词出现得很慢（切歌时尤其明显），这里让两个请求同时发出。
+      final sourceSupportsWordLyric =
+          song.source == 'tx' ||
+          song.source == 'wy' ||
+          song.source == 'kw' ||
+          song.source == 'kg';
+      final needOnlineLyric =
+          (lrc == null || lrc.isEmpty) || sourceSupportsWordLyric;
+
+      Future<List<LyricLine>?>? ttmlFuture;
       if (song.source == 'wy' || song.source == 'tx') {
         final cleanId = song.id.replaceAll('wy_', '').replaceAll('tx_', '');
+        ttmlFuture = _ttmlDbService
+            .fetchTtmlLyrics(song.source!, cleanId)
+            .timeout(_lyricFetchTimeout);
+      }
+
+      Future<LyricResult?>? onlineFuture;
+      if (needOnlineLyric && song.source != null && song.source != 'local') {
+        onlineFuture = _musicSourceManager
+            .getLyricResult(song)
+            .timeout(_lyricFetchTimeout);
+      }
+
+      // Step 1: TTML 词库（wy / tx）
+      List<LyricLine>? ttmlLines;
+      if (ttmlFuture != null) {
         try {
-          ttmlLines = await _ttmlDbService
-              .fetchTtmlLyrics(song.source!, cleanId)
-              .timeout(_lyricFetchTimeout);
+          ttmlLines = await ttmlFuture;
         } catch (_) {
           ttmlLines = null;
         }
         if (requestId != _requestId) return;
       }
 
-      // Step 2: Fetch online lyrics for tlyric/rlyric when TTML used, or as fallback.
-      // tx/wy/kw/kg 即使已有普通 LRC，也要继续请求一次，避免错过 QRC/YRC/逐字歌词。
-      if (song.source != null && song.source != 'local') {
-        final sourceSupportsWordLyric =
-            song.source == 'tx' || song.source == 'wy' || song.source == 'kw' || song.source == 'kg';
-        final needOnlineLyric =
-            (lrc == null || lrc.isEmpty) ||
-            (ttmlLines != null) ||
-            sourceSupportsWordLyric;
-        if (needOnlineLyric) {
-          LyricResult? result;
-          try {
-            result = await _musicSourceManager
-                .getLyricResult(song)
-                .timeout(_lyricFetchTimeout);
-          } catch (_) {
-            result = null;
+      // Step 2: 在线歌词（普通 LRC / 逐字歌词 / 翻译 / 音译）
+      if (onlineFuture != null) {
+        LyricResult? result;
+        try {
+          result = await onlineFuture;
+        } catch (_) {
+          result = null;
+        }
+        if (requestId != _requestId) return;
+        if (result != null) {
+          if (result.crlyric?.trim().isNotEmpty ?? false) {
+            crlyric = result.crlyric;
           }
-          if (requestId != _requestId) return;
-          if (result != null) {
-            if (result.crlyric?.trim().isNotEmpty ?? false) {
-              crlyric = result.crlyric;
-            }
-            if ((lrc == null || lrc.isEmpty) &&
-                (result.lrc?.trim().isNotEmpty ?? false)) {
-              lrc = result.lrc;
-            }
-            tlyric = result.tlyric;
-            rlyric = result.rlyric;
+          if ((lrc == null || lrc.isEmpty) &&
+              (result.lrc?.trim().isNotEmpty ?? false)) {
+            lrc = result.lrc;
           }
+          tlyric = result.tlyric;
+          rlyric = result.rlyric;
         }
       } else if (song.isLocal && (lrc == null || lrc.isEmpty)) {
         try {

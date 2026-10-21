@@ -364,13 +364,6 @@ class _AmllLyricViewState extends State<AmllLyricView>
     }
   }
 
-  String _formatTime(int ms) {
-    final totalSeconds = ms ~/ 1000;
-    final minutes = totalSeconds ~/ 60;
-    final seconds = totalSeconds % 60;
-    return '$minutes:${seconds.toString().padLeft(2, '0')}';
-  }
-
   @override
   Widget build(BuildContext context) {
     if (widget.lines.isEmpty) {
@@ -387,10 +380,6 @@ class _AmllLyricViewState extends State<AmllLyricView>
 
     final activeIndices = _activeIndicesFor(_clock.timeMs).toSet();
     final activeIndex = activeIndices.isEmpty ? -1 : activeIndices.last;
-    final centerLine =
-        _centerLineIndex >= 0 && _centerLineIndex < widget.lines.length
-        ? widget.lines[_centerLineIndex]
-        : null;
 
     return Stack(
       children: [
@@ -446,85 +435,7 @@ class _AmllLyricViewState extends State<AmllLyricView>
             },
           ),
         ),
-        if (_userScrolling && centerLine != null) ...[
-          Positioned.fill(
-            child: IgnorePointer(
-              child: Center(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  child: Row(
-                    children: [
-                      Text(
-                        _formatTime(centerLine.startTimeMs),
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.white.withValues(alpha: 0.7),
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      Expanded(
-                        child: Container(
-                          height: 1,
-                          margin: const EdgeInsets.symmetric(horizontal: 12),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.3),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.white.withValues(alpha: 0.35),
-                                blurRadius: 8,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-          Positioned(
-            right: 12,
-            top: 0,
-            bottom: 0,
-            child: Center(
-              child: GestureDetector(
-                onTap: () {
-                  final seekTimeMs = centerLine.startTimeMs;
-                  widget.onSeek?.call(seekTimeMs);
-                  _userScrollTimer?.cancel();
-                  _clock.setTime(seekTimeMs);
-                  _anchorPositionMs = seekTimeMs;
-                  _anchorWallMs = DateTime.now().millisecondsSinceEpoch;
-                  _activeSignature = _makeActiveSignature(
-                    _activeIndicesFor(_clock.timeMs),
-                  );
-                  setState(() {
-                    _userScrolling = false;
-                    _centerLineIndex = -1;
-                  });
-                  _scrollToActiveLine(force: true);
-                },
-                child: Container(
-                  width: 34,
-                  height: 34,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.12),
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: Colors.white.withValues(alpha: 0.18),
-                    ),
-                  ),
-                  child: const Icon(
-                    Icons.play_arrow_rounded,
-                    size: 18,
-                    color: Colors.white,
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
+        // 正在播放的歌词位置不再显示「时间 + 横线」与播放图标标志。
       ],
     );
   }
