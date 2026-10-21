@@ -32,7 +32,9 @@ class LyricCache {
   static const String _migrationModule = 'lyric_cache';
 
   /// 一首歌的歌词缓存内容。
-  static class Entry {
+  ///
+  /// 注意：嵌套类本身隐式就是 static，不能再写 `static class`（Dart 不允许）。
+  class Entry {
     final String? lrc;
     final String? crlyric;
     final String? tlyric;

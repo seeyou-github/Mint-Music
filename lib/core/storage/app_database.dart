@@ -100,9 +100,9 @@ class AppDatabase {
   static Future<AppDatabase> _open() async {
     _initFactory();
 
-    Database? important;
     try {
-      important = await _openImportant();
+      final important = await _openImportant();
+      _openedImportant = important;
       final cache = await _openCache();
       _persistent = true;
       return AppDatabase._(important, cache);
@@ -112,22 +112,27 @@ class AppDatabase {
       debugPrint('[AppDatabase] 打开数据库失败，降级为内存库: $e');
       // 重要库可能已经打开了（只有临时库失败的情况），先关掉，
       // 否则会一直占着文件句柄。
-      if (important != null) {
+      final opened = _openedImportant;
+      _openedImportant = null;
+      if (opened != null) {
         try {
-          await important.close();
+          await opened.close();
         } catch (_) {}
       }
       try {
-        final fallbackImportant = await _openImportant(inMemory: true);
-        final fallbackCache = await _openCache(inMemory: true);
+        final important = await _openImportant(inMemory: true);
+        final cache = await _openCache(inMemory: true);
         _persistent = false;
-        return AppDatabase._(fallbackImportant, fallbackCache);
+        return AppDatabase._(important, cache);
       } catch (e2) {
         debugPrint('[AppDatabase] 内存数据库打开失败: $e2');
         rethrow;
       }
     }
   }
+
+  /// 已经打开的重要库（降级时需要关掉，避免泄漏文件句柄）。
+  static Database? _openedImportant;
 
   /// 桌面端用 FFI 实现（SQLite 走 sqlite3.dll），移动端用官方 sqflite。
   static bool _factoryReady = false;

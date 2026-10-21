@@ -13,6 +13,7 @@ import '../domain/services/lyric_cache.dart';
 import '../domain/services/lyric_parser.dart';
 import '../domain/services/embedded_lyrics_extractor.dart';
 import '../domain/services/ttml_db_service.dart';
+import '../domain/services/ttml_parser.dart';
 import '../../plugin/application/music_source_manager.dart';
 import '../../plugin/application/plugin_providers.dart';
 import 'playback_controller.dart';
