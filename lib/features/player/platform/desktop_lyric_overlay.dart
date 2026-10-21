@@ -113,20 +113,14 @@ class DesktopLyricOverlay {
     try {
       await _channel.invokeMethod<void>('updateConfig', {
         'isLock': settings.isLock,
-        'isSingleLine': settings.isSingleLine,
-        'showToggleAnima': settings.showToggleAnima,
-        // 单行模式下原生侧只按 1 行布局（Windows 原生窗口也据此渲染）。
-        'maxLineNum': settings.visibleLineNum,
+        'maxLineNum': settings.maxLineNum,
         'fontSize': settings.fontSize,
         'opacityPercent': settings.opacityPercent,
-        'widthPercent': settings.widthPercent,
         'playedColor': settings.playedColor,
         'unplayColor': settings.unplayColor,
         'shadowColor': settings.shadowColor,
         'positionX': settings.positionX,
         'positionY': settings.positionY,
-        'textAlignX': settings.textAlignX.name,
-        'textAlignY': settings.textAlignY.name,
         // 应用字体（设置 - 外观设置 - 应用字体）
         if (fontFamily != null) 'fontFamily': fontFamily,
         if (fontPath != null) 'fontPath': fontPath,

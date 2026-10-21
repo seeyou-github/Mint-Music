@@ -12,8 +12,14 @@ final themeModeProvider = StateProvider<ThemeMode>((ref) => ThemeMode.system);
 
 final themePrimaryColorProvider = StateProvider<String>((ref) => '#1DB954');
 
+/// 「字体颜色」的默认值。
+///
+/// 为空表示使用主题默认色；这里给了具体色值，所以默认是暖调的米黄色。
+const String defaultThemeFontColor = '#D9C8B1';
+
 /// 「字体颜色」：主文字颜色（十六进制），为空表示使用主题默认色。
-final themeFontColorProvider = StateProvider<String>((ref) => '');
+final themeFontColorProvider =
+    StateProvider<String>((ref) => defaultThemeFontColor);
 
 /// 「第二字体颜色」：次级文字颜色（十六进制），为空表示使用主题默认色。
 final themeSecondaryFontColorProvider = StateProvider<String>((ref) => '');

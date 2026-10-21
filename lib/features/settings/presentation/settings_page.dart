@@ -89,7 +89,6 @@ Future<void> _doPersist(
 
 enum SettingsCategory {
   appearance,
-  desktopLyric,
   playback,
   storage,
 }
@@ -113,7 +112,6 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
 
   static const _categoryConfig = {
     SettingsCategory.appearance: (icon: Icons.palette, label: '外观设置'),
-    SettingsCategory.desktopLyric: (icon: Icons.lyrics, label: '桌面歌词'),
     SettingsCategory.playback: (icon: Icons.play_circle, label: '播放设置'),
     SettingsCategory.storage: (icon: Icons.storage, label: '缓存设置'),
   };
@@ -307,8 +305,6 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     switch (cat) {
       case SettingsCategory.appearance:
         return const _AppearanceContent();
-      case SettingsCategory.desktopLyric:
-        return const _DesktopLyricContent();
       case SettingsCategory.playback:
         return const _PlaybackContent();
       case SettingsCategory.storage:
@@ -653,6 +649,8 @@ class _AppearanceContent extends ConsumerWidget {
       children: [
         _buildThemeGroup(context, ref, colors),
         _buildBackgroundModeGroup(context, ref, colors),
+        // 桌面歌词的设置放在外观设置的最底部。
+        _buildDesktopLyricGroup(context, ref, colors),
       ],
     );
   }
@@ -775,6 +773,7 @@ class _AppearanceContent extends ConsumerWidget {
             persistCustom: (s, list) => s.setCustomFontColors(list),
             showReset: true,
             emptyInitialColor: colors.textPrimary,
+            resetValue: defaultThemeFontColor,
           ),
         ),
         _SettingDivider(colors: colors),
@@ -847,6 +846,8 @@ class _AppearanceContent extends ConsumerWidget {
         persistCustom,
     bool showReset = false,
     Color? emptyInitialColor,
+    /// 「恢复默认」时写入的值（为空表示恢复主题默认色）。
+    String resetValue = '',
   }) {
     final container = ProviderScope.containerOf(context);
     showModalBottomSheet<void>(
@@ -919,7 +920,7 @@ class _AppearanceContent extends ConsumerWidget {
                       children: [
                         if (showReset)
                           GestureDetector(
-                            onTap: () => apply(''),
+                            onTap: () => apply(resetValue),
                             child: Container(
                               width: 56,
                               height: 56,
@@ -1498,46 +1499,15 @@ class _AppearanceContent extends ConsumerWidget {
       ],
     );
   }
-}
-
-// ==================== Desktop Lyric ====================
-
-class _DesktopLyricContent extends ConsumerWidget {
-  const _DesktopLyricContent();
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final colors = ref.watch(themeColorsProvider);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _buildDesktopLyricGroup(context, ref, colors),
-      ],
-    );
-  }
-
   Widget _buildDesktopLyricGroup(
     BuildContext context,
     WidgetRef ref,
     ThemeColors colors,
   ) {
     final s = ref.watch(desktopLyricSettingsProvider);
-    final status = ref.watch(desktopLyricSyncProvider);
-    final needPermission = status.supported && !status.permissionGranted;
 
     void update(DesktopLyricSettings Function(DesktopLyricSettings) fn) =>
         updateDesktopLyricSettings(ref.read, fn);
-
-    final alignXLabel = switch (s.textAlignX) {
-      DesktopLyricTextAlignX.left => '左对齐',
-      DesktopLyricTextAlignX.center => '居中',
-      DesktopLyricTextAlignX.right => '右对齐',
-    };
-    final alignYLabel = switch (s.textAlignY) {
-      DesktopLyricTextAlignY.top => '顶部',
-      DesktopLyricTextAlignY.center => '居中',
-      DesktopLyricTextAlignY.bottom => '底部',
-    };
 
     return _SettingGroup(
       title: '桌面歌词',
@@ -1546,31 +1516,6 @@ class _DesktopLyricContent extends ConsumerWidget {
           : '悬浮在页面之上的歌词窗，可拖动位置，锁定后点击穿透',
       colors: colors,
       children: [
-        _SettingRow(
-          icon: Icons.lyrics,
-          title: '启用桌面歌词',
-          subtitle: needPermission
-              ? '需要「在其他应用上层显示」权限，开启时会跳转到授权页'
-              : (Platform.isWindows
-                  ? '开启后弹出独立的桌面歌词窗口（始终置顶），可拖动，锁定后点击穿透'
-                  : '开启后歌词窗悬浮在其它应用之上，可拖动，锁定后点击穿透'),
-          trailing: Switch(
-            // 未拿到悬浮窗权限时保持关闭:授权成功后才自动置为开启。
-            value: s.enable,
-            onChanged: (v) {
-              final sync = ref.read(desktopLyricSyncProvider.notifier);
-              if (v) {
-                unawaited(sync.enableDesktopLyric());
-              } else {
-                unawaited(sync.disableDesktopLyric());
-              }
-            },
-            activeTrackColor: colors.primary.withValues(alpha: 0.3),
-            activeThumbColor: colors.primary,
-          ),
-          colors: colors,
-        ),
-        _SettingDivider(colors: colors),
         _SettingRow(
           icon: s.isLock ? Icons.lock : Icons.lock_open,
           title: '锁定歌词窗',
@@ -1584,50 +1529,10 @@ class _DesktopLyricContent extends ConsumerWidget {
           colors: colors,
         ),
         _SettingDivider(colors: colors),
-        _SettingRow(
-          icon: Icons.short_text,
-          title: '单行显示',
-          subtitle: '只显示当前行，文字超长时横向滚动',
-          trailing: Switch(
-            value: s.isSingleLine,
-            onChanged: (v) => update((cur) => cur.copyWith(isSingleLine: v)),
-            activeTrackColor: colors.primary.withValues(alpha: 0.3),
-            activeThumbColor: colors.primary,
-          ),
-          colors: colors,
-        ),
-        _SettingDivider(colors: colors),
-        _SettingRow(
-          icon: Icons.animation,
-          title: '歌词切换动画',
-          subtitle: '切换歌词时的淡入淡出效果',
-          trailing: Switch(
-            value: s.showToggleAnima,
-            onChanged: (v) => update((cur) => cur.copyWith(showToggleAnima: v)),
-            activeTrackColor: colors.primary.withValues(alpha: 0.3),
-            activeThumbColor: colors.primary,
-          ),
-          colors: colors,
-        ),
-        _SettingDivider(colors: colors),
-        _SettingSlider(
-          icon: Icons.width_normal,
-          title: '窗口宽度',
-          subtitle: '歌词窗宽度占屏幕宽度的比例',
-          value: s.widthPercent.toDouble(),
-          min: 10,
-          max: 100,
-          divisions: 18,
-          valueLabel: '${s.widthPercent}%',
-          colors: colors,
-          onChanged: (v) =>
-              update((cur) => cur.copyWith(widthPercent: v.round())),
-        ),
-        _SettingDivider(colors: colors),
         _SettingSlider(
           icon: Icons.format_list_numbered,
           title: '显示行数',
-          subtitle: '最多同时显示的行数（单行模式下无效）',
+          subtitle: '最多同时显示的行数',
           value: s.maxLineNum.toDouble(),
           min: 1,
           max: 8,
@@ -1642,8 +1547,8 @@ class _DesktopLyricContent extends ConsumerWidget {
           title: '字体大小',
           value: s.fontSize,
           min: 12,
-          max: 40,
-          divisions: 28,
+          max: 80,
+          divisions: 34,
           valueLabel: '${s.fontSize.round()}',
           colors: colors,
           onChanged: (v) => update((cur) => cur.copyWith(fontSize: v)),
@@ -1660,72 +1565,6 @@ class _DesktopLyricContent extends ConsumerWidget {
           colors: colors,
           onChanged: (v) =>
               update((cur) => cur.copyWith(opacityPercent: v.round())),
-        ),
-        _SettingDivider(colors: colors),
-        _SettingRow(
-          icon: Icons.format_align_left,
-          title: '水平对齐',
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                context.tr(alignXLabel),
-                style: TextStyle(fontSize: 13, color: colors.textHint),
-              ),
-              const SizedBox(width: 4),
-              Icon(Icons.chevron_right, size: 18, color: colors.textHint),
-            ],
-          ),
-          colors: colors,
-          onTap: () => _showBottomPicker(
-            context,
-            colors,
-            '水平对齐',
-            ['左对齐', '居中', '右对齐'],
-            alignXLabel,
-            (v) => update(
-              (cur) => cur.copyWith(
-                textAlignX: v == '居中'
-                    ? DesktopLyricTextAlignX.center
-                    : (v == '右对齐'
-                          ? DesktopLyricTextAlignX.right
-                          : DesktopLyricTextAlignX.left),
-              ),
-            ),
-          ),
-        ),
-        _SettingDivider(colors: colors),
-        _SettingRow(
-          icon: Icons.vertical_align_top,
-          title: '垂直对齐',
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                context.tr(alignYLabel),
-                style: TextStyle(fontSize: 13, color: colors.textHint),
-              ),
-              const SizedBox(width: 4),
-              Icon(Icons.chevron_right, size: 18, color: colors.textHint),
-            ],
-          ),
-          colors: colors,
-          onTap: () => _showBottomPicker(
-            context,
-            colors,
-            '垂直对齐',
-            ['顶部', '居中', '底部'],
-            alignYLabel,
-            (v) => update(
-              (cur) => cur.copyWith(
-                textAlignY: v == '居中'
-                    ? DesktopLyricTextAlignY.center
-                    : (v == '底部'
-                          ? DesktopLyricTextAlignY.bottom
-                          : DesktopLyricTextAlignY.top),
-              ),
-            ),
-          ),
         ),
         _SettingDivider(colors: colors),
         _SettingRow(
@@ -1775,24 +1614,13 @@ class _DesktopLyricContent extends ConsumerWidget {
             (v) => update((cur) => cur.copyWith(shadowColor: v)),
           ),
         ),
-        _SettingDivider(colors: colors),
-        _SettingRow(
-          icon: Icons.my_location,
-          title: '重置歌词窗位置',
-          subtitle: '将歌词窗恢复到默认的左上角位置',
-          trailing: Icon(Icons.refresh, size: 18, color: colors.textHint),
-          colors: colors,
-          onTap: () => update(
-            (cur) => cur.copyWith(
-              positionX: DesktopLyricSettings.defaults.positionX,
-              positionY: DesktopLyricSettings.defaults.positionY,
-            ),
-          ),
-        ),
       ],
     );
   }
 }
+
+// ==================== Desktop Lyric ====================
+
 
 /// 带标题、数值与滑块的设置行（滑块独占一行，避免与右侧文字挤在一起）。
 class _SettingSlider extends StatelessWidget {

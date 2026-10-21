@@ -75,11 +75,10 @@ class _DesktopLyricWindowState extends ConsumerState<DesktopLyricWindow> {
     final size = MediaQuery.sizeOf(context);
     final lineHeight = settings.fontSize * 1.5;
     final barHeight = settings.isLock ? 0.0 : DesktopLyricHandle.height;
-    final width = (size.width * settings.widthPercent / 100)
-        .clamp(140.0, size.width)
-        .toDouble();
+    // 宽度固定为可用宽度（100%）。
+    final width = size.width;
     final contentHeight =
-        lineHeight * settings.visibleLineNum +
+        lineHeight * settings.maxLineNum +
         barHeight +
         DesktopLyricPanel.padding * 2;
     final height = contentHeight
@@ -287,8 +286,6 @@ class DesktopLyricPanel extends StatelessWidget {
                 .toList(),
           );
 
-    if (!settings.showToggleAnima) return body;
-
     return AnimatedSwitcher(
       duration: const Duration(milliseconds: 280),
       switchInCurve: Curves.easeOutCubic,
@@ -314,16 +311,7 @@ class DesktopLyricPanel extends StatelessWidget {
     var index = activeIndex < 0 ? 0 : activeIndex;
     if (index >= lines.length) index = lines.length - 1;
 
-    final currentText = lines[index].plainText.trim();
-
-    // 单行模式:只显示当前行。
-    if (settings.isSingleLine) {
-      return [
-        _LyricRow(currentText.isEmpty ? context.tr('暂无歌词') : currentText),
-      ];
-    }
-
-    final max = settings.visibleLineNum;
+    final max = settings.maxLineNum;
     final rows = <_LyricRow>[];
 
     for (var i = index; i < lines.length && rows.length < max; i++) {
@@ -352,29 +340,11 @@ class DesktopLyricPanel extends StatelessWidget {
   }
 }
 
-Alignment _alignFor(DesktopLyricSettings settings) {
-  final x = switch (settings.textAlignX) {
-    DesktopLyricTextAlignX.left => -1.0,
-    DesktopLyricTextAlignX.center => 0.0,
-    DesktopLyricTextAlignX.right => 1.0,
-  };
-  final y = switch (settings.textAlignY) {
-    DesktopLyricTextAlignY.top => -1.0,
-    DesktopLyricTextAlignY.center => 0.0,
-    DesktopLyricTextAlignY.bottom => 1.0,
-  };
-  return Alignment(x, y);
-}
+/// 桌面歌词固定居中对齐。
+Alignment _alignFor(DesktopLyricSettings settings) => Alignment.center;
 
 Widget _buildRow(DesktopLyricSettings settings, _LyricRow row) {
   final style = _styleFor(settings, active: row.active, isSub: row.isSub);
-  if (settings.isSingleLine) {
-    return _MarqueeText(
-      text: row.text,
-      style: style,
-      textAlign: settings.textAlign,
-    );
-  }
   return Text(
     row.text,
     maxLines: 1,
@@ -411,97 +381,4 @@ class _LyricRow {
   final bool isSub;
 
   const _LyricRow(this.text, {this.active = false, this.isSub = false});
-}
-
-/// 单行模式下文字超出宽度时横向来回滚动(对应 lx-music 的 LyricTextView)。
-class _MarqueeText extends StatefulWidget {
-  const _MarqueeText({
-    required this.text,
-    required this.style,
-    required this.textAlign,
-  });
-
-  final String text;
-  final TextStyle style;
-  final TextAlign textAlign;
-
-  @override
-  State<_MarqueeText> createState() => _MarqueeTextState();
-}
-
-class _MarqueeTextState extends State<_MarqueeText>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
-  double _overflow = 0;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 7),
-    );
-  }
-
-  @override
-  void didUpdateWidget(covariant _MarqueeText oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.text != widget.text && _controller.isAnimating) {
-      _controller.forward(from: 0);
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  double _measure(double maxWidth) {
-    final painter = TextPainter(
-      text: TextSpan(text: widget.text, style: widget.style),
-      maxLines: 1,
-      textDirection: TextDirection.ltr,
-    )..layout(maxWidth: double.infinity);
-    return painter.width - maxWidth;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final overflow = _measure(constraints.maxWidth);
-        _overflow = overflow > 0 ? overflow : 0;
-        final shouldAnimate = _overflow > 0;
-        if (shouldAnimate != _controller.isAnimating) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (!mounted) return;
-            if (shouldAnimate) {
-              _controller.repeat(reverse: true);
-            } else {
-              _controller.stop();
-              _controller.value = 0;
-            }
-          });
-        }
-        return ClipRect(
-          child: AnimatedBuilder(
-            animation: _controller,
-            builder: (context, child) => Transform.translate(
-              offset: Offset(-_controller.value * _overflow, 0),
-              child: child,
-            ),
-            child: Text(
-              widget.text,
-              maxLines: 1,
-              softWrap: false,
-              overflow: TextOverflow.visible,
-              textAlign: shouldAnimate ? TextAlign.left : widget.textAlign,
-              style: widget.style,
-            ),
-          ),
-        );
-      },
-    );
-  }
 }

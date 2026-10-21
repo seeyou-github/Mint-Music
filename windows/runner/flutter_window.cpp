@@ -293,13 +293,6 @@ void FlutterWindow::HandleDesktopLyricCall(
     return;
   }
   if (call.method_name() == "updateConfig") {
-    const std::string align = GetStringUtf8(arguments, "textAlignX");
-    int align_value = 1;
-    if (align == "left") {
-      align_value = 0;
-    } else if (align == "right") {
-      align_value = 2;
-    }
     // 应用字体：字体族名 + 字体文件路径（原生侧注册后按族名取用）。
     const std::wstring font_family = Utf8ToWide(GetStringUtf8(arguments, "fontFamily"));
     const std::wstring font_path = Utf8ToWide(GetStringUtf8(arguments, "fontPath"));
@@ -307,8 +300,7 @@ void FlutterWindow::HandleDesktopLyricCall(
         GetBool(arguments, "isLock", false),
         GetInt(arguments, "maxLineNum", 1),
         static_cast<int>(GetDouble(arguments, "fontSize", 18)),
-        GetInt(arguments, "opacityPercent", 100),
-        GetInt(arguments, "widthPercent", 30),
+        GetInt(arguments, "opacityPercent", 85),
         static_cast<unsigned int>(
             GetInt(arguments, "playedColor", static_cast<int>(0xFFFFFFFF))),
         static_cast<unsigned int>(
@@ -316,8 +308,7 @@ void FlutterWindow::HandleDesktopLyricCall(
         static_cast<unsigned int>(
             GetInt(arguments, "shadowColor", static_cast<int>(0xFF000000))),
         GetDouble(arguments, "positionX", 50),
-        GetDouble(arguments, "positionY", 20), align_value, font_family,
-        font_path);
+        GetDouble(arguments, "positionY", 85), font_family, font_path);
     result->Success();
     return;
   }

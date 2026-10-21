@@ -4,6 +4,7 @@ import '../../../core/platform/app_paths.dart';
 import '../../../core/storage/app_database.dart';
 import '../../../core/storage/app_preferences.dart';
 import '../../../core/platform/download_paths.dart';
+import '../../../core/theme/theme_provider.dart';
 
 class SettingsService {
   final AppPreferences _prefs;
@@ -18,8 +19,9 @@ class SettingsService {
   Future<void> setThemePrimaryColor(String v) =>
       _prefs.setString('theme_primary_color', v);
 
-  /// 「字体颜色」：为空表示使用主题默认色。
-  String getThemeFontColor() => _prefs.getString('theme_font_color') ?? '';
+  /// 「字体颜色」：为空表示使用主题默认色，默认值是暖调的米黄色。
+  String getThemeFontColor() =>
+      _prefs.getString('theme_font_color') ?? defaultThemeFontColor;
   Future<void> setThemeFontColor(String v) =>
       _prefs.setString('theme_font_color', v);
 

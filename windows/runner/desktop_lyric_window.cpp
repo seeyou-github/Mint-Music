@@ -186,26 +186,22 @@ void DesktopLyricWindow::UpdateConfig(bool is_lock,
                                        int max_line_num,
                                        int font_size,
                                        int opacity_percent,
-                                       int width_percent,
                                        unsigned int played_color,
                                        unsigned int unplay_color,
                                        unsigned int shadow_color,
                                        double position_x,
                                        double position_y,
-                                       int align,
                                        const std::wstring& font_family,
                                        const std::wstring& font_path) {
   is_lock_ = is_lock;
   max_line_num_ = std::max(1, max_line_num);
   font_size_ = std::max(10, font_size);
   opacity_percent_ = std::max(10, std::min(100, opacity_percent));
-  width_percent_ = std::max(10, std::min(100, width_percent));
   played_color_ = played_color;
   unplay_color_ = unplay_color;
   shadow_color_ = shadow_color;
   position_x_ = position_x;
   position_y_ = position_y;
-  align_ = align;
 
   // 应用字体：先注册字体文件，再取它在系统里的字体族名。
   if (!font_path.empty() && font_path != loaded_font_path_) {
@@ -341,14 +337,26 @@ void DesktopLyricWindow::ApplySizeAndPosition() {
   if (window_ == nullptr) {
     return;
   }
-  int screen_left = 0;
-  int screen_top = 0;
-  int screen_width = 0;
-  int screen_height = 0;
-  GetVirtualScreen(&screen_left, &screen_top, &screen_width, &screen_height);
+  // 使用「工作区」（去掉任务栏后的可用区域），而不是整个虚拟屏幕。
+  RECT work_area{};
+  SystemParametersInfo(SPI_GETWORKAREA, 0, &work_area, 0);
+  if (work_area.right <= work_area.left || work_area.bottom <= work_area.top) {
+    // 取不到工作区时退回整个虚拟屏幕。
+    int virtual_left = 0;
+    int virtual_top = 0;
+    int virtual_width = 0;
+    int virtual_height = 0;
+    GetVirtualScreen(&virtual_left, &virtual_top, &virtual_width, &virtual_height);
+    work_area = RECT{virtual_left, virtual_top, virtual_left + virtual_width,
+                      virtual_top + virtual_height};
+  }
+  const int screen_left = work_area.left;
+  const int screen_top = work_area.top;
+  const int screen_width = work_area.right - work_area.left;
+  const int screen_height = work_area.bottom - work_area.top;
 
-  const int width =
-      std::min(800, std::max(200, screen_width * width_percent_ / 100));
+  // 窗口宽度固定为工作区宽度的 80%（不再由设置项控制）。
+  const int width = std::max(200, screen_width * 80 / 100);
 
   // 高度按歌词行数计算：每行只显示一行文字，超长时横向滚动而不是换行。
   const int height = std::max(GetLineHeight(), MeasureContentHeight());
@@ -475,12 +483,8 @@ void DesktopLyricWindow::Paint() {
 
   const int line_height = GetLineHeight();
   const int global_alpha = opacity_percent_ * 255 / 100;
-  UINT align_flag = DT_CENTER;
-  if (align_ == 0) {
-    align_flag = DT_LEFT;
-  } else if (align_ == 2) {
-    align_flag = DT_RIGHT;
-  }
+  // 文字固定居中显示。
+  const UINT align_flag = DT_CENTER;
 
   // 当前播放行超出窗口宽度时横向滚动（来回滚动，两端速度为 0）。
   marquee_overflow_px_ = 0;

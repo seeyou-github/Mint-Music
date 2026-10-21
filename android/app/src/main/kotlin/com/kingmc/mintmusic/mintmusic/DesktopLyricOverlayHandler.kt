@@ -64,21 +64,15 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
 
     // ---- 配置 ----
     private var isLock = false
-    private var isSingleLine = false
     private var maxLineNum = 1
     private var fontSizeSp = 18f
     private var opacity = 1f
-    private var widthPercent = 100
     private var playedColor = Color.parseColor("#07C556")
     private var unplayColor = Color.WHITE
     private var shadowColor = Color.argb(153, 0, 0, 0)
-    private var alignX = Gravity.START
-    private var alignY = Gravity.TOP
     private var positionXPercent = 3.0
     private var positionYPercent = 8.0
 
-    /// 歌词切换动画（淡入淡出）。由 `updateConfig` 下发。
-    private var showToggleAnima = true
 
     // ---- 歌词数据 ----
     private var lines: List<LyricLineData> = emptyList()
@@ -168,7 +162,7 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
         )
 
         val lp = WindowManager.LayoutParams().apply {
-            width = (screenWidth() * widthPercent / 100f).roundToInt().coerceAtLeast(120)
+            width = screenWidth().coerceAtLeast(120)
             height = contentHeight()
             type = overlayWindowType()
             format = PixelFormat.TRANSLUCENT
@@ -188,7 +182,8 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
             layoutParams = lp
             applyBackground()
             rebuildHandle()
-            switcher.setAnimated(showToggleAnima, slideDistancePx())
+            // 歌词切换动画固定开启。
+            switcher.setAnimated(true, slideDistancePx())
             applyContent(animate = false)
             // 首帧之后才能拿到真实高度,再按百分比精确定位一次。
             root.post { applyPositionPercent() }
@@ -260,7 +255,7 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
     private fun contentHeight(): Int {
         val metrics = appContext.resources.displayMetrics
         val lineHeight = (fontSizeSp * metrics.scaledDensity * 1.35f).roundToInt()
-        val visible = if (isSingleLine) 1 else maxLineNum
+        val visible = maxLineNum
         var height = lineHeight * visible + (if (isLock) 0 else handleHeightPx())
         val limit = screenHeight() - 100
         if (height > limit) height = limit
@@ -320,39 +315,27 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
     private fun applyConfig(args: Map<*, *>?) {
         if (args == null) return
         isLock = args["isLock"] == true
-        isSingleLine = args["isSingleLine"] == true
-        showToggleAnima = args["showToggleAnima"] != false
         maxLineNum = (args["maxLineNum"] as? Number)?.toInt()?.coerceIn(1, 8) ?: maxLineNum
-        fontSizeSp = (args["fontSize"] as? Number)?.toFloat()?.coerceIn(12f, 40f) ?: fontSizeSp
-        opacity = ((args["opacityPercent"] as? Number)?.toFloat() ?: 100f) / 100f
-        widthPercent = (args["widthPercent"] as? Number)?.toInt()?.coerceIn(10, 100) ?: widthPercent
+        fontSizeSp = (args["fontSize"] as? Number)?.toFloat()?.coerceIn(12f, 80f) ?: fontSizeSp
+        opacity = ((args["opacityPercent"] as? Number)?.toFloat() ?: 85f) / 100f
         playedColor = (args["playedColor"] as? Number)?.toInt() ?: playedColor
         unplayColor = (args["unplayColor"] as? Number)?.toInt() ?: unplayColor
         shadowColor = (args["shadowColor"] as? Number)?.toInt() ?: shadowColor
         positionXPercent = (args["positionX"] as? Number)?.toDouble() ?: positionXPercent
         positionYPercent = (args["positionY"] as? Number)?.toDouble() ?: positionYPercent
 
-        alignX = when (args["textAlignX"] as? String) {
-            "center" -> Gravity.CENTER_HORIZONTAL
-            "right" -> Gravity.END
-            else -> Gravity.START
-        }
-        alignY = when (args["textAlignY"] as? String) {
-            "center" -> Gravity.CENTER_VERTICAL
-            "bottom" -> Gravity.BOTTOM
-            else -> Gravity.TOP
-        }
-
         val root = rootView ?: return
         val lp = layoutParams ?: return
         lp.flags = buildFlags()
         lp.alpha = windowAlpha()
-        lp.width = (screenWidth() * widthPercent / 100f).roundToInt().coerceAtLeast(120)
+        // 悬浮窗宽度固定为屏幕宽度（100%）。
+        lp.width = screenWidth().coerceAtLeast(120)
         lp.height = contentHeight()
         applyBackground()
         rebuildHandle()
         root.setOnTouchListener(createTouchListener(root))
-        lyricSwitcher?.setAnimated(showToggleAnima, slideDistancePx())
+        // 歌词切换动画固定开启。
+        lyricSwitcher?.setAnimated(true, slideDistancePx())
         // 样式/尺寸变更不播放切换动画，直接改当前页
         applyContent(animate = false)
         root.post { applyPositionPercent() }
@@ -386,7 +369,7 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
         if (!force && index == activeIndex) return
         val changed = index != activeIndex
         activeIndex = index
-        applyContent(animate = changed && !force && showToggleAnima && lines.isNotEmpty())
+        applyContent(animate = changed && !force && lines.isNotEmpty())
     }
 
     /** 与 Dart 侧 `DesktopLyricPanel._buildRows` 保持一致的取行规则。 */
@@ -394,7 +377,7 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
         if (lines.isEmpty()) return emptyList()
         val index = activeIndex.coerceIn(0, lines.size - 1)
         val rows = mutableListOf<LyricRow>()
-        val max = if (isSingleLine) 1 else maxLineNum
+        val max = maxLineNum
 
         for (i in index until lines.size) {
             if (rows.size >= max) break
@@ -422,9 +405,9 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
      */
     private fun applyContent(animate: Boolean) {
         val switcher = lyricSwitcher ?: return
-        val target = if (isSingleLine) 1 else maxLineNum
+        val target = maxLineNum
         switcher.ensureRowCount(target) { newRowTextView() }
-        switcher.setPageGravity(alignX or alignY)
+        switcher.setPageGravity(Gravity.CENTER_HORIZONTAL or Gravity.CENTER_VERTICAL)
         val rows = buildRows()
         switcher.showPage(animate) { page -> fillPage(page, rows) }
     }
@@ -451,10 +434,10 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
                 TypedValue.COMPLEX_UNIT_SP,
                 if (row.isSub) fontSizeSp * 0.62f else fontSizeSp,
             )
-            tv.gravity = alignX
+            tv.gravity = Gravity.CENTER_HORIZONTAL
             tv.setShadowLayer(4f, 1f, 1f, shadowColor)
             tv.setSingleLine()
-            if (isSingleLine && !row.isSub) {
+            if (!row.isSub) {
                 // 单行且超长时使用系统跑马灯横向滚动
                 tv.ellipsize = TextUtils.TruncateAt.MARQUEE
                 tv.marqueeRepeatLimit = -1
@@ -521,9 +504,27 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
         val lp = layoutParams ?: return
         lp.x = (maxOffsetX(root) * positionXPercent / 100.0).roundToInt()
             .coerceIn(0, maxOffsetX(root))
-        lp.y = (maxOffsetY(root) * positionYPercent / 100.0).roundToInt()
-            .coerceIn(0, maxOffsetY(root))
+        // 顶部位置时避开状态栏（默认就在状态栏下方）。
+        val topInset = if (positionYPercent <= 0.01) statusBarHeightPx() else 0
+        lp.y = (topInset + (maxOffsetY(root) * positionYPercent / 100.0).roundToInt())
+            .coerceIn(0, (screenHeight() - root.height).coerceAtLeast(0))
         safeUpdateLayout()
+    }
+
+    /// 状态栏高度（px）；取不到时返回 0。
+    private fun statusBarHeightPx(): Int {
+        return try {
+            val id = appContext.resources.getIdentifier(
+                "status_bar_height", "dimen", "android"
+            )
+            if (id > 0) {
+                appContext.resources.getDimensionPixelSize(id)
+            } else {
+                0
+            }
+        } catch (_: Throwable) {
+            0
+        }
     }
 
     private fun maxOffsetX(root: View): Int {
@@ -536,8 +537,8 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
         return (screenHeight() - vh).coerceAtLeast(0)
     }
 
-    private fun lpWidth(): Int =
-        (screenWidth() * widthPercent / 100f).roundToInt().coerceAtLeast(120)
+    // 悬浮窗宽度固定为屏幕宽度（100%）。
+    private fun lpWidth(): Int = screenWidth().coerceAtLeast(120)
 
     private fun safeUpdateLayout() {
         val root = rootView ?: return

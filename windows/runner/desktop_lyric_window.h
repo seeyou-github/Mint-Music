@@ -51,13 +51,11 @@ class DesktopLyricWindow {
                     int max_line_num,
                     int font_size,
                     int opacity_percent,
-                    int width_percent,
                     unsigned int played_color,
                     unsigned int unplay_color,
                     unsigned int shadow_color,
                     double position_x,
                     double position_y,
-                    int align,
                     const std::wstring& font_family,
                     const std::wstring& font_path);
 
@@ -110,13 +108,11 @@ class DesktopLyricWindow {
   int max_line_num_ = 3;
   int font_size_ = 18;
   int opacity_percent_ = 100;
-  int width_percent_ = 30;
   unsigned int played_color_ = 0xFFFFFFFF;
   unsigned int unplay_color_ = 0xFFB0B0B0;
   unsigned int shadow_color_ = 0xFF000000;
   double position_x_ = 50.0;
   double position_y_ = 20.0;
-  int align_ = 1;  // 0=左 1=居中 2=右
   bool show_translation_ = false;
   bool show_roman_ = false;
 

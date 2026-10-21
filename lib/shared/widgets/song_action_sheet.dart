@@ -11,6 +11,7 @@ import '../../core/constants/app_routes.dart';
 import '../../core/l10n/l10n.dart';
 import '../../features/library/application/playlist_providers.dart';
 import '../../features/library/domain/models/playlist.dart';
+import '../../features/player/application/desktop_lyric_sync.dart';
 import '../../features/player/application/playback_controller.dart';
 import '../../features/player/domain/models/song.dart';
 import '../../features/download/application/download_providers.dart';
@@ -297,6 +298,8 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                   _buildSpeedItem(colors),
                   const SleepTimerMenuTile(),
                   _buildLyricSettingsItem(colors),
+                  // 「启用桌面歌词」从设置页搬到了播放页的更多菜单里。
+                  _buildDesktopLyricToggleItem(colors),
                 ],
                 // --- Full mode (song context menu) ---
                 if (!widget.compactMode) ...[
@@ -620,6 +623,59 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
             Text(
               context.tr('歌词设置'),
               style: TextStyle(fontSize: 15, color: colors.textSecondary),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 「启用桌面歌词」开关（播放页更多菜单）。
+  ///
+  /// 设置页不再提供这个开关，改由播放页随手开关。
+  Widget _buildDesktopLyricToggleItem(ThemeColors colors) {
+    final status = ref.watch(desktopLyricSyncProvider);
+    if (!status.supported) return const SizedBox.shrink();
+    final enabled = ref.watch(desktopLyricSettingsProvider).enable;
+
+    return InkWell(
+      onTap: () {
+        final sync = ref.read(desktopLyricSyncProvider.notifier);
+        if (enabled) {
+          unawaited(sync.disableDesktopLyric());
+        } else {
+          unawaited(sync.enableDesktopLyric());
+        }
+      },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.lg,
+          vertical: AppSpacing.md,
+        ),
+        child: Row(
+          children: [
+            Icon(
+              enabled ? Icons.desktop_windows : Icons.desktop_windows_outlined,
+              size: 22,
+              color: colors.textSecondary,
+            ),
+            const SizedBox(width: AppSpacing.md),
+            Expanded(
+              child: Text(
+                context.tr('启用桌面歌词'),
+                style: TextStyle(fontSize: 15, color: colors.textSecondary),
+              ),
+            ),
+            Switch(
+              value: enabled,
+              onChanged: (v) {
+                final sync = ref.read(desktopLyricSyncProvider.notifier);
+                if (v) {
+                  unawaited(sync.enableDesktopLyric());
+                } else {
+                  unawaited(sync.disableDesktopLyric());
+                }
+              },
             ),
           ],
         ),
