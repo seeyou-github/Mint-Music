@@ -26,7 +26,7 @@ import 'app_preferences.dart';
 ///
 /// 其它平台沿用系统目录：重要库放在应用私有数据目录，临时库放在应用缓存目录。
 class AppDatabase {
-  AppDatabase._(this._important, this._cache, this.persistent);
+  AppDatabase._(this._important, this._cache);
 
   final Database _important;
   final Database _cache;
@@ -35,7 +35,7 @@ class AppDatabase {
   ///
   /// false 表示打开失败后降级成了内存库：本次会话数据照常可用，
   /// 但不会跨重启保留（此时也不会删除旧配置文件里的数据）。
-  final bool persistent;
+  bool get persistent => isPersistent;
 
   /// 数据库是否落盘（没落盘说明降级成了内存库）。
   static bool get isPersistent => _persistent;
@@ -64,10 +64,16 @@ class AppDatabase {
   static AppDatabase? _instance;
   static Future<AppDatabase>? _pending;
 
+  /// 打开彻底失败（比如桌面端缺 sqlite3.dll）时记下来，
+  /// 避免每次访问数据库都重试一遍（那会非常慢）。
+  static Object? _openError;
+
   /// 获取数据库单例（首次调用会打开 / 创建数据库文件）。
   static Future<AppDatabase> get instance async {
     final cached = _instance;
     if (cached != null) return cached;
+    final error = _openError;
+    if (error != null) throw error;
     final pending = _pending;
     if (pending != null) return pending;
     final future = _open();
@@ -76,6 +82,9 @@ class AppDatabase {
       final created = await future;
       _instance = created;
       return created;
+    } catch (e) {
+      _openError = e;
+      rethrow;
     } finally {
       _pending = null;
     }
@@ -91,20 +100,28 @@ class AppDatabase {
   static Future<AppDatabase> _open() async {
     _initFactory();
 
+    Database? important;
     try {
-      final important = await _openImportant();
+      important = await _openImportant();
       final cache = await _openCache();
       _persistent = true;
-      return AppDatabase._(important, cache, true);
+      return AppDatabase._(important, cache);
     } catch (e) {
       // 打开失败不能让整个应用起不来：降级成内存库，界面照常工作，
       // 只是数据不会跨重启保留。
       debugPrint('[AppDatabase] 打开数据库失败，降级为内存库: $e');
+      // 重要库可能已经打开了（只有临时库失败的情况），先关掉，
+      // 否则会一直占着文件句柄。
+      if (important != null) {
+        try {
+          await important.close();
+        } catch (_) {}
+      }
       try {
-        final important = await _openImportant(inMemory: true);
-        final cache = await _openCache(inMemory: true);
+        final fallbackImportant = await _openImportant(inMemory: true);
+        final fallbackCache = await _openCache(inMemory: true);
         _persistent = false;
-        return AppDatabase._(important, cache, false);
+        return AppDatabase._(fallbackImportant, fallbackCache);
       } catch (e2) {
         debugPrint('[AppDatabase] 内存数据库打开失败: $e2');
         rethrow;
@@ -133,7 +150,7 @@ class AppDatabase {
           );
     return openDatabase(
       path,
-      version: 1,
+      version: 2,
       onConfigure: (db) async {
         // WAL：写入不阻塞读取；synchronous=FULL：断电也不会丢已提交的事务。
         await db.execute('PRAGMA journal_mode=WAL');
@@ -141,8 +158,19 @@ class AppDatabase {
         await db.execute('PRAGMA foreign_keys=ON');
       },
       onCreate: (db, version) async {
-        await db.execute('''
-          CREATE TABLE playlists (
+        await _createImportantSchema(db);
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        // 建表语句都写成 IF NOT EXISTS，重复执行安全。
+        await _createImportantSchema(db);
+      },
+    );
+  }
+
+  /// 重要库的建表语句（幂等）。
+  static Future<void> _createImportantSchema(Database db) async {
+    await db.execute('''
+          CREATE TABLE IF NOT EXISTS playlists (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL DEFAULT '',
             description TEXT NOT NULL DEFAULT '',
@@ -154,8 +182,8 @@ class AppDatabase {
             data TEXT NOT NULL DEFAULT '{}'
           )
         ''');
-        await db.execute('''
-          CREATE TABLE playlist_songs (
+    await db.execute('''
+          CREATE TABLE IF NOT EXISTS playlist_songs (
             playlist_id TEXT NOT NULL,
             song_id TEXT NOT NULL,
             sort_order INTEGER NOT NULL DEFAULT 0,
@@ -164,11 +192,9 @@ class AppDatabase {
             PRIMARY KEY (playlist_id, song_id)
           )
         ''');
-        await db.execute(
-          'CREATE INDEX idx_playlist_songs_order '
-          'ON playlist_songs (playlist_id, sort_order)',
-        );
-      },
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_playlist_songs_order '
+      'ON playlist_songs (playlist_id, sort_order)',
     );
   }
 
@@ -181,15 +207,27 @@ class AppDatabase {
           );
     return openDatabase(
       path,
-      version: 1,
+      version: 2,
       onConfigure: (db) async {
         // 临时库不需要绝对安全：NORMAL 足够，少一次 fsync。
         await db.execute('PRAGMA journal_mode=WAL');
         await db.execute('PRAGMA synchronous=NORMAL');
       },
       onCreate: (db, version) async {
-        await db.execute('''
-          CREATE TABLE local_songs (
+        await _createCacheSchema(db);
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        // 图片缓存索引只是缓存，直接重建；其余表用 IF NOT EXISTS 补齐。
+        await db.execute('DROP TABLE IF EXISTS cache_index');
+        await _createCacheSchema(db);
+      },
+    );
+  }
+
+  /// 临时库的建表语句（幂等）。
+  static Future<void> _createCacheSchema(Database db) async {
+    await db.execute('''
+          CREATE TABLE IF NOT EXISTS local_songs (
             id TEXT PRIMARY KEY,
             title TEXT NOT NULL DEFAULT '',
             artist TEXT NOT NULL DEFAULT '',
@@ -200,29 +238,29 @@ class AppDatabase {
             data TEXT NOT NULL DEFAULT '{}'
           )
         ''');
-        await db.execute(
-          'CREATE INDEX idx_local_songs_artist ON local_songs (artist)',
-        );
-        await db.execute('''
-          CREATE TABLE local_dirs (
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_local_songs_artist ON local_songs (artist)',
+    );
+    await db.execute('''
+          CREATE TABLE IF NOT EXISTS local_dirs (
             path TEXT PRIMARY KEY,
             added_at INTEGER NOT NULL DEFAULT 0
           )
         ''');
-        await db.execute('''
-          CREATE TABLE recently_played (
+    await db.execute('''
+          CREATE TABLE IF NOT EXISTS recently_played (
             song_id TEXT PRIMARY KEY,
             played_at INTEGER NOT NULL DEFAULT 0,
             play_count INTEGER NOT NULL DEFAULT 1,
             data TEXT NOT NULL DEFAULT '{}'
           )
         ''');
-        await db.execute(
-          'CREATE INDEX idx_recently_played_time '
-          'ON recently_played (played_at DESC)',
-        );
-        await db.execute('''
-          CREATE TABLE download_tasks (
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_recently_played_time '
+      'ON recently_played (played_at DESC)',
+    );
+    await db.execute('''
+          CREATE TABLE IF NOT EXISTS download_tasks (
             id TEXT PRIMARY KEY,
             status TEXT NOT NULL DEFAULT '',
             file_path TEXT NOT NULL DEFAULT '',
@@ -231,14 +269,14 @@ class AppDatabase {
             data TEXT NOT NULL DEFAULT '{}'
           )
         ''');
-        await db.execute('''
-          CREATE TABLE search_history (
+    await db.execute('''
+          CREATE TABLE IF NOT EXISTS search_history (
             keyword TEXT PRIMARY KEY,
             searched_at INTEGER NOT NULL DEFAULT 0
           )
         ''');
-        await db.execute('''
-          CREATE TABLE lyrics (
+    await db.execute('''
+          CREATE TABLE IF NOT EXISTS lyrics (
             cache_key TEXT PRIMARY KEY,
             lrc TEXT,
             crlyric TEXT,
@@ -248,15 +286,15 @@ class AppDatabase {
             updated_at INTEGER NOT NULL DEFAULT 0
           )
         ''');
-        await db.execute('''
-          CREATE TABLE playback_state (
+    await db.execute('''
+          CREATE TABLE IF NOT EXISTS playback_state (
             key TEXT PRIMARY KEY,
             data TEXT NOT NULL DEFAULT '{}',
             updated_at INTEGER NOT NULL DEFAULT 0
           )
         ''');
-        await db.execute('''
-          CREATE TABLE cache_index (
+    await db.execute('''
+          CREATE TABLE IF NOT EXISTS cache_index (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             cache_key TEXT NOT NULL UNIQUE,
             url TEXT NOT NULL DEFAULT '',
@@ -267,8 +305,6 @@ class AppDatabase {
             touched INTEGER NOT NULL DEFAULT 0
           )
         ''');
-      },
-    );
   }
 
   // ---------------------------------------------------------------- 迁移标记
@@ -368,7 +404,9 @@ class DeferredWriter {
 
   Timer? _timer;
   bool _dirty = false;
-  bool _running = false;
+
+  /// 正在进行的写入（用于让并发的 flush 等待同一次写入）。
+  Future<void>? _inFlight;
 
   /// 标记数据已变化，安排一次落盘。
   void schedule() {
@@ -385,22 +423,42 @@ class DeferredWriter {
   }
 
   /// 立即落盘（应用切后台 / 退出、下载完成等时机调用）。
+  ///
+  /// 如果已经有一次写入在进行，会等它结束（写入过程中产生的新变更会被
+  /// 那次写入一起带上去）。
   Future<void> flush() async {
     _timer?.cancel();
     _timer = null;
-    if (_running) return;
+
+    final inFlight = _inFlight;
+    if (inFlight != null) {
+      await inFlight;
+      if (!_dirty) return;
+    }
     if (!_dirty) return;
-    _running = true;
+
+    _dirty = false;
+    final future = _doWrite();
+    _inFlight = future;
     try {
-      while (_dirty) {
-        _dirty = false;
-        await _write();
-      }
-    } catch (e) {
-      debugPrint('[DeferredWriter] 落盘失败: $e');
-      _dirty = true;
+      await future;
     } finally {
-      _running = false;
+      if (identical(_inFlight, future)) _inFlight = null;
+    }
+  }
+
+  Future<void> _doWrite() async {
+    // 写入过程中如果又有了新变更，就再写一轮。
+    while (_dirty) {
+      _dirty = false;
+      try {
+        await _write();
+      } catch (e) {
+        // 写失败不重试（避免一直失败时无限循环），数据还在内存里，
+        // 下一次变更会重新写。
+        debugPrint('[DeferredWriter] 落盘失败: $e');
+        _dirty = false;
+      }
     }
   }
 }

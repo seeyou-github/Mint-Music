@@ -131,14 +131,50 @@ class LyricCache {
         },
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
+      await _trimIfNeeded(db);
     } catch (e) {
       debugPrint('[LyricCache] 写入缓存失败: $e');
+    }
+  }
+
+  // ---------------------------------------------------------------- 容量控制
+
+  /// 歌词缓存最多保留多少条。
+  ///
+  /// 逐字歌词（TTML）一条能有几十 KB，不限制的话临时库会一直涨。
+  /// 旧版歌词缓存放在缓存目录里，受「缓存大小上限」约束，现在放进数据库
+  /// 就得自己控制条数。
+  static const int _maxEntries = 2000;
+
+  /// 每写多少条检查一次容量（避免每次写入都 COUNT 一遍）。
+  static const int _trimInterval = 32;
+
+  static int _writeCount = 0;
+
+  static Future<void> _trimIfNeeded(Database db) async {
+    _writeCount++;
+    if (_writeCount % _trimInterval != 0) return;
+    try {
+      final rows = await db.rawQuery('SELECT COUNT(*) AS c FROM lyrics');
+      final count = (rows.first['c'] as int?) ?? 0;
+      if (count <= _maxEntries) return;
+      final excess = count - _maxEntries;
+      await db.rawDelete(
+        'DELETE FROM lyrics WHERE cache_key IN ('
+        'SELECT cache_key FROM lyrics ORDER BY updated_at ASC LIMIT ?)',
+        [excess],
+      );
+    } catch (e) {
+      debugPrint('[LyricCache] 清理旧缓存失败: $e');
     }
   }
 
   // ---------------------------------------------------------------- 迁移
 
   static bool? _migrated;
+
+  /// 迁移过程中的 Future（防止启动迁移和读缓存同时触发两次迁移）。
+  static Future<void>? _migrating;
 
   /// 把旧版「一首歌一个 JSON 文件」的缓存导入数据库，然后删掉那个目录。
   ///
@@ -148,6 +184,22 @@ class LyricCache {
   }
 
   static Future<void> _ensureMigrated() async {
+    if (_migrated == true) return;
+    final running = _migrating;
+    if (running != null) {
+      await running;
+      return;
+    }
+    final future = _doMigrate();
+    _migrating = future;
+    try {
+      await future;
+    } finally {
+      if (identical(_migrating, future)) _migrating = null;
+    }
+  }
+
+  static Future<void> _doMigrate() async {
     if (_migrated == true) return;
     if (await AppDatabase.isMigrated(_migrationModule)) {
       _migrated = true;
