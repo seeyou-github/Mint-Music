@@ -77,7 +77,9 @@ class AppPreferences {
         if (raw.trim().isNotEmpty) {
           final decoded = jsonDecode(raw);
           if (decoded is Map) {
-            values.addAll(decoded.map((key, value) => MapEntry('$key', value)));
+            decoded.forEach((key, value) {
+              values['$key'] = value;
+            });
           }
         }
       } catch (e) {
@@ -86,38 +88,34 @@ class AppPreferences {
       }
     } else {
       // 首次运行：从旧的 shared_preferences.json 迁移。
-      await _migrateLegacy(values, dir);
+      await _migrateLegacy(values);
     }
 
     return AppPreferences._(values, file, null);
   }
 
   /// 把旧版 shared_preferences.json 的内容迁移过来（只迁移一次）。
-  static Future<void> _migrateLegacy(
-    Map<String, Object> values,
-    Directory configDir,
-  ) async {
-    File? legacy;
+  static Future<void> _migrateLegacy(Map<String, Object> values) async {
+    late final File legacy;
     try {
       final support = await getApplicationSupportDirectory();
       legacy = File(p.join(support.path, _legacyFileName));
     } catch (_) {
       return;
     }
-    if (legacy == null || !await legacy.exists()) return;
+    if (!await legacy.exists()) return;
 
     try {
       final raw = await legacy.readAsString();
       if (raw.trim().isEmpty) return;
       final decoded = jsonDecode(raw);
       if (decoded is! Map) return;
-      for (final entry in decoded.entries) {
-        final key = '${entry.key}';
-        final name = key.startsWith(_legacyKeyPrefix)
-            ? key.substring(_legacyKeyPrefix.length)
-            : key;
-        values[name] = entry.value;
-      }
+      decoded.forEach((key, value) {
+        final name = '$key';
+        values[name] = name.startsWith(_legacyKeyPrefix)
+            ? name.substring(_legacyKeyPrefix.length)
+            : name;
+      });
       print('[AppPreferences] 已从旧的 shared_preferences.json 迁移设置');
     } catch (e) {
       print('[AppPreferences] 迁移旧设置失败: $e');

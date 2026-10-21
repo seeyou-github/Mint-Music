@@ -101,7 +101,7 @@ class AppFontManager {
       final legacyRoot = await getApplicationSupportDirectory();
       final legacyDir = Directory(p.join(legacyRoot.path, 'fonts'));
       if (!await legacyDir.exists()) return;
-      if (identical(legacyDir.path, target.path)) return;
+      if (legacyDir.path == target.path) return;
 
       final files = legacyDir
           .listSync(followLinks: false)

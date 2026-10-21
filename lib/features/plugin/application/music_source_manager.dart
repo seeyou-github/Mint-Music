@@ -2256,7 +2256,7 @@ class MusicSourceManager {
         print('[MusicSourceManager] 插件分类歌单获取失败 source=$sourceId: $e');
       }
     }
-    return (const [], true);
+    return (const <Playlist>[], true);
   }
 
   /// 插件返回结果里的结束标记（缺省视为已到底）。

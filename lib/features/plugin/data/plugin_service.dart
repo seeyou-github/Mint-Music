@@ -108,7 +108,7 @@ class PluginService {
         p.join(legacyRoot.path, AppPaths.pluginFolderName),
       );
       if (!await legacyDir.exists()) return;
-      if (identical(legacyDir.path, target.path)) return;
+      if (legacyDir.path == target.path) return;
 
       final files = legacyDir
           .listSync(followLinks: false)
