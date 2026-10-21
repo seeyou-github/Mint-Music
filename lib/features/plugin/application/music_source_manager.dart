@@ -2164,7 +2164,14 @@ class MusicSourceManager {
     return groups.expand((group) => group.tags).take(8).toList();
   }
 
-  Future<List<Playlist>> getCategoryPlaylists({
+  /// 分类歌单分页。
+  ///
+  /// 返回 `(歌单列表, 是否已到底)`：
+  /// * 内置源一次性返回全量，`isEnd` 恒为 true；
+  /// * 插件源尊重脚本返回的 `isEnd`——有些脚本的“推荐歌单”接口不接收
+  ///   offset（永远返回同一批歌单），必须尊重它的结束标记，否则翻页会
+  ///   一直加载出和第一页相同的内容。
+  Future<(List<Playlist>, bool)> getCategoryPlaylists({
     required String sortId,
     required String tagId,
     required int page,
@@ -2180,7 +2187,10 @@ class MusicSourceManager {
           page: page,
           limit: limit,
         );
-        if (playlists.isNotEmpty) return playlists;
+        // 内置源按 offset 翻页：返回数量不足一页即到底。
+        if (playlists.isNotEmpty) {
+          return (playlists, playlists.length < limit);
+        }
       } catch (e) {
         print(
           '[MusicSourceManager] getCategoryPlaylists failed for $sourceId: $e',
@@ -2190,7 +2200,10 @@ class MusicSourceManager {
       if (page == 1 && tagId.isEmpty && sortId == 'hot') {
         try {
           final hot = await builtIn.getHotPlaylists();
-          if (hot.isNotEmpty) return hot.take(limit).toList();
+          if (hot.isNotEmpty) {
+            final limited = hot.take(limit).toList();
+            return (limited, limited.length < limit);
+          }
         } catch (e) {
           print('[MusicSourceManager] 分类热门歌单直接兜底失败 source=$sourceId: $e');
         }
@@ -2204,7 +2217,7 @@ class MusicSourceManager {
               page: page,
               limit: limit,
             );
-            if (tagged.isNotEmpty) return tagged;
+            if (tagged.isNotEmpty) return (tagged, tagged.length < limit);
           }
         } catch (e) {
           print('[MusicSourceManager] 分类热门歌单标签兜底失败 source=$sourceId: $e');
@@ -2216,22 +2229,31 @@ class MusicSourceManager {
     final host = _findDiscoverHost(sourceId, needSheets: true);
     if (host != null) {
       try {
-        final playlists = _pluginPlaylistsFromJson(
-          sourceId,
-          _decodePluginJson(
-            await host.getRecommendSheetsByTag(tagId, page: page),
-          ),
+        final decoded = _decodePluginJson(
+          await host.getRecommendSheetsByTag(tagId, page: page),
         );
+        final playlists = _pluginPlaylistsFromJson(sourceId, decoded);
+        final isEnd = _pluginResultIsEnd(decoded);
         if (playlists.isNotEmpty) {
-          return playlists.length > limit
+          final limited = playlists.length > limit
               ? playlists.take(limit).toList()
               : playlists;
+          return (limited, isEnd);
         }
       } catch (e) {
         print('[MusicSourceManager] 插件分类歌单获取失败 source=$sourceId: $e');
       }
     }
-    return [];
+    return (const [], true);
+  }
+
+  /// 插件返回结果里的结束标记（缺省视为已到底）。
+  static bool _pluginResultIsEnd(dynamic decoded) {
+    if (decoded is Map) {
+      final value = decoded['isEnd'];
+      if (value is bool) return value;
+    }
+    return true;
   }
 
   Future<List<Leaderboard>> getLeaderboards({String sourceId = 'wy'}) async {

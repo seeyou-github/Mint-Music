@@ -21,7 +21,7 @@ class DiscoverRepository {
     return _manager.getHotPlaylistTags(sourceId: sourceId);
   }
 
-  Future<List<Playlist>> getCategoryPlaylists({
+  Future<(List<Playlist>, bool)> getCategoryPlaylists({
     required String sortId,
     required String tagId,
     required int page,

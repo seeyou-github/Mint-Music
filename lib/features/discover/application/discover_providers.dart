@@ -102,7 +102,7 @@ class CategoryPlaylistsNotifier extends StateNotifier<AsyncValue<List<Playlist>>
 
     _loadingMore = true;
     try {
-      final playlists = await _repo.getCategoryPlaylists(
+      final (playlists, isEnd) = await _repo.getCategoryPlaylists(
         sortId: sortId,
         tagId: tagId,
         page: _page,
@@ -110,14 +110,23 @@ class CategoryPlaylistsNotifier extends StateNotifier<AsyncValue<List<Playlist>>
         sourceId: sourceId ?? 'wy',
       );
 
-      if (reset) {
-        state = AsyncValue.data(playlists);
+      final current = state.valueOrNull ?? [];
+      // 去重：部分插件脚本的分页接口并不支持翻页（例如“推荐歌单”接口不接收
+      // offset），会反复返回同一批歌单；重复项不再追加，避免一直刷出
+      // 和第一页相同的内容。
+      final merged = <String, Playlist>{
+        for (final playlist in [...current, ...playlists]) playlist.id: playlist,
+      }.values.toList();
+
+      if (merged.length == current.length) {
+        // 没有新歌单 → 已经到底。
+        _noMore = true;
+        state = AsyncValue.data(current);
       } else {
-        final current = state.valueOrNull ?? [];
-        state = AsyncValue.data([...current, ...playlists]);
+        state = AsyncValue.data(merged);
       }
 
-      if (playlists.length < 30) {
+      if (isEnd || playlists.length < 30) {
         _noMore = true;
       } else {
         _page++;
