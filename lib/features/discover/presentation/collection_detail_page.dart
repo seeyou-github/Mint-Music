@@ -11,11 +11,11 @@ import '../../../shared/widgets/music_cover_image.dart';
 import '../../../shared/widgets/song_action_sheet.dart';
 import '../../../shared/widgets/song_list_item.dart';
 import '../../library/application/playlist_providers.dart';
+import '../../library/domain/models/recently_played.dart';
 import '../../player/application/playback_context.dart';
 import '../../player/application/playback_controller.dart';
 import '../../player/domain/models/song.dart';
 import '../../plugin/application/plugin_providers.dart';
-import '../domain/models/recently_played.dart';
 import '../domain/models/search_collection.dart';
 
 /// 专辑 / 作者详情页。
@@ -95,7 +95,7 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
   Future<void> _toggleFavorite(List<Song> songs) async {
     final name = widget.collection.favoriteName;
     final playlists = ref.read(playlistsProvider).valueOrNull ?? const [];
-    final existing = playlists.where((p) => p.title == name).firstOrNull;
+    final existing = playlists.where((p) => p.name == name).firstOrNull;
     final notifier = ref.read(playlistsProvider.notifier);
     if (existing != null) {
       await notifier.deletePlaylist(existing.id);
@@ -129,7 +129,7 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
     final favoriteName = item.favoriteName;
     final favorited =
         (ref.watch(playlistsProvider).valueOrNull ?? const [])
-            .any((p) => p.title == favoriteName);
+            .any((p) => p.name == favoriteName);
 
     return Scaffold(
       backgroundColor: colors.background,

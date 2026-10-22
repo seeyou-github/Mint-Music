@@ -1,4 +1,4 @@
-import '../../../../player/domain/models/song.dart';
+import '../../../player/domain/models/song.dart';
 
 /// 专辑 / 作者。
 enum CollectionType { album, artist }
