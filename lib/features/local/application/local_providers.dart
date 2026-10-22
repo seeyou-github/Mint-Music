@@ -112,6 +112,8 @@ class LocalMusicNotifier extends StateNotifier<AsyncValue<List<Song>>> {
       final hasPermission = await repo.checkPermission();
       if (hasPermission) {
         final songs = repo.getLocalSongs();
+        // 扫描目录存在但索引里没有歌曲（首次使用 / 还原配置后临时目录被清空）时，
+        // 第一次进入「本地」分类会自动扫描一次这些目录。
         if (songs.isEmpty || rescan) {
           await repo.scanAll(
             onProgress: (progress) {

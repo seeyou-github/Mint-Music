@@ -1,10 +1,6 @@
-import 'dart:convert';
-
 import 'package:flutter/foundation.dart';
-import 'package:sqflite/sqflite.dart';
 
-import '../../features/library/data/playlist_repository.dart';
-import '../storage/app_database.dart';
+import '../../features/library/data/playlist_store.dart';
 import 'webdav_service.dart';
 
 /// 歌单跨平台实时同步。
@@ -85,63 +81,22 @@ class PlaylistSyncService {
     });
   }
 
-  /// 读取本地歌单（数据库里的原始 JSON）。
+  /// 读取本地歌单（收藏 JSON 文件）。
   static Future<List<Map<String, dynamic>>> _readLocalPlaylists() async {
     try {
-      final repo = PlaylistRepository();
-      final playlists = await repo.loadPlaylists();
-      return playlists.map((p) => p.toJson()).toList();
+      return await PlaylistStore.read();
     } catch (e) {
       debugPrint('[PlaylistSyncService] 读取本地歌单失败: $e');
       return const [];
     }
   }
 
-  /// 把合并结果写回本地数据库。
+  /// 把合并结果写回本地收藏文件。
   static Future<void> _writeLocalPlaylists(
     List<Map<String, dynamic>> playlists,
   ) async {
     try {
-      final db = await AppDatabase.importantDatabase();
-      await db.transaction((txn) async {
-        await txn.delete('playlist_songs');
-        await txn.delete('playlists');
-        for (final json in playlists) {
-          final id = '${json['id'] ?? ''}';
-          if (id.isEmpty) continue;
-          final createTime = DateTime.tryParse('${json['createTime'] ?? ''}');
-          final updateTime = DateTime.tryParse('${json['updateTime'] ?? ''}');
-          await txn.insert('playlists', {
-            'id': id,
-            'name': '${json['name'] ?? ''}',
-            'description': '${json['description'] ?? ''}',
-            'cover_url': '${json['coverImgUrl'] ?? ''}',
-            'source': '${json['source'] ?? 'local'}',
-            'create_time':
-                (createTime ?? DateTime.now()).millisecondsSinceEpoch,
-            'update_time':
-                (updateTime ?? DateTime.now()).millisecondsSinceEpoch,
-            'meta': jsonEncode(json['meta'] ?? const <String, dynamic>{}),
-            'data': jsonEncode(json),
-          }, conflictAlgorithm: ConflictAlgorithm.replace);
-          var order = 0;
-          final songs = (json['songs'] as List?) ?? const [];
-          for (final song in songs) {
-            if (song is! Map) continue;
-            final songJson = song.map((k, v) => MapEntry('$k', v));
-            final songId = '${songJson['id'] ?? ''}';
-            if (songId.isEmpty) continue;
-            await txn.insert('playlist_songs', {
-              'playlist_id': id,
-              'song_id': songId,
-              'sort_order': order,
-              'added_at': DateTime.now().millisecondsSinceEpoch,
-              'data': jsonEncode(songJson),
-            }, conflictAlgorithm: ConflictAlgorithm.replace);
-            order++;
-          }
-        }
-      });
+      await PlaylistStore.write(playlists);
     } catch (e) {
       debugPrint('[PlaylistSyncService] 写回本地歌单失败: $e');
     }

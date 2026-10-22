@@ -5,37 +5,33 @@ import 'dart:typed_data';
 import 'package:archive/archive.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
-import 'package:sqflite/sqflite.dart';
 
-import '../../features/library/data/playlist_repository.dart';
 import '../platform/app_paths.dart';
-import '../storage/app_database.dart';
-import '../storage/app_preferences.dart';
 
 /// 备份 / 还原服务。
 ///
 /// 备份内容（压缩包内）：
-/// - `settings.json`：应用设置（主题、播放、下载等全部配置项）
-/// - `plugins/`：插件脚本文件
-/// - `playlists.json`：收藏的歌单与「我的收藏」
-/// - `local_dirs.json`：本地音乐的扫描目录（**不含歌曲列表**）
+/// - `config/`：应用配置目录（`settings.json`、收藏歌单 `playlists.json`、
+///   导入的字体等）
+/// - `plugin/`：插件脚本目录
 ///
-/// 还原时**强制覆盖**现有配置。
+/// 还原时：
+/// - 用备份里的 `config` / `plugin` **覆盖**现有目录；
+/// - **清空 `temp` 目录**（里面的本地歌曲索引等会失效，下次进入「本地」分类
+///   会按配置里的扫描目录重新扫描一次）。
 class BackupService {
   const BackupService._();
 
-  /// 备份包里的文件路径。
-  static const String settingsEntry = 'settings.json';
-  static const String playlistsEntry = 'playlists.json';
-  static const String localDirsEntry = 'local_dirs.json';
-  static const String pluginsDirEntry = 'plugins';
+  /// 压缩包内的目录名。
+  static const String configDirEntry = 'config';
+  static const String pluginDirEntry = 'plugin';
 
   /// 备份文件名前缀。
   static const String backupFilePrefix = 'mintmusic-backup';
 
-  /// 备份文件名：`年-月-日-时:分:秒-mintmusic-backup.zip`。
+  /// 备份文件名：`年-月-日-时-分-秒-mintmusic-backup.zip`。
   ///
-  /// Windows 的文件名不能含冒号，这里用 `-` 代替（跨平台通用）。
+  /// Windows 的文件名不能含冒号，这里统一用 `-`（跨平台通用）。
   static String buildBackupFileName([DateTime? now]) {
     final t = now ?? DateTime.now();
     String two(int v) => v.toString().padLeft(2, '0');
@@ -45,66 +41,30 @@ class BackupService {
 
   // ---------------------------------------------------------------- 备份
 
-  /// 生成一个备份压缩包。
+  /// 生成一个备份压缩包（只含 config 与 plugin 两个目录）。
   static Future<Uint8List> createBackup() async {
     final archive = Archive();
-
-    // 1) 应用设置
-    final prefs = await AppPreferences.getInstance();
-    final settings = <String, Object?>{};
-    for (final key in prefs.getKeys()) {
-      final value = prefs.getString(key);
-      if (value != null) {
-        settings[key] = value;
-        continue;
-      }
-      final list = prefs.getStringList(key);
-      if (list != null) {
-        settings[key] = list;
-        continue;
-      }
-      final num = prefs.getInt(key);
-      if (num != null) {
-        settings[key] = num;
-        continue;
-      }
-      final dbl = prefs.getDouble(key);
-      if (dbl != null) {
-        settings[key] = dbl;
-      }
-    }
-    archive.addFile(
-      ArchiveFile(settingsEntry, jsonEncode(settings).length,
-          jsonEncode(settings)),
-    );
-
-    // 2) 插件脚本
-    final pluginsDir = await AppPaths.pluginDirectory();
-    if (await pluginsDir.exists()) {
-      await for (final entity in pluginsDir.list(recursive: false)) {
-        if (entity is! File) continue;
-        final bytes = await entity.readAsBytes();
-        final name = p.basename(entity.path);
-        archive.addFile(
-          ArchiveFile('$pluginsDirEntry/$name', bytes.length, bytes),
-        );
-      }
-    }
-
-    // 3) 收藏的歌单
-    final playlists = await _exportPlaylists();
-    final playlistsJson = jsonEncode(playlists);
-    archive.addFile(
-      ArchiveFile(playlistsEntry, playlistsJson.length, playlistsJson),
-    );
-
-    // 4) 本地音乐的扫描目录（不含歌曲列表）
-    final dirs = await _exportLocalDirs();
-    final dirsJson = jsonEncode(dirs);
-    archive.addFile(ArchiveFile(localDirsEntry, dirsJson.length, dirsJson));
-
+    await _addDirectory(archive, await AppPaths.configDirectory(), configDirEntry);
+    await _addDirectory(archive, await AppPaths.pluginDirectory(), pluginDirEntry);
     final zipped = ZipEncoder().encode(archive);
     return Uint8List.fromList(zipped);
+  }
+
+  /// 把目录里的文件加进压缩包。
+  static Future<void> _addDirectory(
+    Archive archive,
+    Directory dir,
+    String entryName,
+  ) async {
+    if (!await dir.exists()) return;
+    await for (final entity in dir.list(recursive: true, followLinks: false)) {
+      if (entity is! File) continue;
+      final bytes = await entity.readAsBytes();
+      final relative = p.relative(entity.path, from: dir.path).replaceAll('\\', '/');
+      archive.addFile(
+        ArchiveFile('$entryName/$relative', bytes.length, bytes),
+      );
+    }
   }
 
   // ---------------------------------------------------------------- 还原
@@ -113,172 +73,53 @@ class BackupService {
   static Future<void> restoreBackup(Uint8List bytes) async {
     final archive = ZipDecoder().decodeBytes(bytes);
 
-    // 1) 应用设置
-    final settingsFile = _findFile(archive, settingsEntry);
-    if (settingsFile != null) {
-      final raw = utf8.decode(settingsFile.content as List<int>);
-      final decoded = jsonDecode(raw);
-      if (decoded is Map) {
-        final prefs = await AppPreferences.getInstance();
-        // 强制覆盖：先清空再写入
-        await prefs.clear();
-        for (final entry in decoded.entries) {
-          final key = '${entry.key}';
-          final value = entry.value;
-          if (value is bool) {
-            await prefs.setBool(key, value);
-          } else if (value is int) {
-            await prefs.setInt(key, value);
-          } else if (value is double) {
-            await prefs.setDouble(key, value);
-          } else if (value is List) {
-            await prefs.setStringList(
-              key,
-              value.map((e) => '$e').toList(),
-            );
-          } else if (value is String) {
-            await prefs.setString(key, value);
-          }
-        }
-      }
-    }
+    // 1) config / plugin 目录：覆盖还原
+    await _restoreDirectory(archive, configDirEntry, await AppPaths.configDirectory());
+    await _restoreDirectory(archive, pluginDirEntry, await AppPaths.pluginDirectory());
 
-    // 2) 插件脚本
-    final pluginsDir = await AppPaths.pluginDirectory();
+    // 2) 清空 temp 目录：本地歌曲索引等在这里，下次进入「本地」分类会
+    //    按配置里的扫描目录重新扫描。
+    await _clearTempDirectory();
+  }
+
+  /// 把压缩包里的某个目录还原到目标目录（覆盖同名文件）。
+  static Future<void> _restoreDirectory(
+    Archive archive,
+    String entryName,
+    Directory target,
+  ) async {
+    await target.create(recursive: true);
     for (final file in archive.files) {
       if (!file.isFile) continue;
-      final name = p.basename(file.name);
-      if (name.isEmpty) continue;
+      if (!file.name.startsWith('$entryName/')) continue;
+      final relative = file.name.substring(entryName.length + 1);
+      if (relative.isEmpty || relative.contains('..')) continue;
       final content = file.content;
       if (content is! List<int>) continue;
-      final target = File(p.join(pluginsDir.path, name));
-      await target.writeAsBytes(content, flush: true);
-    }
-
-    // 3) 收藏的歌单
-    final playlistsFile = _findFile(archive, playlistsEntry);
-    if (playlistsFile != null) {
-      final raw = utf8.decode(playlistsFile.content as List<int>);
-      final decoded = jsonDecode(raw);
-      if (decoded is List) {
-        await _importPlaylists(decoded);
-      }
-    }
-
-    // 4) 本地音乐的扫描目录
-    final dirsFile = _findFile(archive, localDirsEntry);
-    if (dirsFile != null) {
-      final raw = utf8.decode(dirsFile.content as List<int>);
-      final decoded = jsonDecode(raw);
-      if (decoded is List) {
-        await _importLocalDirs(decoded.map((e) => '$e').toList());
-      }
+      final dest = File(p.join(target.path, relative));
+      await dest.parent.create(recursive: true);
+      await dest.writeAsBytes(content, flush: true);
     }
   }
 
-  static ArchiveFile? _findFile(Archive archive, String entry) {
-    for (final file in archive.files) {
-      if (file.isFile && file.name == entry) return file;
-    }
-    return null;
-  }
-
-  // ---------------------------------------------------------------- 歌单 / 目录 导入导出
-
-  /// 导出收藏的歌单（不含本地扫描目录里的歌曲列表）。
-  static Future<List<Map<String, dynamic>>> _exportPlaylists() async {
+  /// 清空临时目录的内容（保留目录本身）。
+  static Future<void> _clearTempDirectory() async {
     try {
-      final repo = PlaylistRepository();
-      final playlists = await repo.loadPlaylists();
-      return playlists.map((p) => p.toJson()).toList();
-    } catch (e) {
-      debugPrint('[BackupService] 导出歌单失败: $e');
-      return const [];
-    }
-  }
-
-  static Future<void> _importPlaylists(List<dynamic> raw) async {
-    try {
-      final db = await AppDatabase.importantDatabase();
-      await db.transaction((txn) async {
-        await txn.delete('playlist_songs');
-        await txn.delete('playlists');
-        for (final item in raw) {
-          if (item is! Map) continue;
-          final json = item.map((k, v) => MapEntry('$k', v));
-          final id = '${json['id'] ?? ''}';
-          if (id.isEmpty) continue;
-          final name = '${json['name'] ?? ''}';
-          final description = '${json['description'] ?? ''}';
-          final coverImgUrl = '${json['coverImgUrl'] ?? ''}';
-          final source = '${json['source'] ?? 'local'}';
-          final createTime = DateTime.tryParse('${json['createTime'] ?? ''}');
-          final updateTime = DateTime.tryParse('${json['updateTime'] ?? ''}');
-          final songs = (json['songs'] as List?) ?? const [];
-          await txn.insert('playlists', {
-            'id': id,
-            'name': name,
-            'description': description,
-            'cover_url': coverImgUrl,
-            'source': source,
-            'create_time':
-                (createTime ?? DateTime.now()).millisecondsSinceEpoch,
-            'update_time':
-                (updateTime ?? DateTime.now()).millisecondsSinceEpoch,
-            'meta': jsonEncode(json['meta'] ?? const <String, dynamic>{}),
-            'data': jsonEncode(json),
-          }, conflictAlgorithm: ConflictAlgorithm.replace);
-          var order = 0;
-          for (final song in songs) {
-            if (song is! Map) continue;
-            final songJson = song.map((k, v) => MapEntry('$k', v));
-            final songId = '${songJson['id'] ?? ''}';
-            if (songId.isEmpty) continue;
-            await txn.insert('playlist_songs', {
-              'playlist_id': id,
-              'song_id': songId,
-              'sort_order': order,
-              'added_at': DateTime.now().millisecondsSinceEpoch,
-              'data': jsonEncode(songJson),
-            }, conflictAlgorithm: ConflictAlgorithm.replace);
-            order++;
+      final dir = await AppPaths.tempDirectory();
+      if (!await dir.exists()) return;
+      await for (final entity in dir.list(followLinks: false)) {
+        try {
+          if (entity is Directory) {
+            await entity.delete(recursive: true);
+          } else if (entity is File) {
+            await entity.delete();
           }
+        } catch (e) {
+          debugPrint('[BackupService] 删除临时文件失败: $e');
         }
-      });
+      }
     } catch (e) {
-      debugPrint('[BackupService] 导入歌单失败: $e');
-    }
-  }
-
-  /// 导出本地音乐的扫描目录（不含歌曲列表）。
-  static Future<List<String>> _exportLocalDirs() async {
-    try {
-      final db = await AppDatabase.cacheDatabase();
-      final rows = await db.query('local_dirs', orderBy: 'added_at ASC');
-      return rows.map((r) => '${r['path']}').toList();
-    } catch (e) {
-      debugPrint('[BackupService] 导出扫描目录失败: $e');
-      return const [];
-    }
-  }
-
-  static Future<void> _importLocalDirs(List<String> dirs) async {
-    try {
-      final db = await AppDatabase.cacheDatabase();
-      await db.transaction((txn) async {
-        await txn.delete('local_dirs');
-        var order = 0;
-        for (final dir in dirs) {
-          if (dir.trim().isEmpty) continue;
-          await txn.insert('local_dirs', {
-            'path': dir,
-            'added_at': DateTime.now().millisecondsSinceEpoch,
-          });
-          order++;
-        }
-      });
-    } catch (e) {
-      debugPrint('[BackupService] 导入扫描目录失败: $e');
+      debugPrint('[BackupService] 清空临时目录失败: $e');
     }
   }
 }

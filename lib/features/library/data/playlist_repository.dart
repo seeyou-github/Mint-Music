@@ -1,44 +1,35 @@
 import 'dart:convert';
 
-import 'package:sqflite/sqflite.dart';
+import 'package:flutter/foundation.dart';
 
 import '../../../core/storage/app_database.dart';
-import '../../../core/storage/app_preferences.dart';
 import '../domain/models/playlist.dart';
 import '../../player/domain/models/song.dart';
+import 'playlist_store.dart';
 
-/// 收藏（我的收藏 + 收藏的歌单）的持久化。
+/// 收藏（我的收藏 + 收藏的歌单）的读写。
 ///
-/// 收藏是用户最重要的数据，单独放在「重要库」里
-/// （Windows：`AppData\db\mintmusic.db`）：
-///
-/// * 增删改都是行级操作 —— 给歌单加一首歌只写那一行，不重写整个歌单；
-/// * 变更后立即落盘（SQLite 事务 + WAL + `synchronous=FULL`），不会丢。
+/// 数据保存在一个 JSON 文件里（见 [PlaylistStore]），不在数据库中：
+/// 收藏变动不频繁，文件形式更方便查看、拷贝与备份还原。
 class PlaylistRepository {
   static const _favoritesId = '__favorites__';
 
-  /// 旧版把整个收藏列表塞在设置文件里的键（首次启动时迁移）。
-  static const _legacyKey = 'playlists';
-
-  /// 内存里的歌单缓存，写入时用来做增量对比。
-  Map<String, Playlist>? _cache;
-
+  /// 读取全部歌单（含「我的收藏」）。
   Future<List<Playlist>> loadPlaylists() async {
     try {
-      // 已经在内存里了就直接用，避免每次操作都重新查一遍数据库。
-      final cached = _cache;
-      if (cached != null) return cached.values.toList();
-
-      final db = await AppDatabase.importantDatabase();
-      var playlists = await _readAll(db);
-
-      if (playlists.isEmpty &&
-          !await AppDatabase.isMigrated('playlists')) {
-        playlists = await _importLegacy(db);
-        if (AppDatabase.isPersistent) {
-          await AppDatabase.markMigrated('playlists');
+      var raw = await PlaylistStore.read();
+      // 早期版本把收藏放在数据库里，这里一次性搬到 JSON 文件。
+      if (raw.isEmpty) {
+        final migrated = await _migrateFromDatabase();
+        if (migrated.isNotEmpty) {
+          raw = migrated;
+          await PlaylistStore.write(raw);
         }
       }
+      var playlists = raw
+          .map((e) => Playlist.fromJson(e))
+          .where((p) => p.id.isNotEmpty)
+          .toList();
 
       if (!playlists.any((p) => p.id == _favoritesId)) {
         final now = DateTime.now();
@@ -57,29 +48,57 @@ class PlaylistRepository {
         if (index > 0) {
           final favorites = playlists.removeAt(index);
           playlists.insert(0, favorites);
-          // 同步内存缓存的顺序
-          _cache = {for (final p in playlists) p.id: p};
         }
       }
       return playlists;
     } catch (e) {
-      // ignore: avoid_print
-      print('PlaylistRepository.loadPlaylists error: $e');
+      debugPrint('PlaylistRepository.loadPlaylists error: $e');
       rethrow;
     }
   }
 
-  Future<void> savePlaylists(List<Playlist> playlists) async {
+  /// 把数据库里（旧版本）的收藏一次性搬到 JSON 文件。
+  Future<List<Map<String, dynamic>>> _migrateFromDatabase() async {
     try {
       final db = await AppDatabase.importantDatabase();
-      if (_cache == null) {
-        await _readAll(db);
+      final rows = await db.query('playlists');
+      if (rows.isEmpty) return const [];
+      final result = <Map<String, dynamic>>[];
+      for (final row in rows) {
+        final data = AppDatabase.decodeMap(row['data']);
+        if (data.isEmpty) continue;
+        final id = '${row['id']}';
+        if (id.isEmpty) continue;
+        final songs = await db.query(
+          'playlist_songs',
+          where: 'playlist_id = ?',
+          whereArgs: [id],
+          orderBy: 'sort_order ASC',
+        );
+        data['songs'] = songs
+            .map((s) => AppDatabase.decodeMap(s['data']))
+            .where((s) => s.isNotEmpty)
+            .toList();
+        result.add(data);
       }
-      await _writeAll(db, playlists);
+      if (result.isNotEmpty) {
+        debugPrint('[PlaylistRepository] 已把数据库里的收藏迁移到 JSON 文件');
+      }
+      return result;
     } catch (e) {
-      // log and rethrow so the notifier can surface the error
-      // ignore: avoid_print
-      print('PlaylistRepository.savePlaylists error: $e');
+      debugPrint('[PlaylistRepository] 迁移数据库收藏失败: $e');
+      return const [];
+    }
+  }
+
+  /// 覆盖写入全部歌单。
+  Future<void> savePlaylists(List<Playlist> playlists) async {
+    try {
+      await PlaylistStore.write(
+        playlists.map((p) => p.toJson()).toList(),
+      );
+    } catch (e) {
+      debugPrint('PlaylistRepository.savePlaylists error: $e');
       rethrow;
     }
   }
@@ -183,8 +202,7 @@ class PlaylistRepository {
       }
       return false;
     } catch (e) {
-      // ignore: avoid_print
-      print('PlaylistRepository.addSongToPlaylist error: $e');
+      debugPrint('PlaylistRepository.addSongToPlaylist error: $e');
       rethrow;
     }
   }
@@ -227,158 +245,5 @@ class PlaylistRepository {
     }
     await savePlaylists(playlists);
     return playlist;
-  }
-
-  // ---------------------------------------------------------------- 数据库
-
-  /// 读取全部歌单（含歌曲）。
-  Future<List<Playlist>> _readAll(Database db) async {
-    final playlistRows = await db.query(
-      'playlists',
-      orderBy: 'create_time ASC, rowid ASC',
-    );
-    final songRows = await db.query(
-      'playlist_songs',
-      orderBy: 'playlist_id ASC, sort_order ASC',
-    );
-
-    final songsByPlaylist = <String, List<Map<String, dynamic>>>{};
-    for (final row in songRows) {
-      final pid = '${row['playlist_id']}';
-      songsByPlaylist.putIfAbsent(pid, () => []).add(row);
-    }
-
-    final result = <Playlist>[];
-    for (final row in playlistRows) {
-      final pid = '${row['id']}';
-      final meta = AppDatabase.decodeMap(row['data']);
-      final songsJson = <Map<String, dynamic>>[];
-      for (final songRow in songsByPlaylist[pid] ?? const <Map<String, dynamic>>[]) {
-        final songMap = AppDatabase.decodeMap(songRow['data']);
-        if (songMap.isEmpty) continue;
-        songsJson.add(songMap);
-      }
-      result.add(
-        Playlist.fromJson({...meta, 'id': pid, 'songs': songsJson}),
-      );
-    }
-
-    _cache = {for (final p in result) p.id: p};
-    return result;
-  }
-
-  /// 写入全部歌单（行级增量：只写变化过的歌单 / 歌曲）。
-  Future<void> _writeAll(Database db, List<Playlist> playlists) async {
-    final previous = _cache ?? const <String, Playlist>{};
-
-    await db.transaction((txn) async {
-      final currentIds = playlists.map((p) => p.id).toSet();
-
-      // 删掉已经不存在的歌单
-      final existingRows = await txn.query('playlists', columns: ['id']);
-      for (final row in existingRows) {
-        final id = '${row['id']}';
-        if (!currentIds.contains(id)) {
-          await txn.delete('playlists', where: 'id = ?', whereArgs: [id]);
-          await txn.delete(
-            'playlist_songs',
-            where: 'playlist_id = ?',
-            whereArgs: [id],
-          );
-        }
-      }
-
-      for (final playlist in playlists) {
-        final meta = playlist.toJson()..remove('songs');
-        await txn.insert(
-          'playlists',
-          {
-            'id': playlist.id,
-            'name': playlist.name,
-            'description': playlist.description,
-            'cover_url': playlist.coverImgUrl,
-            'source': playlist.source,
-            'create_time': playlist.createTime.millisecondsSinceEpoch,
-            'update_time': playlist.updateTime.millisecondsSinceEpoch,
-            'meta': jsonEncode(playlist.meta),
-            'data': jsonEncode(meta),
-          },
-          conflictAlgorithm: ConflictAlgorithm.replace,
-        );
-
-        final old = previous[playlist.id];
-        final oldSongs = old?.songs ?? const <Song>[];
-        final oldIndex = <String, int>{};
-        final oldJson = <String, String>{};
-        for (var i = 0; i < oldSongs.length; i++) {
-          oldIndex[oldSongs[i].id] = i;
-          oldJson[oldSongs[i].id] = jsonEncode(oldSongs[i].toJson());
-        }
-
-        final newIds = <String>{};
-        for (var i = 0; i < playlist.songs.length; i++) {
-          final song = playlist.songs[i];
-          newIds.add(song.id);
-          final songJson = jsonEncode(song.toJson());
-          final prevPos = oldIndex[song.id];
-          if (prevPos != null) {
-            // 内容与顺序都没变就不用写。
-            if (prevPos == i && oldJson[song.id] == songJson) continue;
-            await txn.update(
-              'playlist_songs',
-              {'sort_order': i, 'data': songJson},
-              where: 'playlist_id = ? AND song_id = ?',
-              whereArgs: [playlist.id, song.id],
-            );
-          } else {
-            await txn.insert('playlist_songs', {
-              'playlist_id': playlist.id,
-              'song_id': song.id,
-              'sort_order': i,
-              'added_at': DateTime.now().millisecondsSinceEpoch,
-              'data': songJson,
-            });
-          }
-        }
-
-        for (final removedId in oldIndex.keys) {
-          if (!newIds.contains(removedId)) {
-            await txn.delete(
-              'playlist_songs',
-              where: 'playlist_id = ? AND song_id = ?',
-              whereArgs: [playlist.id, removedId],
-            );
-          }
-        }
-      }
-    });
-
-    _cache = {for (final p in playlists) p.id: p};
-  }
-
-  /// 首次启动：把旧设置文件里的收藏导入数据库。
-  Future<List<Playlist>> _importLegacy(Database db) async {
-    final playlists = <Playlist>[];
-    try {
-      final prefs = await AppPreferences.getInstance();
-      final raw = prefs.getString(_legacyKey);
-      if (raw != null && raw.isNotEmpty) {
-        final list = jsonDecode(raw) as List<dynamic>;
-        playlists.addAll(
-          list.map((e) => Playlist.fromJson(e as Map<String, dynamic>)),
-        );
-      }
-      if (playlists.isNotEmpty) {
-        await _writeAll(db, playlists);
-        // 只有真正落盘了才删旧数据，避免降级模式下把收藏弄丢。
-        await AppDatabase.removeLegacyKey(_legacyKey);
-        // ignore: avoid_print
-        print('[PlaylistRepository] 已从旧设置迁移 ${playlists.length} 个歌单');
-      }
-    } catch (e) {
-      // ignore: avoid_print
-      print('[PlaylistRepository] 迁移旧收藏失败: $e');
-    }
-    return playlists;
   }
 }

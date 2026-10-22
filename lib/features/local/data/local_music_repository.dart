@@ -93,9 +93,12 @@ class LocalMusicRepository {
     if (_initialized) return;
     final db = await AppDatabase.cacheDatabase();
 
-    final dirRows = await db.query('local_dirs', orderBy: 'added_at ASC');
-    for (final row in dirRows) {
-      _scannedDirs.add('${row['path']}');
+    // 扫描目录变动很少，存放在应用配置里（备份 / 还原会带上）。
+    try {
+      final prefs = await AppPreferences.getInstance();
+      _scannedDirs.addAll(prefs.getStringList(_dirsKey) ?? const <String>[]);
+    } catch (e) {
+      debugPrint('[LocalMusic] 读取扫描目录失败: $e');
     }
 
     final songRows = await db.query('local_songs');
@@ -597,16 +600,17 @@ class LocalMusicRepository {
   Future<void> _persistIndex() async {
     final db = await AppDatabase.cacheDatabase();
     final songs = _songsMap.values.toList();
-    final dirs = _scannedDirs.toList();
     final now = DateTime.now().millisecondsSinceEpoch;
-    await db.transaction((txn) async {
-      await txn.delete('local_dirs');
-      final dirBatch = txn.batch();
-      for (final dir in dirs) {
-        dirBatch.insert('local_dirs', {'path': dir, 'added_at': now});
-      }
-      await dirBatch.commit(noResult: true);
 
+    // 扫描目录写在应用配置里（变动少，备份 / 还原会带上）。
+    try {
+      final prefs = await AppPreferences.getInstance();
+      await prefs.setStringList(_dirsKey, _scannedDirs.toList());
+    } catch (e) {
+      debugPrint('[LocalMusic] 保存扫描目录失败: $e');
+    }
+
+    await db.transaction((txn) async {
       await txn.delete('local_songs');
       final batch = txn.batch();
       for (final song in songs) {
@@ -632,6 +636,17 @@ class LocalMusicRepository {
       final dirsJson = prefs.getStringList(_dirsKey) ?? [];
       _scannedDirs.addAll(dirsJson);
 
+      // 旧版本把扫描目录放在数据库的 local_dirs 表里，一并搬回设置。
+      try {
+        final db = await AppDatabase.cacheDatabase();
+        final dirRows = await db.query('local_dirs', orderBy: 'added_at ASC');
+        for (final row in dirRows) {
+          _scannedDirs.add('${row['path']}');
+        }
+      } catch (_) {
+        // 表不存在（老版本数据库）时忽略。
+      }
+
       final songsJson = prefs.getString(_songsKey);
       if (songsJson != null) {
         final list = jsonDecode(songsJson) as List;
@@ -644,7 +659,6 @@ class LocalMusicRepository {
       if (dirsJson.isNotEmpty || _songsMap.isNotEmpty) {
         await _persistIndex();
         // 只有真正落盘了才删旧数据，避免降级模式下索引丢失。
-        await AppDatabase.removeLegacyKey(_dirsKey);
         await AppDatabase.removeLegacyKey(_songsKey);
         debugPrint('[LocalMusic] 已从旧设置迁移本地音乐索引');
       }
