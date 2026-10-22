@@ -88,7 +88,9 @@ class RecentlyPlayedPlaylistsNotifier
 
 /// 「统计」页当前选择的粒度。
 final playbackStatsGranularityProvider =
-    StateProvider<PlaybackStatsGranularity>(PlaybackStatsGranularity.day);
+    StateProvider<PlaybackStatsGranularity>(
+      (ref) => PlaybackStatsGranularity.day,
+    );
 
 /// 听歌统计（按粒度聚合）。
 final playbackStatsProvider =

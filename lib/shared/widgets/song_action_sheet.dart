@@ -205,6 +205,11 @@ class SongActionSheet extends ConsumerStatefulWidget {
     );
   }
 
+  /// 弹出播放速度选择（播放页的「倍速」按钮也复用这里）。
+  static Future<void> showSpeedPicker(BuildContext context, WidgetRef ref) {
+    return _SongActionSheetState.showSpeedPicker(context, ref);
+  }
+
   /// 选择下载音质。
   ///
   /// 播放页顶部的下载按钮直接调用这个（不经过 ActionSheet）。
