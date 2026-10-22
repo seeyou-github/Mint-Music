@@ -84,19 +84,12 @@ class MinePage extends ConsumerWidget {
               ),
             ]),
             const SizedBox(height: AppSpacing.md),
-            // 下载 + 最近播放
             _buildEntryGroup(context, colors, [
               _MineEntry(
                 icon: Icons.download_outlined,
                 title: '下载',
                 subtitle: '下载管理与下载记录',
                 route: AppRoutes.download,
-              ),
-              _MineEntry(
-                icon: Icons.history,
-                title: '最近播放',
-                subtitle: '查看最近听过的歌曲',
-                route: AppRoutes.recentlyPlayed,
               ),
             ]),
             // 听歌识曲的音频指纹模块依赖 WebView 运行时，Windows 端不可用，隐藏入口。

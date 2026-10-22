@@ -1805,10 +1805,8 @@ class MusicSourceManager {
     }
 
     final source = song.source;
-    if (source == null || source.isEmpty || source.contains('@')) return null;
-    // 跨平台兜底：优先用内置平台源搜索（内置源一定有搜索接口），再补上
-    // 其它平台的插件源。
-    final others = crossPlatformSourceIds(source);
+    if (source == null || source.isEmpty) return null;
+    final others = playbackFallbackSourceIds(source);
     if (others.isEmpty) return null;
 
     for (final candidate in await matchSongsInSources(song, others)) {
@@ -1824,23 +1822,44 @@ class MusicSourceManager {
     return null;
   }
 
-  /// 跨平台兜底时要尝试的音源 id：其它平台的内置源 + 其它平台的插件源。
+  /// 播放失败 / 内置源解析失败时要尝试的音源 id（按优先级排列）。
   ///
-  /// 内置源没有地址接口，只能靠插件解析，所以跨平台兜底时要把能用的平台
-  /// 都试一遍。内置平台源放在前面：内置源一定有搜索接口，而落雪「仅解析」
-  /// 这类脚本可能没有 search action。
-  ///
-  /// 同名平台（[currentSource]）的插件不在列表里 —— 正常播放路径已经按顺序
-  /// 逐个试过了。
-  List<String> crossPlatformSourceIds(String currentSource) {
+  /// * 同平台优先：`酷狗1 → 酷狗2 → …`。内置源的歌曲没有插件原生元数据
+  ///   （MusicFree 的 `musicItem` 必须由插件自己的搜索结果提供），所以同名
+  ///   插件需要重新搜索同一首歌再解析地址，不能只依赖内置源的元数据；
+  /// * 其它平台：内置源在前（都有搜索接口），插件源在后；
+  /// * 不区分洛雪 / MusicFree 格式，也不看「自动切换音源」开关——内置源
+  ///   自己没有地址接口，必须把所有可能解析地址的音源都试一遍。
+  List<String> playbackFallbackSourceIds(String currentSource) {
+    final current = currentSource.trim();
+    if (current.isEmpty) return const <String>[];
+    final (baseId, pluginId) = splitSourceId(current);
     final result = <String>[];
-    for (final id in builtInPlatformIds) {
-      if (id == currentSource) continue;
+    final seen = <String>{current};
+
+    void add(String id) {
+      if (id.isEmpty || !seen.add(id)) return;
       result.add(id);
     }
+
+    // 1. 同平台的其它插件音源。
     for (final id in pluginSourceIds) {
-      if (id.startsWith('$currentSource@')) continue;
-      result.add(id);
+      if (splitSourceId(id).$1 == baseId) add(id);
+    }
+    // 2. 当前是插件变体时，同平台内置源排在同平台插件之后。
+    if (pluginId != null &&
+        _builtInSources.containsKey(baseId) &&
+        isBuiltInSourceAvailable(baseId)) {
+      add(baseId);
+    }
+    // 3. 其它平台：内置源在前，插件源在后。
+    for (final id in builtInPlatformIds) {
+      if (id == baseId) continue;
+      add(id);
+    }
+    for (final id in pluginSourceIds) {
+      if (splitSourceId(id).$1 == baseId) continue;
+      add(id);
     }
     return result;
   }

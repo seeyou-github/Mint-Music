@@ -11,7 +11,6 @@ import '../platform/audio_handler.dart';
 import '../platform/audio_effect_service.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/services/audio_service_init.dart';
-import '../../library/application/recently_played_providers.dart';
 import '../../plugin/application/music_source_manager.dart';
 import '../../plugin/application/plugin_providers.dart';
 import '../../plugin/domain/plugin_types.dart';
@@ -34,9 +33,6 @@ final playbackControllerProvider =
         musicSourceManager,
         audioEffectService,
       );
-      controller.onSongPlayed = (song) {
-        ref.read(recentlyPlayedProvider.notifier).addToHistory(song);
-      };
       controller.onSongUpdated = (song) {
         ref.read(localMusicNotifierProvider.notifier).upsertSong(song);
         controller.updateSongInQueue(song);
@@ -67,15 +63,6 @@ final playbackControllerProvider =
       controller.setAutoSwitchSource(ref.read(autoSwitchSourceProvider));
       controller.onEnsureMusicSourcesReady = () =>
           ref.read(pluginInitializedProvider.future);
-
-      final sourceQuality = ref.read(sourceQualityProvider);
-      final activeIds = _chineseNamesToSourceIds(sourceQuality.keys.toList());
-      controller.setActiveSourceIds(activeIds);
-      ref.listen(sourceQualityProvider, (prev, next) {
-        controller.setActiveSourceIds(
-          _chineseNamesToSourceIds(next.keys.toList()),
-        );
-      });
 
       ref.listen(rememberProgressProvider, (prev, next) {
         controller.setRememberProgress(next);
@@ -172,14 +159,6 @@ final currentSongIdentityProvider = Provider<int>((ref) {
   ]);
 });
 
-const _chineseNameToSourceId = {
-  '网易云': 'wy',
-  'QQ音乐': 'tx',
-  '酷狗': 'kg',
-  '酷我': 'kw',
-  '咪咕': 'mg',
-};
-
 const _sourceIdToChineseName = {
   'wy': '网易云音乐',
   'tx': 'QQ音乐',
@@ -199,12 +178,6 @@ String _getSourceName(String sourceId, MusicSourceManager manager) {
   if (name.isNotEmpty) return name;
   return _sourceIdToChineseName[sourceId] ?? sourceId;
 }
-List<String> _chineseNamesToSourceIds(List<String> names) {
-  return names
-      .map((n) => _chineseNameToSourceId[n] ?? '')
-      .where((id) => id.isNotEmpty)
-      .toList();
-}
 
 class PlaybackController extends StateNotifier<PlaybackState> {
   final MusicAudioHandler _audioHandler;
@@ -219,7 +192,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   StreamSubscription? _errorListenerSub;
   StreamSubscription<int?>? _audioSessionSub;
 
-  void Function(Song)? onSongPlayed;
   void Function(Song)? onSongUpdated;
   void Function(String message, {Color? backgroundColor})? onMessage;
   String Function(String sourceId)? getQualityForSource;
@@ -233,7 +205,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
 
   int _currentPlayRequestId = 0;
   int? _qualitySwitchRequestId;
-  List<String> _activeSourceIds = [];
   bool _settingQueue = false;
   Duration _lastEmittedPosition = Duration.zero;
   static const Duration _positionThrottle = Duration(milliseconds: 200);
@@ -296,10 +267,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
       },
     );
     _init();
-  }
-
-  void setActiveSourceIds(List<String> sourceIds) {
-    _activeSourceIds = sourceIds;
   }
 
   void setRememberProgress(bool enabled) {
@@ -870,7 +837,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
         if (!identical(currentSongToPlay, song)) {
           _replaceSongInQueue(index, currentSongToPlay);
         }
-        onSongPlayed?.call(currentSongToPlay);
         return;
       }
 
@@ -922,7 +888,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
           excludedUrls: const <String>{},
         );
         if (qualityFallbackSong != null) {
-          onSongPlayed?.call(qualityFallbackSong);
           _errorListenerSub = _mountOneTimeErrorListener(
             requestId,
             index,
@@ -1006,7 +971,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
                 currentQuality: fallbackQuality,
               );
               onMessage?.call(tr('原播放链接失败，已切换到备用播放链接'));
-              onSongPlayed?.call(fallbackSong);
               _errorListenerSub = _mountOneTimeErrorListener(
                 requestId,
                 index,
@@ -1030,7 +994,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
                 excludedUrls: failedUrls,
               );
               if (qualityFallbackSong != null) {
-                onSongPlayed?.call(qualityFallbackSong);
                 _errorListenerSub = _mountOneTimeErrorListener(
                   requestId,
                   index,
@@ -1063,11 +1026,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
 
             final candidates = await _autoSwitchService.getCandidateSongs(
               song,
-              activeSourceIds: _activeSourceIds,
-              // 内置音源：把其它平台都试一遍（同名平台已在正常路径试过）。
-              candidateSources: (song.source ?? '').contains('@')
-                  ? null
-                  : _crossPlatformSourceIds(song.source ?? ''),
+              candidateSources: _fallbackSourceIds(song.source ?? ''),
             );
             if (_currentPlayRequestId != requestId) return;
 
@@ -1112,7 +1071,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
                   isLoading: false,
                   currentSong: switchedSong,
                 );
-                onSongPlayed?.call(switchedSong);
                 _errorListenerSub = _mountOneTimeErrorListener(
                   requestId,
                   index,
@@ -1146,7 +1104,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
           isLoading: false,
           currentSong: currentSongToPlay,
         );
-        onSongPlayed?.call(currentSongToPlay);
 
         _errorListenerSub = _mountOneTimeErrorListener(
           requestId,
@@ -1175,11 +1132,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
 
           final candidates = await _autoSwitchService.getCandidateSongs(
             song,
-            activeSourceIds: _activeSourceIds,
-            // 内置音源：把其它平台都试一遍（同名平台已在正常路径试过）。
-            candidateSources: (song.source ?? '').contains('@')
-                ? null
-                : _crossPlatformSourceIds(song.source ?? ''),
+            candidateSources: _fallbackSourceIds(song.source ?? ''),
           );
           if (_currentPlayRequestId != requestId) return;
 
@@ -1223,7 +1176,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
                 isLoading: false,
                 currentSong: switchedSong,
               );
-              onSongPlayed?.call(switchedSong);
               _errorListenerSub = _mountOneTimeErrorListener(
                 requestId,
                 index,
@@ -1614,7 +1566,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     _qualitySwitchRequestId = null;
     unawaited(_errorListenerSub?.cancel());
     _errorListenerSub = null;
-    _activeSourceIds = [];
     _justCompleted = false;
     _cancelPendingAutoNext();
     _needsUrlRefresh = false;
@@ -1810,18 +1761,16 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     return tr('没有第三方对应$name音源，请先安装$name音源');
   }
 
-  /// 跨平台兜底时要尝试的音源：其它平台的内置源 + 其它平台的插件源。
-  ///
-  /// 内置源没有地址接口，只能靠插件解析，所以要把能用的平台都试一遍
-  /// （同名平台的多个插件在正常播放路径里已经依次试过了）。
-  List<String> _crossPlatformSourceIds(String currentSource) {
-    return _musicSourceManager.crossPlatformSourceIds(currentSource);
+  /// 换源时要尝试的音源（同平台优先，再其它平台，不区分插件格式）。
+  List<String> _fallbackSourceIds(String currentSource) {
+    return _musicSourceManager.playbackFallbackSourceIds(currentSource);
   }
 
   /// 跨音源换源：遍历 `getCandidateSongs` 返回的候选并按顺序尝试播放。
   ///
-  /// 仅在开启「当前音源播放失败自动切换音源」时生效；未开启（默认）时
-  /// 直接停止播放。所有候选都失败同样停止播放，**不自动播放下一首**。
+  /// 插件音源仅在开启「当前音源播放失败自动切换音源」时换源，未开启时直接
+  /// 停止播放；内置音源即使关闭开关也会用插件兜底解析。所有候选都失败同样
+  /// 停止播放，**不自动播放下一首**。
   Future<bool> _tryPlayFromAlternateSources({
     required Song originalSong,
     required int index,
@@ -1875,11 +1824,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     try {
       final candidates = await _autoSwitchService.getCandidateSongs(
         originalSong,
-        activeSourceIds: _activeSourceIds,
-        // 内置音源：把其它平台都试一遍（同名平台已在正常路径试过）。
-        candidateSources: isBuiltInSource
-            ? _crossPlatformSourceIds(source)
-            : null,
+        candidateSources: _fallbackSourceIds(source),
       );
       if (_currentPlayRequestId != requestId) return false;
 
@@ -1912,7 +1857,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
           onMessage?.call(
             tr('已自动切换到 ${_getSourceName(candidate.source ?? '', _musicSourceManager)} 源播放'),
           );
-          onSongPlayed?.call(switchedSong);
           _errorListenerSub = _mountOneTimeErrorListener(
             requestId,
             index,
@@ -1937,10 +1881,9 @@ class PlaybackController extends StateNotifier<PlaybackState> {
 
   /// 内置音源的歌曲改用已安装的插件解析播放地址。
   ///
-  /// 内置源只负责搜索与元数据，本身没有地址接口，播放地址必须由插件解析：
-  /// * 同名插件优先（正常播放路径已经走过一遍：多个同名插件会依次试）；
-  /// * 同名插件全都不行时，用其它平台再搜同一首歌（优先用内置平台源搜索，
-  ///   再补上其它插件源），依次尝试，直到所有平台都失败。
+  /// 内置源只负责搜索与元数据，本身没有地址接口，播放地址必须由插件解析。
+  /// 按同平台插件（酷狗1 → 酷狗2）→ 其它平台内置源 → 其它平台插件的顺序
+  /// 重新搜索同一首歌再解析，直到所有音源都失败。
   ///
   /// 即使关掉了「当前音源播放失败自动切换音源」也会走这个兜底，并且**不弹
   /// 任何提示**，实际使用的音源在播放详情页顶部显示。
@@ -1957,10 +1900,9 @@ class PlaybackController extends StateNotifier<PlaybackState> {
 
     final pluginIds = _musicSourceManager.pluginSourceIds;
     if (pluginIds.isEmpty) return false;
-    // 同名插件已经在正常播放路径里试过了，这里只兜底其它平台：
-    // 优先用内置平台源搜索（内置源一定有搜索接口，落雪「仅解析」脚本
-    // 之类的插件可能没有），再补上其它平台的插件源。
-    final others = _crossPlatformSourceIds(source);
+    // 同平台插件（酷狗1 → 酷狗2）重新搜索同一首歌，失败后再试其它平台；
+    // MusicFree 插件必须用自己搜索结果里的 musicItem 才能解析地址。
+    final others = _fallbackSourceIds(source);
     if (others.isEmpty) return false;
 
     List<Song> candidates;
@@ -2013,7 +1955,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
           isLoading: false,
           currentSong: switchedSong,
         );
-        onSongPlayed?.call(switchedSong);
         _errorListenerSub = _mountOneTimeErrorListener(
           requestId,
           index,
@@ -2401,11 +2342,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
         }
         final candidates = await _autoSwitchService.getCandidateSongs(
           song,
-          activeSourceIds: _activeSourceIds,
-          // 内置音源：把其它平台都试一遍（同名平台已在正常路径试过）。
-          candidateSources: (song.source ?? '').contains('@')
-              ? null
-              : _crossPlatformSourceIds(song.source ?? ''),
+          candidateSources: _fallbackSourceIds(song.source ?? ''),
         );
         if (_currentPlayRequestId != requestId) return;
 

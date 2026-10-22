@@ -77,15 +77,7 @@ class _LocalPageState extends ConsumerState<LocalPage> {
   Future<void> _checkPermissionAndScan() async {
     final repo = ref.read(localMusicRepositoryProvider);
     final hasPermission = await repo.checkPermission();
-    if (!hasPermission) {
-      if (mounted) _showPermissionDialog();
-      return;
-    }
-
-    final songs = repo.getLocalSongs();
-    if (songs.isEmpty) {
-      await ref.read(localMusicNotifierProvider.notifier).scanAll();
-    }
+    if (!hasPermission && mounted) _showPermissionDialog();
   }
 
   void _showPermissionDialog() {

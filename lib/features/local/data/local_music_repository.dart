@@ -185,6 +185,7 @@ class LocalMusicRepository {
     await init();
     if (_scannedDirs.contains(dirPath)) return;
     _scannedDirs.add(dirPath);
+    await _persistDirectories();
     await _flushIndex();
   }
 
@@ -196,6 +197,7 @@ class LocalMusicRepository {
       final fp = (s.filePath ?? '').replaceAll('\\', '/');
       return fp.startsWith(normalized);
     });
+    await _persistDirectories();
     await _flushIndex();
   }
 
@@ -203,6 +205,7 @@ class LocalMusicRepository {
     await init();
     _scannedDirs.clear();
     _scannedDirs.addAll(dirs.where((d) => d.isNotEmpty));
+    await _persistDirectories();
     await _flushIndex();
   }
 
@@ -598,18 +601,24 @@ class LocalMusicRepository {
     await AppDatabase.checkpoint();
   }
 
-  Future<void> _persistIndex() async {
-    final db = await AppDatabase.cacheDatabase();
-    final songs = _songsMap.values.toList();
-    final now = DateTime.now().millisecondsSinceEpoch;
-
-    // 扫描目录写在应用配置里（变动少，备份 / 还原会带上）。
+  /// 扫描目录立即写入设置文件（`AppData/config/settings.json`）。
+  ///
+  /// 目录是用户主动添加的配置，不能等歌曲索引的延迟写：临时数据库打不开时
+  /// 也要保证下次启动能靠设置里的路径自动重新扫描。
+  Future<void> _persistDirectories() async {
     try {
       final prefs = await AppPreferences.getInstance();
       await prefs.setStringList(_dirsKey, _scannedDirs.toList());
     } catch (e) {
       debugPrint('[LocalMusic] 保存扫描目录失败: $e');
     }
+  }
+
+  Future<void> _persistIndex() async {
+    await _persistDirectories();
+    final db = await AppDatabase.cacheDatabase();
+    final songs = _songsMap.values.toList();
+    final now = DateTime.now().millisecondsSinceEpoch;
 
     await db.transaction((txn) async {
       await txn.delete('local_songs');

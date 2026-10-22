@@ -50,12 +50,19 @@ class AutoSwitchSourceService {
             ? List<String>.from(activeSourceIds)
             : List<String>.from(_fallbackSources));
 
-    // CeruMusic: 移除当前源
-    sources = sources.where((s) => s != originalSong.source).toList();
+    // CeruMusic: 移除当前源。音源列表本身已按优先级排好（同平台插件在前），
+    // 这里只去重，不要重排。
+    final seenSources = <String>{};
+    sources = sources
+        .where((s) => s != originalSong.source && seenSources.add(s))
+        .toList();
 
     if (sources.isEmpty) {
       throw Exception('没有其他可用的音源');
     }
+    final sourceOrder = <String, int>{
+      for (var i = 0; i < sources.length; i++) sources[i]: i,
+    };
 
     // CeruMusic: searchKeyword = `${originalSong.name} ${originalSong.singer}`
     final searchKeyword = '${originalSong.title} ${originalSong.artist}'.trim();
@@ -104,7 +111,14 @@ class AutoSwitchSourceService {
             })
             .where((x) => x.score > 0.6)
             .toList()
-          ..sort((a, b) => b.score.compareTo(a.score));
+          // 音源优先级高于匹配度：同平台音源（酷狗1 → 酷狗2）必须先试完，
+          // 再试其它平台；同一音源内部才按匹配度排序。
+          ..sort((a, b) {
+            final orderA = sourceOrder[a.song.source] ?? sources.length;
+            final orderB = sourceOrder[b.song.source] ?? sources.length;
+            if (orderA != orderB) return orderA.compareTo(orderB);
+            return b.score.compareTo(a.score);
+          });
 
     if (ranked.isEmpty) {
       throw Exception('未找到其他源的匹配歌曲');

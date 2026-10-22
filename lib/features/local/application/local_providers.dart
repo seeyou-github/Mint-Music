@@ -96,6 +96,9 @@ final batchMatchProgressProvider = StateProvider<BatchMatchProgress>((ref) {
 class LocalMusicNotifier extends StateNotifier<AsyncValue<List<Song>>> {
   final Ref _ref;
 
+  /// 本次运行是否已经做过「索引为空时自动补扫」，保证只自动扫描一次。
+  bool _autoScanAttempted = false;
+
   LocalMusicNotifier(this._ref) : super(const AsyncValue.loading()) {
     _init();
   }
@@ -112,9 +115,16 @@ class LocalMusicNotifier extends StateNotifier<AsyncValue<List<Song>>> {
       final hasPermission = await repo.checkPermission();
       if (hasPermission) {
         final songs = repo.getLocalSongs();
-        // 扫描目录存在但索引里没有歌曲（首次使用 / 还原配置后临时目录被清空）时，
-        // 第一次进入「本地」分类会自动扫描一次这些目录。
-        if (songs.isEmpty || rescan) {
+        // 临时数据库被删除 / 本地歌曲为空，但设置里仍保存着扫描目录时，
+        // 第一次进入「本地」分类自动补扫一次。没有扫描目录就不自动扫描，
+        // 避免在桌面上无意间遍历整个系统音乐目录。
+        final shouldAutoScan = songs.isEmpty &&
+            !_autoScanAttempted &&
+            repo.getScannedDirectories().isNotEmpty;
+        if (shouldAutoScan) {
+          _autoScanAttempted = true;
+        }
+        if (rescan || shouldAutoScan) {
           await repo.scanAll(
             onProgress: (progress) {
               _ref.read(scanProgressProvider.notifier).state = progress;

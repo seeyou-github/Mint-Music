@@ -260,6 +260,10 @@ function __mfUnwrapItem(musicInfo) {
   // 回退：用本项目字段拼一个最小可用的 musicItem（例如内置源搜索到的歌曲
   // 交给 MusicFree 插件解析播放地址）。
   var id = info.songmid || info.songId || info.songid || info.id || '';
+  // 部分插件在 getMediaSource 第一行就检查 musicItem.qualities[quality]，
+  // 内置源没有插件自己的音质表，这里按 MusicFree 的四个音质键补齐，
+  // 具体的可用性交给插件接口判断。
+  var qualities = { low: {}, standard: {}, high: {}, super: {} };
   return {
     id: id,
     platform: __mfPluginMeta().name,
@@ -268,6 +272,7 @@ function __mfUnwrapItem(musicInfo) {
     album: __mfText(info.albumName || info.album, ''),
     artwork: __mfText(info.img || info.picUrl || info.pic || info.cover, ''),
     duration: typeof info.duration === 'number' ? info.duration : 0,
+    qualities: qualities,
     _info: info,
   };
 }
