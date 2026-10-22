@@ -323,7 +323,7 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
 
   // ---------------------------------------------------------------- 辅助 UI
 
-  ScaffoldFeatureController<SnackBarClosedReason>? _progressController;
+  ScaffoldFeatureController<SnackBar, SnackBarClosedReason>? _progressController;
 
   /// 显示一个不会自动消失的进度提示（上传 / 下载过程中用）。
   void _showProgress(String message) {
@@ -332,7 +332,7 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
     _progressController = ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         // 一直显示，直到任务结束主动关闭。
-        duration: const Duration(days: 1),
+        persist: true,
         backgroundColor: colors.surface,
         content: Row(
           children: [
