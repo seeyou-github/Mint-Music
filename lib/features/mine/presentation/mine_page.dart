@@ -68,13 +68,24 @@ class MinePage extends ConsumerWidget {
               ],
             ),
             const SizedBox(height: AppSpacing.lg),
-            // 插件管理 + 设置
+            // 每个入口单独一组（组与组之间留间距）
+            _buildEntryGroup(context, colors, [
+              _MineEntry(
+                icon: Icons.history,
+                title: '最近播放',
+                route: AppRoutes.recentlyPlayed,
+              ),
+            ]),
+            const SizedBox(height: AppSpacing.md),
             _buildEntryGroup(context, colors, [
               _MineEntry(
                 icon: Icons.extension_outlined,
                 title: '插件管理',
                 route: AppRoutes.pluginManagement,
               ),
+            ]),
+            const SizedBox(height: AppSpacing.md),
+            _buildEntryGroup(context, colors, [
               _MineEntry(
                 icon: Icons.settings_outlined,
                 title: '设置',
@@ -96,7 +107,7 @@ class MinePage extends ConsumerWidget {
                 _MineEntry(
                   icon: Icons.mic_none,
                   title: '听歌识曲',
-                    route: AppRoutes.recognize,
+                  route: AppRoutes.recognize,
                 ),
               ]),
             ],

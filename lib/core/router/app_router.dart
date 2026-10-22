@@ -6,6 +6,7 @@ import '../../features/discover/presentation/search_page.dart';
 import '../../features/discover/presentation/playlist_detail_page.dart';
 import '../../features/library/presentation/library_page.dart';
 import '../../features/library/presentation/local_playlist_detail_page.dart';
+import '../../features/library/domain/models/recently_played.dart';
 import '../../features/library/presentation/recently_played_page.dart';
 import '../../features/discover/presentation/recognize_page.dart';
 import '../../features/local/presentation/tag_editor_page.dart';
@@ -62,9 +63,16 @@ final appRouter = GoRouter(
               path: AppRoutes.playlistDetail,
               pageBuilder: (context, state) {
                 final playlistId = state.pathParameters['id'] ?? '';
+                // 排行榜打开的记成「榜单」来源（最近播放里显示「榜单」标签）。
+                final sourceType = state.uri.queryParameters['type'] == 'rank'
+                    ? PlaybackSourceType.rank
+                    : PlaybackSourceType.playlist;
                 return CustomTransitionPage(
                   key: state.pageKey,
-                  child: PlaylistDetailPage(playlistId: playlistId),
+                  child: PlaylistDetailPage(
+                    playlistId: playlistId,
+                    sourceType: sourceType,
+                  ),
                   transitionDuration: const Duration(milliseconds: 220),
                   reverseTransitionDuration: const Duration(milliseconds: 180),
                   transitionsBuilder: (context, animation, secondaryAnimation,

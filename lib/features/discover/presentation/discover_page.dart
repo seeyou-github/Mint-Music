@@ -964,7 +964,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
   ) {
     return GestureDetector(
       onTap: () {
-        context.push('/playlist/${board.id}');
+        context.push('/playlist/${board.id}?type=rank');
       },
       child: Container(
         decoration: BoxDecoration(

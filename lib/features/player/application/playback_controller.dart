@@ -15,6 +15,8 @@ import '../../plugin/application/plugin_providers.dart';
 import '../../plugin/domain/plugin_types.dart';
 import '../../settings/application/settings_providers.dart';
 import 'auto_switch_source_service.dart';
+import 'playback_context.dart';
+import '../../library/application/recently_played_providers.dart';
 import '../../local/application/local_providers.dart';
 
 final audioHandlerProvider = Provider<MusicAudioHandler>((ref) {
@@ -61,6 +63,30 @@ final playbackControllerProvider =
       );
       controller.setAutoSwitchSource(ref.read(autoSwitchSourceProvider));
       controller.setPreferredSources(ref.read(preferredSourceMapProvider));
+
+      // 「最近播放」：开始播放时记一条（带来源），切歌/退出时结算收听时长。
+      final recentRepo = ref.read(recentlyPlayedRepositoryProvider);
+      controller.onPlayStarted = (song) {
+        final ctx = PlaybackContext.instance;
+        unawaited(
+          recentRepo.recordPlay(
+            song,
+            sourceType: ctx.type,
+            sourceId: ctx.id,
+            sourceName: ctx.name,
+          ),
+        );
+        ref.invalidate(recentlyPlayedProvider);
+      };
+      controller.onListenEnded = (song, listenedMs) {
+        unawaited(
+          recentRepo.recordListen(
+            songId: song.id,
+            listenedMs: listenedMs,
+            durationMs: song.duration * 1000,
+          ),
+        );
+      };
 
       ref.listen(preferredSourceMapProvider, (prev, next) {
         controller.setPreferredSources(next);
@@ -178,6 +204,12 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   /// 用户手动切换音质后回调（用于同步「默认音质 / 全局音质」设置）。
   void Function(String quality, String? sourceId)? onQualityChanged;
   Future<void> Function()? onEnsureMusicSourcesReady;
+
+  /// 一首歌开始播放时回调（写「最近播放」）。
+  void Function(Song song)? onPlayStarted;
+
+  /// 一段收听结束（切歌 / 退出）时回调：实际收听时长 + 歌曲总时长。
+  void Function(Song song, int listenedMs)? onListenEnded;
 
   int _currentPlayRequestId = 0;
   int? _qualitySwitchRequestId;
@@ -583,6 +615,18 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   static const Duration _audioSetTimeout = Duration(seconds: 10);
   static const Duration _musicSourceReadyTimeout = Duration(seconds: 12);
 
+  /// 结算上一首的收听时长。
+  ///
+  /// 用「切歌时的播放位置」当实际收听时长：整首听完 ≈ 歌曲时长，
+  /// 中途切歌就是听到哪儿算哪儿。
+  void _finalizeListenSession() {
+    final song = state.currentSong;
+    if (song == null) return;
+    final listened = state.position.inMilliseconds;
+    if (listened < 1000) return;
+    onListenEnded?.call(song, listened);
+  }
+
   Future<void> playSongAt(int index) async {
     if (index < 0 || index >= state.queue.length) return;
 
@@ -604,6 +648,10 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     // 照搬 CeruMusic：300ms 防抖，防止快速切歌导致并发请求混乱
     await Future.delayed(const Duration(milliseconds: 300));
     if (_currentPlayRequestId != requestId) return;
+
+    // 切歌前先把上一首的收听时长结算掉，再记录这首歌的播放。
+    _finalizeListenSession();
+    onPlayStarted?.call(song);
 
     _errorListenerSub?.cancel();
     _errorListenerSub = null;
@@ -2281,6 +2329,8 @@ class PlaybackController extends StateNotifier<PlaybackState> {
 
   @override
   void dispose() {
+    // 退出前结算当前歌曲的收听时长（否则最后一段统计会丢）。
+    _finalizeListenSession();
     _audioSessionSub?.cancel();
     _loadingTimer?.cancel();
     _loadingTimer = null;

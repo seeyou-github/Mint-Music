@@ -13,6 +13,8 @@ import '../../../shared/widgets/song_action_sheet.dart';
 import '../../../shared/widgets/song_selection.dart';
 import '../../player/presentation/mini_player.dart';
 import '../application/search_providers.dart';
+import '../../player/application/playback_context.dart';
+import '../../library/domain/models/recently_played.dart';
 import '../../library/application/playlist_providers.dart';
 import '../domain/models/playlist.dart';
 import '../../player/application/playback_controller.dart';
@@ -986,6 +988,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                 final controller = ref.read(
                   playbackControllerProvider.notifier,
                 );
+                PlaybackContext.instance.set(PlaybackSourceType.search);
                 await controller.setQueue(songs, startIndex: index);
               },
             );
@@ -1028,6 +1031,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
             }
             _globalLastTapTime = now;
             final controller = ref.read(playbackControllerProvider.notifier);
+            PlaybackContext.instance.set(PlaybackSourceType.search);
             await controller.setQueue(songs, startIndex: index);
           },
         );
@@ -1112,6 +1116,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
             if (lastTap != null && diff! < _tapDebounceMs) return;
             _globalLastTapTime = now;
             final controller = ref.read(playbackControllerProvider.notifier);
+            PlaybackContext.instance.set(PlaybackSourceType.search);
             await controller.setQueue(songs, startIndex: index);
           },
         );

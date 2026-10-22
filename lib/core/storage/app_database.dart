@@ -226,7 +226,7 @@ class AppDatabase {
           );
     return openDatabase(
       path,
-      version: 2,
+      version: 3,
       onConfigure: (db) async {
         await db.execute('PRAGMA journal_mode=WAL');
         // NORMAL：写 WAL 不用每次 fsync，浏览时缓存索引写入不至于卡顿。
@@ -279,6 +279,35 @@ class AppDatabase {
     await db.execute(
       'CREATE INDEX IF NOT EXISTS idx_recently_played_time '
       'ON recently_played (played_at DESC)',
+    );
+    await db.execute('''
+          CREATE TABLE IF NOT EXISTS recently_played_playlists (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL DEFAULT '',
+            cover_url TEXT NOT NULL DEFAULT '',
+            song_count INTEGER NOT NULL DEFAULT 0,
+            source TEXT NOT NULL DEFAULT '',
+            opened_at INTEGER NOT NULL DEFAULT 0,
+            data TEXT NOT NULL DEFAULT '{}'
+          )
+        ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_rp_playlists_time '
+      'ON recently_played_playlists (opened_at DESC)',
+    );
+    // 每次播放（一段连续收听）一条记录：统计总时长 / 按天周月年聚合都靠它。
+    await db.execute('''
+          CREATE TABLE IF NOT EXISTS play_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            song_id TEXT NOT NULL DEFAULT '',
+            played_at INTEGER NOT NULL DEFAULT 0,
+            listened_ms INTEGER NOT NULL DEFAULT 0,
+            duration_ms INTEGER NOT NULL DEFAULT 0
+          )
+        ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_play_events_time '
+      'ON play_events (played_at DESC)',
     );
     await db.execute('''
           CREATE TABLE IF NOT EXISTS download_tasks (

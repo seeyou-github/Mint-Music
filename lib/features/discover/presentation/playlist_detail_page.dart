@@ -13,6 +13,9 @@ import '../../../shared/widgets/song_action_sheet.dart';
 import '../../../shared/widgets/song_list_item.dart';
 import '../../../shared/widgets/song_selection.dart';
 import '../application/discover_providers.dart';
+import '../../../features/player/application/playback_context.dart';
+import '../../library/application/recently_played_providers.dart';
+import '../../library/domain/models/recently_played.dart';
 import '../domain/models/playlist_page.dart';
 import '../../library/application/playlist_providers.dart';
 import '../../library/domain/models/playlist.dart' as local;
@@ -21,9 +24,16 @@ import '../../player/domain/models/song.dart';
 import '../../player/presentation/mini_player.dart';
 
 class PlaylistDetailPage extends ConsumerStatefulWidget {
-  const PlaylistDetailPage({super.key, required this.playlistId});
+  const PlaylistDetailPage({
+    super.key,
+    required this.playlistId,
+    this.sourceType = PlaybackSourceType.playlist,
+  });
 
   final String playlistId;
+
+  /// 打开这个歌单的入口类型（排行榜打开的记为「榜单」）。
+  final PlaybackSourceType sourceType;
 
   @override
   ConsumerState<PlaylistDetailPage> createState() => _PlaylistDetailPageState();
@@ -54,6 +64,10 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
   /// 完整歌曲列表（首屏 + 已加载的后续页）。
   List<Song> get _songs => [..._baseSongs, ..._extraSongs];
 
+  /// 歌单名称 / 封面（写「最近播放」与「最近打开的歌单」用）。
+  String _playlistTitle = '';
+  String _playlistCover = '';
+
   @override
   void dispose() {
     _scrollController.removeListener(_onScroll);
@@ -75,6 +89,31 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
   void _syncPagination(PlaylistPage page) {
     if (_pagedPlaylistId == widget.playlistId) return;
     _pagedPlaylistId = widget.playlistId;
+    final playlist = page.playlist;
+    _playlistTitle = playlist?.title ?? _playlistTitle;
+    _playlistCover = playlist?.coverUrl ?? _playlistCover;
+    if (playlist != null && playlist.title.isNotEmpty) {
+      // 放到帧后执行：这里可能正在 build 中，直接改 provider 会报错。
+      final playlistId = widget.playlistId;
+      final title = playlist.title;
+      final cover = playlist.coverUrl ?? '';
+      final songCount = playlist.songCount;
+      final source = playlist.source;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        unawaited(
+          ref
+              .read(recentlyPlayedPlaylistsProvider.notifier)
+              .recordOpened(
+                id: playlistId,
+                name: title,
+                coverUrl: cover,
+                songCount: songCount,
+                source: source,
+              ),
+        );
+      });
+    }
     _baseSongs = page.playlist?.songs ?? const <Song>[];
     _extraSongs.clear();
     _page = 1;
@@ -572,6 +611,11 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
           // 长按进入批量选择模式
           onLongPress: () => _enterSelection(song),
           onPlayTap: () async {
+            PlaybackContext.instance.set(
+              widget.sourceType,
+              id: widget.playlistId,
+              name: _playlistTitle,
+            );
             final controller = ref.read(playbackControllerProvider.notifier);
             await controller.setQueue(songs, startIndex: index);
           },
@@ -732,6 +776,11 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
 
   Future<void> _playAll(List<Song> songs) async {
     if (songs.isEmpty) return;
+    PlaybackContext.instance.set(
+      widget.sourceType,
+      id: widget.playlistId,
+      name: _playlistTitle,
+    );
     final controller = ref.read(playbackControllerProvider.notifier);
     await controller.setQueue(songs);
   }

@@ -16,6 +16,8 @@ import '../../../shared/widgets/song_action_sheet.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../../../shared/widgets/song_selection.dart';
 import '../application/local_providers.dart';
+import '../../player/application/playback_context.dart';
+import '../../library/domain/models/recently_played.dart';
 import '../data/local_music_repository.dart';
 import 'song_compare_dialog.dart';
 import '../../player/application/playback_controller.dart';
@@ -667,6 +669,7 @@ class _LocalPageState extends ConsumerState<LocalPage> {
     final songs = ref.read(filteredLocalSongsProvider);
     final index = songs.indexWhere((s) => s.id == song.id);
     final controller = ref.read(playbackControllerProvider.notifier);
+    PlaybackContext.instance.set(PlaybackSourceType.local);
     controller.setQueue(songs, startIndex: index >= 0 ? index : 0);
   }
 
