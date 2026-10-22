@@ -95,7 +95,6 @@ class BackupService {
       final relative = file.name.substring(entryName.length + 1);
       if (relative.isEmpty || relative.contains('..')) continue;
       final content = file.content;
-      if (content is! List<int>) continue;
       final dest = File(p.join(target.path, relative));
       await dest.parent.create(recursive: true);
       await dest.writeAsBytes(content, flush: true);

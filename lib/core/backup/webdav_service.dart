@@ -85,7 +85,7 @@ class WebDavService {
     final existing = _client;
     if (existing != null) return existing;
     final client = webdav.newClient(
-      url: config.url.trim(),
+      config.url.trim(),
       user: config.user,
       password: config.password,
     );
@@ -166,8 +166,8 @@ class WebDavService {
       if (name.isEmpty || name == '.' || name == '..') continue;
       if (!name.contains(backupNamePrefix)) continue;
       final path = dyn.path?.toString() ?? '$dir/$name';
-      final size = (dyn.size ?? 0) is int ? dyn.size as int : 0;
-      final modified = dyn.lastModified ?? dyn.modified;
+      final size = dyn.size is int ? dyn.size as int : 0;
+      final modified = dyn.mTime;
       DateTime? modifiedAt;
       if (modified is DateTime) {
         modifiedAt = modified;
@@ -228,6 +228,6 @@ class WebDavService {
         ? playlistFileName
         : '$playlistDir/$playlistFileName';
     final text = jsonEncode(data);
-    await client.write(target, utf8.encode(text));
+    await client.write(target, Uint8List.fromList(utf8.encode(text)));
   }
 }

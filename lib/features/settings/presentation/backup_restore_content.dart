@@ -35,7 +35,6 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
   final _passwordController = TextEditingController();
   final _deviceController = TextEditingController();
 
-  bool _loaded = false;
   bool _busy = false;
 
   @override
@@ -61,7 +60,6 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
     _userController.text = config.user;
     _passwordController.text = config.password;
     _deviceController.text = config.deviceName;
-    _loaded = true;
   }
 
   void _saveConfig({
@@ -122,10 +120,7 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
         type: FileType.any,
         bytes: bytes,
       );
-      if (path == null) {
-        // 用户取消
-        return;
-      }
+      if (path == null) return; // 用户取消
       _toast(tr('备份完成'));
     } catch (e) {
       _toast(tr('备份失败：$e'), error: true);
@@ -152,8 +147,7 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
         _toast(tr('无法读取所选文件'), error: true);
         return;
       }
-      final confirmed = await _confirmRestore();
-      if (!confirmed) return;
+      if (!await _confirmRestore()) return;
       setState(() => _busy = true);
       await BackupService.restoreBackup(bytes);
       _toast(tr('还原完成，请重启应用'));
@@ -172,7 +166,7 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
         backgroundColor: colors.surface,
         title: Text(tr('确认还原'), style: TextStyle(color: colors.textPrimary)),
         content: Text(
-          tr('还原会覆盖当前的应用设置、插件文件、收藏歌单与扫描目录，确定继续吗？'),
+          tr('还原会覆盖当前的应用设置、插件文件与收藏歌单，并清空临时数据，确定继续吗？'),
           style: TextStyle(color: colors.textSecondary),
         ),
         actions: [
@@ -200,19 +194,20 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
     }
     if (_busy) return;
     setState(() => _busy = true);
-    final progress = _showProgress(tr('正在备份并上传到 WebDAV...'));
+    _showProgress(tr('正在备份并上传到 WebDAV...'));
     try {
       final bytes = await BackupService.createBackup();
       final fileName = BackupService.buildBackupFileName();
       await WebDavService(config).uploadBackup(bytes, fileName);
-      progress.close();
+      _closeProgress();
       _toast(tr('备份上传成功'));
     } catch (e) {
-      progress.close();
+      _closeProgress();
       if (!mounted) return;
       // 失败可以重试
       final retry = await _showRetryDialog(tr('备份上传失败：$e'));
-      if (retry) _backupToWebDav();
+      // 延后到当前流程收尾之后再重试，避免 busy 状态被 finally 提前清掉。
+      if (retry) unawaited(Future.microtask(_backupToWebDav));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -226,19 +221,19 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
     }
     if (_busy) return;
     setState(() => _busy = true);
-    final progress = _showProgress(tr('正在读取 WebDAV 备份列表...'));
+    _showProgress(tr('正在读取 WebDAV 备份列表...'));
     List<RemoteBackupFile> files;
     try {
       files = await WebDavService(config).listBackups();
     } catch (e) {
-      progress.close();
+      _closeProgress();
       if (!mounted) return;
       final retry = await _showRetryDialog(tr('读取备份列表失败：$e'));
-      if (retry) _restoreFromWebDav();
+      if (retry) unawaited(Future.microtask(_restoreFromWebDav));
       if (mounted) setState(() => _busy = false);
       return;
     }
-    progress.close();
+    _closeProgress();
     if (!mounted) return;
     if (files.isEmpty) {
       _toast(tr('远端没有备份文件'), error: true);
@@ -246,113 +241,123 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
       return;
     }
 
-    final picked = await showModalBottomSheet<RemoteBackupFile>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) {
-        final colors = ctx.read<ThemeColors>(themeColorsProvider);
-        return Container(
-          decoration: BoxDecoration(
-            color: colors.surface,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-          ),
-          child: SafeArea(
-            top: false,
-            child: ListView(
-              shrinkWrap: true,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.all(AppSpacing.lg),
-                  child: Text(
-                    ctx.tr('选择一个备份文件'),
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: colors.textPrimary,
-                    ),
-                  ),
-                ),
-                ...files.map(
-                  (f) => ListTile(
-                    title: Text(
-                      f.name,
-                      style: TextStyle(color: colors.textPrimary, fontSize: 14),
-                    ),
-                    subtitle: Text(
-                      [
-                        if (f.modified != null)
-                          '${f.modified!.year}-${f.modified!.month.toString().padLeft(2, '0')}-${f.modified!.day.toString().padLeft(2, '0')} '
-                              '${f.modified!.hour.toString().padLeft(2, '0')}:${f.modified!.minute.toString().padLeft(2, '0')}',
-                        _formatSize(f.size),
-                      ].join(' · '),
-                      style: TextStyle(color: colors.textHint, fontSize: 12),
-                    ),
-                    onTap: () => Navigator.pop(ctx, f),
-                  ),
-                ),
-                const SizedBox(height: AppSpacing.md),
-              ],
-            ),
-          ),
-        );
-      },
-    );
+    final picked = await _pickRemoteFile(files);
     if (picked == null) {
       setState(() => _busy = false);
       return;
     }
 
-    final confirmed = await _confirmRestore();
-    if (!confirmed) {
+    if (!await _confirmRestore()) {
       setState(() => _busy = false);
       return;
     }
     setState(() => _busy = true);
-    final progress2 = _showProgress(tr('正在下载并还原...'));
+    _showProgress(tr('正在下载并还原...'));
     try {
       final bytes = await WebDavService(config).downloadBackup(picked.path);
       await BackupService.restoreBackup(bytes);
-      progress2.close();
+      _closeProgress();
       _toast(tr('还原完成，请重启应用'));
     } catch (e) {
-      progress2.close();
+      _closeProgress();
       if (!mounted) return;
       final retry = await _showRetryDialog(tr('还原失败：$e'));
-      if (retry) _restoreFromWebDav();
+      if (retry) unawaited(Future.microtask(_restoreFromWebDav));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
 
-  // ---------------------------------------------------------------- 辅助 UI
-
-  void _showProgress(String message) {
-    showDialog<void>(
+  /// 弹出远端备份列表让用户选择。
+  Future<RemoteBackupFile?> _pickRemoteFile(List<RemoteBackupFile> files) async {
+    final colors = ref.read(themeColorsProvider);
+    return showModalBottomSheet<RemoteBackupFile>(
       context: context,
-      barrierDismissible: false,
-      builder: (ctx) {
-        final colors = ctx.read<ThemeColors>(themeColorsProvider);
-        return AlertDialog(
-          backgroundColor: colors.surface,
-          content: Row(
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        decoration: BoxDecoration(
+          color: colors.surface,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+        ),
+        child: SafeArea(
+          top: false,
+          child: ListView(
+            shrinkWrap: true,
             children: [
-              const SizedBox(
-                width: 22,
-                height: 22,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-              const SizedBox(width: AppSpacing.md),
-              Expanded(
+              Padding(
+                padding: const EdgeInsets.all(AppSpacing.lg),
                 child: Text(
-                  message,
-                  style: TextStyle(color: colors.textSecondary, fontSize: 13),
+                  ctx.tr('选择一个备份文件'),
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: colors.textPrimary,
+                  ),
                 ),
               ),
+              ...files.map(
+                (f) => ListTile(
+                  title: Text(
+                    f.name,
+                    style: TextStyle(color: colors.textPrimary, fontSize: 14),
+                  ),
+                  subtitle: Text(
+                    [
+                      if (f.modified != null)
+                        '${f.modified!.year}-${f.modified!.month.toString().padLeft(2, '0')}-${f.modified!.day.toString().padLeft(2, '0')} '
+                            '${f.modified!.hour.toString().padLeft(2, '0')}:${f.modified!.minute.toString().padLeft(2, '0')}',
+                      _formatSize(f.size),
+                    ].join(' · '),
+                    style: TextStyle(color: colors.textHint, fontSize: 12),
+                  ),
+                  onTap: () => Navigator.pop(ctx, f),
+                ),
+              ),
+              const SizedBox(height: AppSpacing.md),
             ],
           ),
-        );
-      },
+        ),
+      ),
     );
+  }
+
+  // ---------------------------------------------------------------- 辅助 UI
+
+  ScaffoldFeatureController<SnackBarClosedReason>? _progressController;
+
+  /// 显示一个不会自动消失的进度提示（上传 / 下载过程中用）。
+  void _showProgress(String message) {
+    final colors = ref.read(themeColorsProvider);
+    _closeProgress();
+    _progressController = ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        // 一直显示，直到任务结束主动关闭。
+        duration: const Duration(days: 1),
+        backgroundColor: colors.surface,
+        content: Row(
+          children: [
+            const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            const SizedBox(width: AppSpacing.md),
+            Expanded(
+              child: Text(
+                message,
+                style: TextStyle(color: colors.textPrimary, fontSize: 13),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 关闭进度提示。
+  void _closeProgress() {
+    _progressController?.close();
+    _progressController = null;
   }
 
   Future<bool> _showRetryDialog(String message) async {
@@ -395,12 +400,12 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _SettingGroup(
+        SettingGroup(
           title: tr('本地备份'),
-          subtitle: tr('把应用设置、插件、收藏歌单与扫描目录打包备份'),
+          subtitle: tr('把应用设置、插件与收藏歌单打包备份'),
           colors: colors,
           children: [
-            _SettingRow(
+            SettingRow(
               icon: Icons.backup_outlined,
               title: tr('一键备份'),
               subtitle: tr('生成压缩包并选择保存位置'),
@@ -408,8 +413,8 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
               colors: colors,
               onTap: _busy ? null : _backupToFile,
             ),
-            const _SettingDivider(colors: colors),
-            _SettingRow(
+            SettingDivider(colors: colors),
+            SettingRow(
               icon: Icons.settings_backup_restore,
               title: tr('一键还原'),
               subtitle: tr('选择备份压缩包，覆盖当前配置'),
@@ -420,12 +425,12 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
           ],
         ),
         const SizedBox(height: AppSpacing.md),
-        _SettingGroup(
+        SettingGroup(
           title: tr('WebDAV 备份'),
           subtitle: tr('把备份上传到自己的 WebDAV 服务器'),
           colors: colors,
           children: [
-            _SettingRow(
+            SettingRow(
               icon: Icons.cloud_outlined,
               title: tr('WebDAV 地址'),
               subtitle: tr('例如 https://dav.example.com/back'),
@@ -436,21 +441,17 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
                   controller: _urlController,
                   onChanged: (v) => _saveConfig(url: v),
                   style: TextStyle(fontSize: 13, color: colors.textPrimary),
-                  decoration: InputDecoration(
+                  decoration: const InputDecoration(
                     isDense: true,
-                    hintText: tr('https://dav.example.com/back'),
-                    hintStyle: TextStyle(fontSize: 12, color: colors.textHint),
-                    border: const OutlineInputBorder(),
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 8,
-                    ),
+                    hintText: 'https://dav.example.com/back',
+                    border: OutlineInputBorder(),
+                    contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
                   ),
                 ),
               ),
             ),
-            const _SettingDivider(colors: colors),
-            _SettingRow(
+            SettingDivider(colors: colors),
+            SettingRow(
               icon: Icons.person_outline,
               title: tr('用户名'),
               colors: colors,
@@ -460,19 +461,16 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
                   controller: _userController,
                   onChanged: (v) => _saveConfig(user: v),
                   style: TextStyle(fontSize: 13, color: colors.textPrimary),
-                  decoration: InputDecoration(
+                  decoration: const InputDecoration(
                     isDense: true,
-                    border: const OutlineInputBorder(),
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 8,
-                    ),
+                    border: OutlineInputBorder(),
+                    contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
                   ),
                 ),
               ),
             ),
-            const _SettingDivider(colors: colors),
-            _SettingRow(
+            SettingDivider(colors: colors),
+            SettingRow(
               icon: Icons.key_outlined,
               title: tr('密码'),
               subtitle: tr('密码输入后无法查看'),
@@ -484,19 +482,16 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
                   obscureText: true,
                   onChanged: (v) => _saveConfig(password: v),
                   style: TextStyle(fontSize: 13, color: colors.textPrimary),
-                  decoration: InputDecoration(
+                  decoration: const InputDecoration(
                     isDense: true,
-                    border: const OutlineInputBorder(),
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 8,
-                    ),
+                    border: OutlineInputBorder(),
+                    contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
                   ),
                 ),
               ),
             ),
-            const _SettingDivider(colors: colors),
-            _SettingRow(
+            SettingDivider(colors: colors),
+            SettingRow(
               icon: Icons.devices_outlined,
               title: tr('设备名称'),
               subtitle: tr('备份文件保存在远端的该设备文件夹下'),
@@ -507,19 +502,16 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
                   controller: _deviceController,
                   onChanged: (v) => _saveConfig(deviceName: v),
                   style: TextStyle(fontSize: 13, color: colors.textPrimary),
-                  decoration: InputDecoration(
+                  decoration: const InputDecoration(
                     isDense: true,
-                    border: const OutlineInputBorder(),
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 8,
-                    ),
+                    border: OutlineInputBorder(),
+                    contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
                   ),
                 ),
               ),
             ),
-            const _SettingDivider(colors: colors),
-            _SettingRow(
+            SettingDivider(colors: colors),
+            SettingRow(
               icon: Icons.cloud_upload_outlined,
               title: tr('备份到 WebDAV'),
               subtitle: tr('打包后上传到远端设备目录'),
@@ -527,8 +519,8 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
               colors: colors,
               onTap: _busy ? null : _backupToWebDav,
             ),
-            const _SettingDivider(colors: colors),
-            _SettingRow(
+            SettingDivider(colors: colors),
+            SettingRow(
               icon: Icons.cloud_download_outlined,
               title: tr('从 WebDAV 还原'),
               subtitle: tr('从远端选择一个备份文件还原'),
@@ -539,12 +531,12 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
           ],
         ),
         const SizedBox(height: AppSpacing.md),
-        _SettingGroup(
+        SettingGroup(
           title: tr('歌单同步'),
           subtitle: tr('多设备之间实时同步收藏的歌单'),
           colors: colors,
           children: [
-            _SettingRow(
+            SettingRow(
               icon: Icons.sync,
               title: tr('歌单实时同步'),
               subtitle: tr('开启后每次进入应用都会与远端同步一次歌单'),
