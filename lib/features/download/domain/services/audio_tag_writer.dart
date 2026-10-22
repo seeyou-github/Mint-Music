@@ -15,6 +15,9 @@ import 'package:flutter/foundation.dart';
 ///   与 PICTURE 元数据块。
 ///
 /// 已存在的标签会被读取后再覆盖，未管理的帧（例如 TCON 流派）会保留。
+///
+/// 注意：**不会写入「流派」**。下载歌曲只写标题 / 歌手 / 专辑 / 专辑歌手 /
+/// 歌词 / 封面，流派（TCON / GENRE）既不写入也不会从网络信息里带过来。
 class AudioTagWriter {
   AudioTagWriter._();
 

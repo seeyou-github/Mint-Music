@@ -9,15 +9,21 @@ class LocalAudioMetadata {
   final String? title;
   final String? artist;
   final String? album;
+  final int? year;
   final int? durationSeconds;
   final Uint8List? artwork;
+
+  /// 文件里内嵌的歌词（ID3 的 USLT / FLAC 的 LYRICS / MP4 的 ©lyr）。
+  final String? lyrics;
 
   const LocalAudioMetadata({
     this.title,
     this.artist,
     this.album,
+    this.year,
     this.durationSeconds,
     this.artwork,
+    this.lyrics,
   });
 
   bool get isEmpty =>
@@ -111,6 +117,8 @@ class LocalMetadataReader {
     String? artist;
     String? album;
     String? albumArtist;
+    String? lyrics;
+    int? year;
     Uint8List? artwork;
     int? durationMs;
 
@@ -153,6 +161,14 @@ class LocalMetadataReader {
           case 'TPE2':
             albumArtist = _decodeTextFrame(content);
             break;
+          case 'TDRC': // ID3v2.4 录制时间
+          case 'TYER': // ID3v2.3 年份
+          case 'TDRL': // ID3v2.4 发布时间
+            year = _parseYear(_decodeTextFrame(content));
+            break;
+          case 'USLT': // 未同步歌词
+            lyrics = _decodeUsltFrame(content);
+            break;
           case 'TLEN':
             durationMs = int.tryParse((_decodeTextFrame(content) ?? '').trim());
             break;
@@ -173,8 +189,10 @@ class LocalMetadataReader {
       title: title,
       artist: artist ?? albumArtist,
       album: album,
+      year: year,
       durationSeconds: durationMs == null ? null : durationMs ~/ 1000,
       artwork: artwork,
+      lyrics: lyrics,
     );
   }
 
@@ -333,6 +351,8 @@ class LocalMetadataReader {
     String? title;
     String? artist;
     String? album;
+    String? lyrics;
+    int? year;
     Uint8List? artwork;
     int? durationSeconds;
 
@@ -371,6 +391,10 @@ class LocalMetadataReader {
         title ??= comments['TITLE'];
         artist ??= comments['ARTIST'];
         album ??= comments['ALBUM'];
+        year ??= _parseYear(
+          comments['DATE'] ?? comments['YEAR'] ?? comments['ORIGINALDATE'],
+        );
+        lyrics ??= comments['LYRICS'] ?? comments['UNSYNCEDLYRICS'];
       } else if (type == 6) {
         final data = await raf.read(length);
         artwork ??= _parseFlacPicture(data);
@@ -384,8 +408,10 @@ class LocalMetadataReader {
       title: title,
       artist: artist,
       album: album,
+      year: year,
       durationSeconds: durationSeconds,
       artwork: artwork,
+      lyrics: lyrics,
     );
   }
 
@@ -426,6 +452,8 @@ class LocalMetadataReader {
     String? title;
     String? artist;
     String? album;
+    int? year;
+    String? lyrics;
     Uint8List? artwork;
     int? durationSeconds;
 
@@ -444,6 +472,8 @@ class LocalMetadataReader {
         title = parsed.title;
         artist = parsed.artist;
         album = parsed.album;
+        year = parsed.year;
+        lyrics = parsed.lyrics;
         artwork = parsed.artwork;
       }
       pos += size;
@@ -453,8 +483,10 @@ class LocalMetadataReader {
       title: title,
       artist: artist,
       album: album,
+      year: year,
       durationSeconds: durationSeconds,
       artwork: artwork,
+      lyrics: lyrics,
     );
   }
 
@@ -478,11 +510,15 @@ class LocalMetadataReader {
     String? title,
     String? artist,
     String? album,
+    int? year,
+    String? lyrics,
     Uint8List? artwork,
   }) _parseMp4Udta(Uint8List udta) {
     String? title;
     String? artist;
     String? album;
+    int? year;
+    String? lyrics;
     Uint8List? artwork;
 
     // udta > meta > ilst
@@ -505,6 +541,8 @@ class LocalMetadataReader {
             title = parsed.title;
             artist = parsed.artist;
             album = parsed.album;
+            year = parsed.year;
+            lyrics = parsed.lyrics;
             artwork = parsed.artwork;
           }
           mpos += msize;
@@ -513,18 +551,29 @@ class LocalMetadataReader {
       pos += size;
     }
 
-    return (title: title, artist: artist, album: album, artwork: artwork);
+    return (
+      title: title,
+      artist: artist,
+      album: album,
+      year: year,
+      lyrics: lyrics,
+      artwork: artwork,
+    );
   }
 
   static ({
     String? title,
     String? artist,
     String? album,
+    int? year,
+    String? lyrics,
     Uint8List? artwork,
   }) _parseMp4Ilst(Uint8List ilst) {
     String? title;
     String? artist;
     String? album;
+    int? year;
+    String? lyrics;
     Uint8List? artwork;
 
     var pos = 0;
@@ -560,6 +609,12 @@ class LocalMetadataReader {
             case 'aART': // aART
               artist ??= utf8.decode(payload, allowMalformed: true);
               break;
+            case 'day': // ©day
+              year = _parseYear(utf8.decode(payload, allowMalformed: true));
+              break;
+            case 'lyr': // ©lyr
+              lyrics = utf8.decode(payload, allowMalformed: true);
+              break;
             case 'covr': // covr
               if (artwork == null && payload.isNotEmpty) {
                 artwork = Uint8List.fromList(payload);
@@ -572,7 +627,14 @@ class LocalMetadataReader {
       pos += size;
     }
 
-    return (title: title, artist: artist, album: album, artwork: artwork);
+    return (
+      title: title,
+      artist: artist,
+      album: album,
+      year: year,
+      lyrics: lyrics,
+      artwork: artwork,
+    );
   }
 
   // ==================== WAV ====================
@@ -590,6 +652,7 @@ class LocalMetadataReader {
     String? title;
     String? artist;
     String? album;
+    int? year;
 
     var offset = 12;
     while (offset + 8 <= fileLength) {
@@ -616,6 +679,7 @@ class LocalMetadataReader {
         title ??= parsed.$1;
         artist ??= parsed.$2;
         album ??= parsed.$3;
+        year ??= _parseYear(parsed.$4);
       } else {
         await raf.setPosition(dataStart + size);
       }
@@ -626,15 +690,17 @@ class LocalMetadataReader {
       title: title,
       artist: artist,
       album: album,
+      year: year,
       durationSeconds: durationSeconds,
     );
   }
 
-  static (String?, String?, String?) _parseWavInfo(Uint8List list) {
+  static (String?, String?, String?, String?) _parseWavInfo(Uint8List list) {
     String? title;
     String? artist;
     String? album;
-    if (list.length < 4) return (null, null, null);
+    String? date;
+    if (list.length < 4) return (null, null, null, null);
     var pos = 4; // 跳过 'INFO'
     while (pos + 8 <= list.length) {
       final id = String.fromCharCodes(list.sublist(pos, pos + 4));
@@ -655,10 +721,13 @@ class LocalMetadataReader {
         case 'IPRD':
           album = value;
           break;
+        case 'ICRD':
+          date = value;
+          break;
       }
       pos = dataStart + size + (size.isOdd ? 1 : 0);
     }
-    return (title, artist, album);
+    return (title, artist, album, date);
   }
 
   // ==================== OGG ====================
@@ -670,6 +739,8 @@ class LocalMetadataReader {
     String? title;
     String? artist;
     String? album;
+    String? lyrics;
+    int? year;
     int? sampleRate;
     int? lastGranule;
 
@@ -709,6 +780,10 @@ class LocalMetadataReader {
         title = comments['TITLE'];
         artist = comments['ARTIST'];
         album = comments['ALBUM'];
+        year = _parseYear(
+          comments['DATE'] ?? comments['YEAR'] ?? comments['ORIGINALDATE'],
+        );
+        lyrics = comments['LYRICS'] ?? comments['UNSYNCEDLYRICS'];
         break;
       }
     }
@@ -740,7 +815,9 @@ class LocalMetadataReader {
       title: title,
       artist: artist,
       album: album,
+      year: year,
       durationSeconds: durationSeconds,
+      lyrics: lyrics,
     );
   }
 
@@ -808,8 +885,12 @@ class LocalMetadataReader {
   /// 解析 ID3 文本帧。
   static String? _decodeTextFrame(List<int> content) {
     if (content.isEmpty) return null;
-    final encoding = content[0];
-    final data = content.sublist(1);
+    return _decodeTextByEncoding(content[0], content.sublist(1));
+  }
+
+  /// 按 ID3 文本编码解码内容。
+  static String? _decodeTextByEncoding(int encoding, List<int> data) {
+    if (data.isEmpty) return '';
     try {
       switch (encoding) {
         case 0:
@@ -826,6 +907,44 @@ class LocalMetadataReader {
     } catch (_) {
       return null;
     }
+  }
+
+  /// 解析 ID3 USLT 帧（未同步歌词）。
+  ///
+  /// 结构：[编码 1 字节][语言 3 字节][描述符（以 0 结尾）][歌词文本]
+  static String? _decodeUsltFrame(List<int> content) {
+    if (content.length < 5) return null;
+    final encoding = content[0];
+    var pos = 4; // 跳过编码 + 语言（3 字节）
+    if (encoding == 1 || encoding == 2) {
+      // UTF-16：两个 0 字节结束描述符
+      while (pos + 1 < content.length) {
+        if (content[pos] == 0 && content[pos + 1] == 0) {
+          pos += 2;
+          break;
+        }
+        pos += 2;
+      }
+    } else {
+      while (pos < content.length && content[pos] != 0) {
+        pos++;
+      }
+      pos++; // 跳过结束符
+    }
+    if (pos >= content.length) return null;
+    final text = _decodeTextByEncoding(encoding, content.sublist(pos));
+    if (text == null || text.trim().isEmpty) return null;
+    return text;
+  }
+
+  /// 从日期 / 年份文本里解析出年份（`2023`、`2023-05-01` 都取前 4 位）。
+  static int? _parseYear(String? value) {
+    if (value == null) return null;
+    final match = RegExp(r'(\d{4})').firstMatch(value);
+    if (match == null) return null;
+    final year = int.tryParse(match.group(1)!);
+    if (year == null || year < 1000 || year > 9999) return null;
+    return year;
   }
 
   static String _decodeUtf16(List<int> data) {

@@ -21,7 +21,6 @@ class LyricScrollView extends StatefulWidget {
   final double fontSizeRate;
   final bool enableBlur;
   final bool enableScale;
-  final bool enableJumpLyric;
   final bool showTranslation;
   final bool showRoman;
   final bool centerAlign;
@@ -43,7 +42,6 @@ class LyricScrollView extends StatefulWidget {
     this.fontSizeRate = 1.0,
     this.enableBlur = true,
     this.enableScale = true,
-    this.enableJumpLyric = false,
     this.showTranslation = true,
     this.showRoman = true,
     this.centerAlign = true,
@@ -421,18 +419,16 @@ class _LyricScrollViewState extends State<LyricScrollView>
     );
     final distance = (clamped - position.pixels).abs();
 
-    if (!widget.enableJumpLyric) {
+    // 距离太远（切歌、拖动进度条、首次定位）直接跳过去，
+    // 否则会出现很长的滚动动画，等歌词滚过去歌都唱完两句了。
+    if (preferJumpIfFar || distance > position.viewportDimension * 0.85) {
       _autoScrolling = false;
       _scrollController.jumpTo(clamped);
       return;
     }
 
-    if (preferJumpIfFar && distance > position.viewportDimension * 0.85) {
-      _autoScrolling = false;
-      _scrollController.jumpTo(clamped);
-      return;
-    }
-
+    // 跟随播放进度时一律用平滑动画：正在播放的歌词「滑」到中间，
+    // 而不是每到一句就「啪」地跳一下。
     _autoScrolling = true;
     _scrollController
         .animateTo(
@@ -443,7 +439,13 @@ class _LyricScrollViewState extends State<LyricScrollView>
           curve: const _EaseInOutQuad(),
         )
         .whenComplete(() {
-          if (mounted) _autoScrolling = false;
+          if (!mounted) return;
+          _autoScrolling = false;
+          // 动画过程中可能又换行了，这里再校正一次位置。
+          final target = _activeScrollTargetIndex();
+          if (target >= 0 && target != _scrollTargetIndex) {
+            _scrollToActiveLine(force: true);
+          }
         });
   }
 
@@ -597,6 +599,19 @@ class _LyricLineWidget extends StatelessWidget {
   FontWeight _resolveFontWeight() {
     final idx = ((fontWeight / 100).round() - 1).clamp(0, 8);
     return FontWeight.values[idx];
+  }
+
+  /// 这一句歌词在 [timeMs] 时已经唱了多少（0 ~ 1）。
+  ///
+  /// 普通 LRC 只有行级时间戳，这里用「行开始时间 → 下一行开始时间」这段
+  /// 区间做线性插值，估算当前唱到了这一句的第几个字。
+  double _lineProgress(int timeMs) {
+    final start = line.startTimeMs;
+    final end = line.endTimeMs;
+    if (end <= start) return 0;
+    if (timeMs <= start) return 0;
+    if (timeMs >= end) return 1;
+    return (timeMs - start) / (end - start);
   }
 
   @override
@@ -762,20 +777,77 @@ class _LyricLineWidget extends StatelessWidget {
     final resolvedFontFamily = _resolveFontFamily();
     final resolvedFontWeight = _resolveFontWeight();
     if (!useWordLevel) {
-      return Text(
-        line.plainText,
-        textAlign: centerAlign ? TextAlign.center : TextAlign.start,
-        maxLines: 3,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(
+      // 普通 LRC 只有「行级」时间戳，这里按播放时间估算这一句唱到哪里了，
+      // 把已经唱过的部分显示成「已播放颜色」，唱到的部分保持高亮。
+      Widget buildText(int timeMs) {
+        final baseStyle = TextStyle(
           fontFamily: resolvedFontFamily,
           fontSize: mainFontSize,
           height: 1.32,
           fontWeight: resolvedFontWeight,
           letterSpacing: -0.25,
           color: isActive ? activeColor : inactiveColor,
-        ),
-      );
+        );
+
+        final progress = isActive ? _lineProgress(timeMs) : 0.0;
+        if (progress <= 0 || progress >= 1) {
+          return Text(
+            line.plainText,
+            textAlign: centerAlign ? TextAlign.center : TextAlign.start,
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+            style: baseStyle,
+          );
+        }
+
+        // 按字符数比例切分「已唱」与「未唱」两部分。
+        final runes = line.plainText.runes.toList();
+        if (runes.isEmpty) {
+          return Text(
+            line.plainText,
+            textAlign: centerAlign ? TextAlign.center : TextAlign.start,
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+            style: baseStyle,
+          );
+        }
+        final sungCount = (progress * runes.length).round().clamp(
+          0,
+          runes.length,
+        );
+        final sungText = String.fromCharCodes(runes.take(sungCount));
+        final restText = String.fromCharCodes(runes.skip(sungCount));
+
+        return Text.rich(
+          TextSpan(
+            children: [
+              TextSpan(
+                text: sungText,
+                style: TextStyle(color: activeColor),
+              ),
+              TextSpan(
+                text: restText,
+                style: TextStyle(
+                  color: activeColor.withValues(alpha: 0.45),
+                ),
+              ),
+            ],
+          ),
+          textAlign: centerAlign ? TextAlign.center : TextAlign.start,
+          maxLines: 3,
+          overflow: TextOverflow.ellipsis,
+          style: baseStyle,
+        );
+      }
+
+      if (isActive) {
+        // 正在播放的这一行要逐帧刷新，才能看到进度一点点往前走。
+        return AnimatedBuilder(
+          animation: clock,
+          builder: (context, _) => buildText(clock.timeMs),
+        );
+      }
+      return buildText(staticTimeMs);
     }
 
     return _PaintedYrcLine(

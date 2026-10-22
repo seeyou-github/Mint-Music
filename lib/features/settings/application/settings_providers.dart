@@ -253,7 +253,8 @@ final webDavConfigProvider = StateProvider<WebDavConfig>((ref) {
 });
 
 // -- appearance --
-final appearanceJumpLyricProvider = StateProvider<bool>((ref) => false);
+// 「歌词跟随播放」默认开启：歌词会平滑地滚到中间，而不是直接跳过去。
+final appearanceJumpLyricProvider = StateProvider<bool>((ref) => true);
 final appearanceBgAnimationProvider = StateProvider<bool>((ref) => false);
 
 /// 「主题色 / 字体颜色 / 第二字体颜色」里用户新增的自定义颜色列表。
@@ -465,8 +466,9 @@ final settingsInitProvider = FutureProvider<void>((ref) async {
       await _migrateLyricFontWeight(svc);
 
   ref.read(lyricFontColorProvider.notifier).state = svc.getLyricFontColor();
-  ref.read(appearanceJumpLyricProvider.notifier).state = svc
-      .getAppearanceJumpLyric();
+  // 「歌词跟随播放」以前默认关闭（歌词直接跳到中间），现在默认开启。
+  // 这个开关没有界面入口，旧值一律迁移成开启。
+  ref.read(appearanceJumpLyricProvider.notifier).state = true;
   ref.read(appearanceBgAnimationProvider.notifier).state = svc
       .getAppearanceBgAnimation();
   // WebDAV / 备份配置

@@ -414,8 +414,6 @@ class _LyricPageState extends ConsumerState<LyricPage> {
                                                           watchFontRate,
                                                       enableBlur: enableBlur,
                                                       enableScale: enableScale,
-                                                      enableJumpLyric:
-                                                          enableJumpLyric,
                                                       showTranslation:
                                                           showTranslation,
                                                       showRoman: showRoman,

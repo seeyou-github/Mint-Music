@@ -8,6 +8,7 @@ import '../application/local_providers.dart';
 import '../../player/domain/models/song.dart';
 import '../../plugin/application/plugin_providers.dart';
 import '../../../shared/widgets/music_cover_image.dart';
+import '../data/local_metadata_reader.dart';
 import 'song_compare_dialog.dart';
 
 class TagEditorPage extends ConsumerStatefulWidget {
@@ -70,6 +71,30 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
         // 搜索词带上歌手名，匹配更准。
     _searchController.text = _searchKeywordFor(song);
       });
+      // 索引里没有年份 / 歌词时，现读文件里的标签补上。
+      _loadFileMetadata(song);
+    }
+  }
+
+  /// 读取本地文件里的标签（年份 / 内嵌歌词），补齐索引里没有的信息。
+  Future<void> _loadFileMetadata(Song song) async {
+    final path = song.filePath;
+    if (path == null || path.isEmpty) return;
+    try {
+      final metadata = await LocalMetadataReader.read(path);
+      if (!mounted) return;
+      setState(() {
+        if (_yearController.text.trim().isEmpty) {
+          final year = song.year ?? metadata.year;
+          if (year != null) _yearController.text = year.toString();
+        }
+        if (_lrcController.text.trim().isEmpty) {
+          final lrc = song.lrc ?? metadata.lyrics;
+          if (lrc != null && lrc.isNotEmpty) _lrcController.text = lrc;
+        }
+      });
+    } catch (e) {
+      debugPrint('[TagEditor] 读取文件标签失败: $e');
     }
   }
 

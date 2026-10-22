@@ -824,7 +824,6 @@ class _PlayerLyricsPage extends ConsumerWidget {
                   showRoman: showRoman,
                   enableBlur: enableBlur,
                   enableScale: enableScale,
-                  enableJumpLyric: enableJumpLyric,
                   centerAlign: lyricCenterAlign,
                   fontFamily: watchFontFamily,
                   fontWeight: watchFontWeight,

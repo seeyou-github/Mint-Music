@@ -380,6 +380,7 @@ class LocalMusicRepository {
           hasCover: metadata.artwork != null,
           coverKey: _genCoverKey(filePath),
           bitrate: _inferBitrateFromExtension(filePath),
+          year: metadata.year,
         );
 
         final existing = _songsMap[id];

@@ -7,11 +7,13 @@ import '../../../core/theme/theme_provider.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../../plugin/application/plugin_providers.dart';
 import '../../player/domain/models/song.dart';
+import '../data/local_metadata_reader.dart';
 
 /// 弹出「歌曲信息对比」全屏弹窗。
 ///
-/// 左边是原歌曲，右边是网络下载回来的候选；中间每个项目旁边有一个
-/// 「←」按钮，点一下就采用**下载版本**的那一项（封面 / 歌曲信息 / 歌词）。
+/// 左边是原歌曲，右边是网络下载回来的候选；中间每个项目旁边有一个箭头
+/// 按钮，点一下就在「原歌曲 / 下载的歌曲」之间切换（箭头指向当前采用的
+/// 那一侧：横向是「从右到左」，纵向是「从下到上」）。
 ///
 /// 宽度够时左右排列，不够时上下排列。
 ///
@@ -47,6 +49,11 @@ class _SongCompareDialogState extends ConsumerState<_SongCompareDialog> {
   String? _candidateLyric;
   bool _loadingLyric = true;
 
+  /// 原歌曲文件里内嵌的歌词与年份（本地扫描时没有读出来，这里现读）。
+  String? _originalLyric;
+  int? _originalYear;
+  bool _loadingOriginal = true;
+
   /// 每一项是否采用下载版本：封面 / 歌曲信息 / 歌词。
   bool _useCandidateCover = true;
   bool _useCandidateInfo = true;
@@ -56,6 +63,7 @@ class _SongCompareDialogState extends ConsumerState<_SongCompareDialog> {
   void initState() {
     super.initState();
     _fetchCandidateLyric();
+    _loadOriginalMetadata();
   }
 
   Future<void> _fetchCandidateLyric() async {
@@ -76,24 +84,69 @@ class _SongCompareDialogState extends ConsumerState<_SongCompareDialog> {
     }
   }
 
+  /// 读取原歌曲文件里的标签：年份与内嵌歌词。
+  ///
+  /// 本地扫描时只取了标题 / 歌手 / 专辑，文件里写了年份或歌词时这里能补上。
+  Future<void> _loadOriginalMetadata() async {
+    final path = widget.original.filePath;
+    if (path == null || path.isEmpty) {
+      if (mounted) setState(() => _loadingOriginal = false);
+      return;
+    }
+    try {
+      final metadata = await LocalMetadataReader.read(path);
+      if (!mounted) return;
+      setState(() {
+        _originalLyric = metadata.lyrics;
+        _originalYear = metadata.year;
+        _loadingOriginal = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _loadingOriginal = false);
+    }
+  }
+
+  /// 原歌曲的歌词：优先用歌曲自带的，没有再用文件里内嵌的。
+  String? get _originalLyricText {
+    final lrc = widget.original.lrc;
+    if (lrc != null && lrc.trim().isNotEmpty) return lrc;
+    final embedded = _originalLyric;
+    if (embedded != null && embedded.trim().isNotEmpty) return embedded;
+    return null;
+  }
+
+  /// 原歌曲的年份：歌曲里的没有就用文件标签里的。
+  int? get _originalYearText {
+    return widget.original.year ?? _originalYear;
+  }
+
   /// 合并后的歌曲。
+  ///
+  /// 注意：不写入「流派」——下载歌曲与对比页面都不往本地文件里写流派。
   Song _merged() {
     final original = widget.original;
     final candidate = widget.candidate;
     final candidateLyric = _candidateLyric;
     final hasCandidateLyric = candidateLyric != null && candidateLyric.isNotEmpty;
+    final originalLyric = _originalLyricText;
+
+    final year = _useCandidateInfo
+        ? (candidate.year ?? original.year ?? _originalYear)
+        : (original.year ?? _originalYear);
 
     return original.copyWith(
       title: _useCandidateInfo ? candidate.title : original.title,
       artist: _useCandidateInfo ? candidate.artist : original.artist,
       album: _useCandidateInfo ? candidate.album : original.album,
+      year: year,
       coverUrl: _useCandidateCover ? candidate.coverUrl : original.coverUrl,
       hasCover: _useCandidateCover
           ? candidate.coverUrl != null || candidate.hasCover
           : original.hasCover,
       lrc: _useCandidateLyric && hasCandidateLyric
           ? candidateLyric
-          : original.lrc,
+          : originalLyric,
     );
   }
 
@@ -117,25 +170,27 @@ class _SongCompareDialogState extends ConsumerState<_SongCompareDialog> {
       candidate: _CoverBox(song: candidate, size: 132),
       useCandidate: _useCandidateCover,
       sideBySide: sideBySide,
-      onUseCandidate: () => setState(() => _useCandidateCover = true),
-      onUseOriginal: () => setState(() => _useCandidateCover = false),
+      onToggle: () => setState(() => _useCandidateCover = !_useCandidateCover),
     );
 
     final infoRow = _CompareRow(
       label: context.tr('歌曲信息'),
-      original: _InfoBox(song: original),
-      candidate: _InfoBox(song: candidate),
+      original: _InfoBox(
+        song: original,
+        year: _originalYearText,
+        loading: _loadingOriginal,
+      ),
+      candidate: _InfoBox(song: candidate, year: candidate.year),
       useCandidate: _useCandidateInfo,
       sideBySide: sideBySide,
-      onUseCandidate: () => setState(() => _useCandidateInfo = true),
-      onUseOriginal: () => setState(() => _useCandidateInfo = false),
+      onToggle: () => setState(() => _useCandidateInfo = !_useCandidateInfo),
     );
 
     final lyricRow = _CompareRow(
       label: context.tr('歌词'),
       original: _LyricBox(
-        text: original.lrc,
-        loading: false,
+        text: _originalLyricText,
+        loading: _loadingOriginal,
         emptyText: context.tr('原歌曲没有歌词'),
       ),
       candidate: _LyricBox(
@@ -145,8 +200,7 @@ class _SongCompareDialogState extends ConsumerState<_SongCompareDialog> {
       ),
       useCandidate: _useCandidateLyric,
       sideBySide: sideBySide,
-      onUseCandidate: () => setState(() => _useCandidateLyric = true),
-      onUseOriginal: () => setState(() => _useCandidateLyric = false),
+      onToggle: () => setState(() => _useCandidateLyric = !_useCandidateLyric),
     );
 
     return Material(
@@ -233,8 +287,7 @@ class _CompareRow extends ConsumerWidget {
     required this.candidate,
     required this.useCandidate,
     required this.sideBySide,
-    required this.onUseCandidate,
-    required this.onUseOriginal,
+    required this.onToggle,
   });
 
   final String label;
@@ -242,8 +295,7 @@ class _CompareRow extends ConsumerWidget {
   final Widget candidate;
   final bool useCandidate;
   final bool sideBySide;
-  final VoidCallback onUseCandidate;
-  final VoidCallback onUseOriginal;
+  final VoidCallback onToggle;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -260,16 +312,12 @@ class _CompareRow extends ConsumerWidget {
       highlighted: useCandidate,
     );
 
-    // 中间的箭头：点一下就采用「下载的」那一版。
-    final arrow = IconButton(
-      onPressed: onUseCandidate,
-      icon: Icon(
-        sideBySide ? Icons.arrow_left : Icons.arrow_upward,
-        size: 20,
-        color: colors.primary,
-      ),
-      tooltip: context.tr('使用下载的版本'),
-      visualDensity: VisualDensity.compact,
+    // 中间只有一个箭头按钮：点一下在「原歌曲 / 下载的歌曲」之间切换。
+    // 箭头指向当前采用的那一侧（横向从右到左、纵向从下到上）。
+    final arrow = _ArrowToggleButton(
+      sideBySide: sideBySide,
+      useCandidate: useCandidate,
+      onPressed: onToggle,
     );
 
     return Column(
@@ -286,24 +334,10 @@ class _CompareRow extends ConsumerWidget {
         const SizedBox(height: AppSpacing.xs),
         if (sideBySide)
           Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Expanded(child: originalBox),
-              Column(
-                children: [
-                  arrow,
-                  IconButton(
-                    onPressed: onUseOriginal,
-                    icon: Icon(
-                      sideBySide ? Icons.arrow_right : Icons.arrow_downward,
-                      size: 20,
-                      color: colors.textHint,
-                    ),
-                    tooltip: context.tr('保留原来的版本'),
-                    visualDensity: VisualDensity.compact,
-                  ),
-                ],
-              ),
+              arrow,
               Expanded(child: candidateBox),
             ],
           )
@@ -312,26 +346,62 @@ class _CompareRow extends ConsumerWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               originalBox,
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  arrow,
-                  IconButton(
-                    onPressed: onUseOriginal,
-                    icon: Icon(
-                      Icons.arrow_downward,
-                      size: 20,
-                      color: colors.textHint,
-                    ),
-                    tooltip: context.tr('保留原来的版本'),
-                    visualDensity: VisualDensity.compact,
-                  ),
-                ],
-              ),
+              Center(child: arrow),
               candidateBox,
             ],
           ),
       ],
+    );
+  }
+}
+
+/// 中间的箭头切换按钮。
+class _ArrowToggleButton extends ConsumerWidget {
+  const _ArrowToggleButton({
+    required this.sideBySide,
+    required this.useCandidate,
+    required this.onPressed,
+  });
+
+  final bool sideBySide;
+  final bool useCandidate;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final colors = ref.watch(themeColorsProvider);
+    // 当前采用下载版本 → 箭头指向左边（原歌曲那一侧），表示「值来自右边」。
+    final icon = sideBySide
+        ? (useCandidate ? Icons.arrow_left : Icons.arrow_right)
+        : (useCandidate ? Icons.arrow_upward : Icons.arrow_downward);
+    final message = useCandidate
+        ? context.tr('当前使用下载的版本，点击改用原歌曲')
+        : context.tr('当前使用原歌曲，点击改用下载的版本');
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 6),
+      child: Tooltip(
+        message: message,
+        child: Material(
+          color: useCandidate
+              ? colors.primary.withValues(alpha: 0.16)
+              : colors.surfaceVariant,
+          shape: const CircleBorder(),
+          child: InkWell(
+            customBorder: const CircleBorder(),
+            onTap: onPressed,
+            child: SizedBox(
+              width: 46,
+              height: 46,
+              child: Icon(
+                icon,
+                size: 28,
+                color: useCandidate ? colors.primary : colors.textSecondary,
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -375,7 +445,8 @@ class _SideBox extends ConsumerWidget {
             ),
           ),
           const SizedBox(height: 4),
-          child,
+          // 撑满整行宽度：歌词框与上方歌曲信息框一样宽，滚动条也紧贴右边。
+          SizedBox(width: double.infinity, child: child),
         ],
       ),
     );
@@ -395,32 +466,38 @@ class _CoverBox extends ConsumerWidget {
     final hasRemote = song.coverUrl != null && song.coverUrl!.isNotEmpty;
     final hasLocal = song.hasCover;
     if (!hasRemote && !hasLocal) {
-      return SizedBox(
-        width: size,
-        height: size,
-        child: Container(
-          decoration: BoxDecoration(
-            color: colors.surfaceVariant,
-            borderRadius: BorderRadius.circular(AppRadius.md),
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: SizedBox(
+          width: size,
+          height: size,
+          child: Container(
+            decoration: BoxDecoration(
+              color: colors.surfaceVariant,
+              borderRadius: BorderRadius.circular(AppRadius.md),
+            ),
+            child: Icon(Icons.music_note, size: 32, color: colors.textHint),
           ),
-          child: Icon(Icons.music_note, size: 32, color: colors.textHint),
         ),
       );
     }
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(AppRadius.md),
-      child: MusicCoverImage(
-        url: song.coverUrl,
-        songId: song.id,
-        mediaStoreId: song.mediaStoreId,
-        width: size,
-        height: size,
-        fit: BoxFit.cover,
-        errorWidget: Container(
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        child: MusicCoverImage(
+          url: song.coverUrl,
+          songId: song.id,
+          mediaStoreId: song.mediaStoreId,
           width: size,
           height: size,
-          color: colors.surfaceVariant,
-          child: Icon(Icons.music_note, size: 32, color: colors.textHint),
+          fit: BoxFit.cover,
+          errorWidget: Container(
+            width: size,
+            height: size,
+            color: colors.surfaceVariant,
+            child: Icon(Icons.music_note, size: 32, color: colors.textHint),
+          ),
         ),
       ),
     );
@@ -428,34 +505,71 @@ class _CoverBox extends ConsumerWidget {
 }
 
 /// 歌曲信息预览。
+///
+/// 排版固定为「歌曲名 / 歌手 / 专辑 / 年份」，标签右对齐，冒号对齐。
 class _InfoBox extends ConsumerWidget {
-  const _InfoBox({required this.song});
+  const _InfoBox({
+    required this.song,
+    required this.year,
+    this.loading = false,
+  });
 
   final Song song;
+  final int? year;
+  final bool loading;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final colors = ref.watch(themeColorsProvider);
-    Widget line(String text, {bool strong = false}) => Padding(
-      padding: const EdgeInsets.only(bottom: 2),
-      child: Text(
-        text,
-        style: TextStyle(
-          fontSize: strong ? 13 : 12,
-          fontWeight: strong ? FontWeight.w600 : FontWeight.w400,
-          color: strong ? colors.textPrimary : colors.textSecondary,
+
+    Widget field(String label, String value, {bool strong = false}) {
+      final labelStyle = TextStyle(
+        fontSize: 12,
+        fontWeight: strong ? FontWeight.w600 : FontWeight.w400,
+        color: strong ? colors.textPrimary : colors.textHint,
+      );
+      final valueStyle = TextStyle(
+        fontSize: 12,
+        fontWeight: strong ? FontWeight.w600 : FontWeight.w400,
+        color: strong ? colors.textPrimary : colors.textSecondary,
+      );
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 4),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 38,
+              child: Text(label, textAlign: TextAlign.right, style: labelStyle),
+            ),
+            Text('：', style: labelStyle),
+            Expanded(
+              child: Text(
+                value,
+                style: valueStyle,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
         ),
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
-      ),
-    );
+      );
+    }
+
+    if (loading) {
+      return const SizedBox(
+        height: 76,
+        child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+      );
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        line(song.title, strong: true),
-        line(song.artist),
-        line(song.album),
+        field(context.tr('歌曲名'), song.title, strong: true),
+        field(context.tr('歌手'), song.artist),
+        field(context.tr('专辑'), song.album),
+        field(context.tr('年份'), year?.toString() ?? '-'),
       ],
     );
   }
@@ -491,9 +605,16 @@ class _LyricBox extends ConsumerWidget {
             text!,
             style: TextStyle(fontSize: 12, color: colors.textSecondary, height: 1.5),
           );
-    return ConstrainedBox(
-      constraints: const BoxConstraints(maxHeight: 160),
-      child: SingleChildScrollView(child: content),
+    return SizedBox(
+      width: double.infinity,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: 160),
+        child: SingleChildScrollView(
+          // 右侧留一点位置，滚动条不会压住歌词。
+          padding: const EdgeInsets.only(right: 6),
+          child: content,
+        ),
+      ),
     );
   }
 }
