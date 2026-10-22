@@ -177,7 +177,9 @@ class _AppState extends ConsumerState<App> {
                   left: 0,
                   right: 0,
                   bottom:
-                      (ResponsiveLayout.shouldShowSidebar(context) ? 88.0 : 132.0) +
+                      (ResponsiveLayout.shouldShowSidebar(context)
+                          ? 88.0
+                          : 132.0) +
                       MediaQuery.paddingOf(context).bottom,
                   child: const PlaylistSyncIndicator(),
                 ),
