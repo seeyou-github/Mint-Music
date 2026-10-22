@@ -116,6 +116,9 @@ class DesktopLyricWindow {
   int GetSubLineCount() const;
   /// 单个槽位的总高度（主歌词 + 预留的翻译 / 音译行）。
   int GetSlotHeight() const;
+  /// 某个槽位**实际**需要的高度：只统计真的会画出来的行
+  /// （没有翻译 / 音译时不预留空行，避免两行歌词离窗口上下边框太远）。
+  int SlotHeightFor(const DesktopLyricElement& element) const;
 
   HWND window_ = nullptr;
   HFONT font_ = nullptr;

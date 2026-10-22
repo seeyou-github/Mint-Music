@@ -150,6 +150,19 @@ int DesktopLyricWindow::GetSlotHeight() const {
   return GetLineHeight() + GetSubLineCount() * GetSubLineHeight();
 }
 
+int DesktopLyricWindow::SlotHeightFor(
+    const DesktopLyricElement& element) const {
+  int height = GetLineHeight();
+  const int sub = GetSubLineHeight();
+  if (show_translation_ && !element.translation.empty()) {
+    height += sub;
+  }
+  if (show_roman_ && !element.roman.empty()) {
+    height += sub;
+  }
+  return height;
+}
+
 void DesktopLyricWindow::SetPositionCallback(
     std::function<void(double, double)> callback) {
   position_callback_ = std::move(callback);
@@ -434,8 +447,16 @@ void DesktopLyricWindow::ApplySizeAndPosition() {
 }
 
 /// 测量歌词内容所需的高度：固定两个槽位。
+///
+/// 每个槽位只按**实际会画出来**的行计算（没有翻译 / 音译就不预留空行），
+/// 这样两行歌词正好贴着窗口的上下边框，不会出现底部一大片空白。
 int DesktopLyricWindow::MeasureContentHeight() const {
-  return 2 * GetSlotHeight();
+  const std::vector<DesktopLyricElement> elements = BuildElements();
+  int total = 0;
+  for (const auto& element : elements) {
+    total += SlotHeightFor(element);
+  }
+  return std::max(GetLineHeight(), total);
 }
 
 bool DesktopLyricWindow::AdvanceActiveIndex() {
@@ -531,7 +552,6 @@ void DesktopLyricWindow::Paint() {
 
   const int line_height = GetLineHeight();
   const int sub_line_height = GetSubLineHeight();
-  const int slot_height = GetSlotHeight();
   // 整体不透明度固定 80%。
   const int global_alpha = 80 * 255 / 100;
 
@@ -681,10 +701,11 @@ void DesktopLyricWindow::Paint() {
       }
     }
 
-    // 翻译 / 音译固定占用槽位内预留的行；即使当前行没有翻译，也保留空行，
-    // 避免窗口高度随歌词内容变化。
+    // 翻译 / 音译紧跟在主歌词下面：只在真的画出来时才占行高，
+    // 与 SlotHeightFor() 的计算保持一致。
+    int sub_y = y + line_height;
     if (show_translation_ && !element.translation.empty()) {
-      const int translation_y = y + line_height;
+      const int translation_y = sub_y;
       if ((shadow_color_ >> 24) != 0) {
         draw_text(sub_font_, element.translation, translation_y,
                   sub_line_height, shadow_color_, 60, 1, 1,
@@ -695,10 +716,10 @@ void DesktopLyricWindow::Paint() {
                 unplay_color_, 80, 0, 0,
                 DT_SINGLELINE | DT_VCENTER | DT_CENTER | DT_END_ELLIPSIS,
                 width, -1);
+      sub_y += sub_line_height;
     }
     if (show_roman_ && !element.roman.empty()) {
-      const int roman_y =
-          y + line_height + (show_translation_ ? sub_line_height : 0);
+      const int roman_y = sub_y;
       if ((shadow_color_ >> 24) != 0) {
         draw_text(sub_font_, element.roman, roman_y, sub_line_height,
                   shadow_color_, 60, 1, 1,
@@ -710,7 +731,7 @@ void DesktopLyricWindow::Paint() {
                 DT_SINGLELINE | DT_VCENTER | DT_CENTER | DT_END_ELLIPSIS,
                 width, -1);
     }
-    y += slot_height;
+    y += SlotHeightFor(element);
   }
 
   POINT origin{0, 0};

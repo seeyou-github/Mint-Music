@@ -18,6 +18,27 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   // plugins.
   ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
+  // 只允许运行一个实例：再点一次图标时，把已经在跑的窗口提到前台后直接退出。
+  //
+  // 用命名互斥体判断（`Local\` 表示当前登录会话内唯一）。互斥体句柄故意不
+  // 关闭：进程退出时系统会自动释放，不会留下「假锁」。
+  HANDLE single_instance_mutex =
+      ::CreateMutexW(nullptr, TRUE, L"Local\\MintMusic-SingleInstance");
+  if (single_instance_mutex != nullptr &&
+      ::GetLastError() == ERROR_ALREADY_EXISTS) {
+    if (HWND existing =
+            ::FindWindowW(L"FLUTTER_RUNNER_WIN32_WINDOW", nullptr)) {
+      if (::IsIconic(existing)) {
+        ::ShowWindow(existing, SW_RESTORE);
+      }
+      ::SetForegroundWindow(existing);
+      ::BringWindowToTop(existing);
+    }
+    ::CloseHandle(single_instance_mutex);
+    ::CoUninitialize();
+    return EXIT_SUCCESS;
+  }
+
   // WebView2 的用户数据目录默认建在 exe 同级（`<exe>.WebView2\`），程序装在
   // Program Files 下没有写权限时会直接初始化失败。这里统一指到应用自己的
   // AppData\temp\webview2 下，保证应用产生的文件都集中在 AppData 里。

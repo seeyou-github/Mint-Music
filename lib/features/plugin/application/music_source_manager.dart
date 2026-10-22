@@ -385,8 +385,9 @@ class MusicSourceManager {
     // 已经是插件音源就直接用它。
     final (_, pluginId) = splitSourceId(sourceId);
     if (pluginId != null) return sourceId;
-    // 内置源：找提供该平台的插件。
-    for (final host in _pluginService.enabledPlugins) {
+    // 内置源：找提供该平台的插件。按「优先音源」排序后取第一个，
+    // 这样播放详情页顶部显示的就是真正会被优先使用的那个音源。
+    for (final host in _orderedHostsForSource(sourceId)) {
       final pluginSourceId = _getSourceIdForHost(host, sourceId);
       if (pluginSourceId == null) continue;
       return _pluginSourceAppId(host, pluginSourceId);

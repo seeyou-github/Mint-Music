@@ -562,14 +562,16 @@ class _SourceSelector extends ConsumerStatefulWidget {
 class _SourceSelectorState extends ConsumerState<_SourceSelector> {
   final _anchorKey = GlobalKey();
 
-  /// 当前歌曲所属的内置平台 id（插件音源 / 本地歌曲返回 null）。
+  /// 当前歌曲所属的内置平台 id（本地歌曲 / 纯插件音源返回 null）。
+  ///
+  /// 播放成功后歌曲的 `source` 会被改写成实际解析地址的插件变体
+  /// （`wy@luoxue`），这里仍按平台 id 判断，保证顶部标签一直可点。
   String? get _baseSourceId {
     final source = ref.watch(
       playbackControllerProvider.select((s) => s.currentSong?.source ?? ''),
     );
     if (source.isEmpty || source == 'local') return null;
-    final (baseId, pluginId) = MusicSourceManager.splitSourceId(source);
-    if (pluginId != null) return null;
+    final (baseId, _) = MusicSourceManager.splitSourceId(source);
     return MusicSourceManager.builtInPlatformIds.contains(baseId)
         ? baseId
         : null;
@@ -714,7 +716,9 @@ class _SourceSelectorState extends ConsumerState<_SourceSelector> {
 
     // 重新解析播放地址：优先音源失败时控制器会自动回退到其它音源。
     try {
-      await ref.read(playbackControllerProvider.notifier).playSongAt(index);
+      await ref
+          .read(playbackControllerProvider.notifier)
+          .replayWithPreferredSource(baseId);
       if (position > Duration.zero) {
         await ref.read(playbackControllerProvider.notifier).seek(position);
       }

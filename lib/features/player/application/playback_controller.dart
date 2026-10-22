@@ -258,14 +258,37 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   }
 
   /// 当前歌曲所在内置源的优先音源 id（没设置返回 null）。
+  ///
+  /// 按「平台 id」查询：歌曲实际可能已经被解析成某个插件的变体
+  /// （`wy@luoxue`），但优先音源仍然是针对「网易云」这个内置源配置的。
   String? preferredSourceFor(String source) {
-    final (baseId, pluginId) = MusicSourceManager.splitSourceId(source.trim());
+    final (baseId, _) = MusicSourceManager.splitSourceId(source.trim());
     if (baseId.isEmpty) return null;
-    // 只有内置源（没有 @插件 后缀）才谈「优先音源」。
-    if (pluginId != null) return null;
     final preferred = _preferredSources[baseId];
     if (preferred == null || preferred.isEmpty) return null;
     return preferred;
+  }
+
+  /// 用户给当前内置源指定了新的优先音源后，用新音源重新解析并播放当前歌曲。
+  ///
+  /// 队列里这首歌的 `source` 可能已经被改写成上一个插件变体（`wy@luoxue`），
+  /// 那样只会用那个插件解析，所以先把它重置回内置平台 id，再重新播放。
+  Future<void> replayWithPreferredSource(String baseSourceId) async {
+    final index = state.currentIndex;
+    if (index < 0 || index >= state.queue.length) return;
+    final song = state.queue[index];
+    if (song.source != baseSourceId) {
+      _replaceSongInQueue(
+        index,
+        song.copyWith(
+          source: baseSourceId,
+          clearSourceUrl: true,
+          clearSourceHeaders: true,
+          clearSourceQuality: true,
+        ),
+      );
+    }
+    await playSongAt(index);
   }
 
   void setAudioEffects(AudioEffectsConfig config) {
