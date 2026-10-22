@@ -89,7 +89,7 @@ class _MusicCoverImageState extends State<MusicCoverImage> {
   String? _lastKey;
 
   /// 上一次取图时的全局封面版本号（见 [_MusicCoverImageState.refresh]）。
-  int _revision = _MusicCoverImageState._revision;
+  int _seenRevision = _MusicCoverImageState._revision;
 
   @override
   void initState() {
@@ -107,7 +107,7 @@ class _MusicCoverImageState extends State<MusicCoverImage> {
       return;
     }
     // 封面被别处改过（上传 / 删除）：丢掉旧字节重新取图。
-    if (_revision != _MusicCoverImageState._revision) {
+    if (_seenRevision != _MusicCoverImageState._revision) {
       _lastKey = null;
       _bytes = null;
       _load();
@@ -115,7 +115,7 @@ class _MusicCoverImageState extends State<MusicCoverImage> {
   }
 
   void _load() {
-    _revision = _MusicCoverImageState._revision;
+    _seenRevision = _MusicCoverImageState._revision;
     final url = widget.url;
 
     // Case 1: 无 URL — 从 CoverCacheService 获取（MediaStore 提取 / 桌面端缓存）

@@ -493,6 +493,9 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
 
     setState(() => _coverBusy = true);
     try {
+      // 先取出 notifier：写文件是异步的，期间页面可能已经被关掉，
+      // 那时再用 ref.read 会抛「after dispose」。
+      final notifier = ref.read(localMusicNotifierProvider.notifier);
       final bytes = await File(imagePath).readAsBytes();
       if (bytes.isEmpty) {
         throw Exception(context.tr('图片读取失败'));
@@ -505,7 +508,7 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
       // 更新封面缓存 + 索引，列表 / 播放页也会跟着刷新。
       await CoverCacheService().putArtwork(song.id, bytes);
       MusicCoverImage.refresh(song.id);
-      await ref.read(localMusicNotifierProvider.notifier).upsertSong(
+      await notifier.upsertSong(
         song.copyWith(hasCover: true, clearCover: true),
         // 封面信息要以文件为准：合并写入会保留旧的 coverUrl / hasCover，
         // 所以这里整条覆盖（传的就是索引里读出来的完整歌曲对象）。
@@ -532,6 +535,7 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
 
     setState(() => _coverBusy = true);
     try {
+      final notifier = ref.read(localMusicNotifierProvider.notifier);
       final ok = await AudioTagWriter.write(path, removeArtwork: true);
       if (!ok) {
         throw Exception(context.tr('该音频格式不支持删除封面'));
@@ -539,7 +543,7 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
       // 清掉内存 / 磁盘里的封面缓存，界面才会回到「无封面」。
       CoverCacheService().invalidate(song.id);
       MusicCoverImage.refresh(song.id);
-      await ref.read(localMusicNotifierProvider.notifier).upsertSong(
+      await notifier.upsertSong(
         song.copyWith(hasCover: false, clearCover: true),
         forceOverwrite: true,
       );

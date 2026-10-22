@@ -310,7 +310,7 @@ class _SongCompareDialogState extends ConsumerState<_SongCompareDialog> {
 ///
 /// 一行里左右各一张卡片，**点哪张就选中哪张**（不需要中间的箭头按钮）：
 /// 选中的卡片是绿框 + 右上角红色「已选择」。
-class _CompareRow extends ConsumerWidget {
+class _CompareRow extends StatelessWidget {
   const _CompareRow({
     required this.original,
     required this.candidate,
@@ -328,7 +328,7 @@ class _CompareRow extends ConsumerWidget {
   final ValueChanged<bool> onSelect;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final originalBox = _SideBox(
       title: context.tr('原歌曲'),
       selected: !useCandidate,
