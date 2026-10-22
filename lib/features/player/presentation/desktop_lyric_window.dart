@@ -8,7 +8,6 @@ import '../../../core/l10n/l10n.dart';
 import '../../settings/application/settings_providers.dart';
 import '../application/desktop_lyric_controller.dart';
 import '../application/desktop_lyric_sync.dart';
-import '../application/lyric_controller.dart';
 import '../application/playback_controller.dart';
 import '../domain/models/desktop_lyric_settings.dart';
 import '../domain/models/lyric_line.dart';
@@ -28,7 +27,13 @@ class DesktopLyricLayer extends ConsumerWidget {
     final hasSong = ref.watch(
       playbackControllerProvider.select((s) => s.currentSong != null),
     );
-    if (!settings.enable || !hasSong) return const SizedBox.shrink();
+    final isPlaying = ref.watch(
+      playbackControllerProvider.select((s) => s.isPlaying),
+    );
+    // 暂停 / 停止时隐藏桌面歌词，恢复播放后再显示。
+    if (!settings.enable || !hasSong || !isPlaying) {
+      return const SizedBox.shrink();
+    }
     // Windows 上歌词由独立的桌面歌词窗口渲染（应用最小化后仍显示在桌面上），
     // 应用窗口内不再重复渲染一份。
     if (Platform.isWindows) return const SizedBox.shrink();
@@ -41,15 +46,14 @@ class DesktopLyricLayer extends ConsumerWidget {
   }
 }
 
-/// 负责定位、拖动与锁定的悬浮歌词窗外壳。
+/// 负责定位与拖动的悬浮歌词窗外壳。
 ///
 /// 歌词内容渲染在 [DesktopLyricPanel] 中,两者分离后外壳只处理交互。
 class DesktopLyricWindow extends ConsumerStatefulWidget {
   const DesktopLyricWindow({super.key});
 
   @override
-  ConsumerState<DesktopLyricWindow> createState() =>
-      _DesktopLyricWindowState();
+  ConsumerState<DesktopLyricWindow> createState() => _DesktopLyricWindowState();
 }
 
 class _DesktopLyricWindowState extends ConsumerState<DesktopLyricWindow> {
@@ -65,22 +69,22 @@ class _DesktopLyricWindowState extends ConsumerState<DesktopLyricWindow> {
     final settings = ref.watch(desktopLyricSettingsProvider);
     // 用过滤后的歌词行：切歌加载期间不会显示上一首的歌词
     final lines = ref.watch(desktopLyricLinesProvider);
-    final songId = ref.watch(
-      lyricControllerProvider.select((s) => s.currentSongId),
-    );
     final activeIndex = ref.watch(desktopLyricActiveIndexProvider);
     final showTranslation = ref.watch(lyricShowTranslationProvider);
     final showRoman = ref.watch(lyricShowRomanProvider);
+    final fontFamily = ref.watch(lyricFontFamilyProvider).trim();
+    final fontSizeRate = ref.watch(lyricFontRateProvider).clamp(0.5, 2.0);
+    final fontWeight = _fontWeightFromValue(ref.watch(lyricFontWeightProvider));
 
     final size = MediaQuery.sizeOf(context);
-    final lineHeight = settings.fontSize * 1.5;
-    final barHeight = settings.isLock ? 0.0 : DesktopLyricHandle.height;
+    final fontSize = settings.fontSize * fontSizeRate;
+    final subLineCount = (showTranslation ? 1 : 0) + (showRoman ? 1 : 0);
+    final slotHeight = fontSize * 1.35 * (1 + subLineCount);
+    const barHeight = DesktopLyricHandle.height;
     // 宽度固定为可用宽度（100%）。
     final width = size.width;
     final contentHeight =
-        lineHeight * settings.maxLineNum +
-        barHeight +
-        DesktopLyricPanel.padding * 2;
+        slotHeight * DesktopLyricSettings.lineCount + barHeight + 8;
     final height = contentHeight
         .clamp(36.0, math.max(36.0, size.height * 0.7))
         .toDouble();
@@ -109,25 +113,20 @@ class _DesktopLyricWindowState extends ConsumerState<DesktopLyricWindow> {
               child: Material(
                 type: MaterialType.transparency,
                 child: Opacity(
-                  opacity: settings.opacity,
+                  opacity: DesktopLyricSettings.opacity,
                   child: Container(
                     decoration: BoxDecoration(
-                      color: settings.isLock
-                          ? Colors.transparent
-                          : Colors.black.withValues(alpha: 0.16),
+                      color: Colors.black.withValues(alpha: 0.16),
                       borderRadius: BorderRadius.circular(10),
-                      border: settings.isLock
-                          ? null
-                          : Border.all(
-                              color: Colors.white.withValues(alpha: 0.22),
-                            ),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.22),
+                      ),
                     ),
                     clipBehavior: Clip.antiAlias,
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        if (!settings.isLock)
-                          const SizedBox(height: DesktopLyricHandle.height),
+                        const SizedBox(height: barHeight),
                         Expanded(
                           child: Padding(
                             padding: const EdgeInsets.symmetric(
@@ -137,10 +136,15 @@ class _DesktopLyricWindowState extends ConsumerState<DesktopLyricWindow> {
                             child: DesktopLyricPanel(
                               settings: settings,
                               lines: lines,
-                              songId: songId,
                               activeIndex: activeIndex,
                               showTranslation: showTranslation,
                               showRoman: showRoman,
+                              fontFamily:
+                                  fontFamily.isEmpty || fontFamily == 'system'
+                                  ? null
+                                  : fontFamily,
+                              fontWeight: fontWeight,
+                              fontSizeScale: fontSizeRate,
                             ),
                           ),
                         ),
@@ -151,32 +155,27 @@ class _DesktopLyricWindowState extends ConsumerState<DesktopLyricWindow> {
               ),
             ),
           ),
-          if (!settings.isLock)
-            Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              height: DesktopLyricHandle.height,
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onPanUpdate: (details) {
-                  final current = _dragPos ?? Offset(baseX, baseY);
-                  setState(() {
-                    _dragPos = Offset(
-                      (current.dx + details.delta.dx).clamp(0.0, _maxX),
-                      (current.dy + details.delta.dy).clamp(0.0, _maxY),
-                    );
-                  });
-                },
-                onPanEnd: (_) => _commitPosition(),
-                onPanCancel: _commitPosition,
-                onDoubleTap: () => updateDesktopLyricSettings(
-                  ref.read,
-                  (s) => s.copyWith(isLock: !s.isLock),
-                ),
-                child: const DesktopLyricHandle(),
-              ),
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            height: barHeight,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onPanUpdate: (details) {
+                final current = _dragPos ?? Offset(baseX, baseY);
+                setState(() {
+                  _dragPos = Offset(
+                    (current.dx + details.delta.dx).clamp(0.0, _maxX),
+                    (current.dy + details.delta.dy).clamp(0.0, _maxY),
+                  );
+                });
+              },
+              onPanEnd: (_) => _commitPosition(),
+              onPanCancel: _commitPosition,
+              child: const DesktopLyricHandle(),
             ),
+          ),
         ],
       ),
     );
@@ -196,7 +195,7 @@ class _DesktopLyricWindowState extends ConsumerState<DesktopLyricWindow> {
   }
 }
 
-/// 未锁定时的顶部拖动把手。
+/// 顶部拖动把手。
 ///
 /// 应用内回退方案里,只有这一条参与命中测试(歌词区保持穿透),
 /// 否则整块面板会吞掉下层页面的点击。
@@ -227,12 +226,6 @@ class DesktopLyricHandle extends StatelessWidget {
               ),
             ),
           ),
-          Icon(
-            Icons.lock_open,
-            size: 12,
-            color: Colors.white.withValues(alpha: 0.55),
-          ),
-          const SizedBox(width: 8),
         ],
       ),
     );
@@ -241,16 +234,19 @@ class DesktopLyricHandle extends StatelessWidget {
 
 /// 桌面歌词的歌词内容(不含背景与把手)。
 ///
-/// 纯展示组件,便于单独渲染测试。
+/// 固定两个槽位：当前播放行位于 `activeIndex % 2` 对应的槽位，另一个槽位
+/// 预载下一行。唱到下一行时进度直接在另一个槽位显示，两个槽位的位置不变。
 class DesktopLyricPanel extends StatelessWidget {
   const DesktopLyricPanel({
     super.key,
     required this.settings,
     required this.lines,
     required this.activeIndex,
-    this.songId,
     this.showTranslation = true,
     this.showRoman = true,
+    this.fontFamily,
+    this.fontWeight = FontWeight.w500,
+    this.fontSizeScale = 1.0,
   });
 
   /// 歌词区域的左右内边距。
@@ -259,128 +255,143 @@ class DesktopLyricPanel extends StatelessWidget {
   final DesktopLyricSettings settings;
   final List<LyricLine> lines;
   final int activeIndex;
-  final String? songId;
   final bool showTranslation;
   final bool showRoman;
+  final String? fontFamily;
+  final FontWeight fontWeight;
+  final double fontSizeScale;
 
   @override
-  Widget build(BuildContext context) => _buildLyricBody(context);
+  Widget build(BuildContext context) {
+    final slots = _buildSlots(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [for (final slot in slots) Expanded(child: _buildSlot(slot))],
+    );
+  }
 
-  Widget _buildLyricBody(BuildContext context) {
-    final body = lines.isEmpty
-        ? Align(
-            alignment: _alignFor(settings),
-            child: Text(
-              context.tr('暂无歌词'),
-              style: _styleFor(settings, active: false).copyWith(
-                fontSize: settings.fontSize * 0.8,
+  List<_LyricSlot> _buildSlots(BuildContext context) {
+    final slots = List<_LyricSlot>.generate(
+      DesktopLyricSettings.lineCount,
+      (_) => const _LyricSlot.empty(),
+    );
+    if (lines.isEmpty) {
+      slots[0] = _LyricSlot(text: context.tr('暂无歌词'));
+      return slots;
+    }
+
+    final hasActive = activeIndex >= 0 && activeIndex < lines.length;
+    final base = hasActive ? activeIndex : 0;
+    final activeSlot = hasActive ? activeIndex % slots.length : 0;
+    for (var slot = 0; slot < slots.length; slot++) {
+      final offset = (slot - activeSlot + slots.length) % slots.length;
+      final index = base + offset;
+      if (index >= lines.length) continue;
+      final line = lines[index];
+      slots[slot] = _LyricSlot(
+        text: line.plainText.trim(),
+        translation: showTranslation ? line.translatedLyric?.trim() ?? '' : '',
+        roman: showRoman ? line.romanLyric?.trim() ?? '' : '',
+        active: hasActive && index == activeIndex,
+      );
+    }
+    return slots;
+  }
+
+  Widget _buildSlot(_LyricSlot slot) {
+    final text = slot.text.trim();
+    final translation = slot.translation?.trim() ?? '';
+    final roman = slot.roman?.trim() ?? '';
+    if (text.isEmpty && translation.isEmpty && roman.isEmpty) {
+      return const SizedBox.expand();
+    }
+    final fontSize = settings.fontSize * fontSizeScale;
+    return SizedBox.expand(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (text.isNotEmpty)
+            Text(
+              text,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: _styleFor(active: slot.active, fontSize: fontSize),
+            ),
+          if (translation.isNotEmpty)
+            Text(
+              translation,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: _styleFor(
+                active: slot.active,
+                isSub: true,
+                fontSize: fontSize,
               ),
             ),
-          )
-        : Column(
-            mainAxisAlignment: settings.verticalAlignment,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            mainAxisSize: MainAxisSize.max,
-            children: _buildRows(context)
-                .map((row) => _buildRow(settings, row))
-                .toList(),
-          );
-
-    return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 280),
-      switchInCurve: Curves.easeOutCubic,
-      switchOutCurve: Curves.easeInCubic,
-      transitionBuilder: (child, animation) => FadeTransition(
-        opacity: animation,
-        child: SlideTransition(
-          position: Tween<Offset>(
-            begin: const Offset(0, 0.28),
-            end: Offset.zero,
-          ).animate(animation),
-          child: child,
-        ),
-      ),
-      child: KeyedSubtree(
-        key: ValueKey<String>('${songId ?? ''}#$activeIndex'),
-        child: body,
+          if (roman.isNotEmpty)
+            Text(
+              roman,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: _styleFor(
+                active: slot.active,
+                isSub: true,
+                fontSize: fontSize,
+              ),
+            ),
+        ],
       ),
     );
   }
 
-  List<_LyricRow> _buildRows(BuildContext context) {
-    var index = activeIndex < 0 ? 0 : activeIndex;
-    if (index >= lines.length) index = lines.length - 1;
-
-    final max = settings.maxLineNum;
-    final rows = <_LyricRow>[];
-    // 按「页」显示：一页 max 行，播放到本页最后一行时才翻页。
-    final pageStart = (index ~/ max) * max;
-
-    for (var i = pageStart; i < lines.length && rows.length < max; i++) {
-      final text = lines[i].plainText.trim();
-      if (text.isNotEmpty) {
-        rows.add(_LyricRow(text, active: i == index));
-      }
-      if (i != index) continue;
-      // 当前行的翻译/罗马音紧跟其后。
-      if (showTranslation) {
-        final translated = lines[i].translatedLyric?.trim() ?? '';
-        if (translated.isNotEmpty && rows.length < max) {
-          rows.add(_LyricRow(translated, active: true, isSub: true));
-        }
-      }
-      if (showRoman) {
-        final roman = lines[i].romanLyric?.trim() ?? '';
-        if (roman.isNotEmpty && rows.length < max) {
-          rows.add(_LyricRow(roman, active: true, isSub: true));
-        }
-      }
-    }
-
-    if (rows.isEmpty) rows.add(_LyricRow(context.tr('暂无歌词')));
-    return rows;
+  TextStyle _styleFor({
+    required bool active,
+    bool isSub = false,
+    required double fontSize,
+  }) {
+    final color = Color(active ? settings.playedColor : settings.unplayColor);
+    return TextStyle(
+      color: isSub ? color.withValues(alpha: 0.85) : color,
+      fontFamily: fontFamily,
+      fontSize: isSub ? fontSize * 0.62 : fontSize,
+      height: 1.35,
+      fontWeight: fontWeight,
+      shadows: [
+        Shadow(
+          color: Color(settings.shadowColor),
+          blurRadius: 4,
+          offset: const Offset(1, 1),
+        ),
+      ],
+    );
   }
 }
 
-/// 桌面歌词固定居中对齐。
-Alignment _alignFor(DesktopLyricSettings settings) => Alignment.center;
-
-Widget _buildRow(DesktopLyricSettings settings, _LyricRow row) {
-  final style = _styleFor(settings, active: row.active, isSub: row.isSub);
-  return Text(
-    row.text,
-    maxLines: 1,
-    overflow: TextOverflow.ellipsis,
-    textAlign: settings.textAlign,
-    style: style,
-  );
+FontWeight _fontWeightFromValue(int value) {
+  final index = (value ~/ 100).clamp(1, 9) - 1;
+  return FontWeight.values[index];
 }
 
-TextStyle _styleFor(
-  DesktopLyricSettings settings, {
-  required bool active,
-  bool isSub = false,
-}) {
-  final color = Color(active ? settings.playedColor : settings.unplayColor);
-  return TextStyle(
-    color: isSub ? color.withValues(alpha: 0.85) : color,
-    fontSize: isSub ? settings.fontSize * 0.62 : settings.fontSize,
-    height: 1.35,
-    fontWeight: active && !isSub ? FontWeight.w700 : FontWeight.w500,
-    shadows: [
-      Shadow(
-        color: Color(settings.shadowColor),
-        blurRadius: 4,
-        offset: const Offset(1, 1),
-      ),
-    ],
-  );
-}
-
-class _LyricRow {
+class _LyricSlot {
   final String text;
+  final String? translation;
+  final String? roman;
   final bool active;
-  final bool isSub;
 
-  const _LyricRow(this.text, {this.active = false, this.isSub = false});
+  const _LyricSlot({
+    this.text = '',
+    this.translation,
+    this.roman,
+    this.active = false,
+  });
+
+  const _LyricSlot.empty()
+    : text = '',
+      translation = null,
+      roman = null,
+      active = false;
 }

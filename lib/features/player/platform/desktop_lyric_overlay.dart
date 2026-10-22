@@ -108,22 +108,23 @@ class DesktopLyricOverlay {
     DesktopLyricSettings settings, {
     String? fontFamily,
     String? fontPath,
+    int fontWeight = 500,
+    double fontSizeRate = 1.0,
   }) async {
     if (!supported) return;
     try {
       await _channel.invokeMethod<void>('updateConfig', {
-        'isLock': settings.isLock,
-        'maxLineNum': settings.maxLineNum,
-        'fontSize': settings.fontSize,
-        'opacityPercent': settings.opacityPercent,
+        // 固定显示 2 行；不透明度由原生侧固定为 80%。
+        'fontSize': settings.fontSize * fontSizeRate,
         'playedColor': settings.playedColor,
         'unplayColor': settings.unplayColor,
         'shadowColor': settings.shadowColor,
         'positionX': settings.positionX,
         'positionY': settings.positionY,
-        // 应用字体（设置 - 外观设置 - 应用字体）
+        // 歌词设置里的字体 / 字重（字体路径为空时按族名使用系统字体）。
         if (fontFamily != null) 'fontFamily': fontFamily,
         if (fontPath != null) 'fontPath': fontPath,
+        'fontWeight': fontWeight,
       });
     } on PlatformException {
       // 忽略

@@ -88,12 +88,7 @@ Future<void> _doPersist(
   } catch (_) {}
 }
 
-enum SettingsCategory {
-  appearance,
-  playback,
-  storage,
-  backupRestore,
-}
+enum SettingsCategory { appearance, playback, storage, backupRestore }
 
 class SettingsPage extends ConsumerStatefulWidget {
   const SettingsPage({super.key});
@@ -109,8 +104,10 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   final ScrollController _tabScrollController = ScrollController();
 
   /// 每个标签按钮的 GlobalKey，用于测量位置
-  final List<GlobalKey> _tabKeys =
-      List.generate(SettingsCategory.values.length, (_) => GlobalKey());
+  final List<GlobalKey> _tabKeys = List.generate(
+    SettingsCategory.values.length,
+    (_) => GlobalKey(),
+  );
 
   static const _categoryConfig = {
     SettingsCategory.appearance: (icon: Icons.palette, label: '外观设置'),
@@ -145,13 +142,11 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       if (box == null) return;
 
       final buttonCenter = box.localToGlobal(Offset(box.size.width / 2, 0)).dx;
-      final viewportWidth =
-          _tabScrollController.position.viewportDimension;
+      final viewportWidth = _tabScrollController.position.viewportDimension;
       final currentScroll = _tabScrollController.offset;
 
       // 计算需要滚动的距离，使按钮居中
-      final targetOffset =
-          currentScroll + buttonCenter - viewportWidth / 2;
+      final targetOffset = currentScroll + buttonCenter - viewportWidth / 2;
       final clampedOffset = targetOffset.clamp(
         _tabScrollController.position.minScrollExtent,
         _tabScrollController.position.maxScrollExtent,
@@ -285,12 +280,10 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               );
             }).toList(),
           ),
-
         ],
       ),
     );
   }
-
 
   Widget _buildContent(ThemeColors colors) {
     // Only build the active category to avoid constructing all categories
@@ -319,7 +312,6 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
         return const BackupRestoreContent();
     }
   }
-
 }
 
 class SettingGroup extends StatelessWidget {
@@ -615,12 +607,7 @@ class _ColorDot extends StatelessWidget {
               ? Border.all(color: colors.textPrimary, width: 3)
               : null,
           boxShadow: selected
-              ? [
-                  BoxShadow(
-                    color: color.withValues(alpha: 0.4),
-                    blurRadius: 8,
-                  ),
-                ]
+              ? [BoxShadow(color: color.withValues(alpha: 0.4), blurRadius: 8)]
               : null,
         ),
         child: selected
@@ -849,11 +836,12 @@ class _AppearanceContent extends ConsumerWidget {
     required StateProvider<String> currentProvider,
     required StateProvider<List<String>> customProvider,
     required Future<void> Function(SettingsService svc, String hex)
-        persistCurrent,
+    persistCurrent,
     required Future<void> Function(SettingsService svc, List<String> colors)
-        persistCustom,
+    persistCustom,
     bool showReset = false,
     Color? emptyInitialColor,
+
     /// 「恢复默认」时写入的值（为空表示恢复主题默认色）。
     String resetValue = '',
   }) {
@@ -955,7 +943,8 @@ class _AppearanceContent extends ConsumerWidget {
                         for (final item in allColors)
                           _ColorDot(
                             hex: item.$1,
-                            selected: item.$1.toUpperCase() ==
+                            selected:
+                                item.$1.toUpperCase() ==
                                 currentHex.toUpperCase(),
                             colors: colors,
                             onTap: () => apply(item.$1),
@@ -1007,20 +996,14 @@ class _AppearanceContent extends ConsumerWidget {
                       const SizedBox(height: AppSpacing.md),
                       Text(
                         sheetContext.tr('第一个圆圈表示恢复主题默认色'),
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: colors.textHint,
-                        ),
+                        style: TextStyle(fontSize: 12, color: colors.textHint),
                       ),
                     ],
                     if (custom.isNotEmpty) ...[
                       const SizedBox(height: AppSpacing.md),
                       Text(
                         sheetContext.tr('长按自定义颜色可编辑或删除'),
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: colors.textHint,
-                        ),
+                        style: TextStyle(fontSize: 12, color: colors.textHint),
                       ),
                     ],
                     const SizedBox(height: AppSpacing.md),
@@ -1068,9 +1051,9 @@ class _AppearanceContent extends ConsumerWidget {
     required StateProvider<String> currentProvider,
     required StateProvider<List<String>> customProvider,
     required Future<void> Function(SettingsService svc, String hex)
-        persistCurrent,
+    persistCurrent,
     required Future<void> Function(SettingsService svc, List<String> colors)
-        persistCustom,
+    persistCustom,
     VoidCallback? onSaved,
   }) {
     final container = ProviderScope.containerOf(context);
@@ -1154,10 +1137,7 @@ class _AppearanceContent extends ConsumerWidget {
               },
             ),
             ListTile(
-              leading: Icon(
-                Icons.delete_outline,
-                color: colors.textSecondary,
-              ),
+              leading: Icon(Icons.delete_outline, color: colors.textSecondary),
               title: Text(
                 actionContext.tr('删除颜色'),
                 style: TextStyle(color: colors.textPrimary),
@@ -1331,9 +1311,7 @@ class _AppearanceContent extends ConsumerWidget {
                       subtitle: context.tr('使用系统字体'),
                       isSelected: selected == AppFontManager.systemFontFamily,
                       onTap: () async {
-                        await notifier.select(
-                          AppFontManager.systemFontFamily,
-                        );
+                        await notifier.select(AppFontManager.systemFontFamily);
                         if (sheetContext.mounted) Navigator.pop(sheetContext);
                       },
                     ),
@@ -1362,7 +1340,8 @@ class _AppearanceContent extends ConsumerWidget {
                         onPressed: () async {
                           final result = await FilePicker.platform.pickFiles(
                             type: FileType.custom,
-                            allowedExtensions: AppFontManager.supportedExtensions,
+                            allowedExtensions:
+                                AppFontManager.supportedExtensions,
                             allowMultiple: true,
                           );
                           if (result == null) return;
@@ -1379,10 +1358,7 @@ class _AppearanceContent extends ConsumerWidget {
                               '已导入 $count 个字体文件',
                             );
                           } else {
-                            _showSettingsMessage(
-                              sheetContext,
-                              '没有可导入的字体文件',
-                            );
+                            _showSettingsMessage(sheetContext, '没有可导入的字体文件');
                           }
                         },
                         icon: const Icon(Icons.file_upload_outlined, size: 18),
@@ -1402,9 +1378,9 @@ class _AppearanceContent extends ConsumerWidget {
 
   /// 顶部提示条。
   void _showSettingsMessage(BuildContext context, String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(context.tr(message))),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(context.tr(message))));
   }
 
   Widget _buildFontOption(
@@ -1495,9 +1471,7 @@ class _AppearanceContent extends ConsumerWidget {
                 _doPersist(
                   container,
                   (s) => s.setFullScreenBgMode(
-                    v == '纯黑背景'
-                        ? 'dark'
-                        : (v == '跟随主题' ? 'theme' : 'cover'),
+                    v == '纯黑背景' ? 'dark' : (v == '跟随主题' ? 'theme' : 'cover'),
                   ),
                 ),
               );
@@ -1507,6 +1481,7 @@ class _AppearanceContent extends ConsumerWidget {
       ],
     );
   }
+
   Widget _buildDesktopLyricGroup(
     BuildContext context,
     WidgetRef ref,
@@ -1521,35 +1496,9 @@ class _AppearanceContent extends ConsumerWidget {
       title: '桌面歌词',
       subtitle: Platform.isWindows
           ? '独立的桌面歌词窗口（始终置顶），应用最小化后仍显示在桌面上，可拖动'
-          : '悬浮在页面之上的歌词窗，可拖动位置，锁定后点击穿透',
+          : '悬浮在页面之上的歌词窗，可拖动位置',
       colors: colors,
       children: [
-        SettingRow(
-          icon: s.isLock ? Icons.lock : Icons.lock_open,
-          title: '锁定歌词窗',
-          subtitle: '锁定后不再响应触摸，可穿透点击下层内容',
-          trailing: Switch(
-            value: s.isLock,
-            onChanged: (v) => update((cur) => cur.copyWith(isLock: v)),
-            activeTrackColor: colors.primary.withValues(alpha: 0.3),
-            activeThumbColor: colors.primary,
-          ),
-          colors: colors,
-        ),
-        SettingDivider(colors: colors),
-        _SettingSlider(
-          icon: Icons.format_list_numbered,
-          title: '显示行数',
-          subtitle: '最多同时显示的行数',
-          value: s.maxLineNum.toDouble(),
-          min: 1,
-          max: 8,
-          divisions: 7,
-          valueLabel: '${s.maxLineNum} 行',
-          colors: colors,
-          onChanged: (v) => update((cur) => cur.copyWith(maxLineNum: v.round())),
-        ),
-        SettingDivider(colors: colors),
         _SettingSlider(
           icon: Icons.format_size,
           title: '字体大小',
@@ -1560,19 +1509,6 @@ class _AppearanceContent extends ConsumerWidget {
           valueLabel: '${s.fontSize.round()}',
           colors: colors,
           onChanged: (v) => update((cur) => cur.copyWith(fontSize: v)),
-        ),
-        SettingDivider(colors: colors),
-        _SettingSlider(
-          icon: Icons.opacity,
-          title: '不透明度',
-          value: s.opacityPercent.toDouble(),
-          min: 10,
-          max: 100,
-          divisions: 18,
-          valueLabel: '${s.opacityPercent}%',
-          colors: colors,
-          onChanged: (v) =>
-              update((cur) => cur.copyWith(opacityPercent: v.round())),
         ),
         SettingDivider(colors: colors),
         SettingRow(
@@ -1628,7 +1564,6 @@ class _AppearanceContent extends ConsumerWidget {
 }
 
 // ==================== Desktop Lyric ====================
-
 
 /// 带标题、数值与滑块的设置行（滑块独占一行，避免与右侧文字挤在一起）。
 class _SettingSlider extends StatelessWidget {
@@ -1818,10 +1753,7 @@ void _showDesktopLyricColorPicker(
                                     color: colors.textPrimary,
                                     width: 3,
                                   )
-                                : Border.all(
-                                    color: colors.divider,
-                                    width: 1.5,
-                                  ),
+                                : Border.all(color: colors.divider, width: 1.5),
                           ),
                           child: isSelected
                               ? Icon(
@@ -1982,139 +1914,139 @@ class _PlaybackContent extends ConsumerWidget {
           SettingRow(
             icon: Icons.graphic_eq,
             title: '均衡器预设',
-          subtitle: '选择预设均衡器方案',
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                context.tr(eqPreset),
-                style: TextStyle(fontSize: 13, color: colors.textHint),
-              ),
-              const SizedBox(width: 4),
-              Icon(Icons.chevron_right, size: 18, color: colors.textHint),
-            ],
+            subtitle: '选择预设均衡器方案',
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  context.tr(eqPreset),
+                  style: TextStyle(fontSize: 13, color: colors.textHint),
+                ),
+                const SizedBox(width: 4),
+                Icon(Icons.chevron_right, size: 18, color: colors.textHint),
+              ],
+            ),
+            colors: colors,
+            onTap: () => _showBottomPicker(
+              context,
+              colors,
+              '均衡器预设',
+              allPresetNames,
+              eqPreset,
+              (v) => _applyEqPreset(context, v),
+            ),
           ),
-          colors: colors,
-          onTap: () => _showBottomPicker(
-            context,
-            colors,
-            '均衡器预设',
-            allPresetNames,
-            eqPreset,
-            (v) => _applyEqPreset(context, v),
-          ),
-        ),
-        SettingDivider(colors: colors),
-        ...List.generate(10, (i) {
-          final freq = kEqFrequencies[i];
-          final freqLabel = freq >= 1000 ? '${freq ~/ 1000}k' : '$freq';
-          return Column(
-            children: [
-              SettingRow(
-                icon: Icons.equalizer,
-                title: '$freqLabel Hz',
-                subtitle: '${eqBands[i].toStringAsFixed(1)}dB',
-                trailing: SizedBox(
-                  width: 120,
-                  child: Slider(
-                    value: eqBands[i],
-                    min: -12,
-                    max: 12,
-                    divisions: 240,
-                    activeColor: colors.primary,
-                    onChanged: equalizerEnabled
-                        ? (v) {
-                            final container = ProviderScope.containerOf(
-                              context,
-                            );
-                            final nb = List<double>.from(eqBands);
-                            nb[i] = v;
-                            container
-                                    .read(equalizerBandsProvider.notifier)
-                                    .state =
-                                nb;
-                            unawaited(
-                              _doPersist(
-                                container,
-                                (s) => s.setEqualizerBands(jsonEncode(nb)),
-                              ),
-                            );
-                          }
-                        : null,
+          SettingDivider(colors: colors),
+          ...List.generate(10, (i) {
+            final freq = kEqFrequencies[i];
+            final freqLabel = freq >= 1000 ? '${freq ~/ 1000}k' : '$freq';
+            return Column(
+              children: [
+                SettingRow(
+                  icon: Icons.equalizer,
+                  title: '$freqLabel Hz',
+                  subtitle: '${eqBands[i].toStringAsFixed(1)}dB',
+                  trailing: SizedBox(
+                    width: 120,
+                    child: Slider(
+                      value: eqBands[i],
+                      min: -12,
+                      max: 12,
+                      divisions: 240,
+                      activeColor: colors.primary,
+                      onChanged: equalizerEnabled
+                          ? (v) {
+                              final container = ProviderScope.containerOf(
+                                context,
+                              );
+                              final nb = List<double>.from(eqBands);
+                              nb[i] = v;
+                              container
+                                      .read(equalizerBandsProvider.notifier)
+                                      .state =
+                                  nb;
+                              unawaited(
+                                _doPersist(
+                                  container,
+                                  (s) => s.setEqualizerBands(jsonEncode(nb)),
+                                ),
+                              );
+                            }
+                          : null,
+                    ),
                   ),
+                  colors: colors,
                 ),
-                colors: colors,
-              ),
-              if (i < 9) SettingDivider(colors: colors),
-            ],
-          );
-        }),
-        const SizedBox(height: AppSpacing.sm),
-        Row(
-          children: [
-            Expanded(
-              child: OutlinedButton(
-                onPressed: () => _showSavePresetDialog(context, colors),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: colors.primary,
-                  side: BorderSide(color: colors.primary),
-                ),
-                child: Text(context.tr('保存预设')),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: OutlinedButton(
-                onPressed: () => _exportEqConfig(context, colors),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: colors.textSecondary,
-                  side: BorderSide(color: colors.divider),
-                ),
-                child: Text(context.tr('导出配置')),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: OutlinedButton(
-                onPressed: () => _importEqConfig(context, colors),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: colors.textSecondary,
-                  side: BorderSide(color: colors.divider),
-                ),
-                child: Text(context.tr('导入配置')),
-              ),
-            ),
-          ],
-        ),
-        if (isCustom) ...[
-          const SizedBox(height: 8),
+                if (i < 9) SettingDivider(colors: colors),
+              ],
+            );
+          }),
+          const SizedBox(height: AppSpacing.sm),
           Row(
             children: [
               Expanded(
                 child: OutlinedButton(
-                  onPressed: () =>
-                      _saveCurrentToPreset(context, eqPreset, eqBands),
+                  onPressed: () => _showSavePresetDialog(context, colors),
                   style: OutlinedButton.styleFrom(
                     foregroundColor: colors.primary,
                     side: BorderSide(color: colors.primary),
                   ),
-                  child: Text(context.tr('保存到当前预设')),
+                  child: Text(context.tr('保存预设')),
                 ),
               ),
               const SizedBox(width: 8),
               Expanded(
                 child: OutlinedButton(
-                  onPressed: () =>
-                      _deletePreset(context, eqPreset, customPresets),
+                  onPressed: () => _exportEqConfig(context, colors),
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.red,
-                    side: const BorderSide(color: Colors.red),
+                    foregroundColor: colors.textSecondary,
+                    side: BorderSide(color: colors.divider),
                   ),
-                  child: Text(context.tr('删除预设')),
+                  child: Text(context.tr('导出配置')),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => _importEqConfig(context, colors),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: colors.textSecondary,
+                    side: BorderSide(color: colors.divider),
+                  ),
+                  child: Text(context.tr('导入配置')),
                 ),
               ),
             ],
           ),
+          if (isCustom) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () =>
+                        _saveCurrentToPreset(context, eqPreset, eqBands),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: colors.primary,
+                      side: BorderSide(color: colors.primary),
+                    ),
+                    child: Text(context.tr('保存到当前预设')),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () =>
+                        _deletePreset(context, eqPreset, customPresets),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.red,
+                      side: const BorderSide(color: Colors.red),
+                    ),
+                    child: Text(context.tr('删除预设')),
+                  ),
+                ),
+              ],
+            ),
           ],
         ],
       ],
@@ -2208,7 +2140,10 @@ class _PlaybackContent extends ConsumerWidget {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: colors.surface,
-        title: Text(context.tr('保存为新预设'), style: TextStyle(color: colors.textPrimary)),
+        title: Text(
+          context.tr('保存为新预设'),
+          style: TextStyle(color: colors.textPrimary),
+        ),
         content: TextField(
           controller: controller,
           decoration: InputDecoration(
@@ -2226,7 +2161,10 @@ class _PlaybackContent extends ConsumerWidget {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: Text(context.tr('取消'), style: TextStyle(color: colors.textHint)),
+            child: Text(
+              context.tr('取消'),
+              style: TextStyle(color: colors.textHint),
+            ),
           ),
           TextButton(
             onPressed: () {
@@ -2235,7 +2173,10 @@ class _PlaybackContent extends ConsumerWidget {
               Navigator.pop(ctx);
               _saveNewPreset(context, name);
             },
-            child: Text(context.tr('保存'), style: TextStyle(color: colors.primary)),
+            child: Text(
+              context.tr('保存'),
+              style: TextStyle(color: colors.primary),
+            ),
           ),
         ],
       ),
@@ -2283,7 +2224,10 @@ class _PlaybackContent extends ConsumerWidget {
       }),
     );
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(context.tr('预设保存成功')), backgroundColor: Colors.green),
+      SnackBar(
+        content: Text(context.tr('预设保存成功')),
+        backgroundColor: Colors.green,
+      ),
     );
   }
 
@@ -2359,7 +2303,10 @@ class _PlaybackContent extends ConsumerWidget {
                 ),
               );
             },
-            child: Text(context.tr('删除'), style: const TextStyle(color: Colors.red)),
+            child: Text(
+              context.tr('删除'),
+              style: const TextStyle(color: Colors.red),
+            ),
           ),
         ],
       ),
@@ -2380,12 +2327,18 @@ class _PlaybackContent extends ConsumerWidget {
       await File('${dir.path}/mintmusic_eq_config.json').writeAsString(data);
       if (context.mounted)
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(context.tr('均衡器配置已导出')), backgroundColor: colors.primary),
+          SnackBar(
+            content: Text(context.tr('均衡器配置已导出')),
+            backgroundColor: colors.primary,
+          ),
         );
     } catch (e) {
       if (context.mounted)
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(context.tr('导出失败: $e')), backgroundColor: Colors.red),
+          SnackBar(
+            content: Text(context.tr('导出失败: $e')),
+            backgroundColor: Colors.red,
+          ),
         );
     }
   }
@@ -2444,12 +2397,18 @@ class _PlaybackContent extends ConsumerWidget {
       }
       if (context.mounted)
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(context.tr('均衡器配置导入成功')), backgroundColor: colors.primary),
+          SnackBar(
+            content: Text(context.tr('均衡器配置导入成功')),
+            backgroundColor: colors.primary,
+          ),
         );
     } catch (e) {
       if (context.mounted)
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(context.tr('导入失败: $e')), backgroundColor: Colors.red),
+          SnackBar(
+            content: Text(context.tr('导入失败: $e')),
+            backgroundColor: Colors.red,
+          ),
         );
     }
   }
@@ -2509,242 +2468,244 @@ class _PlaybackContent extends ConsumerWidget {
           SettingRow(
             icon: Icons.speaker,
             title: '低音增强 (Bass Boost)',
-          subtitle: bassBoostEnabled
-              ? '增益 ${bassBoostGain.toInt()}dB · ${bassPresetLabels[bassBoostPreset] ?? bassBoostPreset}'
-              : '关闭',
-          trailing: Switch(
-            value: bassBoostEnabled,
-            onChanged: (v) => _persistBool(
-              context,
-              bassBoostEnabledProvider,
-              v,
-              (s) => s.setBassBoostEnabled(v),
+            subtitle: bassBoostEnabled
+                ? '增益 ${bassBoostGain.toInt()}dB · ${bassPresetLabels[bassBoostPreset] ?? bassBoostPreset}'
+                : '关闭',
+            trailing: Switch(
+              value: bassBoostEnabled,
+              onChanged: (v) => _persistBool(
+                context,
+                bassBoostEnabledProvider,
+                v,
+                (s) => s.setBassBoostEnabled(v),
+              ),
+              activeTrackColor: colors.primary.withValues(alpha: 0.3),
+              activeThumbColor: colors.primary,
             ),
-            activeTrackColor: colors.primary.withValues(alpha: 0.3),
-            activeThumbColor: colors.primary,
+            colors: colors,
           ),
-          colors: colors,
-        ),
-        if (bassBoostEnabled) ...[
-          SettingDivider(colors: colors),
-          SettingRow(
-            icon: Icons.speaker,
-            title: '低频增益',
-            subtitle: '${bassBoostGain.toInt()}dB',
-            trailing: SizedBox(
-              width: 120,
-              child: Slider(
-                value: bassBoostGain,
-                min: -12,
-                max: 12,
-                divisions: 48,
-                activeColor: colors.primary,
-                onChanged: (v) => _persistDouble(
-                  context,
-                  bassBoostGainProvider,
-                  v,
-                  (s) => s.setBassBoostGain(v),
+          if (bassBoostEnabled) ...[
+            SettingDivider(colors: colors),
+            SettingRow(
+              icon: Icons.speaker,
+              title: '低频增益',
+              subtitle: '${bassBoostGain.toInt()}dB',
+              trailing: SizedBox(
+                width: 120,
+                child: Slider(
+                  value: bassBoostGain,
+                  min: -12,
+                  max: 12,
+                  divisions: 48,
+                  activeColor: colors.primary,
+                  onChanged: (v) => _persistDouble(
+                    context,
+                    bassBoostGainProvider,
+                    v,
+                    (s) => s.setBassBoostGain(v),
+                  ),
                 ),
               ),
+              colors: colors,
             ),
-            colors: colors,
-          ),
-          SettingDivider(colors: colors),
-          SettingRow(
-            icon: Icons.tune,
-            title: '低音预设',
-            subtitle: '选择低音增强预设',
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  context.tr(bassPresetLabels[bassBoostPreset] ?? bassBoostPreset),
-                  style: TextStyle(fontSize: 13, color: colors.textHint),
-                ),
-                const SizedBox(width: 4),
-                Icon(Icons.chevron_right, size: 18, color: colors.textHint),
-              ],
+            SettingDivider(colors: colors),
+            SettingRow(
+              icon: Icons.tune,
+              title: '低音预设',
+              subtitle: '选择低音增强预设',
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    context.tr(
+                      bassPresetLabels[bassBoostPreset] ?? bassBoostPreset,
+                    ),
+                    style: TextStyle(fontSize: 13, color: colors.textHint),
+                  ),
+                  const SizedBox(width: 4),
+                  Icon(Icons.chevron_right, size: 18, color: colors.textHint),
+                ],
+              ),
+              colors: colors,
+              onTap: () => _showBottomPicker(
+                context,
+                colors,
+                '低音预设',
+                ['轻度', '中度', '重度'],
+                bassPresetLabels[bassBoostPreset] ?? '中度',
+                (v) {
+                  final map = {'轻度': 'light', '中度': 'medium', '重度': 'heavy'};
+                  final gainMap = {'light': 3.0, 'medium': 6.0, 'heavy': 9.0};
+                  _persistString(
+                    context,
+                    bassBoostPresetProvider,
+                    map[v] ?? 'medium',
+                    (s) => s.setBassBoostPreset(map[v] ?? 'medium'),
+                  );
+                  _persistDouble(
+                    context,
+                    bassBoostGainProvider,
+                    gainMap[map[v]] ?? 6.0,
+                    (s) => s.setBassBoostGain(gainMap[map[v]] ?? 6.0),
+                  );
+                },
+              ),
             ),
-            colors: colors,
-            onTap: () => _showBottomPicker(
-              context,
-              colors,
-              '低音预设',
-              ['轻度', '中度', '重度'],
-              bassPresetLabels[bassBoostPreset] ?? '中度',
-              (v) {
-                final map = {'轻度': 'light', '中度': 'medium', '重度': 'heavy'};
-                final gainMap = {'light': 3.0, 'medium': 6.0, 'heavy': 9.0};
-                _persistString(
-                  context,
-                  bassBoostPresetProvider,
-                  map[v] ?? 'medium',
-                  (s) => s.setBassBoostPreset(map[v] ?? 'medium'),
-                );
-                _persistDouble(
-                  context,
-                  bassBoostGainProvider,
-                  gainMap[map[v]] ?? 6.0,
-                  (s) => s.setBassBoostGain(gainMap[map[v]] ?? 6.0),
-                );
-              },
-            ),
-          ),
-        ],
-        SettingDivider(colors: colors),
-        SettingRow(
-          icon: Icons.surround_sound,
-          title: '环绕音效 (Surround)',
-          subtitle: surroundEnabled
-              ? surroundLabels[surroundMode] ?? surroundMode
-              : '关闭',
-          trailing: Switch(
-            value: surroundEnabled,
-            onChanged: (v) => _persistBool(
-              context,
-              surroundEnabledProvider,
-              v,
-              (s) => s.setSurroundEnabled(v),
-            ),
-            activeTrackColor: colors.primary.withValues(alpha: 0.3),
-            activeThumbColor: colors.primary,
-          ),
-          colors: colors,
-        ),
-        if (surroundEnabled) ...[
+          ],
           SettingDivider(colors: colors),
           SettingRow(
             icon: Icons.surround_sound,
-            title: '环境模拟',
-            subtitle: '模拟 5.1/7.1 虚拟声场与环境混响',
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  context.tr(surroundLabels[surroundMode] ?? surroundMode),
-                  style: TextStyle(fontSize: 13, color: colors.textHint),
-                ),
-                const SizedBox(width: 4),
-                Icon(Icons.chevron_right, size: 18, color: colors.textHint),
-              ],
+            title: '环绕音效 (Surround)',
+            subtitle: surroundEnabled
+                ? surroundLabels[surroundMode] ?? surroundMode
+                : '关闭',
+            trailing: Switch(
+              value: surroundEnabled,
+              onChanged: (v) => _persistBool(
+                context,
+                surroundEnabledProvider,
+                v,
+                (s) => s.setSurroundEnabled(v),
+              ),
+              activeTrackColor: colors.primary.withValues(alpha: 0.3),
+              activeThumbColor: colors.primary,
             ),
             colors: colors,
-            onTap: () => _showBottomPicker(
-              context,
-              colors,
-              '环绕模式',
-              ['小房间', '中厅堂', '大教堂'],
-              surroundLabels[surroundMode] ?? '小房间',
-              (v) {
-                final modeMap = {
-                  '小房间': 'small',
-                  '中厅堂': 'medium',
-                  '大教堂': 'large',
-                };
-                _persistString(
-                  context,
-                  surroundModeProvider,
-                  modeMap[v] ?? 'small',
-                  (s) => s.setSurroundMode(modeMap[v] ?? 'small'),
-                );
-              },
-            ),
           ),
-        ],
-        SettingDivider(colors: colors),
-        SettingRow(
-          icon: Icons.balance,
-          title: '声道平衡 (Balance)',
-          subtitle: balanceEnabled
-              ? (balanceValue == 0
-                    ? '居中'
-                    : balanceValue < 0
-                    ? '左 ${((-balanceValue) * 100).toInt()}%'
-                    : '右 ${(balanceValue * 100).toInt()}%')
-              : '关闭',
-          trailing: Switch(
-            value: balanceEnabled,
-            onChanged: (v) => _persistBool(
-              context,
-              balanceEnabledProvider,
-              v,
-              (s) => s.setBalanceEnabled(v),
+          if (surroundEnabled) ...[
+            SettingDivider(colors: colors),
+            SettingRow(
+              icon: Icons.surround_sound,
+              title: '环境模拟',
+              subtitle: '模拟 5.1/7.1 虚拟声场与环境混响',
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    context.tr(surroundLabels[surroundMode] ?? surroundMode),
+                    style: TextStyle(fontSize: 13, color: colors.textHint),
+                  ),
+                  const SizedBox(width: 4),
+                  Icon(Icons.chevron_right, size: 18, color: colors.textHint),
+                ],
+              ),
+              colors: colors,
+              onTap: () => _showBottomPicker(
+                context,
+                colors,
+                '环绕模式',
+                ['小房间', '中厅堂', '大教堂'],
+                surroundLabels[surroundMode] ?? '小房间',
+                (v) {
+                  final modeMap = {
+                    '小房间': 'small',
+                    '中厅堂': 'medium',
+                    '大教堂': 'large',
+                  };
+                  _persistString(
+                    context,
+                    surroundModeProvider,
+                    modeMap[v] ?? 'small',
+                    (s) => s.setSurroundMode(modeMap[v] ?? 'small'),
+                  );
+                },
+              ),
             ),
-            activeTrackColor: colors.primary.withValues(alpha: 0.3),
-            activeThumbColor: colors.primary,
-          ),
-          colors: colors,
-        ),
-        if (balanceEnabled) ...[
+          ],
           SettingDivider(colors: colors),
           SettingRow(
             icon: Icons.balance,
-            title: '平衡调节',
-            subtitle: balanceValue == 0
-                ? '居中'
-                : balanceValue < 0
-                ? '左 ${((-balanceValue) * 100).toInt()}%'
-                : '右 ${(balanceValue * 100).toInt()}%',
-            trailing: SizedBox(
-              width: 120,
-              child: Slider(
-                value: balanceValue,
-                min: -1,
-                max: 1,
-                divisions: 40,
-                activeColor: colors.primary,
-                onChanged: (v) => _persistDouble(
-                  context,
-                  balanceValueProvider,
-                  v,
-                  (s) => s.setBalanceValue(v),
-                ),
+            title: '声道平衡 (Balance)',
+            subtitle: balanceEnabled
+                ? (balanceValue == 0
+                      ? '居中'
+                      : balanceValue < 0
+                      ? '左 ${((-balanceValue) * 100).toInt()}%'
+                      : '右 ${(balanceValue * 100).toInt()}%')
+                : '关闭',
+            trailing: Switch(
+              value: balanceEnabled,
+              onChanged: (v) => _persistBool(
+                context,
+                balanceEnabledProvider,
+                v,
+                (s) => s.setBalanceEnabled(v),
               ),
+              activeTrackColor: colors.primary.withValues(alpha: 0.3),
+              activeThumbColor: colors.primary,
             ),
             colors: colors,
           ),
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 4),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(
-                  Icons.volume_up,
-                  size: 20,
-                  color: colors.textSecondary.withValues(
-                    alpha: 1 - balanceValue.clamp(0, 1),
+          if (balanceEnabled) ...[
+            SettingDivider(colors: colors),
+            SettingRow(
+              icon: Icons.balance,
+              title: '平衡调节',
+              subtitle: balanceValue == 0
+                  ? '居中'
+                  : balanceValue < 0
+                  ? '左 ${((-balanceValue) * 100).toInt()}%'
+                  : '右 ${(balanceValue * 100).toInt()}%',
+              trailing: SizedBox(
+                width: 120,
+                child: Slider(
+                  value: balanceValue,
+                  min: -1,
+                  max: 1,
+                  divisions: 40,
+                  activeColor: colors.primary,
+                  onChanged: (v) => _persistDouble(
+                    context,
+                    balanceValueProvider,
+                    v,
+                    (s) => s.setBalanceValue(v),
                   ),
                 ),
-                const SizedBox(width: 24),
-                Text(
-                  '😐',
-                  style: TextStyle(fontSize: 20, color: colors.textPrimary),
-                ),
-                const SizedBox(width: 24),
-                Icon(
-                  Icons.volume_up,
-                  size: 20,
-                  color: colors.textSecondary.withValues(
-                    alpha: 1 + balanceValue.clamp(-1, 0),
+              ),
+              colors: colors,
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.volume_up,
+                    size: 20,
+                    color: colors.textSecondary.withValues(
+                      alpha: 1 - balanceValue.clamp(0, 1),
+                    ),
                   ),
+                  const SizedBox(width: 24),
+                  Text(
+                    '😐',
+                    style: TextStyle(fontSize: 20, color: colors.textPrimary),
+                  ),
+                  const SizedBox(width: 24),
+                  Icon(
+                    Icons.volume_up,
+                    size: 20,
+                    color: colors.textSecondary.withValues(
+                      alpha: 1 + balanceValue.clamp(-1, 0),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Center(
+              child: TextButton(
+                onPressed: () => _persistDouble(
+                  context,
+                  balanceValueProvider,
+                  0.0,
+                  (s) => s.setBalanceValue(0.0),
                 ),
-              ],
-            ),
-          ),
-          Center(
-            child: TextButton(
-              onPressed: () => _persistDouble(
-                context,
-                balanceValueProvider,
-                0.0,
-                (s) => s.setBalanceValue(0.0),
-              ),
-              child: Text(
-                context.tr('居中校准'),
-                style: TextStyle(fontSize: 12, color: colors.primary),
+                child: Text(
+                  context.tr('居中校准'),
+                  style: TextStyle(fontSize: 12, color: colors.primary),
+                ),
               ),
             ),
-          ),
           ],
         ],
       ],
@@ -3028,15 +2989,11 @@ class _StorageContent extends ConsumerWidget {
             decoration: BoxDecoration(
               color: badgeColor.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(
-                color: badgeColor.withValues(alpha: 0.3),
-              ),
+              border: Border.all(color: badgeColor.withValues(alpha: 0.3)),
             ),
             child: sizeAsync.when(
-              data: (s) => Text(
-                s,
-                style: TextStyle(fontSize: 11, color: badgeColor),
-              ),
+              data: (s) =>
+                  Text(s, style: TextStyle(fontSize: 11, color: badgeColor)),
               loading: () => Text(
                 '...',
                 style: TextStyle(fontSize: 11, color: colors.textHint),
@@ -3060,24 +3017,25 @@ class _StorageContent extends ConsumerWidget {
   }
 
   void _resetDirectories(BuildContext context) {
+    final colors = ref_watch_colors(context);
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: colors_surface(context).surface,
+        backgroundColor: colors.surface,
         title: Text(
           context.tr('重置目录设置'),
-          style: TextStyle(color: text_primary(context)),
+          style: TextStyle(color: colors.textPrimary),
         ),
         content: Text(
           context.tr('确定要重置为默认目录吗？这将清除当前的自定义目录设置。'),
-          style: TextStyle(color: text_secondary(context)),
+          style: TextStyle(color: colors.textSecondary),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
             child: Text(
               context.tr('取消'),
-              style: TextStyle(color: text_hint(context)),
+              style: TextStyle(color: colors.textHint),
             ),
           ),
           TextButton(
@@ -3104,13 +3062,13 @@ class _StorageContent extends ConsumerWidget {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     content: Text(context.tr('已重置为默认目录')),
-                    backgroundColor: Theme.of(context).primaryColor,
+                    backgroundColor: colors.primary,
                   ),
                 );
             },
             child: Text(
               context.tr('确定重置'),
-              style: TextStyle(color: Theme.of(context).primaryColor),
+              style: TextStyle(color: colors.primary),
             ),
           ),
         ],
@@ -3118,12 +3076,6 @@ class _StorageContent extends ConsumerWidget {
     );
   }
 
-  ThemeColors colors_surface(BuildContext context) => ref_watch_colors(context);
-  Color text_primary(BuildContext context) =>
-      ref_watch_colors(context).textPrimary;
-  Color text_secondary(BuildContext context) =>
-      ref_watch_colors(context).textSecondary;
-  Color text_hint(BuildContext context) => ref_watch_colors(context).textHint;
   ThemeColors ref_watch_colors(BuildContext context) =>
       ProviderScope.containerOf(context).read(themeColorsProvider);
 

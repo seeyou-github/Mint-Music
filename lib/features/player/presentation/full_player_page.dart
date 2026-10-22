@@ -159,7 +159,9 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
             SafeArea(
               child: Builder(
                 builder: (context) {
-                  final isTabletLandscape = ResponsiveLayout.isTabletLandscape(context);
+                  final isTabletLandscape = ResponsiveLayout.isTabletLandscape(
+                    context,
+                  );
                   if (isTabletLandscape) {
                     // Tablet landscape: side-by-side cover + lyrics layout
                     return _buildTabletLandscapeLayout(
@@ -273,7 +275,9 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
           currentPage: _landscapeLyricsFullMode ? 1 : 0,
           onBack: () => _beginExit(),
           onTogglePage: () {
-            setState(() => _landscapeLyricsFullMode = !_landscapeLyricsFullMode);
+            setState(
+              () => _landscapeLyricsFullMode = !_landscapeLyricsFullMode,
+            );
           },
         ),
         // Main content
@@ -302,7 +306,9 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
           compact: true,
           onBack: () => _beginExit(),
           onTogglePage: () {
-            setState(() => _landscapeLyricsFullMode = !_landscapeLyricsFullMode);
+            setState(
+              () => _landscapeLyricsFullMode = !_landscapeLyricsFullMode,
+            );
           },
         ),
         Expanded(
@@ -327,10 +333,7 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
               const SizedBox(height: 16),
               // Cover takes up available space, centered vertically
               Expanded(
-                child: _PlayerCoverPage(
-                  isPlaying: isPlaying,
-                  onTapCover: null,
-                ),
+                child: _PlayerCoverPage(isPlaying: isPlaying, onTapCover: null),
               ),
               const SizedBox(height: 8),
               // Controls pinned to bottom
@@ -343,10 +346,7 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
           ),
         ),
         // Right side: lyrics (full height)
-        Expanded(
-          flex: 5,
-          child: _buildLandscapeLyricsPanel(),
-        ),
+        Expanded(flex: 5, child: _buildLandscapeLyricsPanel()),
       ],
     );
   }
@@ -567,8 +567,7 @@ class _PlayerCoverPage extends ConsumerWidget {
     final dominantColor = coverColorAsync.whenOrNull(
       data: (result) => result?.dominantColor,
     );
-    final coverSize =
-        this.coverSize ?? ResponsiveLayout.albumArtSize(context);
+    final coverSize = this.coverSize ?? ResponsiveLayout.albumArtSize(context);
     final radius = ResponsiveLayout.isTablet(context) ? 28.0 : 24.0;
     final borderRadius = math.min(radius, coverSize * 0.12);
 
@@ -592,7 +591,8 @@ class _PlayerCoverPage extends ConsumerWidget {
                           dominantColor != null
                       ? HSLColor.fromColor(dominantColor)
                             .withLightness(
-                              (HSLColor.fromColor(dominantColor).lightness - 0.2)
+                              (HSLColor.fromColor(dominantColor).lightness -
+                                      0.2)
                                   .clamp(0.0, 0.5),
                             )
                             .toColor()
@@ -904,7 +904,7 @@ class _PlayerSongInfo extends ConsumerWidget {
           : () => SongActionSheet.showDownloadQualityPicker(context, song!),
       icon: Icon(
         Icons.download_outlined,
-        size: compact ? 18 : 22,
+        size: compact ? 18 : 24,
         color: Colors.white.withValues(alpha: 0.7),
       ),
       padding: compact ? EdgeInsets.zero : null,
@@ -924,14 +924,21 @@ class _PlayerSongInfo extends ConsumerWidget {
           unawaited(sync.enableDesktopLyric());
         }
       },
-      icon: Text(
-        '词',
-        style: TextStyle(
-          fontSize: compact ? 15 : 18,
-          fontWeight: FontWeight.w600,
-          color: desktopLyricEnabled
-              ? themeColors.primary
-              : Colors.white.withValues(alpha: 0.7),
+      icon: SizedBox(
+        width: compact ? 18 : 24,
+        height: compact ? 18 : 24,
+        child: Center(
+          child: Text(
+            '词',
+            style: TextStyle(
+              fontSize: compact ? 18 : 24,
+              height: 1,
+              fontWeight: FontWeight.w600,
+              color: desktopLyricEnabled
+                  ? themeColors.primary
+                  : Colors.white.withValues(alpha: 0.7),
+            ),
+          ),
         ),
       ),
       padding: compact ? EdgeInsets.zero : null,
@@ -1010,7 +1017,11 @@ class _PlayerSongInfo extends ConsumerWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
-              children: [title, SizedBox(height: compact ? 1 : 4), artist],
+              children: [
+                title,
+                SizedBox(height: compact ? 1 : 4),
+                artist,
+              ],
             ),
           ),
           actions,
@@ -1055,12 +1066,11 @@ class _PlayerProgressBar extends ConsumerWidget {
       onQualityTap: (quality) =>
           ref.read(playbackControllerProvider.notifier).setQuality(quality),
       onSeekPreview: (value) {
-        ref.read(seekPreviewPositionProvider.notifier).state =
-            value == null || duration <= Duration.zero
+        ref
+            .read(seekPreviewPositionProvider.notifier)
+            .state = value == null || duration <= Duration.zero
             ? null
-            : Duration(
-                milliseconds: (value * duration.inMilliseconds).round(),
-              );
+            : Duration(milliseconds: (value * duration.inMilliseconds).round());
       },
       onSeek: (value) {
         ref
@@ -1212,7 +1222,8 @@ class _BackgroundLayerState extends State<_BackgroundLayer>
                       .toColor(),
                   HSLColor.fromColor(dominantColor!)
                       .withLightness(
-                        (HSLColor.fromColor(dominantColor!).lightness * 0.7 - 0.06)
+                        (HSLColor.fromColor(dominantColor!).lightness * 0.7 -
+                                0.06)
                             .clamp(0.04, 0.25),
                       )
                       .toColor(),

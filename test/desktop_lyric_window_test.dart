@@ -39,28 +39,23 @@ List<LyricLine> _sampleLines() => [
   LyricLine(
     startTimeMs: 1000,
     endTimeMs: 2000,
-    words: const [
-      LyricWord(word: '第二行歌词', startTimeMs: 1000, endTimeMs: 1500),
-    ],
+    words: const [LyricWord(word: '第二行歌词', startTimeMs: 1000, endTimeMs: 1500)],
   ),
   LyricLine(
     startTimeMs: 2000,
     endTimeMs: 3000,
-    words: const [
-      LyricWord(word: '第三行歌词', startTimeMs: 2000, endTimeMs: 2500),
-    ],
+    words: const [LyricWord(word: '第三行歌词', startTimeMs: 2000, endTimeMs: 2500)],
   ),
 ];
 
 void main() {
-  testWidgets('多行模式渲染当前行、译文和后续行', (tester) async {
+  testWidgets('固定两个槽位渲染当前行、译文和下一行', (tester) async {
     await tester.pumpWidget(
       _host(
         DesktopLyricPanel(
-          settings: DesktopLyricSettings.defaults.copyWith(maxLineNum: 3),
+          settings: DesktopLyricSettings.defaults,
           lines: _sampleLines(),
           activeIndex: 0,
-          songId: 'song-1',
         ),
       ),
     );
@@ -69,46 +64,72 @@ void main() {
     expect(find.text('第一行歌词'), findsOneWidget);
     expect(find.text('the first line'), findsOneWidget);
     expect(find.text('第二行歌词'), findsOneWidget);
+    expect(find.text('第三行歌词'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('显示行数限制渲染的行数', (tester) async {
+  testWidgets('切到第二行时槽位位置不变，下一行预载到第一槽位', (tester) async {
     await tester.pumpWidget(
       _host(
         DesktopLyricPanel(
-          settings: DesktopLyricSettings.defaults.copyWith(
-            maxLineNum: 1,
-            showToggleAnima: false,
-          ),
-          lines: _sampleLines(),
-          activeIndex: 0,
-        ),
-      ),
-    );
-    await tester.pump();
-
-    expect(find.text('第一行歌词'), findsOneWidget);
-    expect(find.text('第二行歌词'), findsNothing);
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('单行模式只渲染当前行', (tester) async {
-    await tester.pumpWidget(
-      _host(
-        DesktopLyricPanel(
-          settings: DesktopLyricSettings.defaults.copyWith(
-            isSingleLine: true,
-            showToggleAnima: false,
-          ),
+          settings: DesktopLyricSettings.defaults,
           lines: _sampleLines(),
           activeIndex: 1,
         ),
       ),
     );
+    await tester.pumpAndSettle();
+
+    // 第二行仍在第二槽位（下方），第三行预载到第一槽位（上方）。
+    expect(find.text('第一行歌词'), findsNothing);
+    expect(find.text('第二行歌词'), findsOneWidget);
+    expect(find.text('第三行歌词'), findsOneWidget);
+    final secondTop = tester.getTopLeft(find.text('第二行歌词')).dy;
+    final thirdTop = tester.getTopLeft(find.text('第三行歌词')).dy;
+    expect(thirdTop, lessThan(secondTop));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('播放到最后一行时另一个槽位保持为空', (tester) async {
+    await tester.pumpWidget(
+      _host(
+        DesktopLyricPanel(
+          settings: DesktopLyricSettings.defaults,
+          lines: _sampleLines(),
+          activeIndex: 2,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('第一行歌词'), findsNothing);
+    expect(find.text('第二行歌词'), findsNothing);
+    expect(find.text('第三行歌词'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('使用歌词设置里的字体、字重与字号缩放', (tester) async {
+    await tester.pumpWidget(
+      _host(
+        DesktopLyricPanel(
+          settings: DesktopLyricSettings.defaults,
+          lines: _sampleLines(),
+          activeIndex: 0,
+          fontFamily: 'FZLantingHei',
+          fontWeight: FontWeight.w800,
+          fontSizeScale: 1.2,
+        ),
+      ),
+    );
     await tester.pump();
 
-    expect(find.text('第二行歌词'), findsOneWidget);
-    expect(find.text('第一行歌词'), findsNothing);
+    final text = tester.widget<Text>(find.text('第一行歌词'));
+    expect(text.style?.fontFamily, 'FZLantingHei');
+    expect(text.style?.fontWeight, FontWeight.w800);
+    expect(
+      text.style?.fontSize,
+      closeTo(DesktopLyricSettings.defaults.fontSize * 1.2, 0.01),
+    );
     expect(tester.takeException(), isNull);
   });
 
@@ -116,10 +137,7 @@ void main() {
     await tester.pumpWidget(
       _host(
         DesktopLyricPanel(
-          settings: DesktopLyricSettings.defaults.copyWith(
-            isLock: true,
-            showToggleAnima: false,
-          ),
+          settings: DesktopLyricSettings.defaults,
           lines: _sampleLines(),
           activeIndex: 0,
         ),
@@ -186,8 +204,7 @@ void main() {
                                         vertical: 4,
                                       ),
                                       child: DesktopLyricPanel(
-                                        settings: DesktopLyricSettings.defaults
-                                            .copyWith(showToggleAnima: false),
+                                        settings: DesktopLyricSettings.defaults,
                                         lines: _sampleLines(),
                                         activeIndex: 0,
                                       ),

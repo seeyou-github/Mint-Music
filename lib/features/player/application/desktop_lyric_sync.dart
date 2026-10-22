@@ -5,7 +5,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_font_manager.dart';
-import '../../../core/theme/app_typography.dart';
 import '../../settings/application/font_providers.dart';
 import '../../settings/application/settings_providers.dart';
 import '../domain/models/desktop_lyric_settings.dart';
@@ -34,7 +33,8 @@ class DesktopLyricStatus {
   final bool overlayShowing;
 
   /// 歌词正由系统悬浮窗渲染。为 false 时回退到应用内悬浮层。
-  bool get usingNativeOverlay => supported && permissionGranted && overlayShowing;
+  bool get usingNativeOverlay =>
+      supported && permissionGranted && overlayShowing;
 
   DesktopLyricStatus copyWith({
     bool? supported,
@@ -165,10 +165,7 @@ class DesktopLyricSyncController extends StateNotifier<DesktopLyricStatus>
   }
 
   void _setEnable(bool value) {
-    updateDesktopLyricSettings(
-      _ref.read,
-      (s) => s.copyWith(enable: value),
-    );
+    updateDesktopLyricSettings(_ref.read, (s) => s.copyWith(enable: value));
   }
 
   // ------------------------------------------------------------------ 同步
@@ -186,46 +183,56 @@ class DesktopLyricSyncController extends StateNotifier<DesktopLyricStatus>
     unawaited(_pushConfig(next));
   }
 
-  /// 下发样式配置（含应用字体）。
+  /// 下发样式配置（含歌词字体设置）。
   Future<void> _pushConfig(DesktopLyricSettings settings) async {
-    final font = await _appFont();
+    final font = await _lyricFont();
+    final fontWeight = _ref.read(lyricFontWeightProvider).clamp(100, 900);
+    final fontSizeRate = _ref.read(lyricFontRateProvider).clamp(0.5, 2.0);
     await _overlay.updateConfig(
       settings,
-      fontFamily: font?.family,
-      fontPath: font?.path,
+      fontFamily: font?.family ?? '',
+      fontPath: font?.path ?? '',
+      fontWeight: fontWeight,
+      fontSizeRate: fontSizeRate,
     );
   }
 
-  /// 当前选中的应用字体（族名 + 文件路径）。
+  /// 播放页「歌词设置」里的字体（族名 + 文件路径）。
   ///
-  /// Windows 端桌面歌词是原生窗口，需要把字体文件注册进原生侧才能用上
-  /// 「设置 - 外观设置 - 应用字体」里选择的字体。
-  Future<({String family, String path})?> _appFont() async {
-    final selected = _ref.read(appFontSelectedProvider);
-    // 没有选择过 = 用默认字体（内置的思源宋体），桌面歌词要跟应用保持一致。
-    final wanted = (selected == null || selected.isEmpty)
-        ? AppTypography.defaultFontFamily
-        : selected;
+  /// Windows / Android 的系统悬浮窗是原生渲染，需要把字体文件交给原生侧；
+  /// Flutter 回退层直接用族名即可。找不到对应字体文件时退回按族名使用。
+  Future<({String family, String path})?> _lyricFont() async {
+    final selected = _ref.read(lyricFontFamilyProvider).trim();
+    if (selected.isEmpty || selected == 'system') return null;
 
-    // 内置字体（随安装包打包）：路径是相对 flutter_assets 的相对路径，
-    // 原生侧会基于程序目录解析。
     for (final bundled in AppFontManager.bundledFonts) {
-      if (bundled.family != wanted) continue;
+      if (bundled.family != selected) continue;
       return (family: bundled.family, path: bundled.asset);
+    }
+    // pubspec 里内置的「阿里巴巴圆润体」不在 AppFontManager 的字体列表里。
+    if (selected == 'lyricfont') {
+      return (family: selected, path: 'assets/fonts/lyricfont.ttf');
     }
 
     final fonts = _ref.read(appFontsProvider);
     for (final font in fonts) {
-      if (font.family != wanted) continue;
+      if (font.family != selected) continue;
       try {
         final path = await AppFontManager.instance.pathOf(font);
         return (family: font.family, path: path);
       } catch (e) {
-        debugPrint('[DesktopLyricSync] 读取字体路径失败: $e');
-        return null;
+        debugPrint('[DesktopLyricSync] 读取歌词字体路径失败: $e');
+        break;
       }
     }
-    return null;
+    // 平台自带字体（如苹方）：只传族名，让原生侧按系统字体查找。
+    return (family: selected, path: '');
+  }
+
+  /// 歌词字体 / 字重 / 字号变化：把新样式下发给原生悬浮窗。
+  void onLyricStyleChanged() {
+    if (!state.usingNativeOverlay) return;
+    unawaited(_pushConfig(_ref.read(desktopLyricSettingsProvider)));
   }
 
   /// 切歌:重置已下发的歌词,并为新歌主动拉取歌词。
@@ -289,14 +296,23 @@ class DesktopLyricSyncController extends StateNotifier<DesktopLyricStatus>
   /// 歌词加载的卡死阈值。
   static const Duration _lyricStuckTimeout = Duration(seconds: 20);
 
-  Future<void> syncVisibility() async {
-    final settings = _ref.read(desktopLyricSettingsProvider);
-    final song = _ref.read(playbackControllerProvider).currentSong;
+  /// 显示 / 隐藏请求的序号：快速暂停→播放时，较早的异步结果不能覆盖
+  /// 较新的状态。
+  int _visibilityRequest = 0;
 
-    if (!settings.enable || song == null) {
+  Future<void> syncVisibility() async {
+    final request = ++_visibilityRequest;
+    final settings = _ref.read(desktopLyricSettingsProvider);
+    final playback = _ref.read(playbackControllerProvider);
+    final song = playback.currentSong;
+
+    // 暂停 / 停止时隐藏桌面歌词，恢复播放时再显示。
+    if (!settings.enable || song == null || !playback.isPlaying) {
       await _overlay.hide();
-      if (mounted) state = state.copyWith(overlayShowing: false);
+      if (!mounted || request != _visibilityRequest) return;
+      state = state.copyWith(overlayShowing: false);
       _lastLyricSignature = null;
+      _stopSyncTimer();
       return;
     }
 
@@ -309,7 +325,7 @@ class DesktopLyricSyncController extends StateNotifier<DesktopLyricStatus>
     }
 
     final shown = await _overlay.show();
-    if (!mounted) return;
+    if (!mounted || request != _visibilityRequest) return;
     state = state.copyWith(overlayShowing: shown);
     if (!shown) {
       _stopSyncTimer();
@@ -317,7 +333,7 @@ class DesktopLyricSyncController extends StateNotifier<DesktopLyricStatus>
     }
 
     await _pushConfig(settings);
-    await pushLyric(force: true);    // 交给原生侧自行推进,并定期校准。
+    await pushLyric(force: true); // 交给原生侧自行推进,并定期校准。
     await pushPlayState(force: true);
     _startSyncTimer();
   }
@@ -340,10 +356,7 @@ class DesktopLyricSyncController extends StateNotifier<DesktopLyricStatus>
     }
     _lastObservedPositionMs = positionMs;
     _lastPushedPlaying = isPlaying;
-    await _overlay.setPlayState(
-      positionMs: positionMs,
-      isPlaying: isPlaying,
-    );
+    await _overlay.setPlayState(positionMs: positionMs, isPlaying: isPlaying);
   }
 
   void _startSyncTimer() {
@@ -390,10 +403,14 @@ class DesktopLyricSyncController extends StateNotifier<DesktopLyricStatus>
     if (song == null) return;
 
     final lines = _ref.read(desktopLyricLinesProvider);
-    final ready = areLyricsReadyForSong(song, _ref.read(lyricControllerProvider));
+    final ready = areLyricsReadyForSong(
+      song,
+      _ref.read(lyricControllerProvider),
+    );
 
     // 只有内容真的变了才下发（含"是否就绪"这一维度）。
-    final signature = '${song.id}#${ready ? 1 : 0}#${lines.length}#'
+    final signature =
+        '${song.id}#${ready ? 1 : 0}#${lines.length}#'
         '${identityHashCode(lines)}';
     if (!force && signature == _lastLyricSignature) return;
     _lastLyricSignature = signature;
@@ -440,7 +457,9 @@ class DesktopLyricSyncController extends StateNotifier<DesktopLyricStatus>
 }
 
 final desktopLyricSyncProvider =
-    StateNotifierProvider<DesktopLyricSyncController, DesktopLyricStatus>((ref) {
+    StateNotifierProvider<DesktopLyricSyncController, DesktopLyricStatus>((
+      ref,
+    ) {
       final controller = DesktopLyricSyncController(ref);
 
       ref.listen(desktopLyricSettingsProvider, (previous, next) {
@@ -459,9 +478,23 @@ final desktopLyricSyncProvider =
       // 精确剩余时间”调度。Dart 侧的 position 天生滞后(200ms 粒度 + 通道延迟),
       // 与原生时钟同时驱动会互相打架:滞后的行号把原生往回拽,表现为歌词
       // 慢半拍 + 往回跳一下的闪动。行号只在 updateLyric 时作为初值下发。
-      // 播放/暂停切换时立刻刷新锚点,暂停后原生侧停止推进。
-      ref.listen(playbackControllerProvider.select((s) => s.isPlaying), (_, __) {
-        unawaited(controller.pushPlayState(force: true));
+      // 播放/暂停切换：暂停或停止时隐藏桌面歌词，恢复播放时重新显示。
+      ref.listen(playbackControllerProvider.select((s) => s.isPlaying), (
+        _,
+        __,
+      ) {
+        unawaited(controller.syncVisibility());
+      });
+      // 播放页「歌词设置」里的字体 / 字重 / 字号：原生悬浮窗需要立即刷新，
+      // 否则只有等下次切歌或修改桌面歌词设置才会生效。
+      ref.listen(lyricFontFamilyProvider, (_, __) {
+        controller.onLyricStyleChanged();
+      });
+      ref.listen(lyricFontWeightProvider, (_, __) {
+        controller.onLyricStyleChanged();
+      });
+      ref.listen(lyricFontRateProvider, (_, __) {
+        controller.onLyricStyleChanged();
       });
 
       ref.onDispose(controller.dispose);

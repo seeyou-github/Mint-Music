@@ -70,6 +70,7 @@ class _LyricScrollViewState extends State<LyricScrollView>
   final _clock = _LyricClock();
   late final Ticker _ticker;
   Timer? _userScrollTimer;
+  Timer? _initialScrollTimer;
 
   bool _userScrolling = false;
   bool _autoScrolling = false;
@@ -124,6 +125,7 @@ class _LyricScrollViewState extends State<LyricScrollView>
   @override
   void dispose() {
     _userScrollTimer?.cancel();
+    _initialScrollTimer?.cancel();
     _ticker.dispose();
     _clock.dispose();
     _scrollController.removeListener(_handleScroll);
@@ -156,8 +158,44 @@ class _LyricScrollViewState extends State<LyricScrollView>
         _pendingAutoScroll = false;
         _initialScrollQueued = false;
         _scrollToActiveLine(force: true, preferJump: true);
+        // 页面刚打开/路由动画还没结束时，歌词行可能尚未完成排版，
+        // 上面的定位会退回估算位置。等布局稳定后再校正一次，避免要等到
+        // 下一句歌词才把当前行滚到中间。
+        _initialScrollTimer?.cancel();
+        _initialScrollTimer = Timer(
+          const Duration(milliseconds: 400),
+          _recenterAfterInitialLayout,
+        );
       });
     });
+  }
+
+  /// 初始布局稳定后的补校正：只在当前行明显偏离中心时才滚一次。
+  void _recenterAfterInitialLayout() {
+    if (!mounted || _userScrolling || !_scrollController.hasClients) return;
+    final targetIndex = _activeScrollTargetIndex();
+    if (targetIndex < 0 || targetIndex >= _lineKeys.length) return;
+    final lineContext = _lineKeys[targetIndex].currentContext;
+    if (lineContext == null) {
+      // 目标行还没构建出来（列表还停在估算位置），继续做渐进定位。
+      _estimateScrollToIndex(targetIndex);
+      return;
+    }
+    final lineBox = lineContext.findRenderObject() as RenderBox?;
+    final scrollBox =
+        _scrollController.position.context.storageContext.findRenderObject()
+            as RenderBox?;
+    if (lineBox == null ||
+        scrollBox == null ||
+        !lineBox.hasSize ||
+        !scrollBox.hasSize) {
+      return;
+    }
+    final lineOffset = lineBox.localToGlobal(Offset.zero, ancestor: scrollBox);
+    final lineCenter = lineOffset.dy + lineBox.size.height / 2;
+    if ((lineCenter - scrollBox.size.height / 2).abs() > 4) {
+      _scrollToActiveLine(force: true, preferJump: true);
+    }
   }
 
   /// 初始定位的重试次数（等歌词行排版完成）。
@@ -345,8 +383,9 @@ class _LyricScrollViewState extends State<LyricScrollView>
     if (lineContext == null) {
       // 歌词行还没排版好（拿不到 RenderBox）：稍后再试几帧，
       // 否则只能用估算位置，会偏掉，导致「正在播放的那一行」没在中间。
-      // seek / 预览优先响应，只等一帧就估算跳转，再在下一帧精确校正。
-      final maxRetry = preferJump ? 1 : 10;
+      // 页面切换 / 路由动画期间布局会晚几帧才稳定，这里不能只等一两帧，
+      // 否则初始定位会失败，只能等下一句歌词才重新滚动。
+      const maxRetry = 10;
       if (_initialScrollRetry < maxRetry) {
         _initialScrollRetry++;
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -412,8 +451,10 @@ class _LyricScrollViewState extends State<LyricScrollView>
     final line = widget.lines[lineIndex];
     final durationMs = line.endTimeMs - line.startTimeMs;
     if (durationMs <= 0) return targetOffset;
-    final progress =
-        ((_clock.timeMs - line.startTimeMs) / durationMs).clamp(0.0, 1.0);
+    final progress = ((_clock.timeMs - line.startTimeMs) / durationMs).clamp(
+      0.0,
+      1.0,
+    );
 
     final nextOffset = nextBox.localToGlobal(Offset.zero, ancestor: scrollBox);
     final nextCentered =
@@ -423,24 +464,47 @@ class _LyricScrollViewState extends State<LyricScrollView>
     return targetOffset + (nextCentered - targetOffset) * progress * 0.35;
   }
 
-  void _estimateScrollToIndex(int index) {
-    final estimatedLineHeight = max(
-      48.0,
-      widget.mainFontSize * widget.fontSizeRate * 2.4,
-    );
+  /// 已构建歌词行的真实行高（中位数）。
+  ///
+  /// 固定按 48px 估算时，字号较大 / 带翻译的行误差会随行号累积，最终目标行
+  /// 落在 ListView 的构建范围之外，初始定位就失败了（只能等下一句才滚）。
+  double _estimatedLineHeight() {
+    final heights = <double>[];
+    for (final key in _lineKeys) {
+      final lineContext = key.currentContext;
+      if (lineContext == null) continue;
+      final box = lineContext.findRenderObject() as RenderBox?;
+      if (box == null || !box.hasSize || box.size.height <= 0) continue;
+      heights.add(box.size.height);
+      if (heights.length >= 8) break;
+    }
+    if (heights.isEmpty) {
+      return max(48.0, widget.mainFontSize * widget.fontSizeRate * 2.4);
+    }
+    heights.sort();
+    return heights[heights.length ~/ 2];
+  }
+
+  void _estimateScrollToIndex(int index, {int attempts = 4}) {
+    final estimatedLineHeight = _estimatedLineHeight();
     final viewportHeight = _scrollController.position.viewportDimension;
     final verticalPadding = viewportHeight * 0.45;
     final targetOffset = verticalPadding + index * estimatedLineHeight;
     _animateToOffset(targetOffset, preferJumpIfFar: true);
     _scrollTargetIndex = index;
 
-    // 估算跳转后目标行通常已经进入构建范围，下一帧再精确居中一次。
-    // 如果目标行还没构建出来就保持估算位置，避免无限重试。
+    // 估算跳转后目标行通常已经进入构建范围，下一帧再精确居中一次；
+    // 如果目标行还没构建出来（行高估得不准），用新的已构建行继续估算逼近。
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || index >= _lineKeys.length) return;
-      if (_lineKeys[index].currentContext == null) return;
-      _initialScrollRetry = 0;
-      _scrollToActiveLine(force: true, preferJump: true);
+      if (_lineKeys[index].currentContext != null) {
+        _initialScrollRetry = 0;
+        _scrollToActiveLine(force: true, preferJump: true);
+        return;
+      }
+      if (attempts > 1) {
+        _estimateScrollToIndex(index, attempts: attempts - 1);
+      }
     });
   }
 
@@ -1076,7 +1140,10 @@ class _PlainLineLayout {
 
     TextPainter painter(Color color) {
       return TextPainter(
-        text: TextSpan(text: text, style: style.copyWith(color: color)),
+        text: TextSpan(
+          text: text,
+          style: style.copyWith(color: color),
+        ),
         textAlign: TextAlign.left,
         textDirection: TextDirection.ltr,
         textScaler: textScaler,

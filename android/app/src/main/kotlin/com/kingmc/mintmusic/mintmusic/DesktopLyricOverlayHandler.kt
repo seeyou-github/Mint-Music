@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
@@ -12,7 +13,10 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
+import android.text.SpannableStringBuilder
+import android.text.Spanned
 import android.text.TextUtils
+import android.text.style.RelativeSizeSpan
 import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
@@ -28,14 +32,11 @@ import kotlin.math.roundToInt
 /**
  * 桌面歌词的系统级悬浮窗(Android)。
  *
- * 实现参考 lx-music-mobile 的 `LyricView.java` / `LyricSwitchView.java`:
  * - `WindowManager.addView` + `TYPE_APPLICATION_OVERLAY`,歌词可显示在其它应用之上;
- * - 锁定时追加 `FLAG_NOT_TOUCHABLE`,触摸事件完全穿透;
  * - 拖动结束时把像素坐标换算成**屏幕百分比**回传 Dart 保存;
  * - **窗口高度是显式计算的固定值**,换句时绝不触发 `updateViewLayout`;
- * - **歌词切换动画交给 `LyricSwitchView`(ViewSwitcher)双页交叉淡入淡出**。
- *
- * 后两点是不闪动的关键,详见 [LyricSwitchView] 的注释。
+ * - **固定两个槽位**:当前行按行号奇偶落在对应槽位,另一个槽位预载下一行,
+ *   换句时两个槽位的位置都不动,进度直接出现在另一个槽位。
  */
 class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.MethodCallHandler {
 
@@ -46,11 +47,12 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
         val roman: String?,
     )
 
-    /** 一行待渲染的歌词:`isSub` 表示它是当前行的翻译/罗马音。 */
-    private data class LyricRow(
+    /** 一个固定槽位的内容：主歌词 + 可选的翻译 / 罗马音。 */
+    private data class SlotContent(
         val text: String,
+        val translation: String?,
+        val roman: String?,
         val active: Boolean,
-        val isSub: Boolean,
     )
 
     private val appContext = context.applicationContext
@@ -58,20 +60,23 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
         appContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
 
     private var rootView: LinearLayout? = null
-    private var lyricSwitcher: LyricSwitchView? = null
+    private var slotRows: List<TextView> = emptyList()
     private var layoutParams: WindowManager.LayoutParams? = null
     private var backgroundDrawable: GradientDrawable? = null
 
     // ---- 配置 ----
-    private var isLock = false
-    private var maxLineNum = 1
     private var fontSizeSp = 18f
-    private var opacity = 1f
     private var playedColor = Color.parseColor("#07C556")
     private var unplayColor = Color.WHITE
     private var shadowColor = Color.argb(153, 0, 0, 0)
     private var positionXPercent = 3.0
     private var positionYPercent = 8.0
+
+    // 歌词设置里的字体 / 字重（原生悬浮窗需要自己加载字体文件）。
+    private var fontFamily = ""
+    private var fontPath = ""
+    private var fontWeight = 500
+    private var lyricTypeface: Typeface = Typeface.DEFAULT
 
 
     // ---- 歌词数据 ----
@@ -141,7 +146,7 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
 
     private fun show(): Boolean {
         if (rootView != null) {
-            applyContent(animate = false)
+            applyContent()
             return true
         }
         // 清理上一次运行(例如热重启)遗留的窗口,避免歌词窗重复叠加。
@@ -151,9 +156,25 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
         val root = LinearLayout(appContext).apply {
             orientation = LinearLayout.VERTICAL
         }
-        val switcher = LyricSwitchView(appContext)
+        // 固定两个槽位的歌词容器：每行平分剩余高度，换句时不重新布局。
+        val lyricContainer = LinearLayout(appContext).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        val rows = ArrayList<TextView>(FIXED_LINE_COUNT)
+        for (i in 0 until FIXED_LINE_COUNT) {
+            val tv = newRowTextView()
+            rows.add(tv)
+            lyricContainer.addView(
+                tv,
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    0,
+                    1f,
+                ),
+            )
+        }
         root.addView(
-            switcher,
+            lyricContainer,
             LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 0,
@@ -168,7 +189,7 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
             format = PixelFormat.TRANSLUCENT
             gravity = Gravity.TOP or Gravity.START
             flags = buildFlags()
-            alpha = windowAlpha()
+            alpha = WINDOW_OPACITY
         }
 
         root.setOnTouchListener(createTouchListener(root))
@@ -178,20 +199,18 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
             activeRoot = root
             activeWindowManager = windowManager
             rootView = root
-            lyricSwitcher = switcher
+            slotRows = rows
             layoutParams = lp
             applyBackground()
             rebuildHandle()
-            // 歌词切换动画固定开启。
-            switcher.setAnimated(true, slideDistancePx())
-            applyContent(animate = false)
+            applyContent()
             // 首帧之后才能拿到真实高度,再按百分比精确定位一次。
             root.post { applyPositionPercent() }
             true
         } catch (error: Throwable) {
             Log.w(TAG, "addView failed", error)
             rootView = null
-            lyricSwitcher = null
+            slotRows = emptyList()
             layoutParams = null
             false
         }
@@ -212,7 +231,7 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
             activeWindowManager = null
         }
         rootView = null
-        lyricSwitcher = null
+        slotRows = emptyList()
         layoutParams = null
     }
 
@@ -226,47 +245,33 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
     }
 
     private fun buildFlags(): Int {
-        var flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+        return WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
             WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
             WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
-        // 锁定 = 整个窗口不可触摸,事件穿透到下层应用。
-        if (isLock) flags = flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-        return flags
-    }
-
-    // Android 12+ 系统对悬浮窗有最大不透明度限制,锁定态需要主动降到 0.8
-    // 才能真正实现点击穿透(与 lx-music 的处理一致)。
-    private fun windowAlpha(): Float {
-        return if (isLock && Build.VERSION.SDK_INT > Build.VERSION_CODES.R) {
-            opacity.coerceAtMost(0.8f)
-        } else {
-            opacity
-        }
     }
 
     /**
      * 窗口高度：**显式计算的固定值**，不用 WRAP_CONTENT。
      *
-     * lx-music 的 `setLayoutParamsHeight()` 也是这么做的
-     * (`fontMetricsInt * maxLineNum`)。高度恒定意味着换句时窗口不需要重新测量、
-     * 也不需要 `updateViewLayout` —— 这是不闪动的前提之一。
+     * 固定两个槽位；开启翻译 / 罗马音时每个槽位额外预留对应行数。高度恒定
+     * 意味着换句时窗口不需要重新测量、也不需要 `updateViewLayout`。
      */
     private fun contentHeight(): Int {
         val metrics = appContext.resources.displayMetrics
         val lineHeight = (fontSizeSp * metrics.scaledDensity * 1.35f).roundToInt()
-        val visible = maxLineNum
-        var height = lineHeight * visible + (if (isLock) 0 else handleHeightPx())
+        val slotHeight = lineHeight * (1 + subLineCount())
+        var height = slotHeight * FIXED_LINE_COUNT + handleHeightPx()
         val limit = screenHeight() - 100
         if (height > limit) height = limit
         return height.coerceAtLeast(1)
     }
 
+    private fun subLineCount(): Int =
+        (if (showTranslation) 1 else 0) + (if (showRoman) 1 else 0)
+
     private fun handleHeightPx(): Int =
         (HANDLE_HEIGHT_DP * appContext.resources.displayMetrics.density).roundToInt()
-
-    private fun slideDistancePx(): Float =
-        fontSizeSp * appContext.resources.displayMetrics.scaledDensity
 
     private fun rebuildHandle() {
         val root = rootView ?: return
@@ -274,7 +279,6 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
         if (root.childCount > 1) {
             root.removeViewAt(0)
         }
-        if (isLock) return
 
         val handle = TextView(appContext).apply {
             text = "桌面歌词"
@@ -300,13 +304,8 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
         val root = rootView ?: return
         val drawable = backgroundDrawable ?: GradientDrawable().also { backgroundDrawable = it }
         drawable.cornerRadius = 10f * appContext.resources.displayMetrics.density
-        if (isLock) {
-            drawable.setColor(Color.TRANSPARENT)
-            drawable.setStroke(0, Color.TRANSPARENT)
-        } else {
-            drawable.setColor(Color.argb(41, 0, 0, 0))
-            drawable.setStroke(1, Color.argb(56, 255, 255, 255))
-        }
+        drawable.setColor(Color.argb(41, 0, 0, 0))
+        drawable.setStroke(1, Color.argb(56, 255, 255, 255))
         root.background = drawable
     }
 
@@ -314,32 +313,73 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
 
     private fun applyConfig(args: Map<*, *>?) {
         if (args == null) return
-        isLock = args["isLock"] == true
-        maxLineNum = (args["maxLineNum"] as? Number)?.toInt()?.coerceIn(1, 8) ?: maxLineNum
-        fontSizeSp = (args["fontSize"] as? Number)?.toFloat()?.coerceIn(12f, 80f) ?: fontSizeSp
-        opacity = ((args["opacityPercent"] as? Number)?.toFloat() ?: 85f) / 100f
+        fontSizeSp = (args["fontSize"] as? Number)?.toFloat()?.coerceIn(10f, 120f) ?: fontSizeSp
         playedColor = (args["playedColor"] as? Number)?.toInt() ?: playedColor
         unplayColor = (args["unplayColor"] as? Number)?.toInt() ?: unplayColor
         shadowColor = (args["shadowColor"] as? Number)?.toInt() ?: shadowColor
         positionXPercent = (args["positionX"] as? Number)?.toDouble() ?: positionXPercent
         positionYPercent = (args["positionY"] as? Number)?.toDouble() ?: positionYPercent
+        fontFamily = args["fontFamily"] as? String ?: ""
+        fontPath = args["fontPath"] as? String ?: ""
+        fontWeight = (args["fontWeight"] as? Number)?.toInt()?.coerceIn(1, 1000) ?: fontWeight
+        rebuildTypeface()
 
         val root = rootView ?: return
         val lp = layoutParams ?: return
         lp.flags = buildFlags()
-        lp.alpha = windowAlpha()
+        lp.alpha = WINDOW_OPACITY
         // 悬浮窗宽度固定为屏幕宽度（100%）。
         lp.width = screenWidth().coerceAtLeast(120)
         lp.height = contentHeight()
         applyBackground()
         rebuildHandle()
         root.setOnTouchListener(createTouchListener(root))
-        // 歌词切换动画固定开启。
-        lyricSwitcher?.setAnimated(true, slideDistancePx())
-        // 样式/尺寸变更不播放切换动画，直接改当前页
-        applyContent(animate = false)
+        // 样式/尺寸变更直接刷新内容，不做翻页动画。
+        applyContent()
         root.post { applyPositionPercent() }
         safeUpdateLayout()
+    }
+
+    /** 按歌词设置加载字体文件 / 字体族，并应用字重。 */
+    private fun rebuildTypeface() {
+        var base: Typeface? = null
+        if (fontPath.isNotBlank()) {
+            base = try {
+                if (fontPath.startsWith("/")) {
+                    Typeface.createFromFile(fontPath)
+                } else {
+                    val asset = if (fontPath.startsWith("flutter_assets/")) {
+                        fontPath
+                    } else {
+                        "flutter_assets/$fontPath"
+                    }
+                    Typeface.createFromAsset(appContext.assets, asset)
+                }
+            } catch (error: Throwable) {
+                Log.w(TAG, "加载歌词字体失败: $fontPath", error)
+                null
+            }
+        }
+        if (base == null && fontFamily.isNotBlank() && fontFamily != "system") {
+            base = try {
+                Typeface.create(fontFamily, Typeface.NORMAL)
+            } catch (_: Throwable) {
+                null
+            }
+        }
+        val family = base ?: Typeface.DEFAULT
+        lyricTypeface = try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                Typeface.create(family, fontWeight, false)
+            } else {
+                Typeface.create(
+                    family,
+                    if (fontWeight >= 600) Typeface.BOLD else Typeface.NORMAL,
+                )
+            }
+        } catch (_: Throwable) {
+            family
+        }
     }
 
     // ------------------------------------------------------------------ 歌词
@@ -355,112 +395,127 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
                 roman = map["roman"] as? String,
             )
         }.sortedBy { it.time }
+        val previousSubLineCount = subLineCount()
         showTranslation = args["showTranslation"] != false
         showRoman = args["showRoman"] != false
-        // 换歌：直接刷新内容，不播放切换动画
+        // 换歌：直接刷新内容。
         setActiveIndex((args["activeIndex"] as? Number)?.toInt() ?: 0, force = true)
         // 新歌词的时间轴变了，重新调度下一次换句
         refresh()
-    }
-
-    /// 更新当前行。**行号没变时直接返回**，不做任何重绘 —— 否则定时器每 250ms
-    /// 都会打断正在播放的切换动画（表现为闪烁、淡入淡出时有时无）。
-    private fun setActiveIndex(index: Int, force: Boolean = false) {
-        if (!force && index == activeIndex) return
-        val changed = index != activeIndex
-        activeIndex = index
-        applyContent(animate = changed && !force && lines.isNotEmpty())
-    }
-
-    /** 与 Dart 侧 `DesktopLyricPanel._buildRows` 保持一致的取行规则。 */
-    private fun buildRows(): List<LyricRow> {
-        if (lines.isEmpty()) return emptyList()
-        val index = activeIndex.coerceIn(0, lines.size - 1)
-        val rows = mutableListOf<LyricRow>()
-        val max = maxLineNum
-        // 按「页」显示：一页 max 行，播放到本页最后一行时才翻页。
-        // 显示 2 行时，第二行开始播放时第一行内容保持不变，进度直接显示在
-        // 第二行；第二行播完再整体更新成新的一页。
-        val pageStart = (index / max) * max
-
-        for (i in pageStart until lines.size) {
-            if (rows.size >= max) break
-            val line = lines[i]
-            if (line.text.isNotBlank()) {
-                rows.add(LyricRow(line.text, active = i == index, isSub = false))
-            }
-            if (i != index) continue
-            if (showTranslation && !line.translation.isNullOrBlank() && rows.size < max) {
-                rows.add(LyricRow(line.translation!!, active = true, isSub = true))
-            }
-            if (showRoman && !line.roman.isNullOrBlank() && rows.size < max) {
-                rows.add(LyricRow(line.roman!!, active = true, isSub = true))
+        // 翻译 / 罗马音开关变化会改变每个槽位预留的行数，此时才需要调整窗口高度。
+        if (previousSubLineCount != subLineCount()) {
+            val lp = layoutParams
+            if (rootView != null && lp != null) {
+                lp.height = contentHeight()
+                safeUpdateLayout()
+                rootView?.post { applyPositionPercent() }
             }
         }
-        return rows
+    }
+
+    /// 更新当前行。行号没变时直接返回，避免每个定时 tick 都重写 TextView。
+    private fun setActiveIndex(index: Int, force: Boolean = false) {
+        if (!force && index == activeIndex) return
+        activeIndex = index
+        applyContent()
+    }
+
+    /**
+     * 固定两个槽位：当前播放行在 `activeIndex % 2` 对应的槽位，另一个槽位
+     * 预载下一行。唱到下一行时进度直接出现在另一个槽位，两个槽位的位置不变。
+     */
+    private fun buildSlots(): List<SlotContent> {
+        val slots = MutableList(FIXED_LINE_COUNT) {
+            SlotContent("", null, null, false)
+        }
+        if (lines.isEmpty()) return slots
+        val hasActive = activeIndex in lines.indices
+        val index = activeIndex.coerceIn(0, lines.lastIndex)
+        val activeSlot = if (hasActive) index % FIXED_LINE_COUNT else 0
+        for (slot in slots.indices) {
+            val offset = (slot - activeSlot + FIXED_LINE_COUNT) % FIXED_LINE_COUNT
+            val lineIndex = index + offset
+            if (lineIndex >= lines.size) continue
+            val line = lines[lineIndex]
+            slots[slot] = SlotContent(
+                text = line.text,
+                translation = line.translation?.takeIf {
+                    showTranslation && it.isNotBlank()
+                },
+                roman = line.roman?.takeIf { showRoman && it.isNotBlank() },
+                active = hasActive && lineIndex == activeIndex,
+            )
+        }
+        return slots
     }
 
     /**
      * 写入歌词内容。
      *
-     * **只操作 View，绝不调用 `windowManager.updateViewLayout`** —— 与 lx-music
-     * 的 `setLyric()` 一致（它只做 `textView.setText()`)。窗口重排只在配置变更
-     * 或旋转时发生，换句时窗口尺寸恒定，因此不会有额外的重绘帧。
+     * 只更新两个固定槽位的 TextView 文本，不调用 `updateViewLayout`：换句时
+     * 窗口尺寸与槽位位置都保持不变。
      */
-    private fun applyContent(animate: Boolean) {
-        val switcher = lyricSwitcher ?: return
-        val target = maxLineNum
-        switcher.ensureRowCount(target) { newRowTextView() }
-        switcher.setPageGravity(Gravity.CENTER_HORIZONTAL or Gravity.CENTER_VERTICAL)
-        val rows = buildRows()
-        // 同一页内不翻页（不播动画），只有换页时才切。
-        switcher.showPage(animate, pageKey()) { page -> fillPage(page, rows) }
-    }
+    private fun applyContent() {
+        val rows = slotRows
+        if (rows.isEmpty()) return
+        val slots = buildSlots()
+        for (i in rows.indices) {
+            val tv = rows[i]
+            val slot = slots.getOrNull(i) ?: SlotContent("", null, null, false)
+            tv.typeface = lyricTypeface
+            tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSizeSp)
+            tv.setTextColor(if (slot.active) playedColor else unplayColor)
+            tv.gravity = Gravity.CENTER_HORIZONTAL or Gravity.CENTER_VERTICAL
+            tv.setShadowLayer(4f, 1f, 1f, shadowColor)
 
-    /// 当前页的起始行号（按行数分页）。
-    private fun pageKey(): Int {
-        val max = maxLineNum.coerceAtLeast(1)
-        if (lines.isEmpty()) return 0
-        val index = activeIndex.coerceIn(0, lines.size - 1)
-        return (index / max) * max
+            val hasSub = !slot.translation.isNullOrBlank() || !slot.roman.isNullOrBlank()
+            if (slot.text.isBlank() && !hasSub) {
+                tv.text = ""
+                tv.visibility = View.INVISIBLE
+                continue
+            }
+            tv.visibility = View.VISIBLE
+
+            val builder = SpannableStringBuilder(slot.text)
+            fun appendSub(text: String) {
+                if (text.isBlank()) return
+                val start = builder.length
+                builder.append('\n').append(text)
+                builder.setSpan(
+                    RelativeSizeSpan(SUB_TEXT_SCALE),
+                    start,
+                    builder.length,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+                )
+            }
+            slot.translation?.let { appendSub(it) }
+            slot.roman?.let { appendSub(it) }
+            tv.text = builder
+
+            if (hasSub) {
+                tv.setSingleLine(false)
+                tv.maxLines = 1 + subLineCount()
+                tv.ellipsize = TextUtils.TruncateAt.END
+                tv.marqueeRepeatLimit = 0
+                tv.isSelected = false
+            } else {
+                // 单行且超长时使用系统跑马灯横向滚动。
+                tv.setSingleLine(true)
+                tv.ellipsize = TextUtils.TruncateAt.MARQUEE
+                tv.marqueeRepeatLimit = -1
+                tv.isSelected = true
+            }
+        }
     }
 
     private fun newRowTextView(): TextView = TextView(appContext).apply {
         setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSizeSp)
         includeFontPadding = false
-        setLineSpacing(0f, 1.25f)
-        visibility = View.GONE
-    }
-
-    private fun fillPage(page: LyricSwitchView.Page, rows: List<LyricRow>) {
-        for (i in page.rows.indices) {
-            val tv = page.rows[i]
-            if (i >= rows.size) {
-                tv.visibility = View.GONE
-                continue
-            }
-            val row = rows[i]
-            tv.visibility = View.VISIBLE
-            tv.text = row.text
-            tv.setTextColor(if (row.active) playedColor else unplayColor)
-            tv.setTextSize(
-                TypedValue.COMPLEX_UNIT_SP,
-                if (row.isSub) fontSizeSp * 0.62f else fontSizeSp,
-            )
-            tv.gravity = Gravity.CENTER_HORIZONTAL
-            tv.setShadowLayer(4f, 1f, 1f, shadowColor)
-            tv.setSingleLine()
-            if (!row.isSub) {
-                // 单行且超长时使用系统跑马灯横向滚动
-                tv.ellipsize = TextUtils.TruncateAt.MARQUEE
-                tv.marqueeRepeatLimit = -1
-                tv.isSelected = true
-            } else {
-                tv.ellipsize = TextUtils.TruncateAt.END
-                tv.marqueeRepeatLimit = 0
-                tv.isSelected = false
-            }
-        }
+        setLineSpacing(0f, 1.15f)
+        gravity = Gravity.CENTER
+        setTextColor(unplayColor)
+        typeface = lyricTypeface
+        visibility = View.INVISIBLE
     }
 
     // ------------------------------------------------------------------ 拖动
@@ -691,6 +746,12 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
     companion object {
         private const val TAG = "MintDesktopLyric"
         private const val HANDLE_HEIGHT_DP = 22f
+        /// 桌面歌词固定显示两个槽位。
+        private const val FIXED_LINE_COUNT = 2
+        /// 不透明度固定 80%。
+        private const val WINDOW_OPACITY = 0.8f
+        /// 翻译 / 罗马音相对主歌词的字号比例。
+        private const val SUB_TEXT_SCALE = 0.62f
         /// 重新锚定的死区:偏差小于它时认为是通道延迟/抖动,不重设时钟。
         /// 取值要大于通道往返延迟(几十毫秒),又要远小于一句歌词的时长。
         private const val ANCHOR_DEAD_BAND_MS = 120L

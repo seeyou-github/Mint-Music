@@ -301,10 +301,7 @@ void FlutterWindow::HandleDesktopLyricCall(
     const std::wstring font_family = Utf8ToWide(GetStringUtf8(arguments, "fontFamily"));
     const std::wstring font_path = Utf8ToWide(GetStringUtf8(arguments, "fontPath"));
     window.UpdateConfig(
-        GetBool(arguments, "isLock", false),
-        GetInt(arguments, "maxLineNum", 1),
-        static_cast<int>(GetDouble(arguments, "fontSize", 18)),
-        GetInt(arguments, "opacityPercent", 85),
+        static_cast<int>(GetDouble(arguments, "fontSize", 42)),
         static_cast<unsigned int>(
             GetInt(arguments, "playedColor", static_cast<int>(0xFFFFFFFF))),
         static_cast<unsigned int>(
@@ -312,7 +309,8 @@ void FlutterWindow::HandleDesktopLyricCall(
         static_cast<unsigned int>(
             GetInt(arguments, "shadowColor", static_cast<int>(0xFF000000))),
         GetDouble(arguments, "positionX", 50),
-        GetDouble(arguments, "positionY", 85), font_family, font_path);
+        GetDouble(arguments, "positionY", 85), font_family, font_path,
+        GetInt(arguments, "fontWeight", 500));
     result->Success();
     return;
   }

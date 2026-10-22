@@ -20,15 +20,13 @@ struct DesktopLyricLine {
   std::wstring roman;
 };
 
-/// 一个要绘制的歌词元素（文本 + 颜色 + 透明度缩放）。
+/// 一个要绘制的歌词槽位（固定两行，按当前行奇偶交替）。
 struct DesktopLyricElement {
   std::wstring text;
-  unsigned int color = 0xFFFFFFFF;
-  int alpha_scale = 100;
-  /// 是否为当前播放行主歌词（居中显示，超长时横向滚动）。
+  std::wstring translation;
+  std::wstring roman;
+  /// 是否为当前播放行（显示播放进度、超长时横向滚动）。
   bool active = false;
-  /// 是否属于当前播放行（含翻译 / 音译），居中显示。
-  bool centered = false;
 };
 
 /// 桌面歌词窗口。
@@ -36,7 +34,7 @@ struct DesktopLyricElement {
 /// 这是一个独立的顶层窗口（无边框、背景透明、始终置顶），不依赖 Flutter 视图，
 /// 因此：
 /// * 应用最小化后依然显示在桌面上；
-/// * 锁定后点击穿透下层内容（未锁定时可以拖动）。
+/// * 按住窗口可直接拖动位置。
 class DesktopLyricWindow {
  public:
   static DesktopLyricWindow& Instance();
@@ -50,17 +48,18 @@ class DesktopLyricWindow {
   bool IsShowing() const { return window_ != nullptr; }
 
   /// 更新样式配置。
-  void UpdateConfig(bool is_lock,
-                    int max_line_num,
-                    int font_size,
-                    int opacity_percent,
+  ///
+  /// 显示行数（固定 2 行）、不透明度（固定 80%）、锁定（固定关闭）都已固定，
+  /// 不再由设置控制。
+  void UpdateConfig(int font_size,
                     unsigned int played_color,
                     unsigned int unplay_color,
                     unsigned int shadow_color,
                     double position_x,
                     double position_y,
                     const std::wstring& font_family,
-                    const std::wstring& font_path);
+                    const std::wstring& font_path,
+                    int font_weight);
 
   /// 更新歌词内容。[active_index] 为当前行（-1 表示无）。
   void UpdateLyric(const std::vector<DesktopLyricLine>& lines,
@@ -93,9 +92,9 @@ class DesktopLyricWindow {
   void DestroyWindowIfNeeded();
   void ApplySizeAndPosition();
   void EnsureFont();
-  /// 组装当前要绘制的歌词元素。
+  /// 组装固定两个槽位的歌词元素（槽位内容按当前行奇偶交替）。
   std::vector<DesktopLyricElement> BuildElements() const;
-  /// 测量歌词内容所需高度（每行只显示一行文字，超长横向滚动）。
+  /// 测量歌词内容所需高度（固定两个槽位，不会随行数变化）。
   int MeasureContentHeight() const;
   /// 推进当前歌词行；返回是否发生了变化（变化时需要重绘）。
   bool AdvanceActiveIndex();
@@ -111,15 +110,20 @@ class DesktopLyricWindow {
   void Paint();
   void ReportPosition();
   int GetLineHeight() const;
+  /// 翻译 / 音译行的行高（使用略小的字号）。
+  int GetSubLineHeight() const;
+  /// 每个槽位为翻译 / 音译预留的行数。
+  int GetSubLineCount() const;
+  /// 单个槽位的总高度（主歌词 + 预留的翻译 / 音译行）。
+  int GetSlotHeight() const;
 
   HWND window_ = nullptr;
   HFONT font_ = nullptr;
+  HFONT sub_font_ = nullptr;
 
-  // 配置
-  bool is_lock_ = false;
-  int max_line_num_ = 3;
-  int font_size_ = 18;
-  int opacity_percent_ = 100;
+  // 配置（显示 2 行、不透明度 80%、锁定关闭均为固定值，不再由设置控制）
+  int font_size_ = 42;
+  int font_weight_ = 500;
   unsigned int played_color_ = 0xFFFFFFFF;
   unsigned int unplay_color_ = 0xFFB0B0B0;
   unsigned int shadow_color_ = 0xFF000000;

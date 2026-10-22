@@ -1,32 +1,30 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mintmusic/features/player/domain/models/desktop_lyric_settings.dart';
 
 void main() {
   group('DesktopLyricSettings', () {
-    test('默认值与 lx-music 的 desktopLyric 默认值对齐', () {
-      const s = DesktopLyricSettings.defaults;
+    test('默认值', () {
+      final s = DesktopLyricSettings.defaults;
       expect(s.enable, false);
-      expect(s.isLock, false);
-      expect(s.isSingleLine, false);
-      expect(s.showToggleAnima, true);
-      expect(s.widthPercent, 100);
-      expect(s.maxLineNum, 1);
+      expect(s.fontSize, Platform.isWindows ? 42 : 18);
+      expect(s.positionX, 50);
+      expect(s.positionY, Platform.isWindows ? 85 : 0);
       expect(s.playedColor, 0xFF07C556);
       expect(s.unplayColor, 0xFFFFFFFF);
+      expect(s.shadowColor, 0x99000000);
+    });
+
+    test('显示行数与不透明度固定', () {
+      expect(DesktopLyricSettings.lineCount, 2);
+      expect(DesktopLyricSettings.opacity, 0.8);
     });
 
     test('encode/decode 往返保持全部字段', () {
       final s = DesktopLyricSettings.defaults.copyWith(
         enable: true,
-        isLock: true,
-        isSingleLine: true,
-        showToggleAnima: false,
-        widthPercent: 70,
-        maxLineNum: 3,
         fontSize: 24,
-        opacityPercent: 60,
-        textAlignX: DesktopLyricTextAlignX.center,
-        textAlignY: DesktopLyricTextAlignY.bottom,
         positionX: 12.5,
         positionY: 87.5,
         playedColor: 0xFFEC4899,
@@ -47,34 +45,29 @@ void main() {
 
     test('越界数值被夹紧到合法区间', () {
       final s = DesktopLyricSettings.fromJson({
-        'widthPercent': 500,
-        'maxLineNum': 0,
+        'v': 3,
         'fontSize': 999,
-        'opacityPercent': -20,
         'positionX': 150,
         'positionY': -30,
       });
-      expect(s.widthPercent, 100);
-      expect(s.maxLineNum, 1);
-      expect(s.fontSize, 40);
-      expect(s.opacityPercent, 10);
+      expect(s.fontSize, 80);
       expect(s.positionX, 100);
       expect(s.positionY, 0);
     });
 
-    test('未知枚举值回退到默认对齐方式', () {
-      final s = DesktopLyricSettings.fromJson({'textAlignX': 'nonsense'});
-      expect(s.textAlignX, DesktopLyricTextAlignX.left);
-      expect(s.textAlignY, DesktopLyricTextAlignY.top);
-    });
-
-    test('单行模式下显示行数恒为 1', () {
-      final s = DesktopLyricSettings.defaults.copyWith(
-        isSingleLine: true,
-        maxLineNum: 5,
-      );
-      expect(s.visibleLineNum, 1);
-      expect(s.copyWith(isSingleLine: false).visibleLineNum, 5);
+    test('旧版本配置重新使用新的默认字号与位置', () {
+      final s = DesktopLyricSettings.fromJson({
+        'v': 2,
+        'fontSize': 20,
+        'positionX': 10,
+        'positionY': 10,
+        'playedColor': 0xFFEC4899,
+      });
+      expect(s.fontSize, DesktopLyricSettings.defaults.fontSize);
+      expect(s.positionX, DesktopLyricSettings.defaults.positionX);
+      expect(s.positionY, DesktopLyricSettings.defaults.positionY);
+      // 颜色保留用户此前的选择。
+      expect(s.playedColor, 0xFFEC4899);
     });
   });
 }

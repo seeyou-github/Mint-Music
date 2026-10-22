@@ -136,6 +136,18 @@ int DesktopLyricWindow::GetLineHeight() const {
   return font_size_ * 3 / 2;
 }
 
+int DesktopLyricWindow::GetSubLineHeight() const {
+  return std::max(14, font_size_ * 3 / 5) * 3 / 2;
+}
+
+int DesktopLyricWindow::GetSubLineCount() const {
+  return (show_translation_ ? 1 : 0) + (show_roman_ ? 1 : 0);
+}
+
+int DesktopLyricWindow::GetSlotHeight() const {
+  return GetLineHeight() + GetSubLineCount() * GetSubLineHeight();
+}
+
 void DesktopLyricWindow::SetPositionCallback(
     std::function<void(double, double)> callback) {
   position_callback_ = std::move(callback);
@@ -149,6 +161,9 @@ void DesktopLyricWindow::Show() {
   marquee_start_tick_ = ::GetTickCount64();
   marquee_pause_tick_ = marquee_start_tick_;
   marquee_overflow_px_ = 0;
+  // 若在拖动过程中被隐藏（暂停），重新显示时不能还停在「拖动中」状态，
+  // 否则自动刷新会被一直跳过。
+  dragging_ = false;
   ApplySizeAndPosition();
   ::ShowWindow(window_, SW_SHOWNOACTIVATE);
   Paint();
@@ -184,21 +199,17 @@ void DesktopLyricWindow::DestroyWindowIfNeeded() {
   window_ = nullptr;
 }
 
-void DesktopLyricWindow::UpdateConfig(bool is_lock,
-                                       int max_line_num,
-                                       int font_size,
-                                       int opacity_percent,
+void DesktopLyricWindow::UpdateConfig(int font_size,
                                        unsigned int played_color,
                                        unsigned int unplay_color,
                                        unsigned int shadow_color,
                                        double position_x,
                                        double position_y,
                                        const std::wstring& font_family,
-                                       const std::wstring& font_path) {
-  is_lock_ = is_lock;
-  max_line_num_ = std::max(1, max_line_num);
+                                       const std::wstring& font_path,
+                                       int font_weight) {
   font_size_ = std::max(10, font_size);
-  opacity_percent_ = std::max(10, std::min(100, opacity_percent));
+  font_weight_ = std::max(1, std::min(1000, font_weight));
   played_color_ = played_color;
   unplay_color_ = unplay_color;
   shadow_color_ = shadow_color;
@@ -211,14 +222,18 @@ void DesktopLyricWindow::UpdateConfig(bool is_lock,
     loaded_font_path_ = font_path;
     // 枚举得到的族名最准确；枚举失败时退回 Dart 侧传来的名字。
     font_family_ = family.empty() ? font_family : family;
-  } else if (font_path.empty() && !loaded_font_path_.empty()) {
+  } else if (font_path.empty()) {
     loaded_font_path_.clear();
-    font_family_.clear();
+    font_family_ = font_family;
   }
 
   if (font_ != nullptr) {
     ::DeleteObject(font_);
     font_ = nullptr;
+  }
+  if (sub_font_ != nullptr) {
+    ::DeleteObject(sub_font_);
+    sub_font_ = nullptr;
   }
   if (window_ != nullptr) {
     ApplySizeAndPosition();
@@ -318,73 +333,61 @@ bool DesktopLyricWindow::NeedsAnimationFrame() const {
 }
 
 void DesktopLyricWindow::EnsureFont() {
-  if (font_ != nullptr) {
-    return;
-  }
-  // 优先使用应用里选择的字体。
-  if (!font_family_.empty()) {
-    font_ = ::CreateFontW(
-        -font_size_, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-        OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
-        DEFAULT_PITCH | FF_DONTCARE, font_family_.c_str());
-  }
+  const int sub_size = std::max(14, font_size_ * 3 / 5);
+  auto create_font = [this](int pixel_size, const wchar_t* face) {
+    return ::CreateFontW(-pixel_size, 0, 0, 0, font_weight_, FALSE, FALSE, FALSE,
+                         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                         CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
+                         DEFAULT_PITCH | FF_DONTCARE, face);
+  };
+  auto create_with_fallback = [&](int pixel_size) -> HFONT {
+    // 优先使用歌词设置里选择的字体。
+    if (!font_family_.empty()) {
+      HFONT font = create_font(pixel_size, font_family_.c_str());
+      if (font != nullptr) {
+        return font;
+      }
+    }
+    HFONT font = create_font(pixel_size, L"Microsoft YaHei UI");
+    if (font != nullptr) {
+      return font;
+    }
+    return create_font(pixel_size, L"SimHei");
+  };
+
   if (font_ == nullptr) {
-    font_ = ::CreateFontW(
-        -font_size_, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-        OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
-        DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
+    font_ = create_with_fallback(font_size_);
   }
-  if (font_ == nullptr) {
-    font_ = ::CreateFontW(
-        -font_size_, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-        OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
-        DEFAULT_PITCH | FF_DONTCARE, L"SimHei");
+  if (sub_font_ == nullptr) {
+    sub_font_ = create_with_fallback(sub_size);
   }
 }
 
-/// 组装当前要绘制的歌词元素：当前行（高亮）+ 后续行。
+/// 组装固定两个槽位的歌词元素。
+///
+/// 槽位由当前行的奇偶决定（active_index_ % 2）：当前行进哪个槽位，另一个
+/// 槽位就预载下一行。这样从第一行唱到第二行时进度直接出现在第二行，第一行
+/// 的位置换成了更后面的歌词，不会整体上移。
 std::vector<DesktopLyricElement> DesktopLyricWindow::BuildElements() const {
-  std::vector<DesktopLyricElement> elements;
-  if (active_index_ < 0 ||
-      active_index_ >= static_cast<int>(lines_.size())) {
+  std::vector<DesktopLyricElement> elements(2);
+  if (lines_.empty()) {
     return elements;
   }
-  // 按「页」显示：一页 max_line_num_ 行，播放到本页最后一行时才翻页。
-  // 这样显示 2 行时，第二行开始播放时第一行的内容保持不变，进度直接显示在
-  // 第二行；等第二行播完再整体更新成新的一页。
-  const int page_start = (active_index_ / max_line_num_) * max_line_num_;
-  for (int i = page_start;
-       i < static_cast<int>(lines_.size()) &&
-       (i - page_start) < max_line_num_ &&
-       static_cast<int>(elements.size()) < max_line_num_;
-       i++) {
-    const bool is_active = (i == active_index_);
-    DesktopLyricElement main;
-    main.text = lines_[i].text;
-    main.color = is_active ? played_color_ : unplay_color_;
-    main.alpha_scale = 100;
-    main.active = is_active;
-    main.centered = is_active;
-    elements.push_back(main);
-
-    if (show_translation_ && !lines_[i].translation.empty() &&
-        static_cast<int>(elements.size()) < max_line_num_) {
-      DesktopLyricElement translation;
-      translation.text = lines_[i].translation;
-      translation.color = unplay_color_;
-      translation.alpha_scale = 80;
-      translation.centered = is_active;
-      elements.push_back(translation);
+  const int count = static_cast<int>(lines_.size());
+  const bool has_active = active_index_ >= 0 && active_index_ < count;
+  const int base = has_active ? active_index_ : 0;
+  const int active_slot = has_active ? (active_index_ % 2) : 0;
+  for (int slot = 0; slot < 2; slot++) {
+    const int offset = (slot - active_slot + 2) % 2;
+    const int index = base + offset;
+    if (index >= count) {
+      continue;
     }
-    if (show_roman_ && !lines_[i].roman.empty() &&
-        static_cast<int>(elements.size()) < max_line_num_) {
-      DesktopLyricElement roman;
-      roman.text = lines_[i].roman;
-      roman.color = unplay_color_;
-      roman.alpha_scale = 80;
-      roman.centered = is_active;
-      elements.push_back(roman);
-    }
+    DesktopLyricElement& element = elements[slot];
+    element.text = lines_[index].text;
+    element.translation = show_translation_ ? lines_[index].translation : L"";
+    element.roman = show_roman_ ? lines_[index].roman : L"";
+    element.active = has_active && index == active_index_;
   }
   return elements;
 }
@@ -414,7 +417,7 @@ void DesktopLyricWindow::ApplySizeAndPosition() {
   // 窗口宽度固定为工作区宽度的 80%（不再由设置项控制）。
   const int width = std::max(200, screen_width * 80 / 100);
 
-  // 高度按歌词行数计算：每行只显示一行文字，超长时横向滚动而不是换行。
+  // 高度固定为两个槽位（含为翻译 / 音译预留的行），不随歌词内容变化。
   const int height = std::max(GetLineHeight(), MeasureContentHeight());
 
   int x = screen_left + static_cast<int>(position_x_ / 100.0 *
@@ -424,24 +427,13 @@ void DesktopLyricWindow::ApplySizeAndPosition() {
   if (x < screen_left) x = screen_left;
   if (y < screen_top) y = screen_top;
 
-  // 锁定：点击穿透到下层内容；未锁定：可以拖动。
-  LONG_PTR ex_style = WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
-  if (is_lock_) {
-    ex_style |= WS_EX_TRANSPARENT;
-  }
-  ::SetWindowLongPtrW(window_, GWL_EXSTYLE, ex_style);
-
-  // 桌面歌词始终置顶显示（不锁定时同样置顶）。
+  // 桌面歌词始终置顶显示，并且始终可以拖动（锁定功能已固定为关闭）。
   ::SetWindowPos(window_, HWND_TOPMOST, x, y, width, height, SWP_NOACTIVATE);
 }
 
-/// 测量歌词内容所需的高度（每行固定一个行高，不再按文字长度换行）。
+/// 测量歌词内容所需的高度：固定两个槽位。
 int DesktopLyricWindow::MeasureContentHeight() const {
-  const std::vector<DesktopLyricElement> elements = BuildElements();
-  if (elements.empty()) {
-    return GetLineHeight();
-  }
-  return static_cast<int>(elements.size()) * GetLineHeight();
+  return 2 * GetSlotHeight();
 }
 
 bool DesktopLyricWindow::AdvanceActiveIndex() {
@@ -536,9 +528,10 @@ void DesktopLyricWindow::Paint() {
   auto* mask = reinterpret_cast<uint32_t*>(mask_bits);
 
   const int line_height = GetLineHeight();
-  const int global_alpha = opacity_percent_ * 255 / 100;
-  // 文字固定居中显示。
-  const UINT align_flag = DT_CENTER;
+  const int sub_line_height = GetSubLineHeight();
+  const int slot_height = GetSlotHeight();
+  // 整体不透明度固定 80%。
+  const int global_alpha = 80 * 255 / 100;
 
   // 当前播放行超出窗口宽度时横向滚动（来回滚动，两端速度为 0）。
   marquee_overflow_px_ = 0;
@@ -576,9 +569,9 @@ void DesktopLyricWindow::Paint() {
   // [clip_right] 为合成时的右边界（画布像素坐标，-1 表示不裁剪）。当前播放行
   // 用它把「已经唱到」的部分单独染成已播放颜色，边界按进度线性推进，所以
   // 唱到某个字时这个字会被从左往右一点点擦亮。
-  auto draw_text = [&](const std::wstring& text, int y, int row_height,
-                       unsigned int color, int alpha_scale, int left,
-                       int top_offset, UINT format, int draw_width,
+  auto draw_text = [&](HFONT font, const std::wstring& text, int y,
+                       int row_height, unsigned int color, int alpha_scale,
+                       int left, int top_offset, UINT format, int draw_width,
                        int clip_right) {
     if (text.empty() || row_height <= 0 || draw_width <= 0) {
       return;
@@ -596,7 +589,7 @@ void DesktopLyricWindow::Paint() {
       std::memset(mask + static_cast<size_t>(py) * width + rect_left, 0,
                   row_span);
     }
-    ::SelectObject(mask_dc, font_);
+    ::SelectObject(mask_dc, font);
     RECT text_rect{left, y + top_offset, left + draw_width,
                    y + top_offset + row_height};
     ::DrawTextW(mask_dc, text.c_str(), -1, &text_rect, format | DT_NOPREFIX);
@@ -610,7 +603,7 @@ void DesktopLyricWindow::Paint() {
     }
 
     const uint32_t alpha_base = ((color >> 24) & 0xFF) * alpha_scale / 100;
-    // 再乘上整体不透明度（设置里的「不透明度」）。
+    // 再乘上整体不透明度（固定 80%）。
     const uint32_t alpha_limit = alpha_base * global_alpha / 255;
     const uint32_t r = (color & 0x00FF0000) >> 16;
     const uint32_t g = (color & 0x0000FF00) >> 8;
@@ -638,57 +631,84 @@ void DesktopLyricWindow::Paint() {
   const double active_progress = ActiveLineProgress();
   last_painted_progress_ = active_progress;
 
-  // 逐个元素绘制：一行歌词固定占一个行高。
-  // * 正在播放的行居中显示，超长时横向滚动，并按进度逐字填充已播放颜色；
-  // * 其余行按「水平对齐」设置绘制，超长时用省略号截断。
+  // 固定两个槽位：当前播放行在 active_index_ % 2 对应的槽位，另一个槽位
+  // 预载下一行。一行唱完切到下一行时，进度直接出现在另一个槽位，两个槽位
+  // 的位置始终不动。
   int y = 0;
   for (const auto& element : elements) {
-    if (element.text.empty()) {
-      continue;
-    }
-    const int element_height = line_height;
-    const int text_width = MeasureTextWidth(mask_dc, element.text);
-    UINT format = DT_SINGLELINE | DT_VCENTER;
-    int left = 0;
-    int draw_width = width;
-    const bool marquee = element.active && text_width > width;
-    if (marquee) {
-      format |= DT_LEFT;
-      left = -scroll_offset;
-      draw_width = text_width + width;
-    } else if (element.centered) {
-      // 正在播放的歌词（含其翻译 / 音译）居中显示。
-      format |= DT_CENTER | DT_END_ELLIPSIS;
-    } else {
-      format |= align_flag | DT_END_ELLIPSIS;
-    }
-    // 阴影：先在右下偏移 1 像素处画一遍（整行，不参与逐字填充）。
-    if ((shadow_color_ >> 24) != 0) {
-      draw_text(element.text, y, element_height, shadow_color_, 60, left + 1,
-                1, format, draw_width, -1);
-    }
-    if (element.active) {
-      // 未唱到的部分用「未播放颜色」铺底。
-      draw_text(element.text, y, element_height, unplay_color_,
-                element.alpha_scale, left, 0, format, draw_width, -1);
-      if (active_progress > 0.0) {
-        int clip_right = -1;
-        if (active_progress < 1.0) {
-          // 文字实际起点：跑马灯时随滚动偏移，居中时是 (窗口宽 - 文字宽) / 2。
-          const int text_left_x = marquee ? left : (width - text_width) / 2;
-          clip_right =
-              text_left_x +
-              static_cast<int>(std::lround(active_progress * text_width));
-        }
-        // 已经唱到的部分用「已播放颜色」覆盖上去。
-        draw_text(element.text, y, element_height, played_color_,
-                  element.alpha_scale, left, 0, format, draw_width, clip_right);
+    const bool has_text = !element.text.empty();
+    ::SelectObject(mask_dc, font_);
+    const int text_width =
+        has_text ? MeasureTextWidth(mask_dc, element.text) : 0;
+
+    if (has_text) {
+      UINT format = DT_SINGLELINE | DT_VCENTER | DT_CENTER | DT_END_ELLIPSIS;
+      int left = 0;
+      int draw_width = width;
+      const bool marquee = element.active && text_width > width;
+      if (marquee) {
+        format = DT_SINGLELINE | DT_VCENTER | DT_LEFT;
+        left = -scroll_offset;
+        draw_width = text_width + width;
       }
-    } else {
-      draw_text(element.text, y, element_height, element.color,
-                element.alpha_scale, left, 0, format, draw_width, -1);
+      // 阴影：先在右下偏移 1 像素处画一遍（整行，不参与逐字填充）。
+      if ((shadow_color_ >> 24) != 0) {
+        draw_text(font_, element.text, y, line_height, shadow_color_, 60,
+                  left + 1, 1, format, draw_width, -1);
+      }
+      if (element.active) {
+        // 未唱到的部分用「未播放颜色」铺底。
+        draw_text(font_, element.text, y, line_height, unplay_color_, 100,
+                  left, 0, format, draw_width, -1);
+        if (active_progress > 0.0) {
+          int clip_right = -1;
+          if (active_progress < 1.0) {
+            // 文字实际起点：跑马灯时随滚动偏移，居中时是 (窗口宽 - 文字宽) / 2。
+            const int text_left_x = marquee ? left : (width - text_width) / 2;
+            clip_right =
+                text_left_x +
+                static_cast<int>(std::lround(active_progress * text_width));
+          }
+          // 已经唱到的部分用「已播放颜色」覆盖上去。
+          draw_text(font_, element.text, y, line_height, played_color_, 100,
+                    left, 0, format, draw_width, clip_right);
+        }
+      } else {
+        draw_text(font_, element.text, y, line_height, unplay_color_, 100,
+                  left, 0, format, draw_width, -1);
+      }
     }
-    y += element_height;
+
+    // 翻译 / 音译固定占用槽位内预留的行；即使当前行没有翻译，也保留空行，
+    // 避免窗口高度随歌词内容变化。
+    if (show_translation_ && !element.translation.empty()) {
+      const int translation_y = y + line_height;
+      if ((shadow_color_ >> 24) != 0) {
+        draw_text(sub_font_, element.translation, translation_y,
+                  sub_line_height, shadow_color_, 60, 1, 1,
+                  DT_SINGLELINE | DT_VCENTER | DT_CENTER | DT_END_ELLIPSIS,
+                  width, -1);
+      }
+      draw_text(sub_font_, element.translation, translation_y, sub_line_height,
+                unplay_color_, 80, 0, 0,
+                DT_SINGLELINE | DT_VCENTER | DT_CENTER | DT_END_ELLIPSIS,
+                width, -1);
+    }
+    if (show_roman_ && !element.roman.empty()) {
+      const int roman_y =
+          y + line_height + (show_translation_ ? sub_line_height : 0);
+      if ((shadow_color_ >> 24) != 0) {
+        draw_text(sub_font_, element.roman, roman_y, sub_line_height,
+                  shadow_color_, 60, 1, 1,
+                  DT_SINGLELINE | DT_VCENTER | DT_CENTER | DT_END_ELLIPSIS,
+                  width, -1);
+      }
+      draw_text(sub_font_, element.roman, roman_y, sub_line_height,
+                unplay_color_, 80, 0, 0,
+                DT_SINGLELINE | DT_VCENTER | DT_CENTER | DT_END_ELLIPSIS,
+                width, -1);
+    }
+    y += slot_height;
   }
 
   POINT origin{0, 0};
@@ -774,9 +794,6 @@ LRESULT DesktopLyricWindow::HandleMessage(HWND hwnd,
     case WM_ERASEBKGND:
       return 1;
     case WM_LBUTTONDOWN: {
-      if (is_lock_) {
-        return 0;
-      }
       // 交给系统的「标题栏拖动」逻辑移动窗口：
       // 窗口跟随鼠标且不需要重绘，拖动时不会闪烁；
       // 用屏幕坐标计算也不会出现「指针与窗口距离越来越远」的问题。
@@ -793,12 +810,6 @@ LRESULT DesktopLyricWindow::HandleMessage(HWND hwnd,
       dragging_ = false;
       ReportPosition();
       Paint();
-      return 0;
-    }
-    case WM_RBUTTONUP: {
-      // 右键切换锁定（锁定后置顶且不可拖动）。
-      is_lock_ = !is_lock_;
-      ApplySizeAndPosition();
       return 0;
     }
     case WM_DESTROY:
