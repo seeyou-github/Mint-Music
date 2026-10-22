@@ -27,6 +27,9 @@ String describeWebDavError(Object error) {
         return '发送超时：向 $uri 上传数据超时，请检查网络';
       case dio.DioExceptionType.receiveTimeout:
         return '接收超时：$uri 响应过慢，请稍后重试';
+      case dio.DioExceptionType.transformTimeout:
+        // dio 5.9 新增：解析响应数据（转换）超时，同样是「服务端太慢」。
+        return '接收超时：$uri 响应数据解析超时，请稍后重试';
       case dio.DioExceptionType.badCertificate:
         return 'HTTPS 证书校验失败：$uri';
       case dio.DioExceptionType.connectionError:
