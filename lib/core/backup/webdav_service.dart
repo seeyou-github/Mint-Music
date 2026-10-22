@@ -215,7 +215,10 @@ class WebDavService {
           options.followRedirects = false;
           options.validateStatus = (status) => status != null;
           options.responseType = dio.ResponseType.plain;
-          options.headers?['content-length'] = bytes.length;
+          // content-length 手动带上：部分服务器要求 PUT 必须带长度。
+          final headers = options.headers ?? <String, dynamic>{};
+          headers['content-length'] = bytes.length;
+          options.headers = headers;
         },
       );
       final status = response.statusCode ?? 0;
