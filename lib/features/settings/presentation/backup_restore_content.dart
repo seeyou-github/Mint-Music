@@ -358,6 +358,147 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
     return '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB';
   }
 
+  // ---------------------------------------------------------------- 布局组件
+
+  /// 左侧图标 + 标题，下面一个整行宽度的输入框（截图里的 WebDAV 配置样式）。
+  Widget _labeledField({
+    required ThemeColors colors,
+    required IconData icon,
+    required String label,
+    required TextEditingController controller,
+    required ValueChanged<String> onChanged,
+    bool obscure = false,
+    String? hintText,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(icon, size: 18, color: colors.textSecondary),
+            const SizedBox(width: AppSpacing.sm),
+            Text(
+              label,
+              style: TextStyle(fontSize: 14, color: colors.textPrimary),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        TextField(
+          controller: controller,
+          obscureText: obscure,
+          onChanged: onChanged,
+          style: TextStyle(fontSize: 13, color: colors.textPrimary),
+          decoration: InputDecoration(
+            isDense: true,
+            hintText: hintText,
+            hintStyle: TextStyle(fontSize: 13, color: colors.textHint),
+            filled: true,
+            // 比卡片底色更暗，输入框边界一眼能看出来。
+            fillColor: colors.background,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(AppRadius.sm),
+              borderSide: BorderSide.none,
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(AppRadius.sm),
+              borderSide: BorderSide.none,
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(AppRadius.sm),
+              borderSide: BorderSide(
+                color: colors.primary.withValues(alpha: 0.6),
+              ),
+            ),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.md,
+              vertical: 11,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 并排的两个胶囊按钮：左边主色描边，右边中性描边。
+  Widget _pairButtons({
+    required ThemeColors colors,
+    required String leftLabel,
+    required IconData leftIcon,
+    required VoidCallback? onLeft,
+    required String rightLabel,
+    required IconData rightIcon,
+    required VoidCallback? onRight,
+  }) {
+    return Row(
+      children: [
+        Expanded(
+          child: _pairButton(
+            colors: colors,
+            icon: leftIcon,
+            label: leftLabel,
+            onTap: onLeft,
+            primary: true,
+          ),
+        ),
+        const SizedBox(width: AppSpacing.md),
+        Expanded(
+          child: _pairButton(
+            colors: colors,
+            icon: rightIcon,
+            label: rightLabel,
+            onTap: onRight,
+            primary: false,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _pairButton({
+    required ThemeColors colors,
+    required IconData icon,
+    required String label,
+    required VoidCallback? onTap,
+    required bool primary,
+  }) {
+    final enabled = onTap != null;
+    final accent = primary ? colors.primary : colors.textPrimary;
+    final color = enabled ? accent : colors.textHint;
+    final borderColor = enabled
+        ? (primary
+              ? colors.primary.withValues(alpha: 0.8)
+              : colors.divider)
+        : colors.divider.withValues(alpha: 0.5);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(AppRadius.full),
+      child: Container(
+        height: 34,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(AppRadius.full),
+          border: Border.all(color: borderColor),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 16, color: color),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 13, color: color),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   // ---------------------------------------------------------------- 构建
 
   @override
@@ -372,20 +513,14 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
           title: tr('本地备份'),
           colors: colors,
           children: [
-            SettingRow(
-              icon: Icons.backup_outlined,
-              title: tr('一键备份'),
-              trailing: const Icon(Icons.chevron_right, size: 18),
+            _pairButtons(
               colors: colors,
-              onTap: _busy ? null : _backupToFile,
-            ),
-            SettingDivider(colors: colors),
-            SettingRow(
-              icon: Icons.settings_backup_restore,
-              title: tr('一键还原'),
-              trailing: const Icon(Icons.chevron_right, size: 18),
-              colors: colors,
-              onTap: _busy ? null : _restoreFromFile,
+              leftLabel: tr('一键备份'),
+              leftIcon: Icons.cloud_upload_outlined,
+              onLeft: _busy ? null : _backupToFile,
+              rightLabel: tr('一键还原'),
+              rightIcon: Icons.settings_backup_restore,
+              onRight: _busy ? null : _restoreFromFile,
             ),
           ],
         ),
@@ -394,98 +529,48 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
           title: tr('WebDAV 备份'),
           colors: colors,
           children: [
-            SettingRow(
+            _labeledField(
+              colors: colors,
               icon: Icons.cloud_outlined,
-              title: tr('WebDAV 地址'),
-              colors: colors,
-              trailing: SizedBox(
-                width: 200,
-                child: TextField(
-                  controller: _urlController,
-                  onChanged: (v) => _saveConfig(url: v),
-                  style: TextStyle(fontSize: 13, color: colors.textPrimary),
-                  decoration: const InputDecoration(
-                    isDense: true,
-                    hintText: 'https://dav.example.com/back',
-                    border: OutlineInputBorder(),
-                    contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                  ),
-                ),
-              ),
+              label: tr('WebDAV 地址'),
+              controller: _urlController,
+              onChanged: (v) => _saveConfig(url: v),
+              hintText: 'https://dav.example.com/back',
             ),
-            SettingDivider(colors: colors),
-            SettingRow(
+            const SizedBox(height: AppSpacing.md),
+            _labeledField(
+              colors: colors,
               icon: Icons.person_outline,
-              title: tr('用户名'),
-              colors: colors,
-              trailing: SizedBox(
-                width: 200,
-                child: TextField(
-                  controller: _userController,
-                  onChanged: (v) => _saveConfig(user: v),
-                  style: TextStyle(fontSize: 13, color: colors.textPrimary),
-                  decoration: const InputDecoration(
-                    isDense: true,
-                    border: OutlineInputBorder(),
-                    contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                  ),
-                ),
-              ),
+              label: tr('用户名'),
+              controller: _userController,
+              onChanged: (v) => _saveConfig(user: v),
             ),
-            SettingDivider(colors: colors),
-            SettingRow(
+            const SizedBox(height: AppSpacing.md),
+            _labeledField(
+              colors: colors,
               icon: Icons.key_outlined,
-              title: tr('密码'),
-              colors: colors,
-              trailing: SizedBox(
-                width: 200,
-                child: TextField(
-                  controller: _passwordController,
-                  obscureText: true,
-                  onChanged: (v) => _saveConfig(password: v),
-                  style: TextStyle(fontSize: 13, color: colors.textPrimary),
-                  decoration: const InputDecoration(
-                    isDense: true,
-                    border: OutlineInputBorder(),
-                    contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                  ),
-                ),
-              ),
+              label: tr('密码'),
+              controller: _passwordController,
+              onChanged: (v) => _saveConfig(password: v),
+              obscure: true,
             ),
-            SettingDivider(colors: colors),
-            SettingRow(
+            const SizedBox(height: AppSpacing.md),
+            _labeledField(
+              colors: colors,
               icon: Icons.devices_outlined,
-              title: tr('设备名称'),
-              colors: colors,
-              trailing: SizedBox(
-                width: 200,
-                child: TextField(
-                  controller: _deviceController,
-                  onChanged: (v) => _saveConfig(deviceName: v),
-                  style: TextStyle(fontSize: 13, color: colors.textPrimary),
-                  decoration: const InputDecoration(
-                    isDense: true,
-                    border: OutlineInputBorder(),
-                    contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                  ),
-                ),
-              ),
+              label: tr('设备名称'),
+              controller: _deviceController,
+              onChanged: (v) => _saveConfig(deviceName: v),
             ),
-            SettingDivider(colors: colors),
-            SettingRow(
-              icon: Icons.cloud_upload_outlined,
-              title: tr('备份到 WebDAV'),
-              trailing: const Icon(Icons.chevron_right, size: 18),
+            const SizedBox(height: AppSpacing.lg),
+            _pairButtons(
               colors: colors,
-              onTap: _busy ? null : _backupToWebDav,
-            ),
-            SettingDivider(colors: colors),
-            SettingRow(
-              icon: Icons.cloud_download_outlined,
-              title: tr('从 WebDAV 还原'),
-              trailing: const Icon(Icons.chevron_right, size: 18),
-              colors: colors,
-              onTap: _busy ? null : _restoreFromWebDav,
+              leftLabel: tr('备份到 WebDAV'),
+              leftIcon: Icons.cloud_upload_outlined,
+              onLeft: _busy ? null : _backupToWebDav,
+              rightLabel: tr('从 WebDAV 还原'),
+              rightIcon: Icons.cloud_download_outlined,
+              onRight: _busy ? null : _restoreFromWebDav,
             ),
           ],
         ),
