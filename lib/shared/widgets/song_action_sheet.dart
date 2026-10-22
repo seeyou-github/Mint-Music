@@ -23,7 +23,6 @@ import '../../features/settings/data/settings_service.dart';
 import '../services/amll_toggle_service.dart';
 import '../../features/plugin/application/plugin_providers.dart';
 import 'music_cover_image.dart';
-import 'sleep_timer_picker.dart';
 
 const _sheetAnimationStyle = AnimationStyle(
   duration: Duration(milliseconds: 220),
@@ -439,9 +438,9 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                     onTap: () => _showAddToPlaylist(colors, playlistsAsync),
                     skipPop: true,
                   ),
-                  // 「下载」「启用桌面歌词」已经挪到播放页顶部的图标按钮上了。
-                  _buildSpeedItem(colors),
-                  const SleepTimerMenuTile(),
+                  // 「下载」「启用桌面歌词」「定时」已经挪到播放页的图标按钮上了。
+                  // Android 端的倍速也挪到播放页，这里不再重复。
+                  if (!Platform.isAndroid) _buildSpeedItem(colors),
                   _buildLyricSettingsItem(colors),
                 ],
                 // --- Full mode (song context menu) ---
@@ -723,6 +722,14 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
   }
 
   void _showSpeedPicker() {
+    unawaited(SongActionSheet.showSpeedPicker(context, ref));
+  }
+
+  /// 弹出播放速度选择（播放页的「倍速」按钮也复用这里）。
+  static Future<void> showSpeedPicker(
+    BuildContext context,
+    WidgetRef ref,
+  ) async {
     final currentSpeed = ref.read(playbackSpeedProvider);
     const speeds = ['0.5x', '0.75x', '1.0x', '1.25x', '1.5x', '2.0x'];
     showModalBottomSheet(
@@ -755,7 +762,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
               ),
               onTap: () {
                 ref.read(playbackSpeedProvider.notifier).state = speed;
-                unawaited(_doPersistSpeed(speed));
+                unawaited(_persistSpeed(ref, speed));
                 ref.read(audioHandlerProvider).setSpeed(speed);
                 Navigator.pop(ctx);
               },
@@ -766,7 +773,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
     );
   }
 
-  Future<void> _doPersistSpeed(double speed) async {
+  static Future<void> _persistSpeed(WidgetRef ref, double speed) async {
     try {
       final svc = await ref.read(settingsServiceProvider.future);
       await svc.setPlaybackSpeed(speed);

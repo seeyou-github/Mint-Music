@@ -745,7 +745,8 @@ class _LyricLineWidget extends StatelessWidget {
                 fontSize: romanFontSize,
                 height: 1.3,
                 fontWeight: FontWeight.w400,
-                color: activeColor.withValues(alpha: isActive ? 0.5 : 0.3),
+                // 翻译 / 音译统一用「未播放颜色」。
+                color: inactiveColor,
               ),
             ),
           ),
@@ -794,7 +795,7 @@ class _LyricLineWidget extends StatelessWidget {
                 fontSize: transFontSize,
                 height: 1.35,
                 fontWeight: FontWeight.w500,
-                color: activeColor.withValues(alpha: 0.6),
+                color: inactiveColor,
               ),
             ),
             Padding(
@@ -807,7 +808,7 @@ class _LyricLineWidget extends StatelessWidget {
                   fontSize: transFontSize * 0.85,
                   height: 1.3,
                   fontWeight: FontWeight.w400,
-                  color: activeColor.withValues(alpha: isActive ? 0.5 : 0.25),
+                  color: inactiveColor,
                 ),
               ),
             ),
@@ -825,7 +826,7 @@ class _LyricLineWidget extends StatelessWidget {
             fontSize: transFontSize,
             height: 1.35,
             fontWeight: FontWeight.w500,
-            color: activeColor.withValues(alpha: 0.6),
+            color: inactiveColor,
           ),
         ),
       );
@@ -840,7 +841,7 @@ class _LyricLineWidget extends StatelessWidget {
             fontSize: transFontSize * 0.85,
             height: 1.3,
             fontWeight: FontWeight.w400,
-            color: activeColor.withValues(alpha: isActive ? 0.5 : 0.25),
+            color: inactiveColor,
           ),
         ),
       );
@@ -1296,12 +1297,9 @@ class _YrcLinePainter extends CustomPainter {
           word.brightPainter.paint(canvas, Offset.zero);
           canvas.restore();
         }
-      } else if (currentTimeMs >= word.source.endTimeMs) {
-        canvas.save();
-        canvas.clipRect(Rect.fromLTWH(0, 0, word.width, word.height));
-        word.finishedPainter.paint(canvas, Offset.zero);
-        canvas.restore();
       }
+      // 非当前行（含已经唱完的行）统一用「未播放颜色」，
+      // 与普通歌词（LRC）的样式保持一致。
 
       canvas.restore();
     }
@@ -1485,7 +1483,6 @@ class _YrcLineLayout {
     final dimColor = isActive
         ? inactiveColor
         : inactiveColor.withValues(alpha: 0.85);
-    final finishedColor = activeColor.withValues(alpha: isActive ? 1 : 0.5);
 
     final spaceFull = _spacePainter(textStyle).width;
 
@@ -1503,7 +1500,6 @@ class _YrcLineLayout {
           source: source,
           dimPainter: _buildPainter(displayText, textStyle, dimColor),
           brightPainter: _buildPainter(displayText, textStyle, activeColor),
-          finishedPainter: _buildPainter(displayText, textStyle, finishedColor),
           activeColor: activeColor,
         ),
       );
@@ -1587,7 +1583,6 @@ class _WordPaintData {
   final LyricWord source;
   final TextPainter dimPainter;
   final TextPainter brightPainter;
-  final TextPainter finishedPainter;
   final Color activeColor;
   final Offset offset;
 
@@ -1595,7 +1590,6 @@ class _WordPaintData {
     required this.source,
     required this.dimPainter,
     required this.brightPainter,
-    required this.finishedPainter,
     required this.activeColor,
     this.offset = Offset.zero,
   });
@@ -1609,7 +1603,6 @@ class _WordPaintData {
       source: source,
       dimPainter: dimPainter,
       brightPainter: brightPainter,
-      finishedPainter: finishedPainter,
       activeColor: activeColor,
       offset: offset ?? this.offset,
     );

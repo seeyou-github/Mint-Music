@@ -17,6 +17,7 @@ import '../../plugin/application/music_source_manager.dart';
 import '../../plugin/domain/plugin_types.dart';
 import '../application/desktop_lyric_sync.dart';
 import '../application/playback_controller.dart';
+import '../application/sleep_timer_provider.dart';
 import '../application/playback_ui_providers.dart';
 import '../application/full_player_visibility.dart';
 import '../application/lyric_controller.dart';
@@ -26,6 +27,7 @@ import '../../library/application/playlist_providers.dart';
 import '../../plugin/application/plugin_providers.dart';
 import '../../settings/application/settings_providers.dart';
 import '../../../shared/widgets/song_action_sheet.dart';
+import '../../../shared/widgets/sleep_timer_picker.dart';
 import '../../../shared/services/amll_toggle_service.dart';
 import 'widgets/lyric_scroll_view.dart';
 import 'widgets/amll_lyric_player.dart';
@@ -222,18 +224,32 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
                                 }
                                 if (!_lyricsPageBuilt)
                                   return const SizedBox.expand();
+                                final lyricsPage = _PlayerLyricsPage(
+                                  amllKey: _amllKey,
+                                  hideWebView: _isLeaving,
+                                );
                                 return _KeepAlivePage(
-                                  child: _PlayerLyricsPage(
-                                    amllKey: _amllKey,
-                                    hideWebView: _isLeaving,
-                                  ),
+                                  // Android：点歌词区域切回封面页。
+                                  child: Platform.isAndroid
+                                      ? GestureDetector(
+                                          behavior: HitTestBehavior.translucent,
+                                          onTap: () {
+                                            if (_currentPage == 1) {
+                                              _pageController.jumpToPage(0);
+                                            }
+                                          },
+                                          child: lyricsPage,
+                                        )
+                                      : lyricsPage,
                                 );
                               },
                             );
                           },
                         ),
                       ),
-                      _PlayerSongInfo(),
+                      _PlayerSongInfo(
+                        showInlineLyric: Platform.isAndroid,
+                      ),
                       _PlayerProgressBar(),
                       const SizedBox(height: 12),
                       _PlayerControls(onQueue: _openPlayQueue),
@@ -325,29 +341,48 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
     );
   }
 
-  /// Split mode: cover on left (centered/upper), controls at bottom,
-  /// lyrics on right. Layout inspired by CeruMusic's side-by-side player.
+  /// Split mode: cover on left (upper), controls at bottom, lyrics on right.
+  ///
+  /// 左栏自上而下：封面（比之前小一点、往上靠）→ 歌名/歌手（封面左下方，
+  /// 宽度与封面一致，超出省略）→ 操作按钮 → 进度条 → 播放控制。
   Widget _buildTabletSplitMode({required bool isPlaying}) {
     return Row(
       children: [
-        // Left side: cover (centered) + controls (bottom)
         Expanded(
           flex: 5,
-          child: Column(
-            children: [
-              const SizedBox(height: 16),
-              // Cover takes up available space, centered vertically
-              Expanded(
-                child: _PlayerCoverPage(isPlaying: isPlaying, onTapCover: null),
-              ),
-              const SizedBox(height: 8),
-              // Controls pinned to bottom
-              _PlayerSongInfo(),
-              _PlayerProgressBar(),
-              const SizedBox(height: 8),
-              _PlayerControls(onQueue: _openPlayQueue),
-              const SizedBox(height: 16),
-            ],
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              // 封面缩小：宽高都收一点，并整体上移（不再垂直居中）。
+              // 预留约 300px 给歌名/按钮/进度条/播放控制，避免小窗口溢出。
+              final coverSize = math.max(
+                96.0,
+                math.min(
+                  math.min(constraints.maxWidth * 0.62, 300.0),
+                  constraints.maxHeight - 300,
+                ),
+              );
+              return Column(
+                children: [
+                  const SizedBox(height: 8),
+                  _PlayerCoverPage(
+                    isPlaying: isPlaying,
+                    coverSize: coverSize,
+                    onTapCover: null,
+                  ),
+                  const SizedBox(height: 10),
+                  // 歌名 / 歌手 + 操作按钮：宽度与封面一致，左对齐。
+                  SizedBox(
+                    width: coverSize,
+                    child: const _PlayerSongInfo(padded: false),
+                  ),
+                  const Spacer(),
+                  _PlayerProgressBar(),
+                  const SizedBox(height: 8),
+                  _PlayerControls(onQueue: _openPlayQueue),
+                  const SizedBox(height: 16),
+                ],
+              );
+            },
           ),
         ),
         // Right side: lyrics (full height)
@@ -399,7 +434,10 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
                           const SizedBox(width: 12),
                           // 歌名/歌手 + 收藏/功能菜单：右端与进度条右端齐平。
                           const Expanded(
-                            child: _PlayerSongInfo(compact: true, side: true),
+                            child: _PlayerSongInfo(
+                              compact: true,
+                              padded: false,
+                            ),
                           ),
                         ],
                       ),
@@ -1029,12 +1067,17 @@ class _PlayerSongInfo extends ConsumerWidget {
   /// 紧凑模式：手机横屏等高度受限的场景。
   final bool compact;
 
-  /// 侧栏模式：渲染为「封面右侧的信息列」——歌名/歌手 左对齐，
-  /// 收藏与功能菜单另起一行；不加外层水平内边距（由调用方留白）。
-  /// 手机横屏左栏使用；默认 false 时为「左对齐歌名 + 右侧图标」的横排布局。
-  final bool side;
+  /// 是否加外层水平内边距（侧栏模式由调用方留白）。
+  final bool padded;
 
-  const _PlayerSongInfo({this.compact = false, this.side = false});
+  /// 是否在歌手名下方显示当前歌词行（Android 手机）。
+  final bool showInlineLyric;
+
+  const _PlayerSongInfo({
+    this.compact = false,
+    this.padded = true,
+    this.showInlineLyric = false,
+  });
 
   void _toggleFavorite(WidgetRef ref, Song? song) {
     if (song == null) return;
@@ -1071,37 +1114,62 @@ class _PlayerSongInfo extends ConsumerWidget {
         ) ??
         false;
 
-    final buttonConstraints = compact
-        ? const BoxConstraints.tightFor(width: 30, height: 30)
-        : null;
-    final favoriteButton = IconButton(
-      onPressed: () => _toggleFavorite(ref, song),
-      icon: Icon(
-        isFavorite ? Icons.favorite : Icons.favorite_border,
-        size: compact ? 18 : 24,
-        color: isFavorite ? Colors.red : Colors.white.withValues(alpha: 0.7),
-      ),
-      padding: compact ? EdgeInsets.zero : null,
-      constraints: buttonConstraints,
+    final themeColors = ref.watch(themeColorsProvider);
+    final isAndroid = Platform.isAndroid;
+
+    // 图标尺寸：收藏 / 下载 / 定时 / 更多 与「词」文字图标保持一致。
+    // Material 图标自带留白，图标 22 与 20 号的汉字视觉高度接近。
+    final iconSize = compact ? 18.0 : 22.0;
+    final wordFontSize = compact ? 16.0 : 20.0;
+    final buttonConstraints = BoxConstraints.tightFor(
+      width: compact ? 30 : 40,
+      height: compact ? 30 : 40,
     );
-    // 下载：只显示图标，点击后选择音质。
-    final downloadButton = IconButton(
+    final idleColor = Colors.white.withValues(alpha: 0.7);
+
+    IconButton iconButton({
+      required IconData icon,
+      required VoidCallback? onPressed,
+      required String tooltip,
+      Color? color,
+    }) {
+      return IconButton(
+        onPressed: onPressed,
+        icon: Icon(icon, size: iconSize, color: color ?? idleColor),
+        padding: EdgeInsets.zero,
+        constraints: buttonConstraints,
+        tooltip: tooltip,
+      );
+    }
+
+    // 收藏
+    final favoriteButton = iconButton(
+      icon: isFavorite ? Icons.favorite : Icons.favorite_border,
+      onPressed: () => _toggleFavorite(ref, song),
+      tooltip: context.tr('收藏'),
+      color: isFavorite ? Colors.red : null,
+    );
+    // 下载：点击后选择音质
+    final downloadButton = iconButton(
+      icon: Icons.download_outlined,
       onPressed: song == null
           ? null
-          : () => SongActionSheet.showDownloadQualityPicker(context, song!),
-      icon: Icon(
-        Icons.download_outlined,
-        size: compact ? 18 : 24,
-        color: Colors.white.withValues(alpha: 0.7),
-      ),
-      padding: compact ? EdgeInsets.zero : null,
-      constraints: buttonConstraints,
+          : () => SongActionSheet.showDownloadQualityPicker(context, song),
+      tooltip: context.tr('下载'),
+    );
+    // 定时关闭：已设定时用主题色
+    final sleepActive = ref.watch(sleepTimerProvider).active;
+    final sleepTimerButton = iconButton(
+      icon: sleepActive ? Icons.timer : Icons.timer_outlined,
+      onPressed: () => showSleepTimerPicker(context),
+      tooltip: context.tr('定时关闭'),
+      color: sleepActive ? themeColors.primary : null,
     );
     // 桌面歌词：图标是文字「词」，开启后文字用主题色。
+    // Android 没有独立的桌面歌词窗口，这个位置换成「倍速」。
     final desktopLyricEnabled = ref.watch(
       desktopLyricSettingsProvider.select((s) => s.enable),
     );
-    final themeColors = ref.watch(themeColorsProvider);
     final desktopLyricButton = IconButton(
       onPressed: () {
         final sync = ref.read(desktopLyricSyncProvider.notifier);
@@ -1113,33 +1181,30 @@ class _PlayerSongInfo extends ConsumerWidget {
       },
       // 用文字「词」当图标：不要把文字塞进和字号一样大的 SizedBox，
       // 否则中文字形的上下会超出 em 框而被裁掉（表现为图标显示不全）。
-      // 交给 IconButton 自己居中，字号略小于图标尺寸即可。
       icon: Text(
         '词',
         style: TextStyle(
-          fontSize: compact ? 15 : 19,
-          height: 1.25,
+          fontSize: wordFontSize,
+          height: 1.2,
           fontWeight: FontWeight.w600,
-          color: desktopLyricEnabled
-              ? themeColors.primary
-              : Colors.white.withValues(alpha: 0.7),
+          color: desktopLyricEnabled ? themeColors.primary : idleColor,
         ),
       ),
-      padding: compact ? EdgeInsets.zero : null,
+      padding: EdgeInsets.zero,
       constraints: buttonConstraints,
       tooltip: context.tr('启用桌面歌词'),
     );
-    final moreButton = IconButton(
-      onPressed: song != null
-          ? () => SongActionSheet.showPlayerMenu(context, song: song)
-          : null,
-      icon: Icon(
-        Icons.more_horiz,
-        size: compact ? 18 : 24,
-        color: Colors.white.withValues(alpha: 0.7),
-      ),
-      padding: compact ? EdgeInsets.zero : null,
-      constraints: buttonConstraints,
+    final speedButton = iconButton(
+      icon: Icons.speed,
+      onPressed: () => SongActionSheet.showSpeedPicker(context, ref),
+      tooltip: context.tr('播放速度'),
+    );
+    final moreButton = iconButton(
+      icon: Icons.more_horiz,
+      onPressed: song == null
+          ? null
+          : () => SongActionSheet.showPlayerMenu(context, song: song),
+      tooltip: context.tr('更多'),
     );
 
     final title = Text(
@@ -1161,56 +1226,99 @@ class _PlayerSongInfo extends ConsumerWidget {
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
     );
+
+    // 顺序固定为：收藏、下载、定时、桌面歌词（Android 为倍速）、更多。
     final actions = Row(
-      mainAxisSize: MainAxisSize.min,
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        desktopLyricButton,
-        SizedBox(width: compact ? 10 : 18),
-        downloadButton,
-        SizedBox(width: compact ? 10 : 18),
         favoriteButton,
-        SizedBox(width: compact ? 18 : 28),
+        downloadButton,
+        sleepTimerButton,
+        if (isAndroid) speedButton else desktopLyricButton,
         moreButton,
       ],
     );
 
-    // 侧栏模式：封面右侧的信息列。歌名/歌手左对齐，收藏与功能菜单也左对齐，
-    // 与歌名/歌手左侧齐平。
-    if (side) {
-      return Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          title,
-          SizedBox(height: compact ? 4 : 6),
-          artist,
-          SizedBox(height: compact ? 10 : 14),
-          actions,
+    final content = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        title,
+        SizedBox(height: compact ? 1 : 4),
+        artist,
+        if (showInlineLyric) ...[
+          const SizedBox(height: 6),
+          _InlineLyricLine(fontSize: compact ? 12 : 14),
         ],
-      );
-    }
+        SizedBox(height: compact ? 6 : 10),
+        actions,
+      ],
+    );
 
+    if (!padded) return content;
     return Padding(
       padding: EdgeInsets.symmetric(
         horizontal: compact ? 12 : 32,
         vertical: compact ? 2 : 8,
       ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                title,
-                SizedBox(height: compact ? 1 : 4),
-                artist,
-              ],
-            ),
+      child: content,
+    );
+  }
+}
+
+/// 歌手名下方的「正在播放的歌词」（Android）：一行歌词 + 播放进度条。
+class _InlineLyricLine extends ConsumerWidget {
+  const _InlineLyricLine({required this.fontSize});
+
+  /// 与歌手名同字号。
+  final double fontSize;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final lines = ref.watch(lyricControllerProvider.select((s) => s.lines));
+    final position = ref.watch(
+      playbackControllerProvider.select((s) => s.position),
+    );
+    final duration = ref.watch(
+      playbackControllerProvider.select((s) => s.duration),
+    );
+    final colors = ref.watch(themeColorsProvider);
+
+    final positionMs = position.inMilliseconds;
+    var index = lines.isEmpty
+        ? -1
+        : lines.lastIndexWhere((line) => line.startTimeMs <= positionMs);
+    if (index < 0 && lines.isNotEmpty) index = 0;
+    final text = index >= 0 ? lines[index].plainText.trim() : '';
+
+    final progress = duration.inMilliseconds > 0
+        ? (positionMs / duration.inMilliseconds).clamp(0.0, 1.0)
+        : 0.0;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          text.isEmpty ? context.tr('暂无歌词') : text,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontSize: fontSize,
+            color: Colors.white.withValues(alpha: text.isEmpty ? 0.35 : 0.7),
           ),
-          actions,
-        ],
-      ),
+        ),
+        const SizedBox(height: 4),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(1),
+          child: LinearProgressIndicator(
+            value: progress,
+            minHeight: 2,
+            backgroundColor: Colors.white.withValues(alpha: 0.12),
+            valueColor: AlwaysStoppedAnimation<Color>(colors.primary),
+          ),
+        ),
+      ],
     );
   }
 }
