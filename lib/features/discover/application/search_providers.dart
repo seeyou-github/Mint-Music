@@ -5,12 +5,13 @@ import '../../../core/storage/app_database.dart';
 import '../../../core/storage/app_preferences.dart';
 import '../../player/domain/models/song.dart';
 import '../../discover/domain/models/playlist.dart';
+import '../../discover/domain/models/search_collection.dart';
 import '../../plugin/application/plugin_providers.dart';
 import '../../plugin/application/music_source_manager.dart';
 import '../../plugin/domain/plugin_types.dart';
 
 /// 搜索页结果类型切换标签。
-enum SearchTab { songs, playlists }
+enum SearchTab { songs, playlists, albums, artists }
 
 final searchQueryProvider = StateProvider<String>((ref) => '');
 
@@ -590,3 +591,66 @@ final playlistSearchControllerProvider =
     StateNotifierProvider<PlaylistSearchNotifier, PlaylistSearchState>((ref) {
       return PlaylistSearchNotifier(ref.watch(musicSourceManagerProvider));
     });
+
+/// 专辑 / 作者搜索结果。
+class CollectionSearchState {
+  const CollectionSearchState({
+    this.query = '',
+    this.loading = false,
+    this.unsupported = false,
+    this.results = const [],
+  });
+
+  final String query;
+  final bool loading;
+
+  /// 当前音源不支持搜索专辑 / 作者。
+  final bool unsupported;
+
+  final List<SearchCollection> results;
+}
+
+final collectionSearchProvider =
+    StateNotifierProvider<CollectionSearchController, CollectionSearchState>((
+      ref,
+    ) {
+      return CollectionSearchController(ref.watch(musicSourceManagerProvider));
+    });
+
+class CollectionSearchController extends StateNotifier<CollectionSearchState> {
+  CollectionSearchController(this._manager)
+    : super(const CollectionSearchState());
+
+  final MusicSourceManager _manager;
+  int _requestId = 0;
+
+  Future<void> search(
+    String query,
+    String sourceId,
+    CollectionType type,
+  ) async {
+    final keyword = query.trim();
+    final requestId = ++_requestId;
+    if (keyword.isEmpty) {
+      state = const CollectionSearchState();
+      return;
+    }
+    if (!_manager.sourceSupportsCollectionSearch(sourceId, type)) {
+      state = CollectionSearchState(query: keyword, unsupported: true);
+      return;
+    }
+    state = CollectionSearchState(query: keyword, loading: true);
+    try {
+      final results = await _manager.searchCollections(
+        keyword,
+        sourceId: sourceId,
+        type: type,
+      );
+      if (!mounted || requestId != _requestId) return;
+      state = CollectionSearchState(query: keyword, results: results);
+    } catch (_) {
+      if (!mounted || requestId != _requestId) return;
+      state = CollectionSearchState(query: keyword);
+    }
+  }
+}

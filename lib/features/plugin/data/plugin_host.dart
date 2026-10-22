@@ -9,6 +9,10 @@ class PluginHost {
   List<PluginSourceInfo> _sources = [];
   Map<String, List<String>> _sourceActions = {};
   Map<String, bool> _capabilities = const {};
+
+  /// 插件支持的搜索类型（music / album / artist）。
+  List<String> _searchTypes = const ['music'];
+
   bool _loaded = false;
   bool _apiInjected = false;
 
@@ -29,6 +33,13 @@ class PluginHost {
 
   /// 插件是否提供歌单详情（getMusicSheetInfo）。
   bool get supportsSheetDetail => _capabilities['sheetDetail'] == true;
+
+  /// 插件支持的搜索类型（music / album / artist）。
+  List<String> get supportedSearchTypes => _searchTypes;
+
+  /// 是否支持搜索专辑 / 作者（MusicFree 插件的 supportedSearchType 决定）。
+  bool get supportsAlbumSearch => _searchTypes.contains('album');
+  bool get supportsArtistSearch => _searchTypes.contains('artist');
 
   /// 插件是否能在发现页提供内容（榜单或推荐歌单）。
   bool get supportsDiscover =>
@@ -213,6 +224,7 @@ JSON.stringify((function() {
         _sources = sourcesResult['sources'] as List<PluginSourceInfo>;
         _sourceActions = sourcesResult['actions'] as Map<String, List<String>>;
         _capabilities = _parseCapabilities(exports['capabilities']);
+        _searchTypes = _detectSearchTypes();
 
         // 插件必须真的导出了内容：既没有插件信息也没有音源，说明这根本不是
         // 一个可用的插件脚本（混淆插件无法靠静态关键字判断，只能运行时查）。
@@ -760,6 +772,98 @@ JSON.stringify((function() {
         ).hasMatch(text) ||
         trimmed.startsWith('<tt') ||
         text.contains('LyricContent=');
+  }
+
+  /// 探测插件支持的搜索类型。
+  ///
+  /// MusicFree 适配器导出 `supportedSearchTypes()`（同步返回数组），
+  /// LX / CeruMusic 插件没有这个方法，只支持歌曲搜索。
+  List<String> _detectSearchTypes() {
+    try {
+      final result = _engine.evaluate(
+        '(function(){try{'
+        'var f=module.exports.supportedSearchTypes;'
+        'if(typeof f!=="function")return "[]";'
+        'var v=f();'
+        'return JSON.stringify(Array.isArray(v)?v:[]);'
+        '}catch(e){return "[]"}})()',
+      );
+      if (result.isError) return const ['music'];
+      final decoded = jsonDecode(result.stringResult ?? '[]');
+      if (decoded is! List) return const ['music'];
+      final types = <String>['music'];
+      for (final item in decoded) {
+        final value = '$item'.toLowerCase();
+        if (value == 'album' || value == 'artist') {
+          if (!types.contains(value)) types.add(value);
+        }
+      }
+      return types;
+    } catch (_) {
+      return const ['music'];
+    }
+  }
+
+  /// 按类型搜索（album / artist）。仅 MusicFree 适配器支持。
+  Future<String?> searchTyped(
+    String source,
+    String keyword, {
+    required String type,
+    int page = 1,
+    int limit = 30,
+  }) async {
+    _ensureLoaded();
+    final hasMethod = _engine.evaluate(
+      'typeof module.exports.searchTyped === "function"',
+    );
+    if (hasMethod.stringResult != 'true') return null;
+    try {
+      return await _engine.callPluginMethod(
+        "module.exports.searchTyped('$source', '${_escapeForJs(keyword)}', "
+        "$page, $limit, '$type')",
+        timeout: const Duration(seconds: 45),
+      );
+    } catch (e) {
+      print('[PluginHost] searchTyped 异常: $e');
+      return null;
+    }
+  }
+
+  /// 专辑详情（含歌曲列表）。
+  Future<String?> getAlbumInfo(
+    String source,
+    Map<String, dynamic> albumItem,
+  ) async {
+    _ensureLoaded();
+    try {
+      return await _engine.callPluginMethod(
+        "module.exports.getAlbumInfo('$source', ${jsonEncode(albumItem)})",
+        timeout: const Duration(seconds: 45),
+      );
+    } catch (e) {
+      print('[PluginHost] getAlbumInfo 异常: $e');
+      return null;
+    }
+  }
+
+  /// 作者作品（type = music / album）。
+  Future<String?> getArtistWorks(
+    String source,
+    Map<String, dynamic> artistItem, {
+    int page = 1,
+    String type = 'music',
+  }) async {
+    _ensureLoaded();
+    try {
+      return await _engine.callPluginMethod(
+        "module.exports.getArtistWorks('$source', "
+        "${jsonEncode(artistItem)}, $page, '$type')",
+        timeout: const Duration(seconds: 45),
+      );
+    } catch (e) {
+      print('[PluginHost] getArtistWorks 异常: $e');
+      return null;
+    }
   }
 
   Future<String?> search(

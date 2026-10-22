@@ -161,12 +161,21 @@ class AppDatabase {
   }
 
   static Future<Database> _openImportant({bool inMemory = false}) async {
-    final path = inMemory
-        ? inMemoryDatabasePath
-        : p.join(
-            (await AppPaths.databaseDirectory()).path,
-            'mintmusic.db',
-          );
+    // 重要库已经不再使用（我的收藏 / 收藏歌单都改成了 JSON 文件
+    // `AppData\config\playlists.json`），这里只有「旧版本留下的文件」才会打开，
+    // 用于一次性迁移；文件不存在时用内存库，**不再生成 `AppData\db` 目录**。
+    var path = inMemoryDatabasePath;
+    if (!inMemory) {
+      try {
+        final root = await AppPaths.rootDirectory();
+        final legacy = File(p.join(root.path, 'db', 'mintmusic.db'));
+        if (await legacy.exists()) {
+          path = legacy.path;
+        }
+      } catch (_) {
+        // 取不到路径就用内存库
+      }
+    }
     return openDatabase(
       path,
       version: 2,

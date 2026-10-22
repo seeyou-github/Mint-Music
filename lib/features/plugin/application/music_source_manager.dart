@@ -6,6 +6,7 @@ import '../../discover/domain/models/playlist_page.dart';
 import '../../discover/domain/models/leaderboard.dart';
 import '../domain/music_source_provider.dart';
 import '../domain/plugin_types.dart';
+import '../../discover/domain/models/search_collection.dart';
 import '../domain/source_id_mapping.dart';
 import '../domain/builtin_source_states.dart';
 import '../domain/plugin_source_states.dart';
@@ -1905,6 +1906,187 @@ class MusicSourceManager {
 
   /// 内置音源（平台 id）对应的其它平台，用于跨平台兜底。
   static const List<String> builtInPlatformIds = ['wy', 'tx', 'kg', 'kw', 'mg'];
+
+  // ---------------------------------------------------------------- 专辑 / 作者
+
+  /// 某个音源是否支持搜索专辑 / 作者。
+  bool sourceSupportsCollectionSearch(String sourceId, CollectionType type) {
+    if (sourceId.isEmpty) return false;
+    final effective = _canonicalSourceId(sourceId);
+    final wantAlbum = type == CollectionType.album;
+    // 「聚合搜索」：只要有一个插件音源支持就算支持。
+    final ids = effective == 'all' ? pluginSourceIds : <String>[effective];
+    for (final id in ids) {
+      for (final host in _findPluginHostsForSource(id)) {
+        if (wantAlbum ? host.supportsAlbumSearch : host.supportsArtistSearch) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  /// 搜索专辑 / 作者。
+  Future<List<SearchCollection>> searchCollections(
+    String keyword, {
+    required String sourceId,
+    required CollectionType type,
+    int limit = 30,
+  }) async {
+    final query = keyword.trim();
+    if (query.isEmpty) return const [];
+    final effective = _canonicalSourceId(sourceId);
+    // 「聚合搜索」：逐个插件音源查一遍再合并。
+    if (effective == 'all') {
+      final merged = <SearchCollection>[];
+      final seenIds = <String>{};
+      for (final id in pluginSourceIds) {
+        final part = await searchCollections(
+          query,
+          sourceId: id,
+          type: type,
+          limit: limit,
+        );
+        for (final item in part) {
+          if (seenIds.add('${item.source}:${item.id}')) merged.add(item);
+        }
+      }
+      return merged;
+    }
+
+    final wantAlbum = type == CollectionType.album;
+    final results = <SearchCollection>[];
+    final seen = <String>{};
+    for (final host in _findPluginHostsForSource(effective)) {
+      if (!(wantAlbum ? host.supportsAlbumSearch : host.supportsArtistSearch)) {
+        continue;
+      }
+      final pluginSourceId = _getSourceIdForHost(host, effective);
+      if (pluginSourceId == null) continue;
+      final raw = await host.searchTyped(
+        _resolvePluginSourceId(pluginSourceId),
+        query,
+        type: type.id,
+        limit: limit,
+      );
+      if (raw == null || raw.isEmpty) continue;
+      final resultSource = _pluginSourceAppId(host, pluginSourceId);
+      for (final item in _parseCollectionList(raw, resultSource, type)) {
+        if (seen.add('${item.source}:${item.id}')) results.add(item);
+      }
+    }
+    return results;
+  }
+
+  List<SearchCollection> _parseCollectionList(
+    String rawJson,
+    String sourceId,
+    CollectionType type,
+  ) {
+    try {
+      var decoded = jsonDecode(rawJson);
+      if (decoded is String) {
+        try {
+          decoded = jsonDecode(decoded);
+        } catch (_) {}
+      }
+      dynamic list;
+      if (decoded is Map) list = decoded['list'] ?? decoded['data'];
+      if (list is! List) return const [];
+      final items = <SearchCollection>[];
+      for (final entry in list) {
+        if (entry is! Map) continue;
+        final json = entry.map((k, v) => MapEntry('$k', v));
+        final item = SearchCollection.fromJson(
+          json,
+          source: sourceId,
+          type: type,
+        );
+        if (item.id.isEmpty || item.title.isEmpty) continue;
+        items.add(item);
+      }
+      return items;
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// 专辑 / 作者详情（含歌曲列表）。
+  Future<CollectionDetail> getCollectionDetail(
+    SearchCollection item, {
+    int page = 1,
+  }) async {
+    final effective = _canonicalSourceId(item.source);
+    final hosts = _findPluginHostsForSource(effective);
+    if (hosts.isEmpty) {
+      return CollectionDetail(item: item, songs: const []);
+    }
+    final host = hosts.first;
+    final pluginSourceId = _getSourceIdForHost(host, effective) ?? effective;
+    final raw = item.type == CollectionType.album
+        ? await host.getAlbumInfo(
+            _resolvePluginSourceId(pluginSourceId),
+            item.raw,
+          )
+        : await host.getArtistWorks(
+            _resolvePluginSourceId(pluginSourceId),
+            item.raw,
+            page: page,
+          );
+    if (raw == null || raw.isEmpty) {
+      return CollectionDetail(item: item, songs: const []);
+    }
+    try {
+      var decoded = jsonDecode(raw);
+      if (decoded is String) {
+        try {
+          decoded = jsonDecode(decoded);
+        } catch (_) {}
+      }
+      if (decoded is! Map) {
+        return CollectionDetail(item: item, songs: const []);
+      }
+      final map = decoded.map((k, v) => MapEntry('$k', v));
+      final list = map['list'] ?? map['data'];
+      final songs = list is List
+          ? _parsePluginSearchResult(jsonEncode({'list': list}), effective)
+          : const <Song>[];
+
+      var merged = item;
+      final detailItem = map['albumItem'] ?? map['artistItem'];
+      if (detailItem is Map) {
+        final json = detailItem.map((k, v) => MapEntry('$k', v));
+        final parsed = SearchCollection.fromJson(
+          json,
+          source: effective,
+          type: item.type,
+        );
+        merged = SearchCollection(
+          id: parsed.id.isEmpty ? item.id : parsed.id,
+          title: parsed.title.isEmpty ? item.title : parsed.title,
+          type: item.type,
+          source: effective,
+          coverUrl: (parsed.coverUrl?.isNotEmpty ?? false)
+              ? parsed.coverUrl
+              : item.coverUrl,
+          artist: parsed.artist ?? item.artist,
+          worksNum: parsed.worksNum > 0 ? parsed.worksNum : item.worksNum,
+          date: (parsed.date?.isNotEmpty ?? false) ? parsed.date : item.date,
+          description: (parsed.description?.isNotEmpty ?? false)
+              ? parsed.description
+              : item.description,
+          raw: item.raw,
+        );
+      }
+      return CollectionDetail(
+        item: merged,
+        songs: songs,
+        isEnd: map['isEnd'] != false,
+      );
+    } catch (_) {
+      return CollectionDetail(item: item, songs: const []);
+    }
+  }
 
   Future<LyricResult?> getLyricResult(Song song) async {
     final sourceId = song.source;

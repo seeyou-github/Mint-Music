@@ -12,6 +12,7 @@ abstract class AppRoutes {
   static const String playlistDetail = '/playlist/:id';
   static const String localPlaylistDetail = '/library/playlist/:id';
   static const String recentlyPlayed = '/recently-played';
+  static const String collectionDetail = '/collection';
   static const String recognize = '/recognize';
   static const String tagEditor = '/tag-editor';
   static const String pluginManagement = '/plugin-management';

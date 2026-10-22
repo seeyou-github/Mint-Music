@@ -373,6 +373,203 @@ function __mfSearch(source, keyword, page, limit) {
     );
 }
 
+
+/* ------------------------------------------------------------------ *
+ * 专辑 / 作者（MusicFree 插件的 supportedSearchType 含 album / artist 时）
+ * ------------------------------------------------------------------ */
+
+function __mfSearchTypeList(plugin) {
+  var supported = __mfArray(plugin.supportedSearchType);
+  var result = [];
+  for (var i = 0; i < supported.length; i++) {
+    var t = String(supported[i]).toLowerCase();
+    if (t === 'album' || t === 'artist') result.push(t);
+  }
+  return result;
+}
+
+function __mfMapCollectionItem(item, type, sourceId) {
+  if (!item || typeof item !== 'object') return null;
+  var isArtist = type === 'artist';
+  var title = __mfText(
+    isArtist ? item.name || item.title : item.title || item.name,
+    ''
+  );
+  if (!title) return null;
+  var cover = __mfNormalizeCover(
+    isArtist
+      ? item.avatar || item.artwork || item.picUrl || item.img
+      : item.artwork || item.coverImg || item.picUrl || item.img
+  );
+  var works =
+    item.worksNum ||
+    item.trackCount ||
+    item.albumSize ||
+    item.musicSize ||
+    item.songCount;
+  if (typeof works === 'string') {
+    var parsedWorks = parseInt(works, 10);
+    works = isNaN(parsedWorks) ? 0 : parsedWorks;
+  }
+  if (typeof works !== 'number' || !isFinite(works) || works < 0) works = 0;
+  return {
+    id: item.id === null || item.id === undefined ? '' : String(item.id),
+    title: title,
+    artist: __mfText(item.artist || item.singer || item.creator, ''),
+    coverUrl: cover,
+    worksNum: works,
+    date: __mfText(item.date || item.publishTime || item.publishDate, ''),
+    description: __mfText(
+      item.description || item.desc || item.briefDesc,
+      ''
+    ),
+    type: type,
+    source: sourceId,
+    raw: item,
+  };
+}
+
+function __mfSearchTyped(source, keyword, page, limit, type) {
+  return Promise.resolve()
+    .then(function () {
+      var plugin = __mfPluginObject();
+      var wanted = String(type || '').toLowerCase();
+      if (wanted !== 'album' && wanted !== 'artist') {
+        return { list: [], isEnd: true };
+      }
+      if (__mfSearchTypeList(plugin).indexOf(wanted) < 0) {
+        return { list: [], isEnd: true, unsupported: true };
+      }
+      var keywordText = __mfText(keyword, '');
+      var pageNumber = typeof page === 'number' && page > 0 ? page : 1;
+      var result = plugin.search(keywordText, pageNumber, wanted);
+      return Promise.resolve(result).then(function (response) {
+        var rawList = [];
+        if (Array.isArray(response)) rawList = response;
+        else if (response && Array.isArray(response.data)) rawList = response.data;
+        var sourceId = __mfSourceId();
+        var list = [];
+        for (var i = 0; i < rawList.length; i++) {
+          var mapped = __mfMapCollectionItem(rawList[i], wanted, sourceId);
+          if (mapped) list.push(mapped);
+        }
+        var isEnd = !(response && response.isEnd === false);
+        return { list: list, isEnd: isEnd, source: sourceId };
+      });
+    })
+    .then(
+      function (value) {
+        return value;
+      },
+      function (error) {
+        if (typeof console !== 'undefined' && console.log) {
+          console.log(
+            '[MusicFree] searchTyped 失败: ' +
+              (error && error.message ? error.message : error)
+          );
+        }
+        return { list: [], isEnd: true };
+      }
+    );
+}
+
+function __mfGetAlbumInfo(source, albumItem) {
+  return Promise.resolve()
+    .then(function () {
+      var plugin = __mfPluginObject();
+      if (typeof plugin.getAlbumInfo !== 'function') {
+        return { list: [], isEnd: true };
+      }
+      return Promise.resolve(plugin.getAlbumInfo(albumItem || {})).then(
+        function (res) {
+          var sourceId = __mfSourceId();
+          var raw = [];
+          if (res && Array.isArray(res.musicList)) raw = res.musicList;
+          else if (res && Array.isArray(res.data)) raw = res.data;
+          var list = [];
+          for (var i = 0; i < raw.length; i++) {
+            var mapped = __mfMapMusicItem(raw[i], sourceId);
+            if (mapped) list.push(mapped);
+          }
+          return {
+            albumItem: __mfMapCollectionItem(
+              (res && res.albumItem) || albumItem || {},
+              'album',
+              sourceId
+            ),
+            list: list,
+            isEnd: !(res && res.isEnd === false),
+          };
+        }
+      );
+    })
+    .then(
+      function (value) {
+        return value;
+      },
+      function (error) {
+        if (typeof console !== 'undefined' && console.log) {
+          console.log(
+            '[MusicFree] getAlbumInfo 失败: ' +
+              (error && error.message ? error.message : error)
+          );
+        }
+        return { list: [], isEnd: true };
+      }
+    );
+}
+
+function __mfGetArtistWorks(source, artistItem, page, type) {
+  return Promise.resolve()
+    .then(function () {
+      var plugin = __mfPluginObject();
+      if (typeof plugin.getArtistWorks !== 'function') {
+        return { list: [], isEnd: true };
+      }
+      var wanted = String(type || 'music').toLowerCase();
+      var pageNumber = typeof page === 'number' && page > 0 ? page : 1;
+      return Promise.resolve(
+        plugin.getArtistWorks(artistItem || {}, pageNumber, wanted)
+      ).then(function (res) {
+        var sourceId = __mfSourceId();
+        var raw = [];
+        if (res && Array.isArray(res.data)) raw = res.data;
+        else if (res && Array.isArray(res.musicList)) raw = res.musicList;
+        var list = [];
+        for (var i = 0; i < raw.length; i++) {
+          var mapped =
+            wanted === 'album'
+              ? __mfMapCollectionItem(raw[i], 'album', sourceId)
+              : __mfMapMusicItem(raw[i], sourceId);
+          if (mapped) list.push(mapped);
+        }
+        return {
+          artistItem: __mfMapCollectionItem(
+            (res && res.artistItem) || artistItem || {},
+            'artist',
+            sourceId
+          ),
+          list: list,
+          isEnd: !(res && res.isEnd === false),
+        };
+      });
+    })
+    .then(
+      function (value) {
+        return value;
+      },
+      function (error) {
+        if (typeof console !== 'undefined' && console.log) {
+          console.log(
+            '[MusicFree] getArtistWorks 失败: ' +
+              (error && error.message ? error.message : error)
+          );
+        }
+        return { list: [], isEnd: true };
+      }
+    );
+}
+
 function __mfMusicUrl(source, musicInfo, quality) {
   return Promise.resolve()
     .then(function () {
@@ -1000,6 +1197,12 @@ Object.defineProperty(__mfContract, 'sourceActions', {
 });
 
 __mfContract.search = __mfSearch;
+__mfContract.searchTyped = __mfSearchTyped;
+__mfContract.getAlbumInfo = __mfGetAlbumInfo;
+__mfContract.getArtistWorks = __mfGetArtistWorks;
+__mfContract.supportedSearchTypes = function () {
+  return __mfSearchTypeList(__mfPluginObject());
+};
 __mfContract.musicUrl = __mfMusicUrl;
 __mfContract.getPic = __mfGetPic;
 __mfContract.getLyric = __mfGetLyric;

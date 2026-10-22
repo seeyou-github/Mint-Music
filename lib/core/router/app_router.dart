@@ -3,6 +3,8 @@ import 'package:go_router/go_router.dart';
 import '../../app/app_shell.dart';
 import '../../features/discover/presentation/discover_page.dart';
 import '../../features/discover/presentation/search_page.dart';
+import '../../features/discover/presentation/collection_detail_page.dart';
+import '../../features/discover/domain/models/search_collection.dart';
 import '../../features/discover/presentation/playlist_detail_page.dart';
 import '../../features/library/presentation/library_page.dart';
 import '../../features/library/presentation/local_playlist_detail_page.dart';
@@ -91,6 +93,16 @@ final appRouter = GoRouter(
                     );
                   },
                 );
+              },
+            ),
+            GoRoute(
+              path: AppRoutes.collectionDetail,
+              builder: (context, state) {
+                final extra = state.extra;
+                if (extra is! SearchCollection) {
+                  return const SizedBox.shrink();
+                }
+                return CollectionDetailPage(collection: extra);
               },
             ),
             GoRoute(

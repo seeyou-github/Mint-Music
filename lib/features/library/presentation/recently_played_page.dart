@@ -5,12 +5,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../core/constants/app_routes.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../application/recently_played_providers.dart';
 import '../domain/models/recently_played.dart';
+import '../../discover/domain/models/search_collection.dart';
 import '../../player/application/playback_context.dart';
 import '../../player/application/playback_controller.dart';
 import '../../player/domain/models/song.dart';
@@ -577,10 +579,20 @@ class _SongCard extends ConsumerWidget {
       case PlaybackSourceType.rank:
         context.push('/playlist/${Uri.encodeComponent(id)}?type=rank');
       case PlaybackSourceType.album:
+        // 打开专辑详情（用歌曲所在平台 + 专辑 id 重新拉取）。
+        context.push(
+          AppRoutes.collectionDetail,
+          extra: SearchCollection(
+            id: id,
+            title: item.sourceName ?? '',
+            type: CollectionType.album,
+            source: item.song.source ?? '',
+            raw: {'id': id},
+          ),
+        );
       case PlaybackSourceType.search:
       case PlaybackSourceType.local:
       case PlaybackSourceType.unknown:
-        // 暂无专辑详情页，其余来源没有可跳转的页面。
         break;
     }
   }

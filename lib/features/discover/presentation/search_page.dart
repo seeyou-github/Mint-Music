@@ -1,7 +1,11 @@
 import 'dart:async';
+import 'dart:io';
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../../../core/constants/app_routes.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
@@ -17,6 +21,8 @@ import '../../player/application/playback_context.dart';
 import '../../library/domain/models/recently_played.dart';
 import '../../library/application/playlist_providers.dart';
 import '../domain/models/playlist.dart';
+import '../domain/models/search_collection.dart';
+import 'collection_detail_page.dart';
 import '../../player/application/playback_controller.dart';
 import '../../player/domain/models/song.dart';
 import '../../plugin/domain/plugin_types.dart';
@@ -140,18 +146,32 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     ref.read(searchPageProvider.notifier).state = 1;
     final currentTab = ref.read(searchTabProvider);
     final sourceId = ref.read(searchSourceIdProvider);
-    if (currentTab == SearchTab.songs) {
-      unawaited(
-        ref
-            .read(searchResultsControllerProvider.notifier)
-            .start(query, sourceId, force: true),
-      );
-    } else {
-      unawaited(
-        ref
-            .read(playlistSearchControllerProvider.notifier)
-            .search(query, sourceId),
-      );
+    switch (currentTab) {
+      case SearchTab.songs:
+        unawaited(
+          ref
+              .read(searchResultsControllerProvider.notifier)
+              .start(query, sourceId, force: true),
+        );
+      case SearchTab.playlists:
+        unawaited(
+          ref
+              .read(playlistSearchControllerProvider.notifier)
+              .search(query, sourceId),
+        );
+      case SearchTab.albums:
+      case SearchTab.artists:
+        unawaited(
+          ref
+              .read(collectionSearchProvider.notifier)
+              .search(
+                query,
+                sourceId,
+                currentTab == SearchTab.albums
+                    ? CollectionType.album
+                    : CollectionType.artist,
+              ),
+        );
     }
   }
 
@@ -314,16 +334,31 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                           _buildSearchTabBar(colors, searchTab),
                         // 根据标签页显示对应结果
                         Expanded(
-                          child: searchTab == SearchTab.songs || selecting
+                          child: selecting
                               ? _buildSearchResults(
                                   colors,
                                   searchState,
                                   currentSongId: currentSongId,
                                 )
-                              : _buildPlaylistResults(
-                                  colors,
-                                  playlistSearchState,
-                                ),
+                              : switch (searchTab) {
+                                  SearchTab.songs => _buildSearchResults(
+                                    colors,
+                                    searchState,
+                                    currentSongId: currentSongId,
+                                  ),
+                                  SearchTab.playlists => _buildPlaylistResults(
+                                    colors,
+                                    playlistSearchState,
+                                  ),
+                                  SearchTab.albums => _buildCollectionResults(
+                                    colors,
+                                    CollectionType.album,
+                                  ),
+                                  SearchTab.artists => _buildCollectionResults(
+                                    colors,
+                                    CollectionType.artist,
+                                  ),
+                                },
                         ),
                       ],
                     ],
@@ -1171,8 +1206,41 @@ class _SearchPageState extends ConsumerState<SearchPage> {
               }
             },
           ),
+          const SizedBox(width: AppSpacing.sm),
+          _buildTabChip(
+            label: context.tr('专辑'),
+            isActive: currentTab == SearchTab.albums,
+            colors: colors,
+            onTap: () => _switchCollectionTab(
+              SearchTab.albums,
+              CollectionType.album,
+            ),
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          _buildTabChip(
+            label: context.tr('作者'),
+            isActive: currentTab == SearchTab.artists,
+            colors: colors,
+            onTap: () => _switchCollectionTab(
+              SearchTab.artists,
+              CollectionType.artist,
+            ),
+          ),
         ],
       ),
+    );
+  }
+
+  /// 切到专辑 / 作者分类：有搜索词就立刻查一次。
+  void _switchCollectionTab(SearchTab tab, CollectionType type) {
+    if (ref.read(searchTabProvider) == tab) return;
+    ref.read(searchTabProvider.notifier).state = tab;
+    final query = ref.read(searchQueryProvider).trim();
+    if (query.isEmpty) return;
+    unawaited(
+      ref
+          .read(collectionSearchProvider.notifier)
+          .search(query, ref.read(searchSourceIdProvider), type),
     );
   }
 
@@ -1200,6 +1268,170 @@ class _SearchPageState extends ConsumerState<SearchPage> {
             fontWeight: FontWeight.w600,
             color: isActive ? colors.textOnPrimary : colors.textSecondary,
           ),
+        ),
+      ),
+    );
+  }
+
+  /// 专辑 / 作者结果（网格）。
+  Widget _buildCollectionResults(ThemeColors colors, CollectionType type) {
+    final state = ref.watch(collectionSearchProvider);
+
+    if (state.unsupported) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.xl),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.info_outline,
+                size: 40,
+                color: colors.textHint.withValues(alpha: 0.6),
+              ),
+              const SizedBox(height: AppSpacing.md),
+              Text(
+                context.tr('当前音源不支持搜索${type.label}'),
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 14, color: colors.textHint),
+              ),
+              const SizedBox(height: AppSpacing.xs),
+              Text(
+                context.tr('换一个支持该能力的插件音源试试'),
+                style: TextStyle(fontSize: 12, color: colors.textHint),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    if (state.loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (state.results.isEmpty) {
+      return Center(
+        child: Text(
+          context.tr(
+            state.query.isEmpty ? '输入关键词开始搜索' : '未找到相关结果',
+          ),
+          style: TextStyle(fontSize: 14, color: colors.textHint),
+        ),
+      );
+    }
+
+    final width = MediaQuery.sizeOf(context).width;
+    final columns = Platform.isAndroid
+        ? 3
+        : math.max(2, (width / 260).ceil());
+    return GridView.builder(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.lg,
+        AppSpacing.sm,
+        AppSpacing.lg,
+        AppSpacing.xxxl,
+      ),
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: columns,
+        mainAxisSpacing: AppSpacing.md,
+        crossAxisSpacing: AppSpacing.md,
+        mainAxisExtent: 210,
+      ),
+      itemCount: state.results.length,
+      itemBuilder: (context, index) =>
+          _buildCollectionCard(colors, state.results[index]),
+    );
+  }
+
+  Widget _buildCollectionCard(ThemeColors colors, SearchCollection item) {
+    final isArtist = item.type == CollectionType.artist;
+    final subtitle = <String>[
+      if (!isArtist && (item.artist ?? '').isNotEmpty) item.artist!,
+      if ((item.date ?? '').isNotEmpty) item.date!,
+      if (item.worksNum > 0) context.tr('${item.worksNum} 首'),
+    ].join(' · ');
+    return GestureDetector(
+      onTap: () => context.push(
+        AppRoutes.collectionDetail,
+        extra: item,
+      ),
+      child: Container(
+        decoration: BoxDecoration(
+          color: colors.surface,
+          borderRadius: BorderRadius.circular(AppRadius.md),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Stack(
+                children: [
+                  Positioned.fill(
+                    child: MusicCoverImage(
+                      url: item.coverUrl,
+                      fit: BoxFit.cover,
+                      errorWidget: Container(
+                        color: colors.surfaceVariant,
+                        child: Icon(
+                          isArtist ? Icons.person : Icons.album,
+                          size: 36,
+                          color: colors.textHint,
+                        ),
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    left: 6,
+                    top: 6,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.5),
+                        borderRadius: BorderRadius.circular(AppRadius.sm),
+                      ),
+                      child: Text(
+                        context.tr(item.type.label),
+                        style: const TextStyle(
+                          fontSize: 10,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    item.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                      color: colors.textPrimary,
+                    ),
+                  ),
+                  if (subtitle.isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 11, color: colors.textHint),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );
