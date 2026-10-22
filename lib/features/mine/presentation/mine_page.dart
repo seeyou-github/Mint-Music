@@ -73,13 +73,11 @@ class MinePage extends ConsumerWidget {
               _MineEntry(
                 icon: Icons.extension_outlined,
                 title: '插件管理',
-                subtitle: '插件的安装、启用与更新',
                 route: AppRoutes.pluginManagement,
               ),
               _MineEntry(
                 icon: Icons.settings_outlined,
                 title: '设置',
-                subtitle: '外观、播放与存储管理',
                 route: AppRoutes.settings,
               ),
             ]),
@@ -88,7 +86,6 @@ class MinePage extends ConsumerWidget {
               _MineEntry(
                 icon: Icons.download_outlined,
                 title: '下载',
-                subtitle: '下载管理与下载记录',
                 route: AppRoutes.download,
               ),
             ]),
@@ -99,8 +96,7 @@ class MinePage extends ConsumerWidget {
                 _MineEntry(
                   icon: Icons.mic_none,
                   title: '听歌识曲',
-                  subtitle: '识别周围正在播放的音乐',
-                  route: AppRoutes.recognize,
+                    route: AppRoutes.recognize,
                 ),
               ]),
             ],
@@ -164,23 +160,14 @@ class MinePage extends ConsumerWidget {
             ),
             const SizedBox(width: AppSpacing.md),
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    context.tr(entry.title),
-                    style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w500,
-                      color: colors.textPrimary,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    context.tr(entry.subtitle),
-                    style: TextStyle(fontSize: 12, color: colors.textHint),
-                  ),
-                ],
+              // 只有标题：Row 默认垂直居中，图标 / 文字 / 箭头对齐。
+              child: Text(
+                context.tr(entry.title),
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w500,
+                  color: colors.textPrimary,
+                ),
               ),
             ),
             Icon(Icons.chevron_right, size: 20, color: colors.textHint),
@@ -195,12 +182,10 @@ class _MineEntry {
   const _MineEntry({
     required this.icon,
     required this.title,
-    required this.subtitle,
     required this.route,
   });
 
   final IconData icon;
   final String title;
-  final String subtitle;
   final String route;
 }

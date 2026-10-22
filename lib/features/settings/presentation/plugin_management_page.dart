@@ -472,19 +472,9 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
           Icon(Icons.system_update_alt, size: 18, color: colors.textSecondary),
           const SizedBox(width: AppSpacing.sm),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  context.tr('自动检测更新'),
-                  style: TextStyle(fontSize: 14, color: colors.textPrimary),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  context.tr('开启后进入插件管理页会自动检查插件更新'),
-                  style: TextStyle(fontSize: 11, color: colors.textHint),
-                ),
-              ],
+            child: Text(
+              context.tr('自动检测更新'),
+              style: TextStyle(fontSize: 14, color: colors.textPrimary),
             ),
           ),
           Switch(
@@ -541,11 +531,6 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
               ),
           ],
         ),
-        const SizedBox(height: AppSpacing.xs),
-        Text(
-          context.tr('关闭后该音源不再出现在搜索与发现页；已收藏的歌曲仍可正常播放'),
-          style: TextStyle(fontSize: 12, color: colors.textHint),
-        ),
         const SizedBox(height: AppSpacing.md),
         ...visible.map((info) => _buildBuiltInSourceCard(colors, info, states)),
         if (removedCount > 0)
@@ -593,23 +578,13 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
           ),
           const SizedBox(width: AppSpacing.md),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  info.name,
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                    color: colors.textPrimary,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  enabled ? context.tr('内置音源 · 已启用') : context.tr('内置音源 · 已关闭'),
-                  style: TextStyle(fontSize: 11, color: colors.textHint),
-                ),
-              ],
+            child: Text(
+              info.name,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+                color: colors.textPrimary,
+              ),
             ),
           ),
           IconButton(
@@ -690,23 +665,13 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
   }
 
   Widget _buildPluginSectionHeader(ThemeColors colors, int pluginCount) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          context.tr('插件音源（$pluginCount）'),
-          style: TextStyle(
-            fontSize: 15,
-            fontWeight: FontWeight.w600,
-            color: colors.textPrimary,
-          ),
-        ),
-        const SizedBox(height: AppSpacing.xs),
-        Text(
-          context.tr('可同时启用多个插件；多个插件声明同一音源时按列表顺序生效'),
-          style: TextStyle(fontSize: 12, color: colors.textHint),
-        ),
-      ],
+    return Text(
+      context.tr('插件音源（$pluginCount）'),
+      style: TextStyle(
+        fontSize: 15,
+        fontWeight: FontWeight.w600,
+        color: colors.textPrimary,
+      ),
     );
   }
 

@@ -370,13 +370,11 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
       children: [
         SettingGroup(
           title: tr('本地备份'),
-          subtitle: tr('把应用设置、插件与收藏歌单打包备份'),
           colors: colors,
           children: [
             SettingRow(
               icon: Icons.backup_outlined,
               title: tr('一键备份'),
-              subtitle: tr('生成压缩包并选择保存位置'),
               trailing: const Icon(Icons.chevron_right, size: 18),
               colors: colors,
               onTap: _busy ? null : _backupToFile,
@@ -385,7 +383,6 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
             SettingRow(
               icon: Icons.settings_backup_restore,
               title: tr('一键还原'),
-              subtitle: tr('选择备份压缩包，覆盖当前配置'),
               trailing: const Icon(Icons.chevron_right, size: 18),
               colors: colors,
               onTap: _busy ? null : _restoreFromFile,
@@ -395,13 +392,11 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
         const SizedBox(height: AppSpacing.md),
         SettingGroup(
           title: tr('WebDAV 备份'),
-          subtitle: tr('把备份上传到自己的 WebDAV 服务器'),
           colors: colors,
           children: [
             SettingRow(
               icon: Icons.cloud_outlined,
               title: tr('WebDAV 地址'),
-              subtitle: tr('例如 https://dav.example.com/back'),
               colors: colors,
               trailing: SizedBox(
                 width: 200,
@@ -441,7 +436,6 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
             SettingRow(
               icon: Icons.key_outlined,
               title: tr('密码'),
-              subtitle: tr('密码输入后无法查看'),
               colors: colors,
               trailing: SizedBox(
                 width: 200,
@@ -462,7 +456,6 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
             SettingRow(
               icon: Icons.devices_outlined,
               title: tr('设备名称'),
-              subtitle: tr('备份文件保存在远端的该设备文件夹下'),
               colors: colors,
               trailing: SizedBox(
                 width: 200,
@@ -482,7 +475,6 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
             SettingRow(
               icon: Icons.cloud_upload_outlined,
               title: tr('备份到 WebDAV'),
-              subtitle: tr('打包后上传到远端设备目录'),
               trailing: const Icon(Icons.chevron_right, size: 18),
               colors: colors,
               onTap: _busy ? null : _backupToWebDav,
@@ -491,7 +483,6 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
             SettingRow(
               icon: Icons.cloud_download_outlined,
               title: tr('从 WebDAV 还原'),
-              subtitle: tr('从远端选择一个备份文件还原'),
               trailing: const Icon(Icons.chevron_right, size: 18),
               colors: colors,
               onTap: _busy ? null : _restoreFromWebDav,
@@ -501,13 +492,11 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
         const SizedBox(height: AppSpacing.md),
         SettingGroup(
           title: tr('歌单同步'),
-          subtitle: tr('多设备之间实时同步收藏的歌单'),
           colors: colors,
           children: [
             SettingRow(
               icon: Icons.sync,
               title: tr('歌单实时同步'),
-              subtitle: tr('开启后每次进入应用、以及歌单变动后都会自动同步'),
               trailing: Switch(
                 value: config.playlistSyncEnabled,
                 onChanged: (v) {
@@ -524,7 +513,6 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
             SettingRow(
               icon: Icons.sync,
               title: tr('立即同步'),
-              subtitle: tr('与远端歌单合并一次，失败时会显示具体原因'),
               trailing: const PlaylistSyncButton(),
               colors: colors,
             ),
