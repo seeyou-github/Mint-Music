@@ -60,6 +60,11 @@ final playbackControllerProvider =
         ref.read(autoQualityDowngradeProvider),
       );
       controller.setAutoSwitchSource(ref.read(autoSwitchSourceProvider));
+      controller.setPreferredSources(ref.read(preferredSourceMapProvider));
+
+      ref.listen(preferredSourceMapProvider, (prev, next) {
+        controller.setPreferredSources(next);
+      });
       controller.onEnsureMusicSourcesReady = () =>
           ref.read(pluginInitializedProvider.future);
 
@@ -192,6 +197,9 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   /// 「当前音源播放失败自动切换音源」开关（默认关闭）。
   /// 关闭时播放失败直接停止播放，不跨音源换源、不自动播放下一首。
   bool _autoSwitchSource = false;
+
+  /// 内置音源 → 优先音源（平台 id → 音源 id），由设置页 / 播放页下拉维护。
+  Map<String, String> _preferredSources = const {};
   Timer? _loadingTimer;
 
   /// 看门狗武装时记录的播放位置，用于判断是否真的「没有进度」。
@@ -240,6 +248,24 @@ class PlaybackController extends StateNotifier<PlaybackState> {
 
   void setAutoSwitchSource(bool enabled) {
     _autoSwitchSource = enabled;
+  }
+
+  /// 更新「内置音源 → 优先音源」映射。
+  void setPreferredSources(Map<String, String> map) {
+    _preferredSources = Map<String, String>.from(map);
+    // 同步给管理器：内置源「第一次」解析播放地址时也优先用这个音源。
+    _musicSourceManager.setPreferredSources(_preferredSources);
+  }
+
+  /// 当前歌曲所在内置源的优先音源 id（没设置返回 null）。
+  String? preferredSourceFor(String source) {
+    final (baseId, pluginId) = MusicSourceManager.splitSourceId(source.trim());
+    if (baseId.isEmpty) return null;
+    // 只有内置源（没有 @插件 后缀）才谈「优先音源」。
+    if (pluginId != null) return null;
+    final preferred = _preferredSources[baseId];
+    if (preferred == null || preferred.isEmpty) return null;
+    return preferred;
   }
 
   void setAudioEffects(AudioEffectsConfig config) {
@@ -1521,7 +1547,17 @@ class PlaybackController extends StateNotifier<PlaybackState> {
 
   /// 换源时要尝试的音源（同平台优先，再其它平台，不区分插件格式）。
   List<String> _fallbackSourceIds(String currentSource) {
-    return _musicSourceManager.playbackFallbackSourceIds(currentSource);
+    // 复制成可修改列表：管理器在「没有其它音源」时返回的是 const 空列表。
+    final ids = List<String>.of(
+      _musicSourceManager.playbackFallbackSourceIds(currentSource),
+    );
+    // 用户给这个内置源指定了「优先音源」→ 把它提到最前面，
+    // 失败后再按原来的顺序（同平台插件 → 其它平台）继续兜底。
+    final preferred = preferredSourceFor(currentSource);
+    if (preferred != null && ids.remove(preferred)) {
+      ids.insert(0, preferred);
+    }
+    return ids;
   }
 
   /// 跨音源换源：遍历 `getCandidateSongs` 返回的候选并按顺序尝试播放。

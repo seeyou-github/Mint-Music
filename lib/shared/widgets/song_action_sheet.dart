@@ -508,12 +508,15 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                       icon: Icons.folder_open_outlined,
                       label: context.tr('打开歌曲所在文件夹'),
                       onTap: () async {
-                        // 先把 messenger 和文案取出来：弹窗关闭后 context 就失效了，
-                        // 后面再提示错误会报错或者提示跑到别的页面上。
+                        // 注意：这个菜单项（_buildActionItem）在调用 onTap 之前
+                        // 已经自己 Navigator.pop 过一次弹层了，这里**不能再 pop**：
+                        // 再 pop 一次会把下面的页面路由（本地页）也弹掉，表现为
+                        // 「右侧界面所有控件看不见」。
+                        // 先把 messenger 和文案取出来：后面是异步的，等 Explorer
+                        // 打开后再用 context 会失效。
                         final messenger = ScaffoldMessenger.of(context);
                         final errorText = context.tr('无法打开所在文件夹');
                         final path = widget.song.filePath ?? '';
-                        Navigator.pop(context);
                         // 打开这首歌实际所在的目录并选中文件，而不是固定打开
                         // 下载目录：本地扫描目录里的歌曲并不在下载目录下。
                         final opened =

@@ -7,9 +7,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/l10n/l10n.dart';
+import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../../../shared/widgets/music_cover_image.dart';
+import '../../../shared/widgets/source_icon.dart';
+import '../../discover/application/search_providers.dart';
+import '../../plugin/application/music_source_manager.dart';
+import '../../plugin/domain/plugin_types.dart';
 import '../application/desktop_lyric_sync.dart';
 import '../application/playback_controller.dart';
 import '../application/playback_ui_providers.dart';
@@ -505,19 +510,14 @@ class _PlayerHeader extends ConsumerWidget {
             ),
           ),
           // 顶部只显示当前使用的音源（居中，与封面居中对齐）。
+          // 内置音源时可以点开，手动指定「优先音源」。
           Expanded(
             child: sourceLabel.isEmpty
                 ? const SizedBox.shrink()
                 : Center(
-                    child: Text(
-                      sourceLabel,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.white.withValues(alpha: 0.6),
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    child: _SourceSelector(
+                      label: sourceLabel,
+                      compact: compact,
                     ),
                   ),
           ),
@@ -541,6 +541,189 @@ class _PlayerHeader extends ConsumerWidget {
         ],
       ),
     );
+  }
+}
+
+/// 顶部「当前音源」标签。
+///
+/// 内置音源（wy / tx / kg / kw / mg）自己没有地址接口，播放地址要由插件解析。
+/// 点这个标签可以给该内置源指定「优先音源」：播放时先试它，失败再自动回退到
+/// 其它音源。每个内置源各自独立保存（见 [preferredSourceMapProvider]）。
+class _SourceSelector extends ConsumerStatefulWidget {
+  const _SourceSelector({required this.label, required this.compact});
+
+  final String label;
+  final bool compact;
+
+  @override
+  ConsumerState<_SourceSelector> createState() => _SourceSelectorState();
+}
+
+class _SourceSelectorState extends ConsumerState<_SourceSelector> {
+  final _anchorKey = GlobalKey();
+
+  /// 当前歌曲所属的内置平台 id（插件音源 / 本地歌曲返回 null）。
+  String? get _baseSourceId {
+    final source = ref.watch(
+      playbackControllerProvider.select((s) => s.currentSong?.source ?? ''),
+    );
+    if (source.isEmpty || source == 'local') return null;
+    final (baseId, pluginId) = MusicSourceManager.splitSourceId(source);
+    if (pluginId != null) return null;
+    return MusicSourceManager.builtInPlatformIds.contains(baseId)
+        ? baseId
+        : null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final baseId = _baseSourceId;
+    final label = Text(
+      widget.label,
+      textAlign: TextAlign.center,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(
+        fontSize: widget.compact ? 11 : 12,
+        color: Colors.white.withValues(alpha: 0.6),
+      ),
+    );
+    if (baseId == null) return label;
+    // 内置源：标签可点，右边带一个小箭头提示可以选音源。
+    return GestureDetector(
+      key: _anchorKey,
+      behavior: HitTestBehavior.opaque,
+      onTap: () => _showSourceMenu(baseId),
+      child: Tooltip(
+        message: context.tr('选择优先音源'),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Flexible(child: label),
+            Icon(
+              Icons.arrow_drop_down,
+              size: 16,
+              color: Colors.white.withValues(alpha: 0.45),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showSourceMenu(String baseId) async {
+    final box =
+        _anchorKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null) return;
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    final position = RelativeRect.fromRect(
+      Rect.fromPoints(
+        box.localToGlobal(Offset.zero, ancestor: overlay),
+        box.localToGlobal(box.size.bottomRight(Offset.zero), ancestor: overlay),
+      ),
+      Offset.zero & overlay.size,
+    );
+
+    // 与主界面的音源切换列表一致：所有已开启的音源（不含「聚合搜索」）。
+    final sources = ref
+        .read(allAvailableSourcesProvider)
+        .where((s) => s.id != 'all')
+        .toList(growable: false);
+    if (sources.isEmpty) return;
+
+    final colors = ref.read(themeColorsProvider);
+    final preferred = ref.read(preferredSourceMapProvider)[baseId];
+
+    final selected = await showMenu<String>(
+      context: context,
+      position: position,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppRadius.md),
+      ),
+      color: colors.surface,
+      elevation: 8,
+      items: [
+        for (final source in sources)
+          PopupMenuItem<String>(
+            value: source.id,
+            height: 42,
+            child: Row(
+              children: [
+                SourceIcon(
+                  sourceId: SourceInfo.baseIdOf(source.id),
+                  size: 16,
+                  label: source.name,
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: Text(
+                    source.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: source.id == preferred
+                          ? colors.primary
+                          : colors.textPrimary,
+                      fontWeight: source.id == preferred
+                          ? FontWeight.w500
+                          : FontWeight.normal,
+                    ),
+                  ),
+                ),
+                if (source.id == preferred)
+                  Icon(Icons.check, size: 16, color: colors.primary),
+              ],
+            ),
+          ),
+      ],
+    );
+    if (selected == null) return;
+    final name = sources
+        .where((s) => s.id == selected)
+        .map((s) => s.name)
+        .firstOrNull;
+    await _applySource(baseId, selected, name ?? selected);
+  }
+
+  /// 保存优先音源，并立刻用新音源重播当前歌曲。
+  Future<void> _applySource(
+    String baseId,
+    String sourceId,
+    String sourceName,
+  ) async {
+    await setPreferredSource(
+      ref,
+      baseSourceId: baseId,
+      sourceId: sourceId,
+    );
+    if (!mounted) return;
+
+    final playback = ref.read(playbackControllerProvider);
+    final index = playback.currentIndex;
+    final position = playback.position;
+    final wasPlaying = playback.isPlaying;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(context.tr('已设置优先音源：$sourceName')),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+    if (index < 0) return;
+
+    // 重新解析播放地址：优先音源失败时控制器会自动回退到其它音源。
+    try {
+      await ref.read(playbackControllerProvider.notifier).playSongAt(index);
+      if (position > Duration.zero) {
+        await ref.read(playbackControllerProvider.notifier).seek(position);
+      }
+      if (!wasPlaying) {
+        await ref.read(playbackControllerProvider.notifier).pause();
+      }
+    } catch (e) {
+      debugPrint('[FullPlayer] 切换优先音源后重播失败: $e');
+    }
   }
 }
 
@@ -924,21 +1107,18 @@ class _PlayerSongInfo extends ConsumerWidget {
           unawaited(sync.enableDesktopLyric());
         }
       },
-      icon: SizedBox(
-        width: compact ? 18 : 24,
-        height: compact ? 18 : 24,
-        child: Center(
-          child: Text(
-            '词',
-            style: TextStyle(
-              fontSize: compact ? 18 : 24,
-              height: 1,
-              fontWeight: FontWeight.w600,
-              color: desktopLyricEnabled
-                  ? themeColors.primary
-                  : Colors.white.withValues(alpha: 0.7),
-            ),
-          ),
+      // 用文字「词」当图标：不要把文字塞进和字号一样大的 SizedBox，
+      // 否则中文字形的上下会超出 em 框而被裁掉（表现为图标显示不全）。
+      // 交给 IconButton 自己居中，字号略小于图标尺寸即可。
+      icon: Text(
+        '词',
+        style: TextStyle(
+          fontSize: compact ? 15 : 19,
+          height: 1.25,
+          fontWeight: FontWeight.w600,
+          color: desktopLyricEnabled
+              ? themeColors.primary
+              : Colors.white.withValues(alpha: 0.7),
         ),
       ),
       padding: compact ? EdgeInsets.zero : null,

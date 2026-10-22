@@ -157,7 +157,7 @@ class _LyricScrollViewState extends State<LyricScrollView>
         if (!mounted) return;
         _pendingAutoScroll = false;
         _initialScrollQueued = false;
-        _scrollToActiveLine(force: true, preferJump: true);
+        _scrollToActiveLine(force: true, preferJump: true, initial: true);
         // 页面刚打开/路由动画还没结束时，歌词行可能尚未完成排版，
         // 上面的定位会退回估算位置。等布局稳定后再校正一次，避免要等到
         // 下一句歌词才把当前行滚到中间。
@@ -371,7 +371,11 @@ class _LyricScrollViewState extends State<LyricScrollView>
     return closestIndex;
   }
 
-  void _scrollToActiveLine({bool force = false, bool preferJump = false}) {
+  void _scrollToActiveLine({
+    bool force = false,
+    bool preferJump = false,
+    bool initial = false,
+  }) {
     if (!mounted || _userScrolling || !_scrollController.hasClients) return;
     if (_autoScrolling && !preferJump) return;
 
@@ -383,9 +387,11 @@ class _LyricScrollViewState extends State<LyricScrollView>
     if (lineContext == null) {
       // 歌词行还没排版好（拿不到 RenderBox）：稍后再试几帧，
       // 否则只能用估算位置，会偏掉，导致「正在播放的那一行」没在中间。
-      // 页面切换 / 路由动画期间布局会晚几帧才稳定，这里不能只等一两帧，
-      // 否则初始定位会失败，只能等下一句歌词才重新滚动。
-      const maxRetry = 10;
+      // 页面切换 / 路由动画期间布局会晚几帧才稳定，等两帧再估算即可。
+      // 但「刚打开页面」时列表还停在顶部，目标行几乎一定不在构建范围内，
+      // 再等下去只会白等好几帧（表现为打开页面后要过一会儿才定位），
+      // 所以初始定位直接按估算位置跳过去，下一帧再精确居中。
+      final maxRetry = initial ? 0 : 2;
       if (_initialScrollRetry < maxRetry) {
         _initialScrollRetry++;
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -963,7 +969,6 @@ class _PaintedPlainLine extends StatelessWidget {
           fontSize: fontSize,
           activeColor: activeColor,
           inactiveColor: inactiveColor,
-          isActive: isActive,
           fontFamily: fontFamily,
           fontWeight: fontWeight,
           textScaler: MediaQuery.textScalerOf(context),
@@ -1081,7 +1086,6 @@ class _PlainLineLayout {
     required double fontSize,
     required Color activeColor,
     required Color inactiveColor,
-    required bool isActive,
     required String? fontFamily,
     required FontWeight fontWeight,
     required TextScaler textScaler,
@@ -1092,7 +1096,6 @@ class _PlainLineLayout {
       (fontSize * 100).round(),
       activeColor.toARGB32(),
       inactiveColor.toARGB32(),
-      isActive,
       fontFamily ?? '',
       fontWeight.value,
       textScaler.scale(fontSize).round(),
@@ -1106,7 +1109,6 @@ class _PlainLineLayout {
       fontSize: fontSize,
       activeColor: activeColor,
       inactiveColor: inactiveColor,
-      isActive: isActive,
       fontFamily: fontFamily,
       fontWeight: fontWeight,
       textScaler: textScaler,
@@ -1124,7 +1126,6 @@ class _PlainLineLayout {
     required double fontSize,
     required Color activeColor,
     required Color inactiveColor,
-    required bool isActive,
     required String? fontFamily,
     required FontWeight fontWeight,
     required TextScaler textScaler,
@@ -1152,9 +1153,10 @@ class _PlainLineLayout {
       )..layout();
     }
 
-    final dimPainter = painter(
-      isActive ? activeColor.withValues(alpha: 0.45) : inactiveColor,
-    );
+    // 还没唱到的部分统一用「未播放颜色」——正在播放的这一行也一样：
+    // 只有已经唱到的部分才用已播放颜色（逐字填充），这样当前行看起来是
+    // 「从已播放颜色慢慢擦成未播放颜色」，而不是整行都偏亮。
+    final dimPainter = painter(inactiveColor);
     final brightPainter = painter(activeColor);
     return _PlainLineLayout(
       // 空行（纯占位）也要占一个行高，否则行距会塌陷。
@@ -1478,8 +1480,10 @@ class _YrcLineLayout {
       fontWeight: fontWeight,
       letterSpacing: -0.25,
     );
+    // 还没唱到的部分用「未播放颜色」（当前行也一样，只有已唱到的词才用
+    // 已播放颜色），非当前行再压暗一点。
     final dimColor = isActive
-        ? activeColor.withValues(alpha: 0.3)
+        ? inactiveColor
         : inactiveColor.withValues(alpha: 0.85);
     final finishedColor = activeColor.withValues(alpha: isActive ? 1 : 0.5);
 

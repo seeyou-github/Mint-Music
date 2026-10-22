@@ -682,6 +682,44 @@ class MusicSourceManager {
     return sourceId;
   }
 
+  /// 内置音源 → 优先音源（平台 id → 音源 id）。
+  ///
+  /// 由播放控制器在设置变化时同步进来：内置源第一次解析播放地址时，
+  /// 优先使用用户指定的音源，失败后再按原顺序尝试其它音源。
+  Map<String, String> _preferredSources = const {};
+
+  void setPreferredSources(Map<String, String> map) {
+    _preferredSources = Map<String, String>.from(map);
+  }
+
+  /// 解析播放地址时使用的 host 顺序：优先音源对应的插件排在最前面。
+  ///
+  /// 只影响「取播放地址」，不影响搜索结果的顺序。
+  List<PluginHost> _orderedHostsForSource(String sourceId) {
+    final hosts = _findPluginHostsForSource(sourceId);
+    if (hosts.length <= 1) return hosts;
+    final (baseId, pluginId) = splitSourceId(sourceId);
+    // 已经指定了具体插件（`平台id@插件id`）时不需要再排序。
+    if (pluginId != null) return hosts;
+
+    final preferred = _preferredSources[baseId];
+    if (preferred == null || preferred.isEmpty) return hosts;
+    final (preferredBase, preferredPlugin) = splitSourceId(preferred);
+
+    bool matches(PluginHost host) {
+      final hostPluginId = _pluginService.getPluginIdForHost(host);
+      if (preferredPlugin != null) return hostPluginId == preferredPlugin;
+      return _getSourceIdForHost(host, preferredBase) != null;
+    }
+
+    final preferredHosts = hosts.where(matches).toList(growable: false);
+    if (preferredHosts.isEmpty) return hosts;
+    return <PluginHost>[
+      ...preferredHosts,
+      ...hosts.where((host) => !matches(host)),
+    ];
+  }
+
   List<PluginHost> _findPluginHostsForSource(String sourceId) {
     final (baseId, pluginId) = splitSourceId(sourceId);
     final hosts = <PluginHost>[];
@@ -1489,7 +1527,7 @@ class MusicSourceManager {
     // the provider-specific song metadata and requested quality. In
     // particular, Kuwo's legacy endpoint can return HTTP 200 for its
     // free-listening permission prompt instead of the requested song.
-    final hosts = pluginHosts ?? _findPluginHostsForSource(sourceId);
+    final hosts = pluginHosts ?? _orderedHostsForSource(sourceId);
     for (final host in hosts) {
       final pluginSourceId = _getSourceIdForHost(host, sourceId);
       if (pluginSourceId == null) continue;

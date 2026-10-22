@@ -242,6 +242,58 @@ final lyricFontFamilyProvider = StateProvider<String>(
 final lyricFontRateProvider = StateProvider<double>((ref) => 0.9);
 final lyricFontWeightProvider = StateProvider<int>((ref) => 500);
 
+/// 内置音源 → 优先音源（平台 id → 音源 id）。
+///
+/// 内置音源（wy / tx / kg / kw / mg）自己没有地址接口，播放时由插件解析。
+/// 这里记录用户为每个内置源指定的「优先音源」：解析播放地址时先试它，
+/// 失败再按原有顺序尝试其它音源。
+///
+/// 例：`{'wy': 'wy@luoxue', 'kg': 'kg@musicfree'}`
+final preferredSourceMapProvider = StateProvider<Map<String, String>>(
+  (ref) => const {},
+);
+
+/// 解析持久化的优先音源 JSON。
+Map<String, String> _decodePreferredSources(String raw) {
+  if (raw.trim().isEmpty) return const {};
+  try {
+    final decoded = jsonDecode(raw);
+    if (decoded is! Map) return const {};
+    final result = <String, String>{};
+    decoded.forEach((key, value) {
+      final k = '$key'.trim();
+      final v = '$value'.trim();
+      if (k.isNotEmpty && v.isNotEmpty) result[k] = v;
+    });
+    return result;
+  } catch (_) {
+    return const {};
+  }
+}
+
+/// 设置某个内置源的优先音源（[sourceId] 为空表示清除）。
+Future<void> setPreferredSource(
+  WidgetRef ref, {
+  required String baseSourceId,
+  required String sourceId,
+}) async {
+  final base = baseSourceId.trim();
+  if (base.isEmpty) return;
+  final current = Map<String, String>.from(ref.read(preferredSourceMapProvider));
+  if (sourceId.trim().isEmpty) {
+    current.remove(base);
+  } else {
+    current[base] = sourceId.trim();
+  }
+  ref.read(preferredSourceMapProvider.notifier).state = current;
+  try {
+    final svc = await ref.read(settingsServiceProvider.future);
+    await svc.setPreferredSourceMap(jsonEncode(current));
+  } catch (e) {
+    debugPrint('[Settings] 保存优先音源失败: $e');
+  }
+}
+
 /// 歌词字体颜色（hex ARGB 字符串，空表示使用默认/沉浸色）
 final lyricFontColorProvider = StateProvider<String>((ref) => '');
 
@@ -466,6 +518,9 @@ final settingsInitProvider = FutureProvider<void>((ref) async {
       await _migrateLyricFontWeight(svc);
 
   ref.read(lyricFontColorProvider.notifier).state = svc.getLyricFontColor();
+  // 内置音源 → 优先音源（每个内置源可单独指定）
+  ref.read(preferredSourceMapProvider.notifier).state =
+      _decodePreferredSources(svc.getPreferredSourceMap());
   // 「歌词跟随播放」以前默认关闭（歌词直接跳到中间），现在默认开启。
   // 这个开关没有界面入口，旧值一律迁移成开启。
   ref.read(appearanceJumpLyricProvider.notifier).state = true;

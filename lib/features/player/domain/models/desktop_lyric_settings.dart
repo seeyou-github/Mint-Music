@@ -38,7 +38,7 @@ class DesktopLyricSettings {
   static DesktopLyricSettings get defaults => DesktopLyricSettings(
     enable: false,
     // Windows 上桌面歌词是独立窗口，字号比手机大得多。
-    fontSize: Platform.isWindows ? 42 : 18,
+    fontSize: Platform.isWindows ? 50 : 18,
     // 水平居中；Windows 靠近底部（不贴边），Android 在顶部状态栏下方。
     positionX: 50,
     positionY: Platform.isWindows ? 85 : 0,
@@ -46,6 +46,11 @@ class DesktopLyricSettings {
     unplayColor: 0xFFFFFFFF,
     shadowColor: 0x99000000,
   );
+
+  /// 当前配置版本。
+  ///
+  /// 1 → 2 → 3 改过字号 / 位置的默认值；4 把 Windows 字号默认值改成 50。
+  static const int configVersion = 4;
 
   /// 是否启用桌面歌词。
   final bool enable;
@@ -90,7 +95,7 @@ class DesktopLyricSettings {
 
   Map<String, dynamic> toJson() => {
     // 配置版本：字号 / 位置的默认值改过，旧版本需要重新取默认值。
-    'v': 3,
+    'v': configVersion,
     'enable': enable,
     'fontSize': fontSize,
     'positionX': positionX,
@@ -103,23 +108,26 @@ class DesktopLyricSettings {
   static DesktopLyricSettings fromJson(Map<String, dynamic> json) {
     num? readNum(dynamic v) => v is num ? v : null;
 
-    // 旧版本（v < 3）保存的字号 / 位置是按老默认值算的（Windows 字号曾是
-    // 45），这里按新的默认值重新给（颜色保留用户的选择）。
-    final isLegacy = json['v'] != 3;
+    final version = json['v'] is num ? (json['v'] as num).toInt() : 0;
+    // 字号默认值改过（42 → 50）：旧版本保存的是按老默认值算出来的字号，
+    // 这里直接换成新的默认值，用户改过的大小也只能放弃（否则看不出变化）。
+    final legacyFontSize = version < configVersion;
+    // 位置：v3 之前的默认值与布局都不同，一并重置；v3 起保留用户拖动的位置。
+    final legacyPosition = version < 3;
 
     return DesktopLyricSettings(
       enable: json['enable'] as bool? ?? defaults.enable,
-      fontSize: isLegacy
+      fontSize: legacyFontSize
           ? defaults.fontSize
           : (readNum(json['fontSize'])?.toDouble() ?? defaults.fontSize).clamp(
               12.0,
               80.0,
             ),
-      positionX: isLegacy
+      positionX: legacyPosition
           ? defaults.positionX
           : (readNum(json['positionX'])?.toDouble() ?? defaults.positionX)
                 .clamp(0.0, 100.0),
-      positionY: isLegacy
+      positionY: legacyPosition
           ? defaults.positionY
           : (readNum(json['positionY'])?.toDouble() ?? defaults.positionY)
                 .clamp(0.0, 100.0),

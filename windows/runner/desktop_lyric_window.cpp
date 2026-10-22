@@ -133,7 +133,9 @@ DesktopLyricWindow& DesktopLyricWindow::Instance() {
 }
 
 int DesktopLyricWindow::GetLineHeight() const {
-  return font_size_ * 3 / 2;
+  // 行高 = 字号 × 1.25：字形本身约 1em，剩下 0.25em 是两行之间的间距
+  // （原来是 1.5 倍，行间空白 0.5em，按要求减少一半）。
+  return font_size_ * 5 / 4;
 }
 
 int DesktopLyricWindow::GetSubLineHeight() const {
