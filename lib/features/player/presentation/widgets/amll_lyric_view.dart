@@ -17,6 +17,9 @@ class AmllLyricView extends StatefulWidget {
   final List<LyricLine> lines;
   final int currentTimeMs;
   final bool isPlaying;
+
+  /// 当前时间来自进度条拖动预览，应直接定位，不播放弹簧动画。
+  final bool isSeekPreview;
   final bool hasYrc;
   final Color activeColor;
   final Color inactiveColor;
@@ -35,6 +38,7 @@ class AmllLyricView extends StatefulWidget {
     required this.lines,
     required this.currentTimeMs,
     this.isPlaying = false,
+    this.isSeekPreview = false,
     this.hasYrc = false,
     this.activeColor = Colors.white,
     this.inactiveColor = const Color(0x40FFFFFF),
@@ -67,6 +71,8 @@ class _AmllLyricViewState extends State<AmllLyricView>
 
   bool _userScrolling = false;
   bool _autoScrolling = false;
+  bool _programmaticScroll = false;
+  bool _jumpNextScroll = false;
   int _scrollTargetIndex = -1;
   int _centerLineIndex = -1;
   int _linesSignature = 0;
@@ -91,7 +97,7 @@ class _AmllLyricViewState extends State<AmllLyricView>
     _activeSignature = _makeActiveSignature(_activeIndicesFor(_clock.timeMs));
     _scrollController.addListener(_handleScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _scrollToActiveLine(force: true);
+      _scrollToActiveLine(force: true, preferJump: true);
     });
   }
 
@@ -106,14 +112,16 @@ class _AmllLyricViewState extends State<AmllLyricView>
       _centerLineIndex = -1;
       _syncClock(widget.currentTimeMs, widget.isPlaying);
       _activeSignature = _makeActiveSignature(_activeIndicesFor(_clock.timeMs));
+      _jumpNextScroll = false;
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        _scrollToActiveLine(force: true);
+        _scrollToActiveLine(force: true, preferJump: true);
       });
       setState(() {});
       return;
     }
     if (oldWidget.currentTimeMs != widget.currentTimeMs ||
-        oldWidget.isPlaying != widget.isPlaying) {
+        oldWidget.isPlaying != widget.isPlaying ||
+        oldWidget.isSeekPreview != widget.isSeekPreview) {
       _syncClock(widget.currentTimeMs, widget.isPlaying);
       _updateActiveLinesAndScroll();
     }
@@ -160,7 +168,8 @@ class _AmllLyricViewState extends State<AmllLyricView>
   void _syncClock(int positionMs, bool isPlaying) {
     final now = DateTime.now().millisecondsSinceEpoch;
     final drift = (positionMs - _clock.timeMs).abs();
-    if (isPlaying && _ticker.isActive && drift <= 200) {
+    final previewing = widget.isSeekPreview;
+    if (!previewing && isPlaying && _ticker.isActive && drift <= 200) {
       final correction = ((positionMs - _clock.timeMs) * 0.50).round();
       _anchorPositionMs = _clock.timeMs + correction;
       _anchorWallMs = now;
@@ -168,14 +177,16 @@ class _AmllLyricViewState extends State<AmllLyricView>
       _anchorPositionMs = positionMs;
       _anchorWallMs = now;
       _clock.setTime(positionMs);
-      if (drift > 500) {
-        _activeSignature = 0;
+      if (previewing || drift > 500) {
         _userScrolling = false;
         _userScrollTimer?.cancel();
         _scrollTargetIndex = -1;
+        _jumpNextScroll = true;
       }
     }
-    if (isPlaying && !_ticker.isActive) {
+    if (previewing) {
+      if (_ticker.isActive) _ticker.stop();
+    } else if (isPlaying && !_ticker.isActive) {
       _ticker.start();
     } else if (!isPlaying && _ticker.isActive) {
       _ticker.stop();
@@ -193,14 +204,28 @@ class _AmllLyricViewState extends State<AmllLyricView>
   void _updateActiveLinesAndScroll({bool fromTicker = false}) {
     final activeIndices = _activeIndicesFor(_clock.timeMs);
     final signature = _makeActiveSignature(activeIndices);
-    if (signature == _activeSignature) return;
-    _activeSignature = signature;
-    if (!mounted) return;
-    setState(() {});
+    final lineChanged = signature != _activeSignature;
+
+    if (!lineChanged && _scrollTargetIndex >= 0) {
+      _jumpNextScroll = false;
+      return;
+    }
+
+    if (lineChanged) {
+      _activeSignature = signature;
+      if (!mounted) return;
+      setState(() {});
+    }
+
     if (!_userScrolling) {
+      final preferJump = _jumpNextScroll;
+      _jumpNextScroll = false;
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        _scrollToActiveLine(force: true);
+        if (!mounted) return;
+        _scrollToActiveLine(force: true, preferJump: preferJump);
       });
+    } else {
+      _jumpNextScroll = false;
     }
   }
 
@@ -226,7 +251,7 @@ class _AmllLyricViewState extends State<AmllLyricView>
   }
 
   void _handleScroll() {
-    if (_autoScrolling) return;
+    if (_autoScrolling || _programmaticScroll) return;
     if (!_userScrolling) {
       setState(() => _userScrolling = true);
     }
@@ -267,19 +292,20 @@ class _AmllLyricViewState extends State<AmllLyricView>
     return closestIndex;
   }
 
-  void _scrollToActiveLine({bool force = false}) {
-    if (!mounted ||
-        _userScrolling ||
-        _autoScrolling ||
-        !_scrollController.hasClients)
-      return;
+  void _scrollToActiveLine({bool force = false, bool preferJump = false}) {
+    if (!mounted || _userScrolling || !_scrollController.hasClients) return;
+    if (_autoScrolling && !preferJump) return;
+    if (preferJump) {
+      _springCtrl.stop();
+      _autoScrolling = false;
+    }
     final targetIndex = _activeScrollTargetIndex();
     if (targetIndex < 0 || targetIndex >= _lineKeys.length) return;
     if (!force && targetIndex == _scrollTargetIndex) return;
 
     final lineContext = _lineKeys[targetIndex].currentContext;
     if (lineContext == null) {
-      _estimateScrollToIndex(targetIndex);
+      _estimateScrollToIndex(targetIndex, preferJump: preferJump);
       return;
     }
 
@@ -299,21 +325,28 @@ class _AmllLyricViewState extends State<AmllLyricView>
         lineOffset.dy -
         (scrollBox.size.height - lineBox.size.height) * 0.5;
 
-    _animateToOffsetSpring(targetOffset);
+    _animateToOffsetSpring(targetOffset, preferJump: preferJump);
     _scrollTargetIndex = targetIndex;
   }
 
-  void _estimateScrollToIndex(int index) {
+  void _estimateScrollToIndex(int index, {bool preferJump = false}) {
     final estimatedLineHeight = max(48.0, widget.mainFontSize * 2.4);
     final viewportHeight = _scrollController.position.viewportDimension;
     final verticalPadding = viewportHeight * 0.45;
     final targetOffset = verticalPadding + index * estimatedLineHeight;
-    _animateToOffsetSpring(targetOffset);
+    _animateToOffsetSpring(targetOffset, preferJump: preferJump);
     _scrollTargetIndex = index;
+
+    // 估算跳转后目标行通常已经进入构建范围，下一帧再精确居中一次。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || index >= _lineKeys.length) return;
+      if (_lineKeys[index].currentContext == null) return;
+      _scrollToActiveLine(force: true, preferJump: true);
+    });
   }
 
   /// Apple Music 风格弹簧滚动
-  void _animateToOffsetSpring(double targetOffset) {
+  void _animateToOffsetSpring(double targetOffset, {bool preferJump = false}) {
     final position = _scrollController.position;
     final clamped = targetOffset.clamp(
       position.minScrollExtent,
@@ -322,14 +355,27 @@ class _AmllLyricViewState extends State<AmllLyricView>
     final start = position.pixels;
     final distance = clamped - start;
 
-    if (!widget.enableJumpLyric) {
+    // 拖动进度条、切歌等远距离定位直接跳过去；弹簧动画即使开启也不应
+    // 让正在播放的歌词慢慢“飞”到中间。
+    final jump =
+        preferJump || distance.abs() > position.viewportDimension * 0.85;
+    if (jump || !widget.enableJumpLyric) {
+      _springCtrl.stop();
       _autoScrolling = false;
+      _programmaticScroll = true;
       position.jumpTo(clamped);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _programmaticScroll = false;
+      });
       return;
     }
 
     if (distance.abs() < 1.0) {
+      _programmaticScroll = true;
       position.jumpTo(clamped);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _programmaticScroll = false;
+      });
       return;
     }
 

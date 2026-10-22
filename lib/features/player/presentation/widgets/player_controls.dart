@@ -28,6 +28,9 @@ class PlayerProgressBar extends StatefulWidget {
   final Duration position;
   final Duration duration;
   final ValueChanged<double> onSeek;
+
+  /// 拖动过程中的歌词预览（null 表示结束预览）。
+  final ValueChanged<double?>? onSeekPreview;
   final String currentQuality;
   final List<String> availableQualities;
   final ValueChanged<String>? onQualityTap;
@@ -41,6 +44,7 @@ class PlayerProgressBar extends StatefulWidget {
     required this.position,
     required this.duration,
     required this.onSeek,
+    this.onSeekPreview,
     this.currentQuality = '320k',
     this.availableQualities = const [],
     this.onQualityTap,
@@ -150,14 +154,23 @@ class _PlayerProgressBarState extends State<PlayerProgressBar> {
                 _isDragging = true;
                 _dragProgress = _getProgress(d.globalPosition);
               });
+              widget.onSeekPreview?.call(_dragProgress);
             },
             onPanUpdate: (d) {
               setState(() {
                 _dragProgress = _getProgress(d.globalPosition);
               });
+              widget.onSeekPreview?.call(_dragProgress);
             },
             onPanEnd: (_) {
               widget.onSeek(_dragProgress);
+              widget.onSeekPreview?.call(null);
+              setState(() {
+                _isDragging = false;
+              });
+            },
+            onPanCancel: () {
+              widget.onSeekPreview?.call(null);
               setState(() {
                 _isDragging = false;
               });

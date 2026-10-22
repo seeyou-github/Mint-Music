@@ -12,6 +12,7 @@ import '../../../core/utils/responsive_layout.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../application/desktop_lyric_sync.dart';
 import '../application/playback_controller.dart';
+import '../application/playback_ui_providers.dart';
 import '../application/full_player_visibility.dart';
 import '../application/lyric_controller.dart';
 import '../domain/models/song.dart';
@@ -688,6 +689,8 @@ class _PlayerLyricsPage extends ConsumerWidget {
     final position = ref.watch(
       playbackControllerProvider.select((s) => s.position),
     );
+    final seekPreview = ref.watch(seekPreviewPositionProvider);
+    final lyricPosition = seekPreview ?? position;
     final isPlaying = ref.watch(
       playbackControllerProvider.select((s) => s.isPlaying),
     );
@@ -779,8 +782,9 @@ class _PlayerLyricsPage extends ConsumerWidget {
                     child: AmllLyricPlayer(
                       key: amllKey,
                       lines: lyricState.lines,
-                      currentTimeMs: position.inMilliseconds,
+                      currentTimeMs: lyricPosition.inMilliseconds,
                       isPlaying: isPlaying,
+                      isSeekPreview: seekPreview != null,
                       fontSizeRate: watchFontRate * layoutScale,
                       fontFamily: watchFontFamily,
                       fontWeight: watchFontWeight,
@@ -811,8 +815,9 @@ class _PlayerLyricsPage extends ConsumerWidget {
                 maintainInteractivity: false,
                 child: LyricScrollView(
                   lines: lyricState.lines,
-                  currentTimeMs: position.inMilliseconds,
+                  currentTimeMs: lyricPosition.inMilliseconds,
                   isPlaying: isPlaying,
+                  isSeekPreview: seekPreview != null,
                   hasYrc: hasYrc,
                   activeColor: activeColor,
                   inactiveColor: inactiveColor,
@@ -1058,12 +1063,21 @@ class _PlayerProgressBar extends ConsumerWidget {
       availableQualities: availableQualities,
       onQualityTap: (quality) =>
           ref.read(playbackControllerProvider.notifier).setQuality(quality),
+      onSeekPreview: (value) {
+        ref.read(seekPreviewPositionProvider.notifier).state =
+            value == null || duration <= Duration.zero
+            ? null
+            : Duration(
+                milliseconds: (value * duration.inMilliseconds).round(),
+              );
+      },
       onSeek: (value) {
         ref
             .read(playbackControllerProvider.notifier)
             .seek(
               Duration(milliseconds: (value * duration.inMilliseconds).round()),
             );
+        ref.read(seekPreviewPositionProvider.notifier).state = null;
       },
     );
   }

@@ -238,6 +238,13 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   Duration _lastEmittedPosition = Duration.zero;
   static const Duration _positionThrottle = Duration(milliseconds: 200);
 
+  /// seek 后等待位置流追上目标位置的临时锁。
+  ///
+  /// 部分播放器在 seek 完成前还会吐出旧位置，如果直接接受会把刚更新的
+  /// 进度条/歌词拽回旧位置。位置接近目标后立即解除。
+  Duration? _seekTarget;
+  Timer? _seekTargetTimer;
+
   bool _rememberProgress = true;
   bool _autoQualityDowngrade = false;
 
@@ -586,6 +593,17 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     }
     _positionSub = _audioHandler.positionStream.listen((position) {
       if (mounted) {
+        final seekTarget = _seekTarget;
+        if (seekTarget != null) {
+          // seek 完成前可能还有旧位置事件，先忽略，避免歌词/进度条回跳。
+          if ((position - seekTarget).abs() >
+              const Duration(milliseconds: 500)) {
+            return;
+          }
+          _seekTarget = null;
+          _seekTargetTimer?.cancel();
+          _seekTargetTimer = null;
+        }
         final diff = (position - _lastEmittedPosition).abs();
         if (diff >= _positionThrottle) {
           _lastEmittedPosition = position;
@@ -736,6 +754,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     if (index < 0 || index >= state.queue.length) return;
 
     _cancelPendingAutoNext();
+    _clearSeekTarget();
     // playSongAt 总是会重新加载音源（setAudioSource），恢复会话的
     // _needsUrlRefresh 标记随之失效。
     // 否则：启动恢复会话 → 搜索播放（setQueue 不清此标记）→ 暂停 →
@@ -1405,11 +1424,30 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     }
   }
 
+  void _clearSeekTarget() {
+    _seekTargetTimer?.cancel();
+    _seekTargetTimer = null;
+    _seekTarget = null;
+  }
+
   Future<void> seek(Duration position) async {
     _cancelPendingAutoNext();
     // 用户主动拖拽进度条，清除 completed 标记
     _justCompleted = false;
-    await _audioHandler.seek(position);
+
+    var target = position;
+    if (target < Duration.zero) target = Duration.zero;
+
+    // 乐观更新，让进度条和歌词在 seek 完成前就响应，而不是等待
+    // 200ms 节流的位置流。
+    _clearSeekTarget();
+    _seekTarget = target;
+    if (mounted) {
+      state = state.copyWith(position: target);
+    }
+    _seekTargetTimer = Timer(const Duration(seconds: 2), _clearSeekTarget);
+
+    await _audioHandler.seek(target);
   }
 
   Future<void> setSpeed(double speed) async {
@@ -2493,6 +2531,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     _loadingTimer?.cancel();
     _loadingTimer = null;
     _stopSaveTimer();
+    _clearSeekTarget();
     _positionSub?.cancel();
     _bufferedSub?.cancel();
     _durationSub?.cancel();

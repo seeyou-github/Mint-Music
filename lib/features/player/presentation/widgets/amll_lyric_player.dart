@@ -12,6 +12,9 @@ class AmllLyricPlayer extends StatefulWidget {
   final List<LyricLine> lines;
   final int currentTimeMs;
   final bool isPlaying;
+
+  /// 当前时间来自进度条拖动预览，时间变化应立即同步给 WebView。
+  final bool isSeekPreview;
   final String fontFamily;
   final double fontSizeRate;
   final int fontWeight;
@@ -30,6 +33,7 @@ class AmllLyricPlayer extends StatefulWidget {
     required this.lines,
     required this.currentTimeMs,
     this.isPlaying = false,
+    this.isSeekPreview = false,
     this.fontFamily = '',
     this.fontSizeRate = 1.0,
     this.fontWeight = 600,
@@ -58,6 +62,7 @@ class AmllLyricPlayerState extends State<AmllLyricPlayer>
   late final Ticker _ticker;
   int _tickerSkip = 0;
   bool _timeUpdateInFlight = false;
+  bool _forceTimePending = false;
   bool _userScrollingLyrics = false;
   int _suppressTimeUpdatesUntilMs = 0;
   bool _disposed = false;
@@ -170,7 +175,7 @@ try{eval(atob("$jsB64"))}catch(e){}
       return false;
     }
     pendingTime=null;
-    rawSetCurrentTime(t);
+    rawSetCurrentTime(t, force);
     return true;
   };
   bridge.flushPendingCurrentTime=function(){
@@ -304,7 +309,7 @@ try{eval(atob("$jsB64"))}catch(e){}
     }
     final now = DateTime.now().millisecondsSinceEpoch;
     final drift = (positionMs - _anchorPositionMs).abs();
-    if (isPlaying && _ticker.isActive && drift <= 300) {
+    if (!widget.isSeekPreview && isPlaying && _ticker.isActive && drift <= 300) {
       final correction = ((positionMs - _anchorPositionMs) * 0.50).round();
       _anchorPositionMs = _anchorPositionMs + correction;
       _anchorWallMs = now;
@@ -312,7 +317,10 @@ try{eval(atob("$jsB64"))}catch(e){}
       _anchorPositionMs = positionMs;
       _anchorWallMs = now;
     }
-    if (isPlaying && !_ticker.isActive) {
+    if (widget.isSeekPreview) {
+      // 预览期间停止内部时钟，完全以拖动位置为准。
+      if (_ticker.isActive) _ticker.stop();
+    } else if (isPlaying && !_ticker.isActive) {
       _ticker.start();
     } else if (!isPlaying && _ticker.isActive) {
       _ticker.stop();
@@ -335,7 +343,11 @@ try{eval(atob("$jsB64"))}catch(e){}
       return;
     }
     if (!force && _shouldSuppressTimeUpdates) return;
-    if (_timeUpdateInFlight) return;
+    if (_timeUpdateInFlight) {
+      // 拖动结束/暂停 seek 的强制同步不能被普通 tick 的 in-flight 请求吞掉。
+      if (force) _forceTimePending = true;
+      return;
+    }
     final now = DateTime.now().millisecondsSinceEpoch;
     final smoothTimeMs = _anchorPositionMs + now - _anchorWallMs;
     _timeUpdateInFlight = true;
@@ -347,7 +359,13 @@ try{eval(atob("$jsB64"))}catch(e){}
                 'AmllBridge.setCurrentTime($smoothTimeMs${force ? ',true' : ''})',
           )
           .catchError((_) {})
-          .whenComplete(() => _timeUpdateInFlight = false),
+          .whenComplete(() {
+            _timeUpdateInFlight = false;
+            if (_forceTimePending) {
+              _forceTimePending = false;
+              _sendCurrentTime(force: true);
+            }
+          }),
     );
   }
 
@@ -808,11 +826,27 @@ try{eval(atob("$jsB64"))}catch(e){}
       _setActive(widget.isActive);
     }
     if (!widget.isActive) return;
-    if (oldWidget.currentTimeMs != widget.currentTimeMs ||
-        oldWidget.isPlaying != widget.isPlaying) {
+    final timeChanged = oldWidget.currentTimeMs != widget.currentTimeMs;
+    final previewChanged = oldWidget.isSeekPreview != widget.isSeekPreview;
+    if (timeChanged ||
+        oldWidget.isPlaying != widget.isPlaying ||
+        previewChanged) {
       _syncAnchor(widget.currentTimeMs, widget.isPlaying);
     }
     if (!_ready || _controller == null) return;
+
+    // 拖动预览、暂停时 seek、远距离跳转都立即同步时间；否则只靠 ticker
+    // 每 3 帧发一次，暂停状态下歌词根本不会动。
+    if (timeChanged || previewChanged) {
+      final jumped =
+          (widget.currentTimeMs - oldWidget.currentTimeMs).abs() > 500;
+      if (previewChanged ||
+          widget.isSeekPreview ||
+          jumped ||
+          !widget.isPlaying) {
+        _sendCurrentTime(force: true);
+      }
+    }
     if (oldWidget.isVisible != widget.isVisible) {
       _setVisible(widget.isVisible);
     }

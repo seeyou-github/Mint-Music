@@ -12,6 +12,7 @@ import '../../../shared/services/app_image_cache.dart';
 import '../../../shared/widgets/share_preview_dialog.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../application/playback_controller.dart';
+import '../application/playback_ui_providers.dart';
 import '../application/lyric_controller.dart';
 import '../domain/models/song.dart';
 import '../../settings/application/settings_providers.dart';
@@ -327,14 +328,22 @@ class _LyricPageState extends ConsumerState<LyricPage> {
                                                               ),
                                                             ),
                                                       );
+                                                      final seekPreview = ref.watch(
+                                                        seekPreviewPositionProvider,
+                                                      );
+                                                      final lyricPosition =
+                                                          seekPreview ??
+                                                          playback.position;
                                                       return AmllLyricPlayer(
                                                         key: _amllKey,
                                                         lines: lyricState.lines,
-                                                        currentTimeMs: playback
-                                                            .position
-                                                            .inMilliseconds,
+                                                        currentTimeMs:
+                                                            lyricPosition
+                                                                .inMilliseconds,
                                                         isPlaying:
                                                             playback.isPlaying,
+                                                        isSeekPreview:
+                                                            seekPreview != null,
                                                         fontFamily:
                                                             watchFontFamily,
                                                         fontSizeRate:
@@ -393,13 +402,21 @@ class _LyricPageState extends ConsumerState<LyricPage> {
                                                             ),
                                                           ),
                                                     );
+                                                    final seekPreview = ref.watch(
+                                                      seekPreviewPositionProvider,
+                                                    );
+                                                    final lyricPosition =
+                                                        seekPreview ??
+                                                        playback.position;
                                                     return LyricScrollView(
                                                       lines: lyricState.lines,
-                                                      currentTimeMs: playback
-                                                          .position
-                                                          .inMilliseconds,
+                                                      currentTimeMs:
+                                                          lyricPosition
+                                                              .inMilliseconds,
                                                       isPlaying:
                                                           playback.isPlaying,
+                                                      isSeekPreview:
+                                                          seekPreview != null,
                                                       hasYrc: hasYrc,
                                                       activeColor: activeColor,
                                                       inactiveColor:
@@ -847,8 +864,15 @@ class _LyricProgressBar extends ConsumerWidget {
       currentQuality: playback.currentQuality,
       availableQualities: playback.availableQualities,
       onQualityTap: controller.setQuality,
+      onSeekPreview: (value) {
+        ref.read(seekPreviewPositionProvider.notifier).state =
+            value == null || durationMs <= 0
+            ? null
+            : Duration(milliseconds: (value * durationMs).round());
+      },
       onSeek: (value) {
         controller.seek(Duration(milliseconds: (value * durationMs).round()));
+        ref.read(seekPreviewPositionProvider.notifier).state = null;
       },
     );
   }

@@ -12,6 +12,9 @@ class LyricScrollView extends StatefulWidget {
   final List<LyricLine> lines;
   final int currentTimeMs;
   final bool isPlaying;
+
+  /// 当前时间来自进度条拖动预览，应直接定位，不播放滚动动画。
+  final bool isSeekPreview;
   final bool hasYrc;
   final Color activeColor;
   final Color inactiveColor;
@@ -33,6 +36,7 @@ class LyricScrollView extends StatefulWidget {
     required this.lines,
     required this.currentTimeMs,
     this.isPlaying = false,
+    this.isSeekPreview = false,
     this.hasYrc = false,
     this.activeColor = Colors.white,
     this.inactiveColor = const Color(0x40FFFFFF),
@@ -70,7 +74,9 @@ class _LyricScrollViewState extends State<LyricScrollView>
   bool _userScrolling = false;
   bool _autoScrolling = false;
   bool _pendingAutoScroll = false;
+  bool _programmaticScroll = false;
   bool _initialScrollQueued = false;
+  bool _jumpNextScroll = false;
   int _scrollTargetIndex = -1;
   int _centerLineIndex = -1;
   int _linesSignature = 0;
@@ -102,12 +108,14 @@ class _LyricScrollViewState extends State<LyricScrollView>
       _centerLineIndex = -1;
       _syncClock(widget.currentTimeMs, widget.isPlaying);
       _activeSignature = _makeActiveSignature(_activeIndicesFor(_clock.timeMs));
+      _jumpNextScroll = false;
       _queueInitialScroll();
       return;
     }
 
     if (oldWidget.currentTimeMs != widget.currentTimeMs ||
-        oldWidget.isPlaying != widget.isPlaying) {
+        oldWidget.isPlaying != widget.isPlaying ||
+        oldWidget.isSeekPreview != widget.isSeekPreview) {
       _syncClock(widget.currentTimeMs, widget.isPlaying);
       _updateActiveLinesAndScroll();
     }
@@ -178,9 +186,11 @@ class _LyricScrollViewState extends State<LyricScrollView>
   void _syncClock(int positionMs, bool isPlaying) {
     final now = DateTime.now().millisecondsSinceEpoch;
     final drift = (positionMs - _clock.timeMs).abs();
+    final previewing = widget.isSeekPreview;
 
     // 播放中外部 position 通常是低频回调；小漂移不重置内部逐帧时钟，避免逐字动画被反复拉扯。
-    if (isPlaying && _ticker.isActive && drift <= 200) {
+    // 拖动进度条预览时例外：预览时间必须精确生效。
+    if (!previewing && isPlaying && _ticker.isActive && drift <= 200) {
       final correction = ((positionMs - _clock.timeMs) * 0.50).round();
       _anchorPositionMs = _clock.timeMs + correction;
       _anchorWallMs = now;
@@ -189,21 +199,20 @@ class _LyricScrollViewState extends State<LyricScrollView>
       _anchorWallMs = now;
       _clock.setTime(positionMs);
 
-      // 大幅位置跳跃（切歌、拖动进度条、后台切回等）→ 重置签名 & 用户滚动
-      // 状态，并把正在播放的那一行立刻滚到中间。
-      if (drift > 500) {
-        _activeSignature = 0;
+      // 大幅位置跳跃（切歌、拖动进度条、后台切回等）或拖动预览 →
+      // 清除用户滚动状态，并让下一次换行直接跳到中间，不播放滚动动画。
+      if (previewing || drift > 500) {
         _userScrolling = false;
         _userScrollTimer?.cancel();
         _scrollTargetIndex = -1;
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted) return;
-          _scrollToActiveLine(force: true);
-        });
+        _jumpNextScroll = true;
       }
     }
 
-    if (isPlaying && !_ticker.isActive) {
+    if (previewing) {
+      // 预览期间不让内部时钟继续向前跑，以拖动位置为准。
+      if (_ticker.isActive) _ticker.stop();
+    } else if (isPlaying && !_ticker.isActive) {
       _ticker.start();
     } else if (!isPlaying && _ticker.isActive) {
       _ticker.stop();
@@ -222,18 +231,32 @@ class _LyricScrollViewState extends State<LyricScrollView>
   void _updateActiveLinesAndScroll({bool fromTicker = false}) {
     final activeIndices = _activeIndicesFor(_clock.timeMs);
     final signature = _makeActiveSignature(activeIndices);
-    if (signature == _activeSignature) return;
+    final lineChanged = signature != _activeSignature;
 
-    _activeSignature = signature;
-    if (!mounted) return;
-    setState(() {});
+    // 行没变且已经定位过时不需要重复滚动；但 seek / 预览把
+    // _scrollTargetIndex 清成 -1 后，即使还在同一行也要重新居中。
+    if (!lineChanged && _scrollTargetIndex >= 0) {
+      _jumpNextScroll = false;
+      return;
+    }
+
+    if (lineChanged) {
+      _activeSignature = signature;
+      if (!mounted) return;
+      setState(() {});
+    }
 
     if (!_userScrolling) {
+      final preferJump = _jumpNextScroll;
+      _jumpNextScroll = false;
       _pendingAutoScroll = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
         _pendingAutoScroll = false;
-        _scrollToActiveLine(force: true);
+        _scrollToActiveLine(force: true, preferJump: preferJump);
       });
+    } else {
+      _jumpNextScroll = false;
     }
   }
 
@@ -262,7 +285,7 @@ class _LyricScrollViewState extends State<LyricScrollView>
   }
 
   void _handleScroll() {
-    if (_autoScrolling || _pendingAutoScroll) return;
+    if (_autoScrolling || _programmaticScroll || _pendingAutoScroll) return;
 
     if (!_userScrolling) {
       setState(() => _userScrolling = true);
@@ -311,11 +334,8 @@ class _LyricScrollViewState extends State<LyricScrollView>
   }
 
   void _scrollToActiveLine({bool force = false, bool preferJump = false}) {
-    if (!mounted ||
-        _userScrolling ||
-        _autoScrolling ||
-        !_scrollController.hasClients)
-      return;
+    if (!mounted || _userScrolling || !_scrollController.hasClients) return;
+    if (_autoScrolling && !preferJump) return;
 
     final targetIndex = _activeScrollTargetIndex();
     if (targetIndex < 0 || targetIndex >= _lineKeys.length) return;
@@ -325,7 +345,9 @@ class _LyricScrollViewState extends State<LyricScrollView>
     if (lineContext == null) {
       // 歌词行还没排版好（拿不到 RenderBox）：稍后再试几帧，
       // 否则只能用估算位置，会偏掉，导致「正在播放的那一行」没在中间。
-      if (_initialScrollRetry < 10) {
+      // seek / 预览优先响应，只等一帧就估算跳转，再在下一帧精确校正。
+      final maxRetry = preferJump ? 1 : 10;
+      if (_initialScrollRetry < maxRetry) {
         _initialScrollRetry++;
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) return;
@@ -358,11 +380,13 @@ class _LyricScrollViewState extends State<LyricScrollView>
     // 平滑滚动：按当前行内的播放进度，在「本行居中」与「下一行居中」之间
     // 做一点插值。这样正在播放的歌词会一直保持在接近垂直居中的位置，
     // 而不是每到下一句就「啪」地跳一下。
-    final smoothOffset = _smoothedOffset(
-      targetOffset: targetOffset,
-      lineIndex: targetIndex,
-      scrollBox: scrollBox,
-    );
+    final smoothOffset = preferJump
+        ? targetOffset
+        : _smoothedOffset(
+            targetOffset: targetOffset,
+            lineIndex: targetIndex,
+            scrollBox: scrollBox,
+          );
 
     _animateToOffset(smoothOffset, preferJumpIfFar: preferJump);
     _scrollTargetIndex = targetIndex;
@@ -409,6 +433,15 @@ class _LyricScrollViewState extends State<LyricScrollView>
     final targetOffset = verticalPadding + index * estimatedLineHeight;
     _animateToOffset(targetOffset, preferJumpIfFar: true);
     _scrollTargetIndex = index;
+
+    // 估算跳转后目标行通常已经进入构建范围，下一帧再精确居中一次。
+    // 如果目标行还没构建出来就保持估算位置，避免无限重试。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || index >= _lineKeys.length) return;
+      if (_lineKeys[index].currentContext == null) return;
+      _initialScrollRetry = 0;
+      _scrollToActiveLine(force: true, preferJump: true);
+    });
   }
 
   void _animateToOffset(double offset, {bool preferJumpIfFar = false}) {
@@ -423,7 +456,13 @@ class _LyricScrollViewState extends State<LyricScrollView>
     // 否则会出现很长的滚动动画，等歌词滚过去歌都唱完两句了。
     if (preferJumpIfFar || distance > position.viewportDimension * 0.85) {
       _autoScrolling = false;
+      // jumpTo 会同步触发滚动监听，必须标记为程序滚动，否则会被误判成
+      // 用户手动滚动，接下来 3 秒都不再自动跟随歌词。
+      _programmaticScroll = true;
       _scrollController.jumpTo(clamped);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _programmaticScroll = false;
+      });
       return;
     }
 
