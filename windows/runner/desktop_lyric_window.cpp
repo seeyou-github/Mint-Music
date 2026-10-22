@@ -14,7 +14,9 @@ namespace {
 
 constexpr wchar_t kWindowClassName[] = L"MintMusicDesktopLyricWindow";
 constexpr UINT_PTR kTimerId = 1;
-constexpr int kTimerIntervalMs = 50;
+// 逐字填充的刷新间隔（约 33fps）：50ms 时进度是按 1/20 跳的，长句歌词能
+// 看出「一格一格」的台阶；30ms 下每步只移动 1~2 像素，接近线性推进。
+constexpr int kTimerIntervalMs = 30;
 
 /// 注册窗口类（只注册一次）。
 ATOM RegisterLyricWindowClass() {
@@ -246,7 +248,7 @@ void DesktopLyricWindow::SetPlayState(long long position_ms, bool is_playing) {
   anchor_position_ms_ = position_ms;
   anchor_tick_ = ::GetTickCount64();
   if (is_playing_ != is_playing) {
-    const ULONGLONG now = ::GetTickCount64();
+    const ULONGLONG now = anchor_tick_;
     if (is_playing) {
       // 恢复播放：把暂停期间的时间从跑马灯计时里扣掉，长句歌词不会因为
       // 暂停期间的时间而跳过一段。
@@ -256,13 +258,63 @@ void DesktopLyricWindow::SetPlayState(long long position_ms, bool is_playing) {
       marquee_pause_tick_ = now;
     }
     is_playing_ = is_playing;
-    // 暂停/恢复时重绘一次，让滚动位置立刻停住 / 继续。
-    if (window_ != nullptr) {
-      Paint();
-    }
-    return;
   }
-  is_playing_ = is_playing;
+  // 锚点变了就重绘一次：暂停时没有定时推进，逐字进度会停在旧位置；
+  // 拖动进度条（暂停状态）时也只有这里能把它纠正过来。
+  if (window_ != nullptr) {
+    Paint();
+  }
+}
+
+long long DesktopLyricWindow::CurrentPositionMs() const {
+  if (!is_playing_) {
+    return anchor_position_ms_;
+  }
+  const ULONGLONG now = ::GetTickCount64();
+  return anchor_position_ms_ + static_cast<long long>(now - anchor_tick_);
+}
+
+double DesktopLyricWindow::ActiveLineProgress() const {
+  if (active_index_ < 0 ||
+      active_index_ >= static_cast<int>(lines_.size())) {
+    return 0.0;
+  }
+  const DesktopLyricLine& line = lines_[active_index_];
+  const long long start = line.time_ms;
+  long long end = line.end_time_ms;
+  if (end <= start) {
+    // 没有结束时间（例如加载中的占位行）时，用下一行的起始时间估算；
+    // 最后一行按 3 秒估算，与 Dart 侧解析普通 LRC 的规则一致。
+    end = (active_index_ + 1 < static_cast<int>(lines_.size()))
+              ? lines_[active_index_ + 1].time_ms
+              : start + 3000;
+  }
+  if (end <= start) {
+    return 0.0;
+  }
+  const long long position = CurrentPositionMs();
+  if (position <= start) {
+    return 0.0;
+  }
+  if (position >= end) {
+    return 1.0;
+  }
+  return static_cast<double>(position - start) /
+         static_cast<double>(end - start);
+}
+
+bool DesktopLyricWindow::NeedsAnimationFrame() const {
+  if (!is_playing_ || dragging_ || window_ == nullptr) {
+    return false;
+  }
+  if (lines_.empty()) {
+    return false;
+  }
+  // 跑马灯滚动中，或者当前行的逐字填充还没走完，都需要继续重绘。
+  if (marquee_overflow_px_ > 0) {
+    return true;
+  }
+  return ActiveLineProgress() != last_painted_progress_;
 }
 
 void DesktopLyricWindow::EnsureFont() {
@@ -404,9 +456,7 @@ bool DesktopLyricWindow::AdvanceActiveIndex() {
   if (!is_playing_) {
     return false;
   }
-  const ULONGLONG now = ::GetTickCount64();
-  const long long position =
-      anchor_position_ms_ + static_cast<long long>(now - anchor_tick_);
+  const long long position = CurrentPositionMs();
   int index = 0;
   for (size_t i = 0; i < lines_.size(); i++) {
     if (lines_[i].time_ms <= position) {
@@ -522,39 +572,74 @@ void DesktopLyricWindow::Paint() {
 
   // 把一段文字画到蒙版（黑底白字），再按颜色合成到画布。
   // 每个歌词元素只画一行：超长时不换行，由调用方传入横向偏移做滚动。
-  auto draw_text = [&](const std::wstring& text, int y, int height,
+  //
+  // [clip_right] 为合成时的右边界（画布像素坐标，-1 表示不裁剪）。当前播放行
+  // 用它把「已经唱到」的部分单独染成已播放颜色，边界按进度线性推进，所以
+  // 唱到某个字时这个字会被从左往右一点点擦亮。
+  auto draw_text = [&](const std::wstring& text, int y, int row_height,
                        unsigned int color, int alpha_scale, int left,
-                       int top_offset, UINT format, int draw_width) {
-    if (text.empty() || height <= 0 || draw_width <= 0) {
+                       int top_offset, UINT format, int draw_width,
+                       int clip_right) {
+    if (text.empty() || row_height <= 0 || draw_width <= 0) {
       return;
     }
-    std::memset(mask_bits, 0, pixel_count * 4);
+    // 只处理文字实际覆盖的那块区域：逐帧重绘时整窗扫描在高分屏上很吃 CPU。
+    const int rect_left = std::max(0, left);
+    const int rect_right = std::min(width, left + draw_width);
+    const int rect_top = std::max(0, y + top_offset);
+    const int rect_bottom = std::min(height, y + top_offset + row_height);
+    if (rect_left >= rect_right || rect_top >= rect_bottom) {
+      return;
+    }
+    const size_t row_span = static_cast<size_t>(rect_right - rect_left) * 4;
+    for (int py = rect_top; py < rect_bottom; py++) {
+      std::memset(mask + static_cast<size_t>(py) * width + rect_left, 0,
+                  row_span);
+    }
     ::SelectObject(mask_dc, font_);
     RECT text_rect{left, y + top_offset, left + draw_width,
-                   y + top_offset + height};
+                   y + top_offset + row_height};
     ::DrawTextW(mask_dc, text.c_str(), -1, &text_rect, format | DT_NOPREFIX);
+
+    int x_end = rect_right;
+    if (clip_right >= 0) {
+      x_end = std::min(x_end, std::max(rect_left, clip_right));
+    }
+    if (rect_left >= x_end) {
+      return;
+    }
+
     const uint32_t alpha_base = ((color >> 24) & 0xFF) * alpha_scale / 100;
     // 再乘上整体不透明度（设置里的「不透明度」）。
     const uint32_t alpha_limit = alpha_base * global_alpha / 255;
-    for (size_t i = 0; i < pixel_count; i++) {
-      const uint32_t coverage = mask[i] & 0xFF;
-      if (coverage == 0) {
-        continue;
+    const uint32_t r = (color & 0x00FF0000) >> 16;
+    const uint32_t g = (color & 0x0000FF00) >> 8;
+    const uint32_t b = (color & 0x000000FF);
+    for (int py = rect_top; py < rect_bottom; py++) {
+      const size_t row = static_cast<size_t>(py) * width;
+      for (int px = rect_left; px < x_end; px++) {
+        const size_t i = row + static_cast<size_t>(px);
+        const uint32_t coverage = mask[i] & 0xFF;
+        if (coverage == 0) {
+          continue;
+        }
+        const uint32_t alpha = coverage * alpha_limit / 255;
+        if (alpha == 0) {
+          continue;
+        }
+        canvas[i] = (alpha << 24) | (((r * alpha / 255) & 0xFF) << 16) |
+                    (((g * alpha / 255) & 0xFF) << 8) |
+                    ((b * alpha / 255) & 0xFF);
       }
-      const uint32_t alpha = coverage * alpha_limit / 255;
-      if (alpha == 0) {
-        continue;
-      }
-      const uint32_t r = (color & 0x00FF0000) >> 16;
-      const uint32_t g = (color & 0x0000FF00) >> 8;
-      const uint32_t b = (color & 0x000000FF);
-      canvas[i] = (alpha << 24) | (((r * alpha / 255) & 0xFF) << 16) |
-                   (((g * alpha / 255) & 0xFF) << 8) | ((b * alpha / 255) & 0xFF);
     }
   };
 
+  // 当前行的播放进度（0 ~ 1），用于逐字填充。
+  const double active_progress = ActiveLineProgress();
+  last_painted_progress_ = active_progress;
+
   // 逐个元素绘制：一行歌词固定占一个行高。
-  // * 正在播放的行居中显示，超长时横向滚动；
+  // * 正在播放的行居中显示，超长时横向滚动，并按进度逐字填充已播放颜色；
   // * 其余行按「水平对齐」设置绘制，超长时用省略号截断。
   int y = 0;
   for (const auto& element : elements) {
@@ -566,7 +651,8 @@ void DesktopLyricWindow::Paint() {
     UINT format = DT_SINGLELINE | DT_VCENTER;
     int left = 0;
     int draw_width = width;
-    if (element.active && text_width > width) {
+    const bool marquee = element.active && text_width > width;
+    if (marquee) {
       format |= DT_LEFT;
       left = -scroll_offset;
       draw_width = text_width + width;
@@ -576,13 +662,32 @@ void DesktopLyricWindow::Paint() {
     } else {
       format |= align_flag | DT_END_ELLIPSIS;
     }
-    // 阴影：先在右下偏移 1 像素处画一遍。
+    // 阴影：先在右下偏移 1 像素处画一遍（整行，不参与逐字填充）。
     if ((shadow_color_ >> 24) != 0) {
       draw_text(element.text, y, element_height, shadow_color_, 60, left + 1,
-                1, format, draw_width);
+                1, format, draw_width, -1);
     }
-    draw_text(element.text, y, element_height, element.color,
-              element.alpha_scale, left, 0, format, draw_width);
+    if (element.active) {
+      // 未唱到的部分用「未播放颜色」铺底。
+      draw_text(element.text, y, element_height, unplay_color_,
+                element.alpha_scale, left, 0, format, draw_width, -1);
+      if (active_progress > 0.0) {
+        int clip_right = -1;
+        if (active_progress < 1.0) {
+          // 文字实际起点：跑马灯时随滚动偏移，居中时是 (窗口宽 - 文字宽) / 2。
+          const int text_left_x = marquee ? left : (width - text_width) / 2;
+          clip_right =
+              text_left_x +
+              static_cast<int>(std::lround(active_progress * text_width));
+        }
+        // 已经唱到的部分用「已播放颜色」覆盖上去。
+        draw_text(element.text, y, element_height, played_color_,
+                  element.alpha_scale, left, 0, format, draw_width, clip_right);
+      }
+    } else {
+      draw_text(element.text, y, element_height, element.color,
+                element.alpha_scale, left, 0, format, draw_width, -1);
+    }
     y += element_height;
   }
 
@@ -649,9 +754,14 @@ LRESULT DesktopLyricWindow::HandleMessage(HWND hwnd,
                                           LPARAM lparam) {
   switch (message) {
     case WM_TIMER:
-      // 只在当前歌词行变化、或当前行需要横向滚动时重绘，
-      // 避免拖动时反复刷新导致闪烁。暂停时不再滚动，也不必重绘。
-      if (AdvanceActiveIndex() || (marquee_overflow_px_ > 0 && is_playing_)) {
+      // 拖动窗口期间完全不动窗口（含 SetWindowPos / UpdateLayeredWindow），
+      // 否则会与系统拖动逻辑互相拉扯，表现为抖动闪烁。
+      if (dragging_) {
+        return 0;
+      }
+      // 只在当前歌词行变化、或需要动画（跑马灯滚动 / 逐字填充）时重绘。
+      // 暂停、以及当前行已唱完时都不重绘，避免无谓刷新导致闪烁。
+      if (AdvanceActiveIndex() || NeedsAnimationFrame()) {
         Paint();
       }
       return 0;
@@ -674,9 +784,15 @@ LRESULT DesktopLyricWindow::HandleMessage(HWND hwnd,
       ::SendMessage(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
       return 0;
     }
+    case WM_ENTERSIZEMOVE:
+      // 系统拖动窗口期间不重绘：UpdateLayeredWindow 与拖动同时进行会闪。
+      dragging_ = true;
+      return 0;
     case WM_EXITSIZEMOVE: {
-      // 拖动结束：把新位置回传给 Dart 侧持久化。
+      // 拖动结束：把新位置回传给 Dart 侧持久化，并补一帧（拖动期间冻结了）。
+      dragging_ = false;
       ReportPosition();
+      Paint();
       return 0;
     }
     case WM_RBUTTONUP: {

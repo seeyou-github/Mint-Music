@@ -12,6 +12,9 @@ namespace mintmusic {
 /// 一行歌词（时间 + 文本 + 翻译 + 罗马音）。
 struct DesktopLyricLine {
   long long time_ms = 0;
+  /// 这一行唱完的时间（普通 LRC 就是下一行的起始时间）。为 0 时由原生侧
+  /// 用下一行的起始时间估算。
+  long long end_time_ms = 0;
   std::wstring text;
   std::wstring translation;
   std::wstring roman;
@@ -96,6 +99,15 @@ class DesktopLyricWindow {
   int MeasureContentHeight() const;
   /// 推进当前歌词行；返回是否发生了变化（变化时需要重绘）。
   bool AdvanceActiveIndex();
+  /// 当前播放位置（毫秒）。暂停时返回锚点位置，不随系统时钟前进。
+  long long CurrentPositionMs() const;
+  /// 当前行已经唱到的比例（0 ~ 1）。
+  ///
+  /// 普通 LRC 只有行级时间戳，这里用「本行开始 → 本行结束」这段区间做线性
+  /// 插值，估算这一句唱到了哪个位置，用于逐字填充已播放颜色。
+  double ActiveLineProgress() const;
+  /// 是否还需要逐帧重绘（跑马灯滚动 / 逐字填充还没走完）。
+  bool NeedsAnimationFrame() const;
   void Paint();
   void ReportPosition();
   int GetLineHeight() const;
@@ -135,6 +147,13 @@ class DesktopLyricWindow {
   long long anchor_position_ms_ = 0;
   ULONGLONG anchor_tick_ = 0;
   bool is_playing_ = false;
+
+  // 正在被系统「拖动窗口」逻辑移动：期间不重绘，避免与拖动打架产生闪烁。
+  bool dragging_ = false;
+
+  // 上一帧绘制时当前行的填充进度：进度没变就不必再重绘
+  // （前奏、暂停、整行已唱完时进度会被钳在 0 / 1，避免空转刷新）。
+  double last_painted_progress_ = -1.0;
 
   std::function<void(double, double)> position_callback_;
 };

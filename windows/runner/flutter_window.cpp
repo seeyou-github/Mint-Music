@@ -325,6 +325,7 @@ void FlutterWindow::HandleDesktopLyricCall(
           }
           mintmusic::DesktopLyricLine line;
           line.time_ms = GetInt(line_map, "time", 0);
+          line.end_time_ms = GetInt(line_map, "endTime", 0);
           line.text = Utf8ToWide(GetStringUtf8(line_map, "text"));
           line.translation = Utf8ToWide(GetStringUtf8(line_map, "translation"));
           line.roman = Utf8ToWide(GetStringUtf8(line_map, "roman"));

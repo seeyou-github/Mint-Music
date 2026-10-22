@@ -147,6 +147,9 @@ class DesktopLyricOverlay {
             .map(
               (line) => {
                 'time': line.startTimeMs,
+                // 行结束时间:原生侧据此把「本行已唱到的位置」按时间线性插值,
+                // 逐字填充已播放颜色(普通 LRC 只有行级时间戳)。
+                'endTime': line.endTimeMs,
                 'text': line.plainText.trim(),
                 'translation': line.translatedLyric?.trim(),
                 'roman': line.romanLyric?.trim(),

@@ -527,44 +527,52 @@ class _LyricScrollViewState extends State<LyricScrollView>
               final viewportHeight = constraints.maxHeight;
               final verticalPadding = viewportHeight * 0.45;
 
-              return ListView.builder(
-                controller: _scrollController,
-                physics: const BouncingScrollPhysics(),
-                cacheExtent: viewportHeight,
-                addAutomaticKeepAlives: false,
-                addRepaintBoundaries: true,
-                padding: EdgeInsets.only(
-                  top: verticalPadding,
-                  bottom: viewportHeight - verticalPadding,
+              return ScrollConfiguration(
+                // 桌面平台默认会给可滚动区域套一层 Scrollbar：歌词自动滚动时
+                // 右侧那条垂直滚动条会跟着一直跳，这里直接关掉（只关滚动条，
+                // 滚动本身仍然可用）。
+                behavior: ScrollConfiguration.of(
+                  context,
+                ).copyWith(scrollbars: false),
+                child: ListView.builder(
+                  controller: _scrollController,
+                  physics: const BouncingScrollPhysics(),
+                  cacheExtent: viewportHeight,
+                  addAutomaticKeepAlives: false,
+                  addRepaintBoundaries: true,
+                  padding: EdgeInsets.only(
+                    top: verticalPadding,
+                    bottom: viewportHeight - verticalPadding,
+                  ),
+                  itemCount: widget.lines.length,
+                  itemBuilder: (context, index) {
+                    final isActive = activeIndices.contains(index);
+                    return _LyricLineWidget(
+                      key: _lineKeys[index],
+                      line: widget.lines[index],
+                      clock: _clock,
+                      staticTimeMs: _clock.timeMs,
+                      isActive: isActive,
+                      activeIndex: activeIndex,
+                      index: index,
+                      activeColor: widget.activeColor,
+                      inactiveColor: widget.inactiveColor,
+                      mainFontSize: widget.mainFontSize * rate,
+                      transFontSize: widget.transFontSize * rate,
+                      romanFontSize: widget.romanFontSize * rate,
+                      enableBlur: widget.enableBlur,
+                      userScrolling: _userScrolling,
+                      enableScale: widget.enableScale,
+                      showTranslation: widget.showTranslation,
+                      showRoman: widget.showRoman,
+                      centerAlign: widget.centerAlign,
+                      hasYrc: widget.hasYrc,
+                      isPlaying: widget.isPlaying,
+                      fontFamily: widget.fontFamily,
+                      fontWeight: widget.fontWeight,
+                    );
+                  },
                 ),
-                itemCount: widget.lines.length,
-                itemBuilder: (context, index) {
-                  final isActive = activeIndices.contains(index);
-                  return _LyricLineWidget(
-                    key: _lineKeys[index],
-                    line: widget.lines[index],
-                    clock: _clock,
-                    staticTimeMs: _clock.timeMs,
-                    isActive: isActive,
-                    activeIndex: activeIndex,
-                    index: index,
-                    activeColor: widget.activeColor,
-                    inactiveColor: widget.inactiveColor,
-                    mainFontSize: widget.mainFontSize * rate,
-                    transFontSize: widget.transFontSize * rate,
-                    romanFontSize: widget.romanFontSize * rate,
-                    enableBlur: widget.enableBlur,
-                    userScrolling: _userScrolling,
-                    enableScale: widget.enableScale,
-                    showTranslation: widget.showTranslation,
-                    showRoman: widget.showRoman,
-                    centerAlign: widget.centerAlign,
-                    hasYrc: widget.hasYrc,
-                    isPlaying: widget.isPlaying,
-                    fontFamily: widget.fontFamily,
-                    fontWeight: widget.fontWeight,
-                  );
-                },
               );
             },
           ),
@@ -638,19 +646,6 @@ class _LyricLineWidget extends StatelessWidget {
   FontWeight _resolveFontWeight() {
     final idx = ((fontWeight / 100).round() - 1).clamp(0, 8);
     return FontWeight.values[idx];
-  }
-
-  /// 这一句歌词在 [timeMs] 时已经唱了多少（0 ~ 1）。
-  ///
-  /// 普通 LRC 只有行级时间戳，这里用「行开始时间 → 下一行开始时间」这段
-  /// 区间做线性插值，估算当前唱到了这一句的第几个字。
-  double _lineProgress(int timeMs) {
-    final start = line.startTimeMs;
-    final end = line.endTimeMs;
-    if (end <= start) return 0;
-    if (timeMs <= start) return 0;
-    if (timeMs >= end) return 1;
-    return (timeMs - start) / (end - start);
   }
 
   @override
@@ -816,77 +811,20 @@ class _LyricLineWidget extends StatelessWidget {
     final resolvedFontFamily = _resolveFontFamily();
     final resolvedFontWeight = _resolveFontWeight();
     if (!useWordLevel) {
-      // 普通 LRC 只有「行级」时间戳，这里按播放时间估算这一句唱到哪里了，
-      // 把已经唱过的部分显示成「已播放颜色」，唱到的部分保持高亮。
-      Widget buildText(int timeMs) {
-        final baseStyle = TextStyle(
-          fontFamily: resolvedFontFamily,
-          fontSize: mainFontSize,
-          height: 1.32,
-          fontWeight: resolvedFontWeight,
-          letterSpacing: -0.25,
-          color: isActive ? activeColor : inactiveColor,
-        );
-
-        final progress = isActive ? _lineProgress(timeMs) : 0.0;
-        if (progress <= 0 || progress >= 1) {
-          return Text(
-            line.plainText,
-            textAlign: centerAlign ? TextAlign.center : TextAlign.start,
-            maxLines: 3,
-            overflow: TextOverflow.ellipsis,
-            style: baseStyle,
-          );
-        }
-
-        // 按字符数比例切分「已唱」与「未唱」两部分。
-        final runes = line.plainText.runes.toList();
-        if (runes.isEmpty) {
-          return Text(
-            line.plainText,
-            textAlign: centerAlign ? TextAlign.center : TextAlign.start,
-            maxLines: 3,
-            overflow: TextOverflow.ellipsis,
-            style: baseStyle,
-          );
-        }
-        final sungCount = (progress * runes.length).round().clamp(
-          0,
-          runes.length,
-        );
-        final sungText = String.fromCharCodes(runes.take(sungCount));
-        final restText = String.fromCharCodes(runes.skip(sungCount));
-
-        return Text.rich(
-          TextSpan(
-            children: [
-              TextSpan(
-                text: sungText,
-                style: TextStyle(color: activeColor),
-              ),
-              TextSpan(
-                text: restText,
-                style: TextStyle(
-                  color: activeColor.withValues(alpha: 0.45),
-                ),
-              ),
-            ],
-          ),
-          textAlign: centerAlign ? TextAlign.center : TextAlign.start,
-          maxLines: 3,
-          overflow: TextOverflow.ellipsis,
-          style: baseStyle,
-        );
-      }
-
-      if (isActive) {
-        // 正在播放的这一行要逐帧刷新，才能看到进度一点点往前走。
-        return AnimatedBuilder(
-          animation: clock,
-          builder: (context, _) => buildText(clock.timeMs),
-        );
-      }
-      return buildText(staticTimeMs);
+      // 普通 LRC 只有「行级」时间戳，按播放时间估算这一句唱到哪里了，
+      // 用像素级裁剪把已经唱过的部分线性填充成已播放颜色。
+      return _PaintedPlainLine(
+        line: line,
+        clock: isActive ? clock : null,
+        staticTimeMs: staticTimeMs,
+        activeColor: activeColor,
+        inactiveColor: inactiveColor,
+        fontSize: mainFontSize,
+        isActive: isActive,
+        centerAlign: centerAlign,
+        fontFamily: resolvedFontFamily,
+        fontWeight: resolvedFontWeight,
+      );
     }
 
     return _PaintedYrcLine(
@@ -900,6 +838,278 @@ class _LyricLineWidget extends StatelessWidget {
       centerAlign: centerAlign,
       fontFamily: resolvedFontFamily,
       fontWeight: resolvedFontWeight,
+    );
+  }
+}
+
+/// 这一句歌词在 [timeMs] 时已经唱了多少（0 ~ 1）。
+///
+/// 普通 LRC 只有行级时间戳，这里用「行开始时间 → 行结束时间」这段区间做
+/// 线性插值，估算当前唱到了这一句的第几个字。
+double _lineProgressOf(LyricLine line, int timeMs) {
+  final start = line.startTimeMs;
+  final end = line.endTimeMs;
+  if (end <= start) return 0;
+  if (timeMs <= start) return 0;
+  if (timeMs >= end) return 1;
+  return (timeMs - start) / (end - start);
+}
+
+/// 普通 LRC（只有行级时间戳）歌词的逐字填充绘制。
+///
+/// 用 CustomPainter 而不是每帧重建 `Text.rich`：
+/// * 文字排版只做一次并缓存，进度变化时只按「已唱宽度」裁剪重绘，所以填充是
+///   像素级的线性推进 —— 唱到某个字时，这个字会被从左往右一点点擦亮，而不是
+///   整字跳变成已播放颜色；
+/// * 不再每帧重新排版整句文字，长句歌词的滚动/填充不会再卡顿。
+class _PaintedPlainLine extends StatelessWidget {
+  final LyricLine line;
+  final _LyricClock? clock;
+  final int staticTimeMs;
+  final Color activeColor;
+  final Color inactiveColor;
+  final double fontSize;
+  final bool isActive;
+  final bool centerAlign;
+  final String? fontFamily;
+  final FontWeight fontWeight;
+
+  const _PaintedPlainLine({
+    required this.line,
+    required this.clock,
+    required this.staticTimeMs,
+    required this.activeColor,
+    required this.inactiveColor,
+    required this.fontSize,
+    required this.isActive,
+    required this.centerAlign,
+    required this.fontFamily,
+    required this.fontWeight,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final maxWidth = constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : MediaQuery.sizeOf(context).width - 60;
+        final layout = _PlainLineLayout.cached(
+          text: line.plainText,
+          maxWidth: maxWidth,
+          fontSize: fontSize,
+          activeColor: activeColor,
+          inactiveColor: inactiveColor,
+          isActive: isActive,
+          textAlign: centerAlign ? TextAlign.center : TextAlign.start,
+          fontFamily: fontFamily,
+          fontWeight: fontWeight,
+          textScaler: MediaQuery.textScalerOf(context),
+          locale: Localizations.maybeLocaleOf(context),
+        );
+        // 宽度与原来的 Text 一致：单行短句收缩到文字宽度，长句撑满可用宽度。
+        // 这样 AnimatedScale 的缩放中心、以及行内居中都与改动前完全一致。
+        final boxWidth = max(min(maxWidth, layout.width), 1.0);
+        return RepaintBoundary(
+          child: CustomPaint(
+            size: Size(boxWidth, layout.height),
+            painter: _PlainLinePainter(
+              layout: layout,
+              line: line,
+              clock: clock,
+              staticTimeMs: staticTimeMs,
+              isActive: isActive,
+              repaint: clock,
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _PlainLinePainter extends CustomPainter {
+  final _PlainLineLayout layout;
+  final LyricLine line;
+  final _LyricClock? clock;
+  final int staticTimeMs;
+  final bool isActive;
+
+  _PlainLinePainter({
+    required this.layout,
+    required this.line,
+    required this.clock,
+    required this.staticTimeMs,
+    required this.isActive,
+    super.repaint,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // 未唱到的部分：整句先按「未播放」颜色画一遍。
+    layout.dimPainter.paint(canvas, Offset.zero);
+    if (!isActive || layout.totalWidth <= 0) return;
+
+    final progress = _lineProgressOf(line, clock?.timeMs ?? staticTimeMs);
+    if (progress <= 0) return;
+    if (progress >= 1) {
+      layout.brightPainter.paint(canvas, Offset.zero);
+      return;
+    }
+
+    // 把整句的可绘制宽度按进度切开，逐行裁剪出「已唱」的部分。
+    // 裁剪边界是像素级的，所以填充在字符内部也是连续的（线性进度）。
+    var remaining = layout.totalWidth * progress;
+    for (final metrics in layout.lines) {
+      if (remaining <= 0) break;
+      final fill = min(remaining, metrics.width);
+      if (fill > 0) {
+        canvas.save();
+        canvas.clipRect(
+          Rect.fromLTWH(
+            metrics.left,
+            metrics.baseline - metrics.ascent,
+            fill,
+            metrics.ascent + metrics.descent,
+          ),
+        );
+        layout.brightPainter.paint(canvas, Offset.zero);
+        canvas.restore();
+      }
+      remaining -= fill;
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _PlainLinePainter oldDelegate) {
+    return oldDelegate.layout != layout ||
+        oldDelegate.line != line ||
+        oldDelegate.staticTimeMs != staticTimeMs ||
+        oldDelegate.isActive != isActive;
+  }
+}
+
+/// 普通 LRC 一行歌词的排版缓存（未唱 / 已唱两份同形排版 + 每行几何信息）。
+class _PlainLineLayout {
+  static final Map<int, _PlainLineLayout> _cache = {};
+  static const _maxCacheEntries = 200;
+
+  final double height;
+  /// 文字实际占用的宽度（与 `Text` 的宽度一致）。
+  final double width;
+  final TextPainter dimPainter;
+  final TextPainter brightPainter;
+  final List<ui.LineMetrics> lines;
+  final double totalWidth;
+
+  const _PlainLineLayout({
+    required this.height,
+    required this.width,
+    required this.dimPainter,
+    required this.brightPainter,
+    required this.lines,
+    required this.totalWidth,
+  });
+
+  static _PlainLineLayout cached({
+    required String text,
+    required double maxWidth,
+    required double fontSize,
+    required Color activeColor,
+    required Color inactiveColor,
+    required bool isActive,
+    required TextAlign textAlign,
+    required String? fontFamily,
+    required FontWeight fontWeight,
+    required TextScaler textScaler,
+    required Locale? locale,
+  }) {
+    final key = Object.hash(
+      text,
+      maxWidth.round(),
+      (fontSize * 100).round(),
+      activeColor.toARGB32(),
+      inactiveColor.toARGB32(),
+      isActive,
+      textAlign,
+      fontFamily ?? '',
+      fontWeight.value,
+      textScaler.scale(fontSize).round(),
+      locale?.toLanguageTag() ?? '',
+    );
+    final cached = _cache[key];
+    if (cached != null) return cached;
+
+    final layout = build(
+      text: text,
+      maxWidth: maxWidth,
+      fontSize: fontSize,
+      activeColor: activeColor,
+      inactiveColor: inactiveColor,
+      isActive: isActive,
+      textAlign: textAlign,
+      fontFamily: fontFamily,
+      fontWeight: fontWeight,
+      textScaler: textScaler,
+      locale: locale,
+    );
+    if (_cache.length >= _maxCacheEntries) {
+      _cache.remove(_cache.keys.first);
+    }
+    _cache[key] = layout;
+    return layout;
+  }
+
+  static _PlainLineLayout build({
+    required String text,
+    required double maxWidth,
+    required double fontSize,
+    required Color activeColor,
+    required Color inactiveColor,
+    required bool isActive,
+    required TextAlign textAlign,
+    required String? fontFamily,
+    required FontWeight fontWeight,
+    required TextScaler textScaler,
+    required Locale? locale,
+  }) {
+    final style = TextStyle(
+      fontFamily: fontFamily,
+      fontSize: fontSize,
+      height: 1.32,
+      fontWeight: fontWeight,
+      letterSpacing: -0.25,
+    );
+
+    TextPainter painter(Color color) {
+      return TextPainter(
+        text: TextSpan(text: text, style: style.copyWith(color: color)),
+        textAlign: textAlign,
+        textDirection: TextDirection.ltr,
+        textScaler: textScaler,
+        locale: locale,
+        maxLines: 3,
+        ellipsis: '…',
+      )..layout(maxWidth: maxWidth);
+    }
+
+    final dimPainter = painter(
+      isActive ? activeColor.withValues(alpha: 0.45) : inactiveColor,
+    );
+    final brightPainter = painter(activeColor);
+    final metrics = dimPainter.computeLineMetrics();
+    var totalWidth = 0.0;
+    for (final line in metrics) {
+      totalWidth += line.width;
+    }
+    return _PlainLineLayout(
+      // 空行（纯占位）也要占一个行高，否则行距会塌陷。
+      height: max(dimPainter.height, fontSize * 1.32),
+      width: dimPainter.width,
+      dimPainter: dimPainter,
+      brightPainter: brightPainter,
+      lines: metrics,
+      totalWidth: totalWidth,
     );
   }
 }
