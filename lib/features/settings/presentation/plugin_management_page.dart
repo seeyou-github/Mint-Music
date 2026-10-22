@@ -45,6 +45,9 @@ class PluginManagementPage extends ConsumerStatefulWidget {
 
 class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
   bool _isCheckingUpdates = false;
+
+  /// 正在单独检查更新的插件 id（卡片上的「更新」按钮显示转圈）。
+  final Set<String> _checkingPluginUpdateIds = {};
   StreamSubscription<Map<String, dynamic>>? _updateNoticeSubscription;
 
   @override
@@ -966,30 +969,45 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
                 const SizedBox(width: AppSpacing.md),
                 Icon(Icons.access_time, size: 14, color: colors.textHint),
                 const SizedBox(width: 4),
-                Text(
-                  context.tr(
-                    '${plugin.installTime.year}/${plugin.installTime.month.toString().padLeft(2, '0')}/${plugin.installTime.day.toString().padLeft(2, '0')} 安装',
-                  ),
-                  style: TextStyle(fontSize: 11, color: colors.textHint),
-                ),
-                const Spacer(),
-                if (updateResult != null)
-                  GestureDetector(
-                    onTap: () => _showUpdateDialog(colors, updateResult),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: AppSpacing.md,
-                      ),
-                      child: Text(
-                        context.tr('更新'),
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Color(0xFF4CAF50),
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
+                // Expanded：日期占满剩余宽度，右侧按钮再多也不会挤出屏幕。
+                Expanded(
+                  child: Text(
+                    context.tr(
+                      '${plugin.installTime.year}/${plugin.installTime.month.toString().padLeft(2, '0')}/${plugin.installTime.day.toString().padLeft(2, '0')} 安装',
                     ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 11, color: colors.textHint),
                   ),
+                ),
+                // 每个插件都提供「更新」：已经检测到新版本时直接弹更新框，
+                // 否则先单独检查这个插件，有新版本再弹框。
+                GestureDetector(
+                  onTap: () => _handleUpdateTap(colors, plugin, updateResult),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.md,
+                      vertical: 8,
+                    ),
+                    child: _checkingPluginUpdateIds.contains(plugin.id)
+                        ? const SizedBox(
+                            width: 12,
+                            height: 12,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 1.6,
+                              color: Color(0xFF4CAF50),
+                            ),
+                          )
+                        : Text(
+                            context.tr('更新'),
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Color(0xFF4CAF50),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                  ),
+                ),
                 // 插件测试仅对已启用插件显示：未启用的插件未加载运行时，
                 // 测试服务无法解析其音源与音质，展示按钮只会误导用户。
                 if (plugin.isEnabled)
@@ -1149,6 +1167,61 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
           ),
         ],
       ),
+    );
+  }
+
+  /// 单个插件的「更新」按钮。
+  ///
+  /// 已经检查出新版本（[updateResult] 非空）时直接弹更新框；否则先只检查
+  /// 这一个插件，有新版本再弹框，已是最新则提示一下。
+  Future<void> _handleUpdateTap(
+    ThemeColors colors,
+    PluginInfo plugin,
+    PluginUpdateResult? updateResult,
+  ) async {
+    if (updateResult != null) {
+      _showUpdateDialog(colors, updateResult);
+      return;
+    }
+    if (_checkingPluginUpdateIds.contains(plugin.id)) return;
+
+    final updateUrl = plugin.updateUrl;
+    if (updateUrl == null || updateUrl.trim().isEmpty) {
+      _toast(context.tr('该插件没有配置更新地址，无法检查更新'));
+      return;
+    }
+
+    setState(() => _checkingPluginUpdateIds.add(plugin.id));
+    try {
+      final repo = ref.read(pluginRepositoryProvider);
+      final result = await repo.checkPluginUpdate(plugin);
+      if (!mounted) return;
+      if (result.available) {
+        // 同步到全局结果：卡片上的「可更新 vX」徽标也会一起出现。
+        final current = ref.read(pluginUpdateResultsProvider);
+        ref.read(pluginUpdateResultsProvider.notifier).state = [
+          ...current.where((r) => r.plugin.id != plugin.id),
+          result,
+        ];
+        _showUpdateDialog(colors, result);
+      } else {
+        _toast(context.tr('已是最新版本'));
+      }
+    } catch (e) {
+      if (mounted) {
+        _toast(
+          context.tr('检查更新失败: ${PluginManagementPage.pluginErrorMessage(e)}'),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _checkingPluginUpdateIds.remove(plugin.id));
+    }
+  }
+
+  void _toast(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
     );
   }
 

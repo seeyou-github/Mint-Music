@@ -430,10 +430,6 @@ class _DownloadTaskItemState extends ConsumerState<_DownloadTaskItem> {
             ),
           ],
           const SizedBox(width: AppSpacing.xs),
-          if (FileManagerService.isSupported) ...[
-            _buildRevealButton(context, colors),
-            const SizedBox(width: AppSpacing.xs),
-          ],
           _buildDeleteButton(context, colors, repo),
         ],
       );
@@ -467,30 +463,6 @@ class _DownloadTaskItemState extends ConsumerState<_DownloadTaskItem> {
 
     // 下载中：只显示删除按钮（进度信息在行下方）。
     return _buildDeleteButton(context, colors, repo);
-  }
-
-  /// 「打开所在文件夹」按钮（仅 Windows）：用系统文件管理器打开该歌曲所在的
-  /// 目录。
-  ///
-  /// 之前用的是「打开目录并选中文件」（explorer /select），文件不存在时
-  /// explorer 不会打开任何窗口，用户只看到「无法打开所在文件夹」；这里改成
-  /// 直接打开所在目录。
-  Widget _buildRevealButton(BuildContext context, ThemeColors colors) {
-    return IconButton(
-      visualDensity: VisualDensity.compact,
-      padding: EdgeInsets.zero,
-      constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
-      icon: Icon(Icons.folder_open_outlined, size: 19, color: colors.textSecondary),
-      tooltip: context.tr('打开所在文件夹'),
-      onPressed: () async {
-        final messenger = ScaffoldMessenger.of(context);
-        final ok = await FileManagerService.openFolderOf(task.filePath);
-        if (ok || !context.mounted) return;
-        messenger.showSnackBar(
-          SnackBar(content: Text(context.tr('无法打开所在文件夹'))),
-        );
-      },
-    );
   }
 
   /// 删除按钮：删除歌曲文件与该条下载记录。
