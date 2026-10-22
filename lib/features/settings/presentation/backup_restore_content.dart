@@ -12,6 +12,7 @@ import '../../../core/backup/webdav_service.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
+import '../../../shared/widgets/playlist_sync_button.dart';
 import '../application/settings_providers.dart';
 import '../data/settings_service.dart';
 import 'settings_page.dart';
@@ -205,7 +206,9 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
       _closeProgress();
       if (!mounted) return;
       // 失败可以重试
-      final retry = await _showRetryDialog(tr('备份上传失败：$e'));
+      final retry = await _showRetryDialog(
+        tr('备份上传失败：${describeWebDavError(e)}'),
+      );
       // 延后到当前流程收尾之后再重试，避免 busy 状态被 finally 提前清掉。
       if (retry) unawaited(Future.microtask(_backupToWebDav));
     } finally {
@@ -228,7 +231,9 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
     } catch (e) {
       _closeProgress();
       if (!mounted) return;
-      final retry = await _showRetryDialog(tr('读取备份列表失败：$e'));
+      final retry = await _showRetryDialog(
+        tr('读取备份列表失败：${describeWebDavError(e)}'),
+      );
       if (retry) unawaited(Future.microtask(_restoreFromWebDav));
       if (mounted) setState(() => _busy = false);
       return;
@@ -261,62 +266,24 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
     } catch (e) {
       _closeProgress();
       if (!mounted) return;
-      final retry = await _showRetryDialog(tr('还原失败：$e'));
+      final retry = await _showRetryDialog(
+        tr('还原失败：${describeWebDavError(e)}'),
+      );
       if (retry) unawaited(Future.microtask(_restoreFromWebDav));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
 
-  /// 弹出远端备份列表让用户选择。
-  Future<RemoteBackupFile?> _pickRemoteFile(List<RemoteBackupFile> files) async {
-    final colors = ref.read(themeColorsProvider);
+  /// 弹出远端备份列表让用户选择（可删除远端备份）。
+  Future<RemoteBackupFile?> _pickRemoteFile(List<RemoteBackupFile> files) {
     return showModalBottomSheet<RemoteBackupFile>(
       context: context,
       backgroundColor: Colors.transparent,
-      builder: (ctx) => Container(
-        decoration: BoxDecoration(
-          color: colors.surface,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-        ),
-        child: SafeArea(
-          top: false,
-          child: ListView(
-            shrinkWrap: true,
-            children: [
-              Padding(
-                padding: const EdgeInsets.all(AppSpacing.lg),
-                child: Text(
-                  ctx.tr('选择一个备份文件'),
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: colors.textPrimary,
-                  ),
-                ),
-              ),
-              ...files.map(
-                (f) => ListTile(
-                  title: Text(
-                    f.name,
-                    style: TextStyle(color: colors.textPrimary, fontSize: 14),
-                  ),
-                  subtitle: Text(
-                    [
-                      if (f.modified != null)
-                        '${f.modified!.year}-${f.modified!.month.toString().padLeft(2, '0')}-${f.modified!.day.toString().padLeft(2, '0')} '
-                            '${f.modified!.hour.toString().padLeft(2, '0')}:${f.modified!.minute.toString().padLeft(2, '0')}',
-                      _formatSize(f.size),
-                    ].join(' · '),
-                    style: TextStyle(color: colors.textHint, fontSize: 12),
-                  ),
-                  onTap: () => Navigator.pop(ctx, f),
-                ),
-              ),
-              const SizedBox(height: AppSpacing.md),
-            ],
-          ),
-        ),
+      isScrollControlled: true,
+      builder: (ctx) => _RemoteBackupSheet(
+        files: files,
+        service: WebDavService(_config),
       ),
     );
   }
@@ -539,13 +506,21 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
             SettingRow(
               icon: Icons.sync,
               title: tr('歌单实时同步'),
-              subtitle: tr('开启后每次进入应用都会与远端同步一次歌单'),
+              subtitle: tr('开启后每次进入应用、以及歌单变动后都会自动同步'),
               trailing: Switch(
                 value: config.playlistSyncEnabled,
                 onChanged: (v) => _saveConfig(playlistSyncEnabled: v),
                 activeTrackColor: colors.primary.withValues(alpha: 0.3),
                 activeThumbColor: colors.primary,
               ),
+              colors: colors,
+            ),
+            SettingDivider(colors: colors),
+            SettingRow(
+              icon: Icons.sync,
+              title: tr('立即同步'),
+              subtitle: tr('与远端歌单合并一次，失败时会显示具体原因'),
+              trailing: const PlaylistSyncButton(),
               colors: colors,
             ),
           ],
@@ -556,6 +531,196 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
             child: LinearProgressIndicator(color: colors.primary),
           ),
       ],
+    );
+  }
+}
+
+/// 远端备份选择列表：点击条目还原，右侧按钮删除远端文件。
+class _RemoteBackupSheet extends ConsumerStatefulWidget {
+  const _RemoteBackupSheet({required this.files, required this.service});
+
+  final List<RemoteBackupFile> files;
+  final WebDavService service;
+
+  @override
+  ConsumerState<_RemoteBackupSheet> createState() => _RemoteBackupSheetState();
+}
+
+class _RemoteBackupSheetState extends ConsumerState<_RemoteBackupSheet> {
+  late final List<RemoteBackupFile> _files;
+  final Set<String> _deleting = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _files = List.of(widget.files);
+  }
+
+  Future<void> _confirmDelete(RemoteBackupFile file) async {
+    if (_deleting.contains(file.path)) return;
+    final colors = ref.read(themeColorsProvider);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: colors.surface,
+        title: Text(tr('删除远端备份'), style: TextStyle(color: colors.textPrimary)),
+        content: Text(
+          tr('确定删除「${file.name}」吗？删除后无法恢复。'),
+          style: TextStyle(color: colors.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(tr('取消'), style: TextStyle(color: colors.textHint)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(tr('删除'), style: TextStyle(color: colors.error)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _deleting.add(file.path));
+    try {
+      await widget.service.deleteBackup(file.path);
+      if (!mounted) return;
+      setState(() => _files.removeWhere((f) => f.path == file.path));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(tr('已删除远端备份')),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      final message = describeWebDavError(e);
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: colors.surface,
+          title: Text(tr('删除失败'), style: TextStyle(color: colors.textPrimary)),
+          content: SingleChildScrollView(
+            child: Text(
+              tr('删除远端备份失败：\n$message'),
+              style: TextStyle(color: colors.textSecondary),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text(tr('确定'), style: TextStyle(color: colors.primary)),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _deleting.remove(file.path));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = ref.watch(themeColorsProvider);
+    final maxHeight = MediaQuery.of(context).size.height * 0.7;
+
+    return Container(
+      constraints: BoxConstraints(maxHeight: maxHeight),
+      decoration: BoxDecoration(
+        color: colors.surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.lg,
+                AppSpacing.md,
+                AppSpacing.sm,
+                0,
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      tr('选择一个备份文件'),
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: colors.textPrimary,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: Icon(Icons.close, size: 20, color: colors.textHint),
+                  ),
+                ],
+              ),
+            ),
+            if (_files.isEmpty)
+              Padding(
+                padding: const EdgeInsets.all(AppSpacing.xl),
+                child: Text(
+                  tr('远端没有备份文件'),
+                  style: TextStyle(color: colors.textHint, fontSize: 13),
+                ),
+              )
+            else
+              Flexible(
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: _files.length,
+                  itemBuilder: (context, index) {
+                    final file = _files[index];
+                    final deleting = _deleting.contains(file.path);
+                    return ListTile(
+                      title: Text(
+                        file.name,
+                        style: TextStyle(
+                          color: colors.textPrimary,
+                          fontSize: 14,
+                        ),
+                      ),
+                      subtitle: Text(
+                        [
+                          if (file.modified != null)
+                            '${file.modified!.year}-${file.modified!.month.toString().padLeft(2, '0')}-${file.modified!.day.toString().padLeft(2, '0')} '
+                                '${file.modified!.hour.toString().padLeft(2, '0')}:${file.modified!.minute.toString().padLeft(2, '0')}',
+                          _BackupRestoreContentState._formatSize(file.size),
+                        ].join(' · '),
+                        style: TextStyle(color: colors.textHint, fontSize: 12),
+                      ),
+                      trailing: deleting
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : IconButton(
+                              tooltip: tr('删除远端备份'),
+                              onPressed: () => _confirmDelete(file),
+                              icon: Icon(
+                                Icons.delete_outline,
+                                size: 20,
+                                color: colors.error,
+                              ),
+                            ),
+                      onTap: deleting
+                          ? null
+                          : () => Navigator.pop(context, file),
+                    );
+                  },
+                ),
+              ),
+            const SizedBox(height: AppSpacing.sm),
+          ],
+        ),
+      ),
     );
   }
 }

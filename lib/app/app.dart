@@ -42,31 +42,45 @@ class _AppState extends ConsumerState<App> {
   Future<void> _syncPlaylistsOnStartup() async {
     if (!mounted) return;
     final config = ref.read(webDavConfigProvider);
-    if (!config.playlistSyncEnabled || !config.isConfigured) return;
+    if (!config.playlistSyncEnabled) return;
     try {
+      // 先确保本地歌单已加载（首次启动会创建「我的收藏」、迁移旧数据库数据），
+      // 再与远端合并，避免用空数据覆盖远端。
+      try {
+        await ref.read(playlistsProvider.future);
+      } catch (e) {
+        debugPrint('[App] 本地歌单加载失败，仍尝试远端同步: $e');
+      }
       await PlaylistSyncService.pullAndMerge(WebDavService(config));
       if (!mounted) return;
       ref.invalidate(playlistsProvider);
     } catch (e) {
       if (!mounted) return;
-      await _showSyncFailedDialog('$e');
+      await _showSyncFailedDialog(describeWebDavError(e));
     }
   }
 
   Future<void> _showSyncFailedDialog(String reason) async {
     if (!mounted) return;
+    // App 位于 MaterialApp 之上，自身 context 找不到 Navigator；
+    // 用路由根 Navigator 的 Overlay context 作为弹窗宿主。
+    final dialogContext =
+        appRouter.routerDelegate.navigatorKey.currentState?.overlay?.context;
+    if (dialogContext == null) return;
     final colors = ref.read(themeColorsProvider);
     final retry = await showDialog<bool>(
-      context: context,
+      context: dialogContext,
       builder: (ctx) => AlertDialog(
         backgroundColor: colors.surface,
         title: Text(
           tr('歌单同步失败'),
           style: TextStyle(color: colors.textPrimary),
         ),
-        content: Text(
-          tr('同步远端歌单失败：$reason'),
-          style: TextStyle(color: colors.textSecondary),
+        content: SingleChildScrollView(
+          child: Text(
+            tr('同步远端歌单失败：$reason'),
+            style: TextStyle(color: colors.textSecondary),
+          ),
         ),
         actions: [
           TextButton(

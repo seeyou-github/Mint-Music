@@ -1,6 +1,3 @@
-import 'dart:async';
-
-import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/backup/playlist_sync_service.dart';
@@ -65,16 +62,11 @@ class PlaylistsNotifier extends AsyncNotifier<List<Playlist>> {
   }
 
   /// 把本地歌单推送到 WebDAV 远端（开启了「歌单实时同步」时）。
+  /// 5 秒防抖：连续增删改只会在最后一次操作后同步一次。
   void _syncToRemote() {
     final config = ref.read(webDavConfigProvider);
     if (!config.playlistSyncEnabled || !config.isConfigured) return;
-    unawaited(() async {
-      try {
-        await PlaylistSyncService.push(WebDavService(config));
-      } catch (e) {
-        debugPrint('[PlaylistsNotifier] 歌单同步到远端失败: $e');
-      }
-    }());
+    PlaylistSyncService.schedulePush(WebDavService(config));
   }
 
   /// Returns true if the song was actually added (not a duplicate).
@@ -143,6 +135,7 @@ class PlaylistsNotifier extends AsyncNotifier<List<Playlist>> {
     final repo = ref.read(playlistRepositoryProvider);
     final playlist = await repo.importPlaylist(jsonString);
     ref.invalidateSelf();
+    _syncToRemote();
     return playlist;
   }
 }

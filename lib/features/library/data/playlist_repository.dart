@@ -179,6 +179,8 @@ class PlaylistRepository {
     final playlists = await loadPlaylists();
     playlists.removeWhere((p) => p.id == id);
     await savePlaylists(playlists);
+    // 记录墓碑，跨设备同步时把这次删除传播到其它端。
+    await PlaylistStore.recordTombstone(id);
   }
 
   /// Returns true if the song was actually added (not a duplicate).

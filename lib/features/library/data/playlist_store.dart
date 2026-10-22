@@ -59,4 +59,65 @@ class PlaylistStore {
       debugPrint('[PlaylistStore] 写入收藏失败: $e');
     }
   }
+
+  // ------------------------------------------------------------ 删除墓碑
+
+  /// 删除墓碑文件：记录被删除歌单的 id 与删除时间，供跨设备同步时
+  /// 判断「远端还有、本地已删」的情况，避免删除被另一端合并回来。
+  static const String tombstoneFileName = 'playlist_tombstones.json';
+
+  static Future<File> tombstoneFile() async {
+    final dir = await AppPaths.configDirectory();
+    return File(p.join(dir.path, tombstoneFileName));
+  }
+
+  /// 读取删除墓碑（id → 删除时间毫秒）。
+  static Future<Map<String, int>> readTombstones() async {
+    try {
+      final f = await tombstoneFile();
+      if (!await f.exists()) return {};
+      final raw = await f.readAsString();
+      if (raw.trim().isEmpty) return {};
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return {};
+      final result = <String, int>{};
+      decoded.forEach((key, value) {
+        final id = '$key';
+        final millis = value is int
+            ? value
+            : value is num
+                ? value.toInt()
+                : int.tryParse('$value');
+        if (id.isNotEmpty && millis != null) result[id] = millis;
+      });
+      return result;
+    } catch (e) {
+      debugPrint('[PlaylistStore] 读取删除墓碑失败: $e');
+      return {};
+    }
+  }
+
+  /// 写入删除墓碑。
+  static Future<void> writeTombstones(Map<String, int> tombstones) async {
+    try {
+      final f = await tombstoneFile();
+      await f.parent.create(recursive: true);
+      final temp = File('${f.path}.tmp');
+      await temp.writeAsString(jsonEncode(tombstones), flush: true);
+      if (await f.exists()) {
+        await f.delete();
+      }
+      await temp.rename(f.path);
+    } catch (e) {
+      debugPrint('[PlaylistStore] 写入删除墓碑失败: $e');
+    }
+  }
+
+  /// 记录一个被删除的歌单。
+  static Future<void> recordTombstone(String id) async {
+    if (id.isEmpty) return;
+    final tombstones = await readTombstones();
+    tombstones[id] = DateTime.now().millisecondsSinceEpoch;
+    await writeTombstones(tombstones);
+  }
 }

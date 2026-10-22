@@ -3,7 +3,6 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:just_audio/just_audio.dart';
-import '../data/playback_state_store.dart';
 import '../domain/models/song.dart';
 import '../domain/models/playback_state.dart';
 import '../domain/models/play_mode.dart';
@@ -64,10 +63,6 @@ final playbackControllerProvider =
       controller.onEnsureMusicSourcesReady = () =>
           ref.read(pluginInitializedProvider.future);
 
-      ref.listen(rememberProgressProvider, (prev, next) {
-        controller.setRememberProgress(next);
-      });
-
       ref.listen(autoQualityDowngradeProvider, (prev, next) {
         controller.setAutoQualityDowngrade(next);
       });
@@ -104,33 +99,12 @@ final playbackControllerProvider =
       ref.listen(balanceValueProvider, (_, __) => syncAudioEffects());
       syncAudioEffects();
 
-      // 播放记忆：保存／恢复进度
       ref
           .read(settingsServiceProvider.future)
           .then((svc) async {
-            controller.setRememberProgress(svc.getRememberProgress());
             controller.setAutoQualityDowngrade(svc.getAutoQualityDowngrade());
             controller.setAutoSwitchSource(svc.getAutoSwitchSource());
             unawaited(controller.setSpeed(svc.getPlaybackSpeed()));
-            // 播放状态每 5 秒就要存一次，属于高频写入，放在临时库里；
-            // 队列只有变化时才写那几十 KB，高频保存只动当前歌曲那一行。
-            final stateStore = PlaybackStateStore();
-            await stateStore.load();
-            controller.onSavePlaybackState = (data) {
-              stateStore.save(data);
-            };
-            controller.onRestorePlaybackState = () => stateStore.restore();
-            controller.onClearPlaybackState = () => stateStore.clear();
-            // 回调就绪后自动恢复上次播放会话
-            // 直接从偏好设置读取音质，避免 provider 未初始化的竞态
-            final persistedQuality = svc.getGlobalQuality();
-            final persistedSourceQuality = svc.getSourceQuality();
-            await controller.restoreLastSession(
-              autoPlay: svc.getAutoPlay(),
-              rememberProgress: svc.getRememberProgress(),
-              quality: persistedQuality,
-              sourceQualities: persistedSourceQuality,
-            );
           })
           .catchError((e) {
             debugPrint('[PlaybackController] settingsService error: $e');
@@ -198,9 +172,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
 
   /// 用户手动切换音质后回调（用于同步「默认音质 / 全局音质」设置）。
   void Function(String quality, String? sourceId)? onQualityChanged;
-  void Function(Map<String, dynamic> data)? onSavePlaybackState;
-  Map<String, dynamic>? Function()? onRestorePlaybackState;
-  VoidCallback? onClearPlaybackState;
   Future<void> Function()? onEnsureMusicSourcesReady;
 
   int _currentPlayRequestId = 0;
@@ -216,21 +187,15 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   Duration? _seekTarget;
   Timer? _seekTargetTimer;
 
-  bool _rememberProgress = true;
   bool _autoQualityDowngrade = false;
 
   /// 「当前音源播放失败自动切换音源」开关（默认关闭）。
   /// 关闭时播放失败直接停止播放，不跨音源换源、不自动播放下一首。
   bool _autoSwitchSource = false;
-  bool _needsUrlRefresh = false;
-  int? _pendingRestorePosition;
-  String? _pendingRestoreSongId;
-  Timer? _saveTimer;
   Timer? _loadingTimer;
 
   /// 看门狗武装时记录的播放位置，用于判断是否真的「没有进度」。
   Duration? _stallBaselinePosition;
-  static const Duration _saveInterval = Duration(seconds: 5);
   static const Duration _loadingTimeout = Duration(seconds: 30);
 
   bool get _isSwitchingQuality =>
@@ -269,15 +234,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     _init();
   }
 
-  void setRememberProgress(bool enabled) {
-    _rememberProgress = enabled;
-    if (!enabled) {
-      _stopSaveTimer();
-    } else if (state.isPlaying) {
-      _startSaveTimer();
-    }
-  }
-
   void setAutoQualityDowngrade(bool enabled) {
     _autoQualityDowngrade = enabled;
   }
@@ -288,43 +244,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
 
   void setAudioEffects(AudioEffectsConfig config) {
     unawaited(_audioEffectService.apply(config));
-  }
-
-  void _savePlaybackState() {
-    if (!_rememberProgress) return;
-    final song = state.currentSong;
-    if (song == null) return;
-    final positionMs = state.position.inMilliseconds;
-    if (positionMs <= 0) return;
-    final persistedSong = _stripTransientPlaybackData(song);
-    final persistedQueue = state.queue
-        .map(_stripTransientPlaybackData)
-        .toList();
-    onSavePlaybackState?.call({
-      'song': persistedSong.toJson(),
-      'positionMs': positionMs,
-      'queue': persistedQueue.map((s) => s.toJson()).toList(),
-      'currentIndex': state.currentIndex,
-      'currentQuality': state.currentQuality,
-    });
-  }
-
-  /// Online music URLs and their headers often contain short-lived tokens.
-  /// They must never survive process death; playback restoration always
-  /// resolves a fresh URL from the original source metadata.
-  Song _stripTransientPlaybackData(Song song) {
-    if (song.source == 'local') return song;
-    return song.copyWith(clearSourceUrl: true, clearSourceHeaders: true);
-  }
-
-  void _startSaveTimer() {
-    _stopSaveTimer();
-    _saveTimer = Timer.periodic(_saveInterval, (_) => _savePlaybackState());
-  }
-
-  void _stopSaveTimer() {
-    _saveTimer?.cancel();
-    _saveTimer = null;
   }
 
   /// 武装「加载卡死」看门狗。
@@ -380,101 +299,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     unawaited(_stopPlaybackOnFailure(tr('播放加载超时')));
   }
 
-  /// 启动时恢复上次播放会话（CeruMusic 风格：仅恢复队列+UI，不获取 URL）
-  Future<void> restoreLastSession({
-    required bool autoPlay,
-    required bool rememberProgress,
-    String quality = '320k',
-    Map<String, String> sourceQualities = const {},
-  }) async {
-    _loadingTimer?.cancel();
-    _loadingTimer = null;
-    if (!autoPlay && !rememberProgress) return;
-    if (state.queue.isNotEmpty) return;
-
-    final data = onRestorePlaybackState?.call();
-    if (data == null) return;
-
-    final songJson = data['song'] as Map<String, dynamic>?;
-    if (songJson == null) return;
-
-    final positionMs = data['positionMs'] as int? ?? 0;
-    final savedSong = Song.fromJson(songJson);
-
-    // 恢复完整队列
-    List<Song> queue;
-    final queueJson = data['queue'] as List<dynamic>?;
-    int currentIndex = data['currentIndex'] as int? ?? 0;
-    if (queueJson != null && queueJson.isNotEmpty) {
-      queue = queueJson
-          .map((s) => Song.fromJson(s as Map<String, dynamic>))
-          .toList();
-      if (currentIndex < 0 || currentIndex >= queue.length) {
-        currentIndex = queue.indexWhere((s) => s.id == savedSong.id);
-        if (currentIndex < 0) currentIndex = 0;
-      }
-    } else {
-      queue = [savedSong];
-      currentIndex = 0;
-    }
-
-    // 清除所有在线歌曲的临时 URL 和请求头，避免重启后复用已过期的
-    // token。历史版本的记录也在此统一清理。
-    queue = queue.map(_stripTransientPlaybackData).toList();
-    final restoredSong = queue[currentIndex];
-
-    // 恢复队列和 UI 状态（含音质），不获取 URL 不设音源（延迟到用户点击播放时）
-    final restoredQuality = (data['currentQuality'] as String?) ?? quality;
-    state = state.copyWith(
-      queue: queue,
-      currentIndex: currentIndex,
-      currentSong: restoredSong,
-      currentQuality: restoredQuality,
-      isLoading: false,
-      isPlaying: false,
-    );
-
-    // 保存待恢复的进度位置（CeruMusic: pendingRestorePosition）
-    if (positionMs > 0) {
-      _pendingRestorePosition = positionMs;
-      _pendingRestoreSongId = restoredSong.id;
-    }
-
-    // 标记首次播放需刷新 URL
-    _needsUrlRefresh = true;
-
-    // 清除已恢复的记忆，只保留待恢复位置（由 _pendingRestorePosition 携带）
-    // 注意：不清除 SharedPrefs，让进度持续保留到用户实际播放时才清除
-    // 这样即使用户下次打开不播放，再下次也能继续进度
-
-    // autoPlay：直接走 play() → _needsUrlRefresh → playSongAt → 获取最新 URL
-    if (autoPlay) {
-      await play();
-    }
-  }
-
-  Future<void> _restoreAndPlay(Song song) async {
-    // 用户实际开始播放时，清除已恢复的记忆（确保下次启动重新读取 SharedPrefs）
-    onClearPlaybackState?.call();
-    if (_rememberProgress) {
-      // 照搬 CeruMusic：仅消费 restoreLastSession 设置的一次性进度标记
-      // _pendingRestorePosition → 在 restoreLastSession 中设置，
-      // 由 onClearPlaybackState 清除 SharedPrefs，仅在首次播放时可用。
-      // 不设回退读取 SharedPrefs 的路径，避免重新播放同源同首歌时误续进度。
-      if (_pendingRestorePosition != null && _pendingRestoreSongId == song.id) {
-        final savedPos = _pendingRestorePosition!;
-        _pendingRestorePosition = null;
-        _pendingRestoreSongId = null;
-        if (savedPos > 0) {
-          await _audioHandler.seek(Duration(milliseconds: savedPos));
-        }
-      } else {
-        // 照搬 CeruMusic（else 分支 pendingRestorePosition = 0）：
-        // 非恢复目标歌曲播放时立即清除待恢复进度，避免后续误用
-        _pendingRestorePosition = null;
-        _pendingRestoreSongId = null;
-      }
-    }
+  Future<void> _startPlayback() async {
     await _audioHandler.play();
   }
 
@@ -636,7 +461,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
         // 关键修复：ready(playing=true) 也必须突破 _settingQueue 守卫。
         //
         // playSongAt 内 setAudioSource() 发出 ready(playing=false)，
-        // 然后 _restoreAndPlay → play() 发出 ready(playing=true)。
+        // 然后 _startPlayback → play() 发出 ready(playing=true)。
         // 这两个事件都是微任务，在 _settingQueue 仍为 true 时被处理：
         //   · ready(playing=false) → 被守卫拦住 ✅（不应覆盖 isLoading:true）
         //   · ready(playing=true)  → 也被拦住 ❌ —— 这是 play() 的确认信号，
@@ -683,14 +508,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
         }
       }
 
-      if (state.isPlaying != wasPlaying) {
-        if (state.isPlaying) {
-          _startSaveTimer();
-        } else {
-          _savePlaybackState();
-          _stopSaveTimer();
-        }
-      }
     });
 
     // 通知栏控制回调（通知栏下一首/上一首按钮）
@@ -722,16 +539,8 @@ class PlaybackController extends StateNotifier<PlaybackState> {
 
     _cancelPendingAutoNext();
     _clearSeekTarget();
-    // playSongAt 总是会重新加载音源（setAudioSource），恢复会话的
-    // _needsUrlRefresh 标记随之失效。
-    // 否则：启动恢复会话 → 搜索播放（setQueue 不清此标记）→ 暂停 →
-    // play() 误判需要刷新 URL → 重新 playSongAt 加载音源 → 进度归零
-    // （_pendingRestorePosition 已被 setQueue 清空，无法 seek 回原进度）。
-    _needsUrlRefresh = false;
     _loadingTimer?.cancel();
     _loadingTimer = null;
-
-    _savePlaybackState();
 
     _settingQueue = true;
     // 清除 completed 标记：新歌开始播放，后续的 ready 事件应正常处理
@@ -776,15 +585,9 @@ class PlaybackController extends StateNotifier<PlaybackState> {
             bypassCache: sourceId == 'kw',
           )
         : null;
-    final defaultQuality = isLocal
+    final quality = isLocal
         ? _getQualityFromSong(song)
         : (getQualityForSource?.call(sourceId) ?? _getQualityFromSong(song));
-    // 仅当处于待恢复状态（重启后首次播放）时使用恢复的音质，否则走默认
-    final isRestorePlay =
-        _pendingRestorePosition != null && _pendingRestoreSongId == song.id;
-    final quality = isRestorePlay && state.currentQuality.isNotEmpty
-        ? state.currentQuality
-        : defaultQuality;
     final availableQualities = isLocal
         ? <String>[quality]
         : _musicSourceManager.getSupportedQualitiesForSourceId(sourceId);
@@ -821,7 +624,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
           await _audioHandler
               .setAudioSource(urlToPlay, song: currentSongToPlay)
               .timeout(_audioSetTimeout);
-          await _restoreAndPlay(currentSongToPlay);
+          await _startPlayback();
         } catch (_) {
           state = state.copyWith(isLoading: false, isPlaying: false);
           return;
@@ -924,7 +727,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
           await _audioHandler
               .setAudioSource(urlToPlay, song: currentSongToPlay)
               .timeout(_audioSetTimeout);
-          await _restoreAndPlay(currentSongToPlay);
+          await _startPlayback();
         } catch (_) {
           if (_currentPlayRequestId != requestId) return;
 
@@ -959,7 +762,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
               await _audioHandler
                   .setAudioSource(candidateUrl, song: fallbackSong)
                   .timeout(_audioSetTimeout);
-              await _restoreAndPlay(fallbackSong);
+              await _startPlayback();
               currentSongToPlay = fallbackSong;
               _replaceSongInQueue(index, fallbackSong);
               final fallbackQuality = candidate.quality.isEmpty
@@ -1058,7 +861,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
                 await _audioHandler
                     .setAudioSource(url, song: switchedSong)
                     .timeout(_audioSetTimeout);
-                await _restoreAndPlay(switchedSong);
+                await _startPlayback();
 
                 // CeruMusic：只有播放成功后（waitForAudioReady/setAudioSource 成功）
                 // 才显示切换成功消息，避免切换消息显示后播放又失败
@@ -1165,7 +968,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
               await _audioHandler
                   .setAudioSource(url, song: switchedSong)
                   .timeout(_audioSetTimeout);
-              await _restoreAndPlay(switchedSong);
+              await _startPlayback();
 
               onMessage?.call(
                 tr('已自动切换到 ${_getSourceName(candidate.source ?? '', _musicSourceManager)} 源播放'),
@@ -1218,9 +1021,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
         );
       }
       _settingQueue = false;
-      if (_rememberProgress && state.isPlaying) {
-        _startSaveTimer();
-      }
       // 兜底（CeruMusic 风格）：若所有微任务事件处理完后 isLoading
       // 仍有残留且播放器实际在播放，强制清除。
       Future.microtask(() {
@@ -1327,29 +1127,9 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     _cancelPendingAutoNext();
     // 用户主动播放，清除 completed 标记
     _justCompleted = false;
-    // 首次恢复后播放：强制刷新 URL（CeruMusic 从不保存 URL，每次播放都重新获取）
-    if (_needsUrlRefresh && state.currentSong != null) {
-      _needsUrlRefresh = false;
-      final idx = _currentIndex;
-      if (idx >= 0) {
-        final currentSong = state.currentSong!;
-        if (currentSong.source != 'local') {
-          _replaceSongInQueue(
-            idx,
-            currentSong.copyWith(
-              clearSourceUrl: true,
-              clearSourceHeaders: true,
-            ),
-          );
-        }
-        await playSongAt(idx);
-        return;
-      }
-    }
     await _audioHandler.play();
     // 遵循 CeruMusic：不乐观设 isPlaying=true。
     // 由 _playerStateSub 的 ready(playing=true) 或微任务兜底同步。
-    if (_rememberProgress) _startSaveTimer();
   }
 
   Future<void> pause() async {
@@ -1359,8 +1139,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     _justCompleted = false;
     state = state.copyWith(isPlaying: false);
     await _audioHandler.pause();
-    _savePlaybackState();
-    _stopSaveTimer();
   }
 
   Future<void> togglePlayPause() async {
@@ -1425,10 +1203,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   Future<void> setQueue(List<Song> songs, {int startIndex = 0}) async {
     _cancelPendingAutoNext();
     if (songs.isEmpty) return;
-    // 用户主动切换队列（搜索/歌单等），不应用待恢复进度
-    _pendingRestorePosition = null;
-    _pendingRestoreSongId = null;
-    onClearPlaybackState?.call();
     // 用户主动起播 → 解除 clearQueue() 设置的会话屏蔽，
     // 否则 playSongAt 里的 setAudioSource 会被忽略、根本播不出声音。
     _audioHandler.markSessionActive();
@@ -1460,9 +1234,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     // 队列为空且无当前歌曲：从头开始播放这批歌曲。
     if (state.queue.isEmpty && state.currentSong == null) {
       _cancelPendingAutoNext();
-      _pendingRestorePosition = null;
-      _pendingRestoreSongId = null;
-      onClearPlaybackState?.call();
       await setQueue(songs);
       return;
     }
@@ -1479,9 +1250,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     if (songs.isEmpty) return;
     if (state.queue.isEmpty && state.currentSong == null) {
       _cancelPendingAutoNext();
-      _pendingRestorePosition = null;
-      _pendingRestoreSongId = null;
-      onClearPlaybackState?.call();
       await setQueue(songs);
       return;
     }
@@ -1493,10 +1261,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
 
   /// 插入到队列首位并播放（照搬 CeruMusic addSongToFirst + playSong）
   Future<void> prependAndPlay(Song song) async {
-    // 用户主动插播，不应用待恢复进度
-    _pendingRestorePosition = null;
-    _pendingRestoreSongId = null;
-    onClearPlaybackState?.call();
     // 用户主动起播 → 解除 clearQueue() 设置的会话屏蔽，
     // 否则紧随其后的 setAudioSource 会被忽略。
     _audioHandler.markSessionActive();
@@ -1568,18 +1332,12 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     _errorListenerSub = null;
     _justCompleted = false;
     _cancelPendingAutoNext();
-    _needsUrlRefresh = false;
     _loadingTimer?.cancel();
     _loadingTimer = null;
     _stallBaselinePosition = null;
-    // 用户主动清空，不应用待恢复进度
-    _pendingRestorePosition = null;
-    _pendingRestoreSongId = null;
 
-    // 2) 复位状态（保存定时器随即短路，不再写盘），再清持久化，
-    //避免保存定时器在两者之间把旧队列写回去。
+    // 2) 复位状态。
     state = const PlaybackState();
-    onClearPlaybackState?.call();
 
     // 3) 硬重置媒体会话：停播 + 卸音源 + 清 queue/mediaItem，通知栏同步消失
     await _audioHandler.clearMediaSession();
@@ -1847,7 +1605,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
           await _audioHandler
               .setAudioSource(result.url, song: switchedSong)
               .timeout(_audioSetTimeout);
-          await _restoreAndPlay(switchedSong);
+          await _startPlayback();
           _replaceSongInQueue(index, switchedSong);
           state = state.copyWith(
             currentSong: switchedSong,
@@ -1945,7 +1703,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
         await _audioHandler
             .setAudioSource(url, song: switchedSong)
             .timeout(_audioSetTimeout);
-        await _restoreAndPlay(switchedSong);
+        await _startPlayback();
 
         debugPrint(
           '[PlaybackController] 内置源改用插件解析播放: '
@@ -2120,7 +1878,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
           await _audioHandler
               .setAudioSource(candidate.url, song: fallbackSong)
               .timeout(_audioSetTimeout);
-          await _restoreAndPlay(fallbackSong);
+          await _startPlayback();
           await _resumeFromPosition(resumePosition);
           _replaceSongInQueue(index, fallbackSong);
           state = state.copyWith(
@@ -2182,7 +1940,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
         await _audioHandler
             .setAudioSource(candidate.url, song: fallbackSong)
             .timeout(_audioSetTimeout);
-        await _restoreAndPlay(fallbackSong);
+        await _startPlayback();
         await _resumeFromPosition(resumePosition);
         _replaceSongInQueue(index, fallbackSong);
         state = state.copyWith(
@@ -2293,7 +2051,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
             await _audioHandler
                 .setAudioSource(resolved.sourceUrl!, song: resolved)
                 .timeout(_audioSetTimeout);
-            await _restoreAndPlay(resolved);
+            await _startPlayback();
             await _resumeFromPosition(resumePosition);
             state = state.copyWith(currentSong: resolved, isLoading: false);
             onMessage?.call(
@@ -2372,7 +2130,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
             await _audioHandler
                 .setAudioSource(url, song: switchedSong)
                 .timeout(_audioSetTimeout);
-            await _restoreAndPlay(switchedSong);
+            await _startPlayback();
             await _resumeFromPosition(resumePosition);
 
             onMessage?.call(
@@ -2467,7 +2225,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     _audioSessionSub?.cancel();
     _loadingTimer?.cancel();
     _loadingTimer = null;
-    _stopSaveTimer();
     _clearSeekTarget();
     _positionSub?.cancel();
     _bufferedSub?.cancel();

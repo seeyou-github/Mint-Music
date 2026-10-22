@@ -12,6 +12,7 @@ import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../../../shared/widgets/music_cover_image.dart';
+import '../../../shared/widgets/playlist_sync_button.dart';
 import '../application/playlist_providers.dart';
 import '../../player/application/playback_controller.dart';
 import '../../plugin/application/plugin_providers.dart';
@@ -153,6 +154,8 @@ class LibraryPage extends ConsumerWidget {
             ),
           ),
         ),
+        const SizedBox(width: AppSpacing.sm),
+        const PlaylistSyncButton(),
       ],
     );
   }

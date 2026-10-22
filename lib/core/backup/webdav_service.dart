@@ -1,8 +1,50 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart';
+import 'package:dio/dio.dart' as dio;
 import 'package:webdav_client/webdav_client.dart' as webdav;
+
+/// 带可读原因的 WebDAV 异常。
+class WebDavException implements Exception {
+  const WebDavException(this.message, {this.statusCode});
+
+  final String message;
+  final int? statusCode;
+
+  @override
+  String toString() => message;
+}
+
+/// 把网络 / WebDAV 异常转换成用户能看懂的原因。
+String describeWebDavError(Object error) {
+  if (error is WebDavException) return error.message;
+  if (error is dio.DioException) {
+    final uri = error.requestOptions.uri;
+    switch (error.type) {
+      case dio.DioExceptionType.connectionTimeout:
+        return '连接超时：无法在 15 秒内连接 $uri，请检查网络或服务器地址';
+      case dio.DioExceptionType.sendTimeout:
+        return '发送超时：向 $uri 上传数据超时，请检查网络';
+      case dio.DioExceptionType.receiveTimeout:
+        return '接收超时：$uri 响应过慢，请稍后重试';
+      case dio.DioExceptionType.badCertificate:
+        return 'HTTPS 证书校验失败：$uri';
+      case dio.DioExceptionType.connectionError:
+        return '网络连接失败：无法访问 $uri\n${error.error ?? error.message ?? ''}'
+            .trim();
+      case dio.DioExceptionType.cancel:
+        return '请求已取消';
+      case dio.DioExceptionType.badResponse:
+        final code = error.response?.statusCode;
+        final message = error.response?.statusMessage;
+        return '服务器返回错误：HTTP $code'
+            '${message == null || message.isEmpty ? '' : ' $message'}';
+      case dio.DioExceptionType.unknown:
+        return '网络异常：${error.error ?? error.message ?? error}';
+    }
+  }
+  return error.toString();
+}
 
 /// WebDAV 远端配置。
 class WebDavConfig {
@@ -95,6 +137,108 @@ class WebDavService {
     return client;
   }
 
+  void _requireConfigured() {
+    if (!config.isConfigured) {
+      throw const WebDavException(
+        '未配置 WebDAV：请先在「设置 → 备份还原」中填写 WebDAV 地址',
+      );
+    }
+  }
+
+  /// 直接发 GET 读取远端文件。
+  ///
+  /// 不调用 `client.read()`：它固定先发 OPTIONS 且要求返回 200，遇到
+  /// 301/302 的服务器会直接抛错（`DioException [bad response]: null`）。
+  /// 这里让 Dio 跟随重定向，并手动兜底处理未自动跟随的 3xx。
+  Future<Uint8List> _readBytes(String path) async {
+    final client = _buildClient();
+    var target = path;
+    for (var redirects = 0; redirects <= 5; redirects++) {
+      final response = await client.c.req<List<int>>(
+        client,
+        'GET',
+        target,
+        optionsHandler: (options) {
+          options.responseType = dio.ResponseType.bytes;
+          options.followRedirects = true;
+          // 状态码由下面统一判断，避免 404 被 Dio 转成无信息的 badResponse。
+          options.validateStatus = (status) => status != null;
+        },
+      );
+      final status = response.statusCode ?? 0;
+      if (status >= 200 && status < 300) {
+        final data = response.data;
+        if (data == null) return Uint8List(0);
+        return data is Uint8List ? data : Uint8List.fromList(data);
+      }
+      if (status >= 300 && status < 400) {
+        final location = response.headers.value('location');
+        if (location == null || location.isEmpty) {
+          throw WebDavException(
+            '服务器返回重定向（HTTP $status），但没有提供跳转地址',
+            statusCode: status,
+          );
+        }
+        final current = Uri.tryParse(target);
+        target = current?.resolve(location).toString() ?? location;
+        continue;
+      }
+      if (status == 404) {
+        throw WebDavException('远端文件不存在（HTTP 404）', statusCode: 404);
+      }
+      final message = response.statusMessage;
+      throw WebDavException(
+        'HTTP $status${message == null || message.isEmpty ? '' : ' $message'}',
+        statusCode: status,
+      );
+    }
+    throw const WebDavException('下载失败：重定向次数过多');
+  }
+
+  /// 直接发 PUT 写入远端文件。
+  ///
+  /// 同样绕过 `client.write()` 的 OPTIONS 预检（部分服务器 OPTIONS 会 301）。
+  /// 重定向手动处理，避免 PUT 被客户端改写成 GET。
+  Future<void> _writeBytes(String path, Uint8List bytes) async {
+    final client = _buildClient();
+    var target = path;
+    for (var redirects = 0; redirects <= 5; redirects++) {
+      final response = await client.c.req<dynamic>(
+        client,
+        'PUT',
+        target,
+        data: bytes,
+        optionsHandler: (options) {
+          options.followRedirects = false;
+          options.validateStatus = (status) => status != null;
+          options.responseType = dio.ResponseType.plain;
+          options.headers?['content-length'] = bytes.length;
+        },
+      );
+      final status = response.statusCode ?? 0;
+      if (status >= 200 && status < 300) return;
+      if (status >= 300 && status < 400) {
+        final location = response.headers.value('location');
+        if (location == null || location.isEmpty) {
+          throw WebDavException(
+            '服务器返回重定向（HTTP $status），但没有提供跳转地址',
+            statusCode: status,
+          );
+        }
+        final current = Uri.tryParse(target);
+        target = current?.resolve(location).toString() ?? location;
+        continue;
+      }
+      final message = response.statusMessage;
+      throw WebDavException(
+        '上传失败：HTTP $status'
+        '${message == null || message.isEmpty ? '' : ' $message'}',
+        statusCode: status,
+      );
+    }
+    throw const WebDavException('上传失败：重定向次数过多');
+  }
+
   /// 远端根路径（URL 里的路径部分，例如 `back`），仅用于界面展示。
   String get remoteRoot {
     final uri = Uri.tryParse(config.url.trim());
@@ -145,16 +289,15 @@ class WebDavService {
   ///
   /// 保存位置：`<远端根>/<设备名>/<文件名>`。
   Future<void> uploadBackup(Uint8List bytes, String fileName) async {
-    if (!config.isConfigured) throw Exception('WebDAV 未配置');
-    final client = _buildClient();
+    _requireConfigured();
     await _ensureDir(backupDir);
     final target = backupDir.isEmpty ? fileName : '$backupDir/$fileName';
-    await client.write(target, bytes);
+    await _writeBytes(target, bytes);
   }
 
   /// 列出远端备份文件。
   Future<List<RemoteBackupFile>> listBackups() async {
-    if (!config.isConfigured) throw Exception('WebDAV 未配置');
+    _requireConfigured();
     final client = _buildClient();
     final dir = backupDir.isEmpty ? '/' : backupDir;
     final items = await client.readDir(dir);
@@ -189,10 +332,15 @@ class WebDavService {
 
   /// 下载远端备份文件。
   Future<Uint8List> downloadBackup(String path) async {
+    _requireConfigured();
+    return _readBytes(path);
+  }
+
+  /// 删除远端备份文件。
+  Future<void> deleteBackup(String path) async {
+    _requireConfigured();
     final client = _buildClient();
-    final bytes = await client.read(path);
-    if (bytes is Uint8List) return bytes;
-    return Uint8List.fromList(bytes as List<int>);
+    await client.remove(path);
   }
 
   // ---------------------------------------------------------------- 歌单同步
@@ -200,34 +348,40 @@ class WebDavService {
   /// 歌单同步文件名（远端 `<远端根>/playlists.json`）。
   static const String playlistFileName = 'playlists.json';
 
-  /// 读取远端歌单 JSON（不存在时返回 null）。
+  /// 读取远端歌单 JSON。
+  ///
+  /// 仅在远端文件确实不存在（404）时返回 null；网络 / 鉴权等错误一律
+  /// 向上抛出，避免把「读取失败」误当成「远端没有歌单」而覆盖远端数据。
   Future<Map<String, dynamic>?> readRemotePlaylists() async {
-    if (!config.isConfigured) return null;
-    final client = _buildClient();
+    _requireConfigured();
     final target = playlistDir.isEmpty
         ? playlistFileName
         : '$playlistDir/$playlistFileName';
+    var bytes = Uint8List(0);
     try {
-      final bytes = await client.read(target);
-      final text = utf8.decode(bytes is Uint8List ? bytes : Uint8List.fromList(bytes as List<int>));
-      final decoded = jsonDecode(text);
-      if (decoded is Map) return decoded.map((k, v) => MapEntry('$k', v));
-      return null;
-    } catch (e) {
-      debugPrint('[WebDavService] 读取远端歌单失败: $e');
-      return null;
+      bytes = await _readBytes(target);
+    } on WebDavException catch (e) {
+      if (e.statusCode == 404) return null;
+      rethrow;
     }
+    if (bytes.isEmpty) return null;
+    final decoded = jsonDecode(utf8.decode(bytes));
+    if (decoded is Map) return decoded.map((k, v) => MapEntry('$k', v));
+    throw const WebDavException('远端歌单文件格式错误：不是有效的 JSON 对象');
   }
 
   /// 写入远端歌单 JSON。
   Future<void> writeRemotePlaylists(Map<String, dynamic> data) async {
-    if (!config.isConfigured) throw Exception('WebDAV 未配置');
-    final client = _buildClient();
+    _requireConfigured();
     await _ensureDir(playlistDir);
     final target = playlistDir.isEmpty
         ? playlistFileName
         : '$playlistDir/$playlistFileName';
-    final text = jsonEncode(data);
-    await client.write(target, Uint8List.fromList(utf8.encode(text)));
+    final text = jsonEncode({
+      ...data,
+      'deviceName': config.deviceName,
+      'updatedAt': data['updatedAt'] ?? DateTime.now().millisecondsSinceEpoch,
+    });
+    await _writeBytes(target, Uint8List.fromList(utf8.encode(text)));
   }
 }
