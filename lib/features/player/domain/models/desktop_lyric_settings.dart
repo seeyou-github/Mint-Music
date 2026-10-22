@@ -41,8 +41,8 @@ class DesktopLyricSettings {
   static DesktopLyricSettings get defaults => DesktopLyricSettings(
     enable: false,
     isLock: false,
-    // 默认只显示当前行
-    maxLineNum: 1,
+    // 默认显示当前行与下一行
+    maxLineNum: 2,
     // Windows 上桌面歌词是独立窗口，字号比手机大得多。
     fontSize: Platform.isWindows ? 45 : 18,
     opacityPercent: 85,

@@ -513,20 +513,13 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                         final messenger = ScaffoldMessenger.of(context);
                         final errorText = context.tr('无法打开所在文件夹');
                         final path = widget.song.filePath ?? '';
-                        // 直接打开「下载文件夹」：歌曲基本都是下载下来的，
-                        // 用户要的是那个文件夹，而不是每首歌各自的路径。
-                        final downloadDir = ref.read(downloadDirProvider);
                         Navigator.pop(context);
-                        var opened = false;
-                        if (downloadDir.trim().isNotEmpty) {
-                          opened = await FileManagerService.openFolder(
-                            downloadDir,
-                          );
-                        }
-                        // 下载目录不可用（没设置 / 已被删除）时再退回歌曲所在目录。
-                        if (!opened && path.isNotEmpty) {
-                          opened = await FileManagerService.openFolderOf(path);
-                        }
+                        // 打开这首歌实际所在的目录并选中文件，而不是固定打开
+                        // 下载目录：本地扫描目录里的歌曲并不在下载目录下。
+                        final opened =
+                            await FileManagerService.revealFileOrOpenFolder(
+                              path,
+                            );
                         if (opened) return;
                         messenger.showSnackBar(
                           SnackBar(content: Text(errorText)),

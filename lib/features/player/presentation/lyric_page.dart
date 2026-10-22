@@ -8,6 +8,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:palette_generator/palette_generator.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../core/theme/theme_provider.dart';
 import '../../../shared/services/app_image_cache.dart';
 import '../../../shared/widgets/share_preview_dialog.dart';
 import '../../../shared/widgets/music_cover_image.dart';
@@ -32,7 +33,6 @@ class LyricPage extends ConsumerStatefulWidget {
 
 class _LyricPageState extends ConsumerState<LyricPage> {
   Color? _dominantColor;
-  Color? _lightColor;
   Song? _lastSong;
   bool _isLeaving = false;
   bool _exiting = false;
@@ -148,13 +148,8 @@ class _LyricPageState extends ConsumerState<LyricPage> {
       if (!mounted || _isLeaving) return;
       final dominant = paletteGenerator.dominantColor;
       if (dominant != null) {
-        final color = dominant.color;
-        final lightColor = color.computeLuminance() > 0.5
-            ? Color.lerp(Colors.white, color, 0.3)!
-            : Color.lerp(Colors.white, color, 0.15)!;
         setState(() {
-          _dominantColor = color;
-          _lightColor = lightColor;
+          _dominantColor = dominant.color;
         });
       }
     } catch (_) {
@@ -179,8 +174,8 @@ class _LyricPageState extends ConsumerState<LyricPage> {
     final enableBlur = ref.watch(lyricEnableBlurProvider);
     final enableScale = ref.watch(lyricEnableScaleProvider);
     final enableJumpLyric = ref.watch(appearanceJumpLyricProvider);
-    final immersiveColor = ref.watch(lyricImmersiveColorProvider);
     final fontSizeScale = ref.watch(lyricFontSizeProvider);
+    final themeColors = ref.watch(themeColorsProvider);
     if (song != null && !identical(song, _lastSong)) {
       _lastSong = song;
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -190,9 +185,7 @@ class _LyricPageState extends ConsumerState<LyricPage> {
       });
     }
 
-    final activeColor = immersiveColor && _lightColor != null
-        ? _lightColor!
-        : Colors.white;
+    final activeColor = themeColors.primary;
     final inactiveColor = Colors.white.withValues(alpha: 0.4);
     final hasYrc = lyricState.hasYrc;
     final baseFontSize = 35.0 * fontSizeScale;

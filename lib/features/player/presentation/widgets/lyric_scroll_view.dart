@@ -896,29 +896,27 @@ class _PaintedPlainLine extends StatelessWidget {
             : MediaQuery.sizeOf(context).width - 60;
         final layout = _PlainLineLayout.cached(
           text: line.plainText,
-          maxWidth: maxWidth,
           fontSize: fontSize,
           activeColor: activeColor,
           inactiveColor: inactiveColor,
           isActive: isActive,
-          textAlign: centerAlign ? TextAlign.center : TextAlign.start,
           fontFamily: fontFamily,
           fontWeight: fontWeight,
           textScaler: MediaQuery.textScalerOf(context),
           locale: Localizations.maybeLocaleOf(context),
         );
-        // 宽度与原来的 Text 一致：单行短句收缩到文字宽度，长句撑满可用宽度。
-        // 这样 AnimatedScale 的缩放中心、以及行内居中都与改动前完全一致。
-        final boxWidth = max(min(maxWidth, layout.width), 1.0);
+        // 始终占满可用宽度，由画笔自己决定居中/横向滚动位置：
+        // 外层是 ListView 的紧约束，收缩宽度无法让文字真正居中。
         return RepaintBoundary(
           child: CustomPaint(
-            size: Size(boxWidth, layout.height),
+            size: Size(maxWidth, layout.height),
             painter: _PlainLinePainter(
               layout: layout,
               line: line,
               clock: clock,
               staticTimeMs: staticTimeMs,
               isActive: isActive,
+              centerAlign: centerAlign,
               repaint: clock,
             ),
           ),
@@ -934,6 +932,7 @@ class _PlainLinePainter extends CustomPainter {
   final _LyricClock? clock;
   final int staticTimeMs;
   final bool isActive;
+  final bool centerAlign;
 
   _PlainLinePainter({
     required this.layout,
@@ -941,43 +940,45 @@ class _PlainLinePainter extends CustomPainter {
     required this.clock,
     required this.staticTimeMs,
     required this.isActive,
+    required this.centerAlign,
     super.repaint,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
-    // 未唱到的部分：整句先按「未播放」颜色画一遍。
-    layout.dimPainter.paint(canvas, Offset.zero);
-    if (!isActive || layout.totalWidth <= 0) return;
+    final textWidth = layout.width;
+    if (textWidth <= 0 || size.width <= 0) return;
 
     final progress = _lineProgressOf(line, clock?.timeMs ?? staticTimeMs);
-    if (progress <= 0) return;
-    if (progress >= 1) {
-      layout.brightPainter.paint(canvas, Offset.zero);
-      return;
+    final double dx;
+    if (textWidth <= size.width) {
+      dx = centerAlign ? (size.width - textWidth) * 0.5 : 0;
+    } else {
+      // 超宽单行不换行：随播放进度横向滚动，让当前唱到的位置
+      // 尽量保持在控件水平中央；行首/行尾则贴边显示。
+      dx = (size.width * 0.5 - textWidth * progress)
+          .clamp(size.width - textWidth, 0.0)
+          .toDouble();
     }
 
-    // 把整句的可绘制宽度按进度切开，逐行裁剪出「已唱」的部分。
-    // 裁剪边界是像素级的，所以填充在字符内部也是连续的（线性进度）。
-    var remaining = layout.totalWidth * progress;
-    for (final metrics in layout.lines) {
-      if (remaining <= 0) break;
-      final fill = min(remaining, metrics.width);
-      if (fill > 0) {
+    canvas.save();
+    canvas.clipRect(Offset.zero & size);
+    canvas.translate(dx, 0);
+    // 未唱到的部分：整句先按「未播放」颜色画一遍。
+    layout.dimPainter.paint(canvas, Offset.zero);
+    if (isActive && progress > 0) {
+      if (progress >= 1) {
+        layout.brightPainter.paint(canvas, Offset.zero);
+      } else {
+        // 按进度裁剪出「已唱」的部分：边界是像素级的，填充在字符内部
+        // 也是连续的（线性推进），不会整字跳变。
         canvas.save();
-        canvas.clipRect(
-          Rect.fromLTWH(
-            metrics.left,
-            metrics.baseline - metrics.ascent,
-            fill,
-            metrics.ascent + metrics.descent,
-          ),
-        );
+        canvas.clipRect(Rect.fromLTWH(0, 0, textWidth * progress, size.height));
         layout.brightPainter.paint(canvas, Offset.zero);
         canvas.restore();
       }
-      remaining -= fill;
     }
+    canvas.restore();
   }
 
   @override
@@ -985,40 +986,38 @@ class _PlainLinePainter extends CustomPainter {
     return oldDelegate.layout != layout ||
         oldDelegate.line != line ||
         oldDelegate.staticTimeMs != staticTimeMs ||
-        oldDelegate.isActive != isActive;
+        oldDelegate.isActive != isActive ||
+        oldDelegate.centerAlign != centerAlign;
   }
 }
 
-/// 普通 LRC 一行歌词的排版缓存（未唱 / 已唱两份同形排版 + 每行几何信息）。
+/// 普通 LRC 一行歌词的排版缓存（未唱 / 已唱两份同形排版）。
+///
+/// 单行排版、不换行：超过控件宽度的长句交给画笔横向滚动。
 class _PlainLineLayout {
   static final Map<int, _PlainLineLayout> _cache = {};
   static const _maxCacheEntries = 200;
 
   final double height;
-  /// 文字实际占用的宽度（与 `Text` 的宽度一致）。
+
+  /// 文字完整宽度（不换行）。
   final double width;
   final TextPainter dimPainter;
   final TextPainter brightPainter;
-  final List<ui.LineMetrics> lines;
-  final double totalWidth;
 
   const _PlainLineLayout({
     required this.height,
     required this.width,
     required this.dimPainter,
     required this.brightPainter,
-    required this.lines,
-    required this.totalWidth,
   });
 
   static _PlainLineLayout cached({
     required String text,
-    required double maxWidth,
     required double fontSize,
     required Color activeColor,
     required Color inactiveColor,
     required bool isActive,
-    required TextAlign textAlign,
     required String? fontFamily,
     required FontWeight fontWeight,
     required TextScaler textScaler,
@@ -1026,12 +1025,10 @@ class _PlainLineLayout {
   }) {
     final key = Object.hash(
       text,
-      maxWidth.round(),
       (fontSize * 100).round(),
       activeColor.toARGB32(),
       inactiveColor.toARGB32(),
       isActive,
-      textAlign,
       fontFamily ?? '',
       fontWeight.value,
       textScaler.scale(fontSize).round(),
@@ -1042,12 +1039,10 @@ class _PlainLineLayout {
 
     final layout = build(
       text: text,
-      maxWidth: maxWidth,
       fontSize: fontSize,
       activeColor: activeColor,
       inactiveColor: inactiveColor,
       isActive: isActive,
-      textAlign: textAlign,
       fontFamily: fontFamily,
       fontWeight: fontWeight,
       textScaler: textScaler,
@@ -1062,12 +1057,10 @@ class _PlainLineLayout {
 
   static _PlainLineLayout build({
     required String text,
-    required double maxWidth,
     required double fontSize,
     required Color activeColor,
     required Color inactiveColor,
     required bool isActive,
-    required TextAlign textAlign,
     required String? fontFamily,
     required FontWeight fontWeight,
     required TextScaler textScaler,
@@ -1084,32 +1077,24 @@ class _PlainLineLayout {
     TextPainter painter(Color color) {
       return TextPainter(
         text: TextSpan(text: text, style: style.copyWith(color: color)),
-        textAlign: textAlign,
+        textAlign: TextAlign.left,
         textDirection: TextDirection.ltr,
         textScaler: textScaler,
         locale: locale,
-        maxLines: 3,
-        ellipsis: '…',
-      )..layout(maxWidth: maxWidth);
+        maxLines: 1,
+      )..layout();
     }
 
     final dimPainter = painter(
       isActive ? activeColor.withValues(alpha: 0.45) : inactiveColor,
     );
     final brightPainter = painter(activeColor);
-    final metrics = dimPainter.computeLineMetrics();
-    var totalWidth = 0.0;
-    for (final line in metrics) {
-      totalWidth += line.width;
-    }
     return _PlainLineLayout(
       // 空行（纯占位）也要占一个行高，否则行距会塌陷。
       height: max(dimPainter.height, fontSize * 1.32),
       width: dimPainter.width,
       dimPainter: dimPainter,
       brightPainter: brightPainter,
-      lines: metrics,
-      totalWidth: totalWidth,
     );
   }
 }
@@ -1197,6 +1182,14 @@ class _YrcLinePainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final currentTimeMs = clock?.timeMs ?? staticTimeMs;
+    final dx = _horizontalOffset(currentTimeMs, size.width);
+
+    canvas.save();
+    // 只限制横向（超宽单行滚动），纵向留出富余给逐字缩放/上浮动画。
+    canvas.clipRect(
+      Rect.fromLTWH(0, -size.height, size.width, size.height * 3),
+    );
+    canvas.translate(dx, 0);
 
     for (final word in layout.words) {
       final duration = max(1, word.source.endTimeMs - word.source.startTimeMs);
@@ -1243,6 +1236,32 @@ class _YrcLinePainter extends CustomPainter {
 
       canvas.restore();
     }
+
+    canvas.restore();
+  }
+
+  /// 超宽单行的横向滚动偏移：让当前唱到的位置保持在控件水平中央。
+  double _horizontalOffset(int currentTimeMs, double viewWidth) {
+    final contentWidth = layout.contentWidth;
+    if (contentWidth <= viewWidth || layout.words.isEmpty) return 0;
+
+    _WordPaintData? current;
+    for (final word in layout.words) {
+      if (currentTimeMs >= word.source.startTimeMs) current = word;
+    }
+    var focus = 0.0;
+    if (current != null) {
+      final duration = max(
+        1,
+        current.source.endTimeMs - current.source.startTimeMs,
+      );
+      final progress = ((currentTimeMs - current.source.startTimeMs) / duration)
+          .clamp(0.0, 1.0);
+      focus = current.offset.dx + current.width * progress;
+    }
+    return (viewWidth * 0.5 - focus)
+        .clamp(viewWidth - contentWidth, 0.0)
+        .toDouble();
   }
 
   double fontPadding(_WordPaintData word) => max(4, word.height * 0.25);
@@ -1311,12 +1330,16 @@ class _YrcLineLayout {
   final double width;
   final double height;
   final double fontSize;
+
+  /// 整行歌词的完整宽度（不换行）。
+  final double contentWidth;
   final List<_WordPaintData> words;
 
   const _YrcLineLayout({
     required this.width,
     required this.height,
     required this.fontSize,
+    required this.contentWidth,
     required this.words,
   });
 
@@ -1433,54 +1456,32 @@ class _YrcLineLayout {
       }
     }
 
-    final rows = <List<_WordPaintData>>[];
-    var currentRow = <_WordPaintData>[];
-    var currentRowWidth = 0.0;
+    // 单行排版、不换行：短句按设置居中，超过控件宽度的长句交给画笔
+    // 横向滚动（让当前唱到的词保持在控件水平中央）。
+    var contentWidth = 0.0;
+    for (int wi = 0; wi < paintWords.length; wi++) {
+      if (wi > 0 && wi - 1 < gaps.length) contentWidth += gaps[wi - 1];
+      contentWidth += paintWords[wi].width;
+    }
 
+    var x = centerAlign && contentWidth <= maxWidth
+        ? (maxWidth - contentWidth) / 2
+        : 0.0;
+    final positioned = <_WordPaintData>[];
+    var rowHeight = 0.0;
     for (int wi = 0; wi < paintWords.length; wi++) {
       final word = paintWords[wi];
-      final gap = (currentRow.isNotEmpty && wi - 1 < gaps.length)
-          ? gaps[wi - 1]
-          : 0;
-      final nextWidth = currentRowWidth + gap + word.width;
-
-      if (currentRow.isNotEmpty && nextWidth > maxWidth) {
-        rows.add(currentRow);
-        currentRow = <_WordPaintData>[];
-        currentRowWidth = 0;
-      }
-
-      if (currentRow.isNotEmpty && wi - 1 < gaps.length)
-        currentRowWidth += gaps[wi - 1];
-      currentRow.add(word);
-      currentRowWidth += word.width;
-    }
-    if (currentRow.isNotEmpty) rows.add(currentRow);
-
-    final positioned = <_WordPaintData>[];
-    var y = 0.0;
-    for (final row in rows) {
-      final rowGaps = <double>[];
-      for (int ri = 0; ri + 1 < row.length; ri++) {
-        final gi = paintWords.indexOf(row[ri]);
-        if (gi >= 0 && gi < gaps.length) rowGaps.add(gaps[gi]);
-      }
-      final totalSpace = rowGaps.fold<double>(0, (s, g) => s + g);
-      final rowWidth = row.fold<double>(0, (s, w) => s + w.width) + totalSpace;
-      final rowHeight = row.fold<double>(0, (h, w) => max(h, w.height));
-      var x = centerAlign ? max(0.0, (maxWidth - rowWidth) / 2) : 0.0;
-      for (int ri = 0; ri < row.length; ri++) {
-        positioned.add(row[ri].copyWith(offset: Offset(x, y)));
-        x += row[ri].width;
-        if (ri < rowGaps.length) x += rowGaps[ri];
-      }
-      y += rowHeight;
+      if (wi > 0 && wi - 1 < gaps.length) x += gaps[wi - 1];
+      positioned.add(word.copyWith(offset: Offset(x, 0)));
+      x += word.width;
+      rowHeight = max(rowHeight, word.height);
     }
 
     return _YrcLineLayout(
       width: maxWidth,
-      height: max(y, fontSize * 1.32),
+      height: max(rowHeight, fontSize * 1.32),
       fontSize: fontSize,
+      contentWidth: contentWidth,
       words: positioned,
     );
   }

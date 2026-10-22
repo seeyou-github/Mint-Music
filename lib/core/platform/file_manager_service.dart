@@ -65,6 +65,13 @@ class FileManagerService {
     return revealFile(filePath);
   }
 
+  /// 打开 [filePath] 所在目录并选中该文件；定位失败时退回直接打开目录。
+  static Future<bool> revealFileOrOpenFolder(String filePath) async {
+    if (filePath.trim().isEmpty) return false;
+    if (await revealFile(filePath)) return true;
+    return openFolderOf(filePath);
+  }
+
   /// 取文件所在目录（取不到时返回空串）。
   static String _parentDir(String filePath) {
     try {

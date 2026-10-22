@@ -699,19 +699,10 @@ class _PlayerLyricsPage extends ConsumerWidget {
     final enableBlur = ref.watch(lyricEnableBlurProvider);
     final enableScale = ref.watch(lyricEnableScaleProvider);
     final enableJumpLyric = ref.watch(appearanceJumpLyricProvider);
-    final immersiveColor = ref.watch(lyricImmersiveColorProvider);
     final fontSizeScale = ref.watch(lyricFontSizeProvider);
-    final coverColorAsync = ref.watch(currentCoverColorProvider);
-    final lightColor = coverColorAsync.whenOrNull(
-      data: (result) => result?.lightColor,
-    );
+    final themeColors = ref.watch(themeColorsProvider);
 
-    final Color activeColor;
-    if (immersiveColor && lightColor != null) {
-      activeColor = lightColor;
-    } else {
-      activeColor = Colors.white;
-    }
+    final activeColor = themeColors.primary;
     final inactiveColor = Colors.white.withValues(alpha: 0.4);
     final hasYrc = lyricState.hasYrc;
     // 横屏（手机/平板）时歌词区更宽更矮，22pt 显得过小，统一放大。
