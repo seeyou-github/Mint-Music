@@ -5,6 +5,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:path/path.dart' as p;
 
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
@@ -871,6 +872,9 @@ class LibraryPage extends ConsumerWidget {
       final ext = file.path!.split('.').last.toLowerCase();
 
       List<Map<String, dynamic>> playlistData;
+      // 歌单名：导出的文件名就是歌单名（xxx.cmpl），JSON 文件里也可能带
+      // name 字段；都取不到时才用「导入歌单 + 日期」兜底。
+      String? playlistName;
 
       if (ext == 'cmpl' || ext == 'cpl') {
         playlistData = await CeruMusicPlaylistImporter.importFromFileAsync(
@@ -880,10 +884,14 @@ class LibraryPage extends ConsumerWidget {
         if (!CeruMusicPlaylistImporter.validateImportedPlaylist(playlistData)) {
           throw Exception('歌单数据格式不正确或缺少必要字段');
         }
+
+        playlistName = _playlistNameFromFilePath(file.path!);
       } else {
         final fileBytes = await File(file.path!).readAsBytes();
         final content = utf8.decode(fileBytes);
         playlistData = _parseJsonPlaylist(content);
+        playlistName =
+            _playlistNameFromJson(content) ?? _playlistNameFromFilePath(file.path!);
       }
 
       final songs = _convertCeruMusicPlaylistToSongs(playlistData);
@@ -892,11 +900,13 @@ class LibraryPage extends ConsumerWidget {
         throw Exception('歌单中没有有效的歌曲');
       }
 
-      final playlistName = '导入歌单 ${DateTime.now().toString().substring(0, 10)}';
+      final name =
+          playlistName ??
+          '导入歌单 ${DateTime.now().toString().substring(0, 10)}';
 
       await ref
           .read(playlistsProvider.notifier)
-          .createPlaylistWithSongs(playlistName, songs);
+          .createPlaylistWithSongs(name, songs);
 
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -922,6 +932,34 @@ class LibraryPage extends ConsumerWidget {
         );
       }
     }
+  }
+
+  /// 从文件名里取歌单名。
+  ///
+  /// 导出的歌单文件名就是歌单名（`我的歌单.cmpl`），导入时直接拿文件名当
+  /// 歌单名，才能把名字还原回来。
+  String? _playlistNameFromFilePath(String path) {
+    final name = p.basenameWithoutExtension(path).trim();
+    if (name.isEmpty) return null;
+    return name;
+  }
+
+  /// 从 JSON 歌单文件里取歌单名（文件里有 name / playlistName / title 时）。
+  String? _playlistNameFromJson(String jsonText) {
+    try {
+      final data = jsonDecode(jsonText);
+      if (data is Map) {
+        for (final key in const ['name', 'playlistName', 'title']) {
+          final value = data[key];
+          if (value is String && value.trim().isNotEmpty) {
+            return value.trim();
+          }
+        }
+      }
+    } catch (_) {
+      // 解析失败就当没有名字，继续用文件名兜底。
+    }
+    return null;
   }
 
   List<Map<String, dynamic>> _parseJsonPlaylist(String jsonText) {

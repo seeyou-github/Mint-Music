@@ -457,9 +457,12 @@ final settingsInitProvider = FutureProvider<void>((ref) async {
       LyricDisplayDefaults.amllStyle;
   ref.read(lyricImmersiveColorProvider.notifier).state = svc
       .getLyricImmersiveColor();
-  ref.read(lyricFontFamilyProvider.notifier).state = svc.getLyricFontFamily();
-  ref.read(lyricFontRateProvider.notifier).state = svc.getLyricFontRate();
-  ref.read(lyricFontWeightProvider.notifier).state = svc.getLyricFontWeight();
+  ref.read(lyricFontFamilyProvider.notifier).state =
+      await _migrateLyricFontFamily(svc);
+  ref.read(lyricFontRateProvider.notifier).state =
+      await _migrateLyricFontRate(svc);
+  ref.read(lyricFontWeightProvider.notifier).state =
+      await _migrateLyricFontWeight(svc);
 
   ref.read(lyricFontColorProvider.notifier).state = svc.getLyricFontColor();
   ref.read(appearanceJumpLyricProvider.notifier).state = svc
@@ -505,4 +508,40 @@ Future<void> persistSetting(
 ) async {
   final svc = await ref.read(settingsServiceProvider.future);
   await saveFn(svc);
+}
+
+// ---------------------------------------------------------------------------
+// 歌词字体默认值迁移
+//
+// 歌词字体三项（字体 / 字号 / 字重）已经移进「歌词设置」，默认值改成
+// 思源宋体 / 90% / 500。老用户本地存的还是旧默认值（system / 100% / 700），
+// 直接读会一直沿用旧值，这里做一次性迁移。
+// ---------------------------------------------------------------------------
+
+const String _oldLyricFontFamily = 'system';
+const String _defaultLyricFontFamily = 'SourceHanSerif';
+const double _oldLyricFontRate = 1.0;
+const double _defaultLyricFontRate = 0.9;
+const int _oldLyricFontWeight = 700;
+const int _defaultLyricFontWeight = 500;
+
+Future<String> _migrateLyricFontFamily(SettingsService svc) async {
+  final value = svc.getLyricFontFamily();
+  if (value != _oldLyricFontFamily) return value;
+  await svc.setLyricFontFamily(_defaultLyricFontFamily);
+  return _defaultLyricFontFamily;
+}
+
+Future<double> _migrateLyricFontRate(SettingsService svc) async {
+  final value = svc.getLyricFontRate();
+  if (value != _oldLyricFontRate) return value;
+  await svc.setLyricFontRate(_defaultLyricFontRate);
+  return _defaultLyricFontRate;
+}
+
+Future<int> _migrateLyricFontWeight(SettingsService svc) async {
+  final value = svc.getLyricFontWeight();
+  if (value != _oldLyricFontWeight) return value;
+  await svc.setLyricFontWeight(_defaultLyricFontWeight);
+  return _defaultLyricFontWeight;
 }

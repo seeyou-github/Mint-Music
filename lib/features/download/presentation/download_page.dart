@@ -469,8 +469,12 @@ class _DownloadTaskItemState extends ConsumerState<_DownloadTaskItem> {
     return _buildDeleteButton(context, colors, repo);
   }
 
-  /// 「打开所在文件夹」按钮（仅 Windows）：用资源管理器打开该歌曲所在目录
-  /// 并选中歌曲文件。
+  /// 「打开所在文件夹」按钮（仅 Windows）：用系统文件管理器打开该歌曲所在的
+  /// 目录。
+  ///
+  /// 之前用的是「打开目录并选中文件」（explorer /select），文件不存在时
+  /// explorer 不会打开任何窗口，用户只看到「无法打开所在文件夹」；这里改成
+  /// 直接打开所在目录。
   Widget _buildRevealButton(BuildContext context, ThemeColors colors) {
     return IconButton(
       visualDensity: VisualDensity.compact,
@@ -479,9 +483,10 @@ class _DownloadTaskItemState extends ConsumerState<_DownloadTaskItem> {
       icon: Icon(Icons.folder_open_outlined, size: 19, color: colors.textSecondary),
       tooltip: context.tr('打开所在文件夹'),
       onPressed: () async {
-        final ok = await FileManagerService.revealFile(task.filePath);
+        final messenger = ScaffoldMessenger.of(context);
+        final ok = await FileManagerService.openFolderOf(task.filePath);
         if (ok || !context.mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
+        messenger.showSnackBar(
           SnackBar(content: Text(context.tr('无法打开所在文件夹'))),
         );
       },

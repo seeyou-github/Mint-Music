@@ -500,7 +500,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                         '${AppRoutes.tagEditor}?songId=${widget.song.id}',
                       ),
                     ),
-                  // Windows：用系统文件管理器打开并定位这首歌曲
+                  // Windows：用系统文件管理器打开这首歌曲所在的目录
                   if (Platform.isWindows &&
                       (widget.song.filePath ?? '').isNotEmpty)
                     _buildActionItem(
@@ -508,14 +508,15 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                       icon: Icons.folder_open_outlined,
                       label: context.tr('打开歌曲所在文件夹'),
                       onTap: () async {
+                        // 先把 messenger 和文案取出来：弹窗关闭后 context 就失效了，
+                        // 后面再提示错误会报错或者提示跑到别的页面上。
+                        final messenger = ScaffoldMessenger.of(context);
+                        final errorText = context.tr('无法打开所在文件夹');
+                        final path = widget.song.filePath ?? '';
                         Navigator.pop(context);
-                        final path = widget.song.filePath;
-                        if (path == null || path.isEmpty) return;
-                        final ok = await FileManagerService.revealFile(path);
-                        if (ok || !context.mounted) return;
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text(context.tr('无法打开所在文件夹'))),
-                        );
+                        final ok = await FileManagerService.openFolderOf(path);
+                        if (ok) return;
+                        messenger.showSnackBar(SnackBar(content: Text(errorText)));
                       },
                     ),
                 ],

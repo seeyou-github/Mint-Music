@@ -477,6 +477,12 @@ class _PlayerHeader extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // 当前实际使用的音源：内置音源本身没有地址接口，播放地址由插件解析，
+    // 这里显示真正在提供地址的那个音源（内置源带「-内置」，插件源用平台名）。
+    //
+    // 音源标签放在顶部栏并与封面居中对齐。
+    final sourceLabel = currentSourceLabel(ref) ?? '';
+
     return Padding(
       padding: EdgeInsets.only(
         top: compact ? 2 : 8,
@@ -497,7 +503,23 @@ class _PlayerHeader extends ConsumerWidget {
               backgroundColor: Colors.white.withValues(alpha: 0.05),
             ),
           ),
-          const Spacer(),
+          // 顶部只显示当前使用的音源（居中，与封面居中对齐）。
+          Expanded(
+            child: sourceLabel.isEmpty
+                ? const SizedBox.shrink()
+                : Center(
+                    child: Text(
+                      sourceLabel,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.white.withValues(alpha: 0.6),
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+          ),
           // Windows 上没有「切换全屏歌词」这个形态，直接隐藏该按钮。
           if (!Platform.isWindows)
             IconButton(
@@ -549,62 +571,41 @@ class _PlayerCoverPage extends ConsumerWidget {
     final radius = ResponsiveLayout.isTablet(context) ? 28.0 : 24.0;
     final borderRadius = math.min(radius, coverSize * 0.12);
 
-    // 音源名称放在封面图正上方，与封面水平居中。
-    final sourceLabel = currentSourceLabel(ref);
-
+    // 音源名称放在顶部栏（与封面居中对齐），封面页不再重复显示。
     return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (sourceLabel != null) ...[
-            Text(
-              sourceLabel,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 12,
-                color: Colors.white.withValues(alpha: 0.6),
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            const SizedBox(height: 10),
-          ],
-          GestureDetector(
-            onTap: onTapCover,
-            child: AnimatedScale(
-              duration: const Duration(milliseconds: 500),
-              scale: isPlaying ? 1.0 : 0.95,
-              curve: Curves.easeOutCubic,
-              child: Container(
-                width: coverSize,
-                height: coverSize,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(borderRadius),
-                  boxShadow: [
-                    BoxShadow(
-                      color:
-                          bgMode == FullScreenBackgroundMode.theme &&
-                              dominantColor != null
-                          ? HSLColor.fromColor(dominantColor)
-                                .withLightness(
-                                  (HSLColor.fromColor(dominantColor).lightness -
-                                          0.2)
-                                      .clamp(0.0, 0.5),
-                                )
-                                .toColor()
-                                .withValues(alpha: 0.4)
-                          : Colors.black.withValues(alpha: 0.5),
-                      blurRadius: math.min(50, coverSize * 0.16),
-                      offset: Offset(0, math.min(25, coverSize * 0.08)),
-                    ),
-                  ],
+      child: GestureDetector(
+        onTap: onTapCover,
+        child: AnimatedScale(
+          duration: const Duration(milliseconds: 500),
+          scale: isPlaying ? 1.0 : 0.95,
+          curve: Curves.easeOutCubic,
+          child: Container(
+            width: coverSize,
+            height: coverSize,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(borderRadius),
+              boxShadow: [
+                BoxShadow(
+                  color:
+                      bgMode == FullScreenBackgroundMode.theme &&
+                          dominantColor != null
+                      ? HSLColor.fromColor(dominantColor)
+                            .withLightness(
+                              (HSLColor.fromColor(dominantColor).lightness - 0.2)
+                                  .clamp(0.0, 0.5),
+                            )
+                            .toColor()
+                            .withValues(alpha: 0.4)
+                      : Colors.black.withValues(alpha: 0.5),
+                  blurRadius: math.min(50, coverSize * 0.16),
+                  offset: Offset(0, math.min(25, coverSize * 0.08)),
                 ),
-                clipBehavior: Clip.antiAlias,
-                child: _buildCoverImage(song, coverSize),
-              ),
+              ],
             ),
+            clipBehavior: Clip.antiAlias,
+            child: _buildCoverImage(song, coverSize),
           ),
-        ],
+        ),
       ),
     );
   }
@@ -1017,8 +1018,7 @@ class _PlayerSongInfo extends ConsumerWidget {
               children: [title, SizedBox(height: compact ? 1 : 4), artist],
             ),
           ),
-          favoriteButton,
-          moreButton,
+          actions,
         ],
       ),
     );

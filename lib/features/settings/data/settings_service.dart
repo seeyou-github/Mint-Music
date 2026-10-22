@@ -276,14 +276,17 @@ class SettingsService {
       _prefs.setBool('lyric_immersive_color', v);
 
   // -- lyric font settings --
+  //
+  // 默认：思源宋体 / 90% / 字重 500。
+  // 旧默认值（system / 100% / 700）在 [SettingsProviders] 初始化时会被迁移。
   String getLyricFontFamily() =>
-      _prefs.getString('lyric_font_family') ?? 'system';
+      _prefs.getString('lyric_font_family') ?? 'SourceHanSerif';
   Future<void> setLyricFontFamily(String v) =>
       _prefs.setString('lyric_font_family', v);
-  double getLyricFontRate() => _prefs.getDouble('lyric_font_rate') ?? 1.0;
+  double getLyricFontRate() => _prefs.getDouble('lyric_font_rate') ?? 0.9;
   Future<void> setLyricFontRate(double v) =>
       _prefs.setDouble('lyric_font_rate', v);
-  int getLyricFontWeight() => _prefs.getInt('lyric_font_weight') ?? 700;
+  int getLyricFontWeight() => _prefs.getInt('lyric_font_weight') ?? 500;
   Future<void> setLyricFontWeight(int v) =>
       _prefs.setInt('lyric_font_weight', v);
   String getLyricFontColor() => _prefs.getString('lyric_font_color') ?? '';

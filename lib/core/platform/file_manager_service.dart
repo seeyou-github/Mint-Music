@@ -52,4 +52,27 @@ class FileManagerService {
       return false;
     }
   }
+
+  /// 用系统文件管理器打开 [filePath] 所在的文件夹。
+  ///
+  /// 优先直接打开所在目录（在资源管理器里浏览该目录）；目录打不开时再退回
+  /// 到「打开目录并选中文件」。这样即使文件已经被移动/删除，也至少能把所在
+  /// 目录打开出来，而不是直接报「无法打开所在文件夹」。
+  static Future<bool> openFolderOf(String filePath) async {
+    if (filePath.trim().isEmpty) return false;
+    final dir = _parentDir(filePath);
+    if (dir.isNotEmpty && await openFolder(dir)) return true;
+    return revealFile(filePath);
+  }
+
+  /// 取文件所在目录（取不到时返回空串）。
+  static String _parentDir(String filePath) {
+    try {
+      final parent = File(filePath).parent.path;
+      if (parent.isEmpty || parent == '.') return '';
+      return parent;
+    } catch (_) {
+      return '';
+    }
+  }
 }
