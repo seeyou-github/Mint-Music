@@ -11,9 +11,9 @@ import '../data/local_metadata_reader.dart';
 
 /// 弹出「歌曲信息对比」全屏弹窗。
 ///
-/// 左边是原歌曲，右边是网络下载回来的候选；中间每个项目旁边有一个箭头
-/// 按钮，点一下就在「原歌曲 / 下载的歌曲」之间切换（箭头指向当前采用的
-/// 那一侧：横向是「从右到左」，纵向是「从下到上」）。
+/// 左边是原歌曲，右边是网络下载回来的候选，按「封面 / 歌曲信息 / 歌词」分成
+/// 三行两列。**直接点某个卡片即选中那一侧**（选中的卡片是绿框，右上角带红色
+/// 「已选择」标签），不再用中间的箭头按钮切换。
 ///
 /// 宽度够时左右排列，不够时上下排列。
 ///
@@ -28,7 +28,7 @@ Future<Song?> showSongCompareDialog(
     barrierColor: Colors.black54,
     builder: (ctx) => Dialog(
       backgroundColor: Colors.transparent,
-      insetPadding: const EdgeInsets.all(AppSpacing.md),
+      insetPadding: const EdgeInsets.all(AppSpacing.lg),
       child: _SongCompareDialog(original: original, candidate: candidate),
     ),
   );
@@ -165,16 +165,15 @@ class _SongCompareDialogState extends ConsumerState<_SongCompareDialog> {
     final candidate = widget.candidate;
 
     final coverRow = _CompareRow(
-      label: context.tr('封面'),
       original: _CoverBox(song: original, size: 132),
       candidate: _CoverBox(song: candidate, size: 132),
       useCandidate: _useCandidateCover,
       sideBySide: sideBySide,
-      onToggle: () => setState(() => _useCandidateCover = !_useCandidateCover),
+      onSelect: (useCandidate) =>
+          setState(() => _useCandidateCover = useCandidate),
     );
 
     final infoRow = _CompareRow(
-      label: context.tr('歌曲信息'),
       original: _InfoBox(
         song: original,
         year: _originalYearText,
@@ -183,11 +182,11 @@ class _SongCompareDialogState extends ConsumerState<_SongCompareDialog> {
       candidate: _InfoBox(song: candidate, year: candidate.year),
       useCandidate: _useCandidateInfo,
       sideBySide: sideBySide,
-      onToggle: () => setState(() => _useCandidateInfo = !_useCandidateInfo),
+      onSelect: (useCandidate) =>
+          setState(() => _useCandidateInfo = useCandidate),
     );
 
     final lyricRow = _CompareRow(
-      label: context.tr('歌词'),
       original: _LyricBox(
         text: _originalLyricText,
         loading: _loadingOriginal,
@@ -200,254 +199,266 @@ class _SongCompareDialogState extends ConsumerState<_SongCompareDialog> {
       ),
       useCandidate: _useCandidateLyric,
       sideBySide: sideBySide,
-      onToggle: () => setState(() => _useCandidateLyric = !_useCandidateLyric),
+      onSelect: (useCandidate) =>
+          setState(() => _useCandidateLyric = useCandidate),
     );
 
     return Material(
       color: colors.surface,
       borderRadius: BorderRadius.circular(AppRadius.lg),
       clipBehavior: Clip.antiAlias,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(
-              AppSpacing.lg,
-              AppSpacing.md,
-              AppSpacing.md,
-              AppSpacing.sm,
-            ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    context.tr('歌曲信息对比'),
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: colors.textPrimary,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 980),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.lg,
+                AppSpacing.md,
+                AppSpacing.md,
+                AppSpacing.xs,
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      context.tr('歌曲信息对比'),
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: colors.textPrimary,
+                      ),
                     ),
                   ),
-                ),
-                IconButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  icon: Icon(Icons.close, color: colors.textHint),
-                  visualDensity: VisualDensity.compact,
-                ),
-              ],
-            ),
-          ),
-          Flexible(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  coverRow,
-                  const SizedBox(height: AppSpacing.md),
-                  infoRow,
-                  const SizedBox(height: AppSpacing.md),
-                  lyricRow,
-                  const SizedBox(height: AppSpacing.md),
+                  IconButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: Icon(Icons.close, color: colors.textHint),
+                    visualDensity: VisualDensity.compact,
+                  ),
                 ],
               ),
             ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(AppSpacing.md),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: Text(
-                    context.tr('取消'),
-                    style: TextStyle(color: colors.textHint),
+            // 顶部提示：告诉用户要手动挑，而不是自动合并。
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.lg,
+                0,
+                AppSpacing.lg,
+                AppSpacing.sm,
+              ),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  context.tr('请手动选择要使用的信息：'),
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: colors.error,
                   ),
                 ),
-                const SizedBox(width: AppSpacing.sm),
-                FilledButton(
-                  onPressed: _apply,
-                  child: Text(context.tr('应用')),
-                ),
-              ],
+              ),
             ),
-          ),
-        ],
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.lg,
+                  0,
+                  AppSpacing.lg,
+                  AppSpacing.sm,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    coverRow,
+                    const SizedBox(height: AppSpacing.md),
+                    infoRow,
+                    const SizedBox(height: AppSpacing.md),
+                    lyricRow,
+                  ],
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(AppSpacing.md),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: Text(
+                      context.tr('取消'),
+                      style: TextStyle(color: colors.textHint),
+                    ),
+                  ),
+                  const SizedBox(width: AppSpacing.sm),
+                  FilledButton(
+                    onPressed: _apply,
+                    child: Text(context.tr('应用')),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 }
 
 /// 对比中的一行（封面 / 歌曲信息 / 歌词）。
+///
+/// 一行里左右各一张卡片，**点哪张就选中哪张**（不需要中间的箭头按钮）：
+/// 选中的卡片是绿框 + 右上角红色「已选择」。
 class _CompareRow extends ConsumerWidget {
   const _CompareRow({
-    required this.label,
     required this.original,
     required this.candidate,
     required this.useCandidate,
     required this.sideBySide,
-    required this.onToggle,
+    required this.onSelect,
   });
 
-  final String label;
   final Widget original;
   final Widget candidate;
   final bool useCandidate;
   final bool sideBySide;
-  final VoidCallback onToggle;
+
+  /// 选中某一侧：true = 下载的歌曲，false = 原歌曲。
+  final ValueChanged<bool> onSelect;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final colors = ref.watch(themeColorsProvider);
-
     final originalBox = _SideBox(
       title: context.tr('原歌曲'),
+      selected: !useCandidate,
+      onTap: () => onSelect(false),
       child: original,
-      highlighted: !useCandidate,
     );
     final candidateBox = _SideBox(
       title: context.tr('下载的歌曲'),
+      selected: useCandidate,
+      onTap: () => onSelect(true),
       child: candidate,
-      highlighted: useCandidate,
     );
 
-    // 中间只有一个箭头按钮：点一下在「原歌曲 / 下载的歌曲」之间切换。
-    // 箭头指向当前采用的那一侧（横向从右到左、纵向从下到上）。
-    final arrow = _ArrowToggleButton(
-      sideBySide: sideBySide,
-      useCandidate: useCandidate,
-      onPressed: onToggle,
-    );
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w500,
-            color: colors.textHint,
-          ),
-        ),
-        const SizedBox(height: AppSpacing.xs),
-        if (sideBySide)
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Expanded(child: originalBox),
-              arrow,
-              Expanded(child: candidateBox),
-            ],
-          )
-        else
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              originalBox,
-              Center(child: arrow),
-              candidateBox,
-            ],
-          ),
-      ],
-    );
-  }
-}
-
-/// 中间的箭头切换按钮。
-class _ArrowToggleButton extends ConsumerWidget {
-  const _ArrowToggleButton({
-    required this.sideBySide,
-    required this.useCandidate,
-    required this.onPressed,
-  });
-
-  final bool sideBySide;
-  final bool useCandidate;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final colors = ref.watch(themeColorsProvider);
-    // 当前采用下载版本 → 箭头指向左边（原歌曲那一侧），表示「值来自右边」。
-    final icon = sideBySide
-        ? (useCandidate ? Icons.arrow_left : Icons.arrow_right)
-        : (useCandidate ? Icons.arrow_upward : Icons.arrow_downward);
-    final message = useCandidate
-        ? context.tr('当前使用下载的版本，点击改用原歌曲')
-        : context.tr('当前使用原歌曲，点击改用下载的版本');
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 6),
-      child: Tooltip(
-        message: message,
-        child: Material(
-          color: useCandidate
-              ? colors.primary.withValues(alpha: 0.16)
-              : colors.surfaceVariant,
-          shape: const CircleBorder(),
-          child: InkWell(
-            customBorder: const CircleBorder(),
-            onTap: onPressed,
-            child: SizedBox(
-              width: 46,
-              height: 46,
-              child: Icon(
-                icon,
-                size: 28,
-                color: useCandidate ? colors.primary : colors.textSecondary,
-              ),
-            ),
-          ),
-        ),
+    if (!sideBySide) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          originalBox,
+          const SizedBox(height: AppSpacing.sm),
+          candidateBox,
+        ],
+      );
+    }
+    // IntrinsicHeight：同一行的两张卡片高度对齐（图片 / 信息 / 歌词都一样）。
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(child: originalBox),
+          const SizedBox(width: AppSpacing.md),
+          Expanded(child: candidateBox),
+        ],
       ),
     );
   }
 }
 
-/// 对比中的一侧。
+/// 对比中的一侧：可点击的卡片。
+///
+/// 选中态：主题色描边 + 右上角红色「已选择」标签。
 class _SideBox extends ConsumerWidget {
   const _SideBox({
     required this.title,
     required this.child,
-    required this.highlighted,
+    required this.selected,
+    required this.onTap,
   });
 
   final String title;
   final Widget child;
-  final bool highlighted;
+  final bool selected;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final colors = ref.watch(themeColorsProvider);
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: 2),
-      padding: const EdgeInsets.all(AppSpacing.sm),
-      decoration: BoxDecoration(
-        color: highlighted
-            ? colors.primary.withValues(alpha: 0.08)
-            : colors.surfaceVariant,
+    return Material(
+      color: selected
+          ? colors.primary.withValues(alpha: 0.10)
+          : colors.surfaceVariant.withValues(alpha: 0.55),
+      borderRadius: BorderRadius.circular(AppRadius.md),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
         borderRadius: BorderRadius.circular(AppRadius.md),
-        border: Border.all(
-          color: highlighted ? colors.primary : colors.divider,
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w500,
-              color: highlighted ? colors.primary : colors.textHint,
+        child: Container(
+          padding: const EdgeInsets.all(AppSpacing.sm),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(AppRadius.md),
+            border: Border.all(
+              color: selected ? colors.primary : colors.divider,
+              width: selected ? 1.4 : 1,
             ),
           ),
-          const SizedBox(height: 4),
-          // 撑满整行宽度：歌词框与上方歌曲信息框一样宽，滚动条也紧贴右边。
-          SizedBox(width: double.infinity, child: child),
-        ],
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: selected ? colors.primary : colors.textHint,
+                      ),
+                    ),
+                  ),
+                  if (selected) ...[
+                    const SizedBox(width: AppSpacing.xs),
+                    _SelectedBadge(color: colors.error),
+                  ],
+                ],
+              ),
+              const SizedBox(height: 6),
+              // 撑满整行宽度：歌词框与上方歌曲信息框一样宽，滚动条也紧贴右边。
+              SizedBox(width: double.infinity, child: child),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 选中卡片右上角的红色「已选择」标签。
+class _SelectedBadge extends StatelessWidget {
+  const _SelectedBadge({required this.color});
+
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(AppRadius.xs),
+        border: Border.all(color: color.withValues(alpha: 0.75)),
+      ),
+      child: Text(
+        context.tr('已选择'),
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          color: color,
+        ),
       ),
     );
   }
@@ -506,7 +517,7 @@ class _CoverBox extends ConsumerWidget {
 
 /// 歌曲信息预览。
 ///
-/// 排版固定为「歌曲名 / 歌手 / 专辑 / 年份」，标签右对齐，冒号对齐。
+/// 排版固定为「歌曲 / 歌手 / 专辑 / 年份」，标签右对齐，冒号对齐。
 class _InfoBox extends ConsumerWidget {
   const _InfoBox({
     required this.song,
@@ -566,7 +577,7 @@ class _InfoBox extends ConsumerWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        field(context.tr('歌曲名'), song.title, strong: true),
+        field(context.tr('歌曲'), song.title, strong: true),
         field(context.tr('歌手'), song.artist),
         field(context.tr('专辑'), song.album),
         field(context.tr('年份'), year?.toString() ?? '-'),
@@ -592,7 +603,7 @@ class _LyricBox extends ConsumerWidget {
     final colors = ref.watch(themeColorsProvider);
     if (loading) {
       return const SizedBox(
-        height: 100,
+        height: _lyricBoxHeight,
         child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
       );
     }
@@ -605,16 +616,17 @@ class _LyricBox extends ConsumerWidget {
             text!,
             style: TextStyle(fontSize: 12, color: colors.textSecondary, height: 1.5),
           );
+    // 固定高度：左右两张歌词卡片高度一致（外层用 IntrinsicHeight 对齐）。
     return SizedBox(
       width: double.infinity,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxHeight: 160),
-        child: SingleChildScrollView(
-          // 右侧留一点位置，滚动条不会压住歌词。
-          padding: const EdgeInsets.only(right: 6),
-          child: content,
-        ),
+      height: _lyricBoxHeight,
+      child: SingleChildScrollView(
+        // 右侧留一点位置，滚动条不会压住歌词。
+        padding: const EdgeInsets.only(right: 6),
+        child: content,
       ),
     );
   }
+
+  static const double _lyricBoxHeight = 150;
 }

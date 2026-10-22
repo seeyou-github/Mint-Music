@@ -241,20 +241,24 @@ void FlutterWindow::HandleFileManagerCall(
   }
 
   if (call.method_name() == "openFolder") {
-    // explorer.exe "<dir>"：用系统文件管理器打开目录。
-    const std::wstring command = L"explorer.exe \"" + wide_path + L"\"";
-    const HINSTANCE ret = ::ShellExecuteW(nullptr, L"open", command.c_str(),
+    // 直接把目录交给 ShellExecute（资源管理器会用「打开文件夹」的方式打开它）。
+    //
+    // 注意：不能把整条命令（`explorer.exe "C:\dir"`）当成 lpFile 传进来 ——
+    // 带引号的命令行不是合法路径，ShellExecute 会直接失败（返回值 <= 32），
+    // 表现就是「点了没反应 / 提示无法打开所在文件夹」。
+    const HINSTANCE ret = ::ShellExecuteW(nullptr, L"open", wide_path.c_str(),
                                           nullptr, nullptr, SW_SHOWNORMAL);
     result->Success(static_cast<int64_t>(reinterpret_cast<intptr_t>(ret)) > 32);
     return;
   }
 
   if (call.method_name() == "revealFile") {
-    // explorer.exe /select,"<file>"：打开所在目录并选中该文件。
-    const std::wstring command =
-        L"explorer.exe /select,\"" + wide_path + L"\"";
-    const HINSTANCE ret = ::ShellExecuteW(nullptr, L"open", command.c_str(),
-                                          nullptr, nullptr, SW_SHOWNORMAL);
+    // 打开所在目录并选中该文件：程序放 lpFile，`/select,"file"` 放 lpParameters，
+    // explorer 才会正确解析参数（同样不能拼成一条命令塞进 lpFile）。
+    const std::wstring parameters = L"/select,\"" + wide_path + L"\"";
+    const HINSTANCE ret =
+        ::ShellExecuteW(nullptr, L"open", L"explorer.exe", parameters.c_str(),
+                        nullptr, SW_SHOWNORMAL);
     result->Success(static_cast<int64_t>(reinterpret_cast<intptr_t>(ret)) > 32);
     return;
   }

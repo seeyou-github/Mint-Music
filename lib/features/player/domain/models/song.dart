@@ -82,6 +82,7 @@ class Song {
     bool clearSourceUrl = false,
     bool clearSourceHeaders = false,
     bool clearSourceQuality = false,
+    bool clearCover = false,
   }) {
     return Song(
       id: id ?? this.id,
@@ -89,7 +90,7 @@ class Song {
       artist: artist ?? this.artist,
       album: album ?? this.album,
       duration: duration ?? this.duration,
-      coverUrl: coverUrl ?? this.coverUrl,
+      coverUrl: clearCover ? null : coverUrl ?? this.coverUrl,
       sourceUrl: clearSourceUrl ? null : sourceUrl ?? this.sourceUrl,
       lyricUrl: lyricUrl ?? this.lyricUrl,
       source: source ?? this.source,

@@ -1,9 +1,18 @@
+import 'dart:async';
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
+import '../../../shared/services/cover_cache_service.dart';
+import '../../../shared/widgets/source_icon.dart';
+import '../../discover/application/search_providers.dart';
+import '../../download/domain/services/audio_tag_writer.dart';
+import '../../plugin/domain/plugin_types.dart';
 import '../application/local_providers.dart';
 import '../../player/domain/models/song.dart';
 import '../../plugin/application/plugin_providers.dart';
@@ -36,6 +45,19 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
   bool _searching = false;
   List<Song> _searchResults = [];
 
+  /// 正在写入封面（上传 / 删除），期间禁用封面按钮。
+  bool _coverBusy = false;
+
+  /// 封面版本号：封面改动后自增，用作 [MusicCoverImage] 的 key，
+  /// 强制它重建并重新取图。
+  int _coverVersion = 0;
+
+  /// 在线搜索使用的音源 id（默认网易云，和之前一致）。
+  String _searchSourceId = 'wy';
+
+  /// 切换音源按钮的锚点，用于把菜单弹在按钮下方。
+  final _sourceButtonKey = GlobalKey();
+
   @override
   void initState() {
     super.initState();
@@ -47,10 +69,33 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
     _genreController = TextEditingController();
     _lrcController = TextEditingController();
     _searchController = TextEditingController();
+    // 监听放在控制器创建之后：回调里会读这些输入框的内容。
+    _tabController.addListener(_handleTabChanged);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadSong();
     });
+  }
+
+  /// 切到「在线搜索」时，用歌曲名 / 歌手输入框的**当前**内容重建关键词。
+  ///
+  /// 用户很可能在「编辑信息」里改过歌名或歌手（比如去掉多余的括号、修正错别字），
+  /// 搜索时必须用改后的内容，而不是加载时缓存下来的旧关键词。
+  void _handleTabChanged() {
+    if (_tabController.indexIsChanging) return;
+    if (_tabController.index != 1) return;
+    final keyword = _keywordFromFields();
+    if (keyword.isEmpty || keyword == _searchController.text) return;
+    setState(() => _searchController.text = keyword);
+  }
+
+  /// 由「歌曲名 + 歌手」输入框当前内容拼出的搜索关键词。
+  String _keywordFromFields() {
+    final title = _titleController.text.trim();
+    final artist = _artistController.text.trim();
+    if (artist.isEmpty) return title;
+    if (title.isEmpty) return artist;
+    return '$title $artist';
   }
 
   void _loadSong() {
@@ -100,6 +145,7 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
 
   @override
   void dispose() {
+    _tabController.removeListener(_handleTabChanged);
     _tabController.dispose();
     _titleController.dispose();
     _artistController.dispose();
@@ -275,6 +321,9 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
   }
 
   Widget _buildCoverSection(ThemeColors colors) {
+    final song = _song;
+    if (song == null) return const SizedBox.shrink();
+    final hasCover = song.coverUrl != null || song.hasCover;
     return Center(
       child: Column(
         children: [
@@ -288,12 +337,13 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
             clipBehavior: Clip.antiAlias,
             // 有封面就直接显示封面：网络封面用 coverUrl，本地内嵌封面
             // 走 MusicCoverImage（从 MediaStore / 文件里取）。
-            child: _song != null &&
-                    (_song!.coverUrl != null || _song!.hasCover)
+            // key 带上版本号：上传 / 删除封面后强制重建，否则会一直显示旧图。
+            child: hasCover
                 ? MusicCoverImage(
-                    url: _song!.coverUrl,
-                    songId: _song!.id,
-                    mediaStoreId: _song!.mediaStoreId,
+                    key: ValueKey('tag_cover_${song.id}_$_coverVersion'),
+                    url: song.coverUrl,
+                    songId: song.id,
+                    mediaStoreId: song.mediaStoreId,
                     width: 160,
                     height: 160,
                     fit: BoxFit.cover,
@@ -321,26 +371,194 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
                   ),
           ),
           const SizedBox(height: AppSpacing.sm),
-          if (_song?.filePath != null)
+          // 封面操作：本地上传 / 删除
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _buildCoverAction(
+                colors,
+                icon: Icons.add_photo_alternate_outlined,
+                label: context.tr('本地上传图片'),
+                onTap: _coverBusy ? null : _pickCover,
+              ),
+              if (hasCover) ...[
+                const SizedBox(width: AppSpacing.md),
+                _buildCoverAction(
+                  colors,
+                  icon: Icons.delete_outline,
+                  label: context.tr('删除封面'),
+                  danger: true,
+                  onTap: _coverBusy ? null : _removeCover,
+                ),
+              ],
+            ],
+          ),
+          if (_coverBusy) ...[
+            const SizedBox(height: AppSpacing.xs),
+            SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: colors.primary,
+              ),
+            ),
+          ],
+          const SizedBox(height: AppSpacing.xs),
+          if (song.filePath != null)
             Text(
-              _song!.filePath!.split(RegExp(r'[/\\]')).last,
+              song.filePath!.split(RegExp(r'[/\\]')).last,
               style: TextStyle(fontSize: 11, color: colors.textHint),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
-          if (_song?.bitrate != null && _song!.bitrate! > 0) ...[
+          if (song.bitrate != null && song.bitrate! > 0) ...[
             const SizedBox(height: 2),
             Text(
               context.tr(
-                '${(_song!.bitrate! / 1000).round()} kbps'
-                '${_song?.sampleRate != null ? ' · ${(_song!.sampleRate! / 1000).toStringAsFixed(1)} kHz' : ''}'
-                '${_song?.channels != null ? ' · ${_song!.channels == 2 ? '立体声' : '单声道'}' : ''}',
+                '${(song.bitrate! / 1000).round()} kbps'
+                '${song.sampleRate != null ? ' · ${(song.sampleRate! / 1000).toStringAsFixed(1)} kHz' : ''}'
+                '${song.channels != null ? ' · ${song.channels == 2 ? '立体声' : '单声道'}' : ''}',
               ),
               style: TextStyle(fontSize: 11, color: colors.textHint),
             ),
           ],
         ],
       ),
+    );
+  }
+
+  Widget _buildCoverAction(
+    ThemeColors colors, {
+    required IconData icon,
+    required String label,
+    required VoidCallback? onTap,
+    bool danger = false,
+  }) {
+    final enabled = onTap != null;
+    final color = danger ? colors.error : colors.primary;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md,
+          vertical: 6,
+        ),
+        decoration: BoxDecoration(
+          color: enabled
+              ? color.withValues(alpha: 0.12)
+              : colors.surfaceVariant,
+          borderRadius: BorderRadius.circular(AppRadius.full),
+          border: Border.all(
+            color: enabled
+                ? color.withValues(alpha: 0.35)
+                : colors.divider,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 14, color: enabled ? color : colors.textHint),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                color: enabled ? color : colors.textHint,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 从本地选一张图片，写进音频文件的封面标签。
+  Future<void> _pickCover() async {
+    final song = _song;
+    final path = song?.filePath;
+    if (song == null || path == null || path.isEmpty) return;
+
+    final result = await FilePicker.platform.pickFiles(
+      dialogTitle: context.tr('选择封面图片'),
+      type: FileType.custom,
+      allowedExtensions: const ['jpg', 'jpeg', 'png', 'webp', 'bmp'],
+      allowMultiple: false,
+    );
+    final files = result?.files;
+    if (files == null || files.isEmpty) return;
+    final imagePath = files.first.path;
+    if (imagePath == null || imagePath.isEmpty) return;
+
+    setState(() => _coverBusy = true);
+    try {
+      final bytes = await File(imagePath).readAsBytes();
+      if (bytes.isEmpty) {
+        throw Exception(context.tr('图片读取失败'));
+      }
+      // 直接写进音频文件（MP3 / FLAC），其它格式会返回 false。
+      final ok = await AudioTagWriter.write(path, artwork: bytes);
+      if (!ok) {
+        throw Exception(context.tr('该音频格式不支持写入封面'));
+      }
+      // 更新封面缓存 + 索引，列表 / 播放页也会跟着刷新。
+      await CoverCacheService().putArtwork(song.id, bytes);
+      MusicCoverImage.refresh(song.id);
+      await ref.read(localMusicNotifierProvider.notifier).upsertSong(
+        song.copyWith(hasCover: true, clearCover: true),
+        // 封面信息要以文件为准：合并写入会保留旧的 coverUrl / hasCover，
+        // 所以这里整条覆盖（传的就是索引里读出来的完整歌曲对象）。
+        forceOverwrite: true,
+      );
+      if (!mounted) return;
+      setState(() {
+        _song = song.copyWith(hasCover: true, clearCover: true);
+        _coverVersion++;
+      });
+      _toast(context.tr('封面已更新'));
+    } catch (e) {
+      if (mounted) _toast(context.tr('封面更新失败: $e'));
+    } finally {
+      if (mounted) setState(() => _coverBusy = false);
+    }
+  }
+
+  /// 删除音频文件里的封面。
+  Future<void> _removeCover() async {
+    final song = _song;
+    final path = song?.filePath;
+    if (song == null || path == null || path.isEmpty) return;
+
+    setState(() => _coverBusy = true);
+    try {
+      final ok = await AudioTagWriter.write(path, removeArtwork: true);
+      if (!ok) {
+        throw Exception(context.tr('该音频格式不支持删除封面'));
+      }
+      // 清掉内存 / 磁盘里的封面缓存，界面才会回到「无封面」。
+      CoverCacheService().invalidate(song.id);
+      MusicCoverImage.refresh(song.id);
+      await ref.read(localMusicNotifierProvider.notifier).upsertSong(
+        song.copyWith(hasCover: false, clearCover: true),
+        forceOverwrite: true,
+      );
+      if (!mounted) return;
+      setState(() {
+        _song = song.copyWith(hasCover: false, clearCover: true);
+        _coverVersion++;
+      });
+      _toast(context.tr('封面已删除'));
+    } catch (e) {
+      if (mounted) _toast(context.tr('删除封面失败: $e'));
+    } finally {
+      if (mounted) setState(() => _coverBusy = false);
+    }
+  }
+
+  void _toast(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
     );
   }
 
@@ -447,11 +665,21 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
   }
 
   Widget _buildSearchTab(ThemeColors colors) {
+    final sources = ref
+        .watch(allAvailableSourcesProvider)
+        .where((s) => s.id != 'all')
+        .toList(growable: false);
     return Column(
       children: [
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
-          child: _buildSearchBar(colors),
+          child: Row(
+            children: [
+              Expanded(child: _buildSearchBar(colors)),
+              const SizedBox(width: AppSpacing.sm),
+              _buildSourceButton(colors, sources),
+            ],
+          ),
         ),
         const SizedBox(height: AppSpacing.md),
         Expanded(
@@ -474,8 +702,113 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
     );
   }
 
+  /// 搜索框与音源按钮共用的高度。
+  static const double _searchBarHeight = 44;
+
+  /// 搜索框右侧的音源切换按钮（与发现页搜索页的样式保持一致）。
+  Widget _buildSourceButton(ThemeColors colors, List<SourceInfo> sources) {
+    SourceInfo? current;
+    for (final source in sources) {
+      if (source.id == _searchSourceId) {
+        current = source;
+        break;
+      }
+    }
+    return GestureDetector(
+      key: _sourceButtonKey,
+      onTap: sources.isEmpty ? null : () => _showSourceMenu(colors, sources),
+      child: Container(
+        width: _searchBarHeight,
+        height: _searchBarHeight,
+        decoration: BoxDecoration(
+          color: colors.surface,
+          shape: BoxShape.circle,
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: current == null
+            ? Icon(
+                Icons.library_music_outlined,
+                size: 20,
+                color: colors.textHint,
+              )
+            : SourceIcon(
+                // 同名插件的变体 id 要还原成平台 id 才能取到对应图标。
+                sourceId: SourceInfo.baseIdOf(current.id),
+                size: _searchBarHeight,
+                label: current.name,
+              ),
+      ),
+    );
+  }
+
+  void _showSourceMenu(ThemeColors colors, List<SourceInfo> sources) {
+    final box =
+        _sourceButtonKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null) return;
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    final position = RelativeRect.fromRect(
+      Rect.fromPoints(
+        box.localToGlobal(Offset.zero, ancestor: overlay),
+        box.localToGlobal(box.size.bottomRight(Offset.zero), ancestor: overlay),
+      ),
+      Offset.zero & overlay.size,
+    );
+
+    showMenu<String>(
+      context: context,
+      position: position,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppRadius.md),
+      ),
+      color: colors.surface,
+      elevation: 8,
+      items: [
+        for (final source in sources)
+          PopupMenuItem<String>(
+            value: source.id,
+            height: 44,
+            child: Row(
+              children: [
+                SourceIcon(
+                  sourceId: SourceInfo.baseIdOf(source.id),
+                  size: 18,
+                  label: source.name,
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: Text(
+                    source.name,
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: source.id == _searchSourceId
+                          ? colors.primary
+                          : colors.textPrimary,
+                      fontWeight: source.id == _searchSourceId
+                          ? FontWeight.w500
+                          : FontWeight.normal,
+                    ),
+                  ),
+                ),
+                if (source.id == _searchSourceId)
+                  Icon(Icons.check, size: 16, color: colors.primary),
+              ],
+            ),
+          ),
+      ],
+    ).then((selectedId) {
+      if (selectedId == null || selectedId == _searchSourceId) return;
+      setState(() => _searchSourceId = selectedId);
+      // 已经搜过的话，换音源后直接用新音源重搜一次。
+      if (_searchResults.isNotEmpty) {
+        unawaited(_handleSearch());
+      }
+    });
+  }
+
   Widget _buildSearchBar(ThemeColors colors) {
     return Container(
+      // 与右侧音源按钮等高，视觉上是一条完整的搜索栏。
+      height: _searchBarHeight,
       padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
       decoration: BoxDecoration(
         color: colors.surface,
@@ -492,6 +825,7 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
               decoration: InputDecoration(
                 hintText: context.tr('输入关键词搜索 (歌曲名 歌手)'),
                 border: InputBorder.none,
+                isDense: true,
                 hintStyle: TextStyle(color: colors.textHint, fontSize: 14),
               ),
               style: TextStyle(color: colors.textPrimary, fontSize: 14),
@@ -585,7 +919,12 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
                         borderRadius: BorderRadius.circular(AppRadius.xs),
                       ),
                       child: Text(
-                        'WY',
+                        // 显示这条结果真正来自哪个音源（不再写死 WY）。
+                        SourceInfo.baseIdOf(
+                          (item.source ?? '').isEmpty
+                              ? _searchSourceId
+                              : item.source!,
+                        ).toUpperCase(),
                         style: TextStyle(
                           fontSize: 9,
                           fontWeight: FontWeight.w600,
@@ -649,14 +988,26 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
   }
 
   Future<void> _handleSearch() async {
-    final keyword = _searchController.text.trim();
+    // 关键词以搜索框为准；框里是空的就用「歌曲名 + 歌手」输入框的最新内容
+    // （用户可能刚改过歌名 / 歌手）。
+    var keyword = _searchController.text.trim();
+    if (keyword.isEmpty) {
+      keyword = _keywordFromFields();
+      if (keyword.isNotEmpty) {
+        setState(() => _searchController.text = keyword);
+      }
+    }
     if (keyword.isEmpty) return;
 
     setState(() => _searching = true);
 
     try {
       final manager = ref.read(musicSourceManagerProvider);
-      final results = await manager.search(keyword, sourceId: 'wy', limit: 30);
+      final results = await manager.search(
+        keyword,
+        sourceId: _searchSourceId,
+        limit: 30,
+      );
       if (mounted) {
         setState(() {
           _searchResults = results;

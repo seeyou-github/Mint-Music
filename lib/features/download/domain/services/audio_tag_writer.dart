@@ -22,6 +22,9 @@ class AudioTagWriter {
   AudioTagWriter._();
 
   /// 写入标签，返回是否成功。
+  ///
+  /// [removeArtwork] 为 true 时会**删掉**文件里已有的封面（APIC / PICTURE），
+  /// 用于「编辑标签」页删除封面的场景；[artwork] 非空时则以它替换旧封面。
   static Future<bool> write(
     String filePath, {
     String? title,
@@ -30,6 +33,7 @@ class AudioTagWriter {
     String? albumArtist,
     String? lyrics,
     Uint8List? artwork,
+    bool removeArtwork = false,
   }) async {
     final ext = _extOf(filePath);
     try {
@@ -42,6 +46,7 @@ class AudioTagWriter {
           albumArtist: albumArtist,
           lyrics: lyrics,
           artwork: artwork,
+          removeArtwork: removeArtwork,
         );
       }
       if (ext == '.flac') {
@@ -53,6 +58,7 @@ class AudioTagWriter {
           albumArtist: albumArtist,
           lyrics: lyrics,
           artwork: artwork,
+          removeArtwork: removeArtwork,
         );
       }
       debugPrint('[AudioTagWriter] 不支持的格式，跳过: $ext');
@@ -83,6 +89,7 @@ class AudioTagWriter {
     String? albumArtist,
     String? lyrics,
     Uint8List? artwork,
+    bool removeArtwork = false,
   }) async {
     final file = File(filePath);
     if (!await file.exists()) return false;
@@ -123,7 +130,10 @@ class AudioTagWriter {
     if (lyrics != null && lyrics.isNotEmpty) {
       frames['USLT'] = _buildUsltFrame(lyrics);
     }
-    if (artwork != null && artwork.isNotEmpty) {
+    if (removeArtwork) {
+      // 删除封面：APIC 可能在原标签里存在，必须显式移除，否则会被原样保留。
+      frames.remove('APIC');
+    } else if (artwork != null && artwork.isNotEmpty) {
       frames['APIC'] = _buildApicFrame(artwork);
     }
 
@@ -294,6 +304,7 @@ class AudioTagWriter {
     String? albumArtist,
     String? lyrics,
     Uint8List? artwork,
+    bool removeArtwork = false,
   }) async {
     final file = File(filePath);
     if (!await file.exists()) return false;
@@ -326,8 +337,9 @@ class AudioTagWriter {
     final newBlocks = <_FlacBlock>[];
     for (final block in blocks) {
       if (block.type == 4) continue; // 旧的 Vorbis Comment，稍后重建
-      if (block.type == 6 && artwork != null && artwork.isNotEmpty) {
-        continue; // 旧的图片，稍后重建
+      if (block.type == 6 &&
+          (removeArtwork || (artwork != null && artwork.isNotEmpty))) {
+        continue; // 旧的图片：删除封面，或者稍后用新封面重建
       }
       newBlocks.add(block);
     }

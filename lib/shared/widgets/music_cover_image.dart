@@ -39,6 +39,11 @@ class MusicCoverImage extends StatefulWidget {
     this.filterQuality = FilterQuality.medium,
   });
 
+  /// 封面被改动（编辑标签页上传 / 删除封面）后调用。
+  ///
+  /// 清掉这首歌的内存缓存，并让所有已构建的封面组件重新取图。
+  static void refresh(String songId) => _MusicCoverImageState.refresh(songId);
+
   @override
   State<MusicCoverImage> createState() => _MusicCoverImageState();
 }
@@ -48,6 +53,18 @@ class _MusicCoverImageState extends State<MusicCoverImage> {
   static final Map<String, List<void Function(Uint8List)>> _pending = {};
   static const int _maxCacheBytes = 24 * 1024 * 1024;
   static int _cacheBytes = 0;
+
+  /// 封面被改动（编辑标签页上传 / 删除封面）后自增，用来让所有封面组件
+  /// 丢掉旧字节重新取图 —— 否则列表、播放页会一直显示改动前的封面。
+  static int _revision = 0;
+
+  /// 通知所有封面组件：这张封面变了，请重新取图。
+  static void refresh(String songId) {
+    final removed = _cache.remove(songId);
+    if (removed != null) _cacheBytes -= removed.length;
+    _pending.remove(songId);
+    _revision++;
+  }
 
   static final Dio _dio = Dio(
     BaseOptions(
@@ -71,6 +88,9 @@ class _MusicCoverImageState extends State<MusicCoverImage> {
   bool _loading = true;
   String? _lastKey;
 
+  /// 上一次取图时的全局封面版本号（见 [_MusicCoverImageState.refresh]）。
+  int _revision = _MusicCoverImageState._revision;
+
   @override
   void initState() {
     super.initState();
@@ -84,10 +104,18 @@ class _MusicCoverImageState extends State<MusicCoverImage> {
         oldWidget.songId != widget.songId ||
         oldWidget.mediaStoreId != widget.mediaStoreId) {
       _load();
+      return;
+    }
+    // 封面被别处改过（上传 / 删除）：丢掉旧字节重新取图。
+    if (_revision != _MusicCoverImageState._revision) {
+      _lastKey = null;
+      _bytes = null;
+      _load();
     }
   }
 
   void _load() {
+    _revision = _MusicCoverImageState._revision;
     final url = widget.url;
 
     // Case 1: 无 URL — 从 CoverCacheService 获取（MediaStore 提取 / 桌面端缓存）

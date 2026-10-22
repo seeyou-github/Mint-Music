@@ -500,7 +500,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                         '${AppRoutes.tagEditor}?songId=${widget.song.id}',
                       ),
                     ),
-                  // Windows：用系统文件管理器打开这首歌曲所在的目录
+                  // Windows：用系统文件管理器打开歌曲所在的目录
                   if (Platform.isWindows &&
                       (widget.song.filePath ?? '').isNotEmpty)
                     _buildActionItem(
@@ -513,10 +513,24 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                         final messenger = ScaffoldMessenger.of(context);
                         final errorText = context.tr('无法打开所在文件夹');
                         final path = widget.song.filePath ?? '';
+                        // 直接打开「下载文件夹」：歌曲基本都是下载下来的，
+                        // 用户要的是那个文件夹，而不是每首歌各自的路径。
+                        final downloadDir = ref.read(downloadDirProvider);
                         Navigator.pop(context);
-                        final ok = await FileManagerService.openFolderOf(path);
-                        if (ok) return;
-                        messenger.showSnackBar(SnackBar(content: Text(errorText)));
+                        var opened = false;
+                        if (downloadDir.trim().isNotEmpty) {
+                          opened = await FileManagerService.openFolder(
+                            downloadDir,
+                          );
+                        }
+                        // 下载目录不可用（没设置 / 已被删除）时再退回歌曲所在目录。
+                        if (!opened && path.isNotEmpty) {
+                          opened = await FileManagerService.openFolderOf(path);
+                        }
+                        if (opened) return;
+                        messenger.showSnackBar(
+                          SnackBar(content: Text(errorText)),
+                        );
                       },
                     ),
                 ],
