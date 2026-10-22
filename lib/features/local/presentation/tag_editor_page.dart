@@ -801,7 +801,8 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
       ],
     ).then((selectedId) {
       if (selectedId == null || selectedId == _searchSourceId) return;
-      setState(() => _searchSourceId = selectedId);
+      final id = selectedId;
+      setState(() => _searchSourceId = id);
       // 已经搜过的话，换音源后直接用新音源重搜一次。
       if (_searchResults.isNotEmpty) {
         unawaited(_handleSearch());
