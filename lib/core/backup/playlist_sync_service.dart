@@ -112,15 +112,24 @@ class PlaylistSyncService {
   static Timer? _debounceTimer;
 
   /// 本地歌单增删改后的自动推送：5 秒防抖，连续操作只同步最后一次。
-  static void schedulePush(WebDavService webdav) {
+  ///
+  /// [onStart] / [onFinish] 用于把同步状态同步给界面（窗口底部的同步提示）。
+  static void schedulePush(
+    WebDavService webdav, {
+    void Function()? onStart,
+    void Function(bool ok, Object? error)? onFinish,
+  }) {
     _debounceTimer?.cancel();
     _debounceTimer = Timer(const Duration(seconds: 5), () {
       _debounceTimer = null;
       unawaited(() async {
+        onStart?.call();
         try {
           await push(webdav);
+          onFinish?.call(true, null);
         } catch (e) {
           debugPrint('[PlaylistSyncService] 自动同步歌单失败: $e');
+          onFinish?.call(false, e);
         }
       }());
     });

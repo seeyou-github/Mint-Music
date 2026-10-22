@@ -19,6 +19,7 @@ import '../core/backup/playlist_sync_service.dart';
 import '../core/backup/webdav_service.dart';
 import '../features/library/application/playlist_providers.dart';
 import '../features/settings/data/plugin_repository.dart';
+import '../shared/widgets/playlist_sync_indicator.dart';
 import 'app_desktop_shell.dart';
 
 class App extends ConsumerStatefulWidget {
@@ -169,6 +170,16 @@ class _AppState extends ConsumerState<App> {
                       child: child ?? const SizedBox.shrink(),
                     ),
                   ),
+                ),
+                // 歌单自动同步提示：浮在窗口底部（迷你播放器 / 底部导航之上），
+                // 只在收藏页增删改、开启实时同步开关触发的同步时出现。
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom:
+                      (ResponsiveLayout.shouldShowSidebar(context) ? 88.0 : 132.0) +
+                      MediaQuery.paddingOf(context).bottom,
+                  child: const PlaylistSyncIndicator(),
                 ),
                 const DesktopLyricLayer(),
               ],

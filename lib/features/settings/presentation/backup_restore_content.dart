@@ -13,6 +13,7 @@ import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../shared/widgets/playlist_sync_button.dart';
+import '../../library/application/playlist_providers.dart';
 import '../application/settings_providers.dart';
 import '../data/settings_service.dart';
 import 'settings_page.dart';
@@ -509,7 +510,11 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
               subtitle: tr('开启后每次进入应用、以及歌单变动后都会自动同步'),
               trailing: Switch(
                 value: config.playlistSyncEnabled,
-                onChanged: (v) => _saveConfig(playlistSyncEnabled: v),
+                onChanged: (v) {
+                  _saveConfig(playlistSyncEnabled: v);
+                  // 开启后立刻同步一次（窗口底部会显示同步提示）。
+                  if (v) unawaited(syncPlaylistsNow(ref));
+                },
                 activeTrackColor: colors.primary.withValues(alpha: 0.3),
                 activeThumbColor: colors.primary,
               ),

@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/backup/playlist_sync_service.dart';
+import '../../../core/backup/playlist_sync_status.dart';
 import '../../../core/backup/webdav_service.dart';
 import '../../settings/application/settings_providers.dart';
 import '../data/playlist_repository.dart';
@@ -10,6 +11,33 @@ import '../../player/domain/models/song.dart';
 final playlistRepositoryProvider = Provider<PlaylistRepository>((ref) {
   return PlaylistRepository();
 });
+
+/// 立即同步一次歌单（拉取远端 + 合并 + 回推），并把过程写到全局同步状态，
+/// 让窗口底部显示「正在同步 / 同步完成 / 同步失败」。
+///
+/// 返回失败原因；成功返回 null。
+Future<String?> syncPlaylistsNow(WidgetRef ref) async {
+  final config = ref.read(webDavConfigProvider);
+  final status = ref.read(playlistSyncStatusProvider.notifier);
+  if (!config.isConfigured) {
+    const message = '未配置 WebDAV：请先在「设置 → 备份还原」中填写 WebDAV 地址';
+    status.fail(message);
+    return message;
+  }
+  status.start();
+  try {
+    // 先确保本地歌单已就绪（首次启动会创建「我的收藏」），避免用空数据覆盖远端。
+    await ref.read(playlistsProvider.future);
+    await PlaylistSyncService.pullAndMerge(WebDavService(config));
+    ref.invalidate(playlistsProvider);
+    status.succeed();
+    return null;
+  } catch (e) {
+    final message = describeWebDavError(e);
+    status.fail(message);
+    return message;
+  }
+}
 
 final playlistsProvider = AsyncNotifierProvider<PlaylistsNotifier, List<Playlist>>(
   PlaylistsNotifier.new,
@@ -66,7 +94,19 @@ class PlaylistsNotifier extends AsyncNotifier<List<Playlist>> {
   void _syncToRemote() {
     final config = ref.read(webDavConfigProvider);
     if (!config.playlistSyncEnabled || !config.isConfigured) return;
-    PlaylistSyncService.schedulePush(WebDavService(config));
+    final status = ref.read(playlistSyncStatusProvider.notifier);
+    PlaylistSyncService.schedulePush(
+      WebDavService(config),
+      // 真正开始推送时才显示提示（前面的 5 秒是防抖等待，还没发请求）。
+      onStart: status.start,
+      onFinish: (ok, error) {
+        if (ok) {
+          status.succeed();
+        } else {
+          status.fail(describeWebDavError(error ?? '未知错误'));
+        }
+      },
+    );
   }
 
   /// Returns true if the song was actually added (not a duplicate).
