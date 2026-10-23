@@ -35,6 +35,9 @@ class _RecentlyPlayedPageState extends ConsumerState<RecentlyPlayedPage> {
   /// 卡片内边距（封面左右各留这么多）。
   static const double _cardPadding = AppSpacing.sm;
 
+  /// 卡片底部内边距（封面下方的文字离卡片下沿的距离）。
+  static const double _cardBottomPadding = 6;
+
   @override
   Widget build(BuildContext context) {
     final colors = ref.watch(themeColorsProvider);
@@ -174,17 +177,43 @@ class _RecentlyPlayedPageState extends ConsumerState<RecentlyPlayedPage> {
     );
   }
 
-  /// 网格列数：Android 固定 3 列，其它平台按窗口宽度自适应。
+  /// 网格列数：Android 固定 3 列，其它平台至少 3 列，宽窗口按 300px 递增。
+  ///
+  /// 横屏 / 窗口被拉窄时不能再掉到 2 列：宁可把卡片（封面）缩小，也要保证
+  /// 一屏至少排得下 3 列，宽度够大时自动涨到 4 列及以上。
   int _gridColumns(BuildContext context) {
     if (Platform.isAndroid) return 3;
     final width = MediaQuery.sizeOf(context).width;
-    return math.max(2, (width / 300).ceil());
+    return math.max(3, (width / 300).ceil());
   }
 
-  /// 歌曲卡片封面之外的高度（标题 + 歌手 + 内边距），随系统字体缩放。
+  /// 歌曲卡片封面之外的高度（标题 + 歌手 + 间距 + 上下内边距）。
+  ///
+  /// 以前用「基准值 + 固定行高 × 缩放」估，估大了就会在歌手名下面留一条
+  /// 空白（卡片底部那块多余间距）。这里直接按当前字体 / 字号缩放量一遍，
+  /// 卡片高度刚好贴住文字，紧凑且不会溢出。
   double _songExtraHeight(BuildContext context) {
-    final scale = MediaQuery.textScalerOf(context).scale(1);
-    return 38 + 35 * scale;
+    final titleH = _lineHeight(
+      context,
+      const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+    );
+    final artistH = _lineHeight(context, const TextStyle(fontSize: 12));
+    // 上内边距 + 封面与标题间距 + 标题 + 标题与歌手间距 + 歌手 + 下内边距
+    return _cardPadding + 6 + titleH + 2 + artistH + _cardBottomPadding;
+  }
+
+  /// 单行文本在当前主题字体 / 系统字号缩放下的实际高度。
+  double _lineHeight(BuildContext context, TextStyle style) {
+    final base = Theme.of(context).textTheme.bodyMedium ?? const TextStyle();
+    final painter = TextPainter(
+      text: TextSpan(text: '国', style: base.merge(style)),
+      maxLines: 1,
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+    )..layout();
+    final height = painter.height;
+    painter.dispose();
+    return height;
   }
 
   // ---------------------------------------------------------------- 歌单
@@ -218,10 +247,14 @@ class _RecentlyPlayedPageState extends ConsumerState<RecentlyPlayedPage> {
     );
   }
 
-  /// 歌单卡片封面之外的高度（两行名称 + 内边距），随系统字体缩放。
+  /// 歌单卡片封面之外的高度（两行名称 + 间距 + 上下内边距）。
   double _playlistExtraHeight(BuildContext context) {
-    final scale = MediaQuery.textScalerOf(context).scale(1);
-    return 30 + 33 * scale;
+    final nameH = _lineHeight(
+      context,
+      const TextStyle(fontSize: 14, height: 1.25, fontWeight: FontWeight.w500),
+    );
+    // 上内边距 + 封面与名称间距 + 两行名称 + 下内边距
+    return _cardPadding + 6 + nameH * 2 + _cardBottomPadding;
   }
 
   // ---------------------------------------------------------------- 排行
@@ -691,7 +724,7 @@ class _SongCard extends ConsumerWidget {
             _RecentlyPlayedPageState._cardPadding,
             _RecentlyPlayedPageState._cardPadding,
             _RecentlyPlayedPageState._cardPadding,
-            10,
+            _RecentlyPlayedPageState._cardBottomPadding,
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -805,7 +838,7 @@ class _PlaylistCard extends ConsumerWidget {
             _RecentlyPlayedPageState._cardPadding,
             _RecentlyPlayedPageState._cardPadding,
             _RecentlyPlayedPageState._cardPadding,
-            10,
+            _RecentlyPlayedPageState._cardBottomPadding,
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -818,7 +851,9 @@ class _PlaylistCard extends ConsumerWidget {
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(AppRadius.sm),
                         child: MusicCoverImage(
-                          url: coverUrl.isNotEmpty ? coverUrl : coverSong?.coverUrl,
+                          url: coverUrl.isNotEmpty
+                              ? coverUrl
+                              : coverSong?.coverUrl,
                           songId: coverSong?.id,
                           mediaStoreId: coverSong?.mediaStoreId,
                           fit: BoxFit.cover,

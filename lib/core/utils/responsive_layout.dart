@@ -156,10 +156,10 @@ class ResponsiveLayout {
 
   /// Returns a responsive album art size.
   static double albumArtSize(BuildContext context) {
-    if (isPhoneLandscape(context)) return 200;
-    if (isTabletLandscape(context)) return 380;
-    if (isTablet(context)) return 300;
-    return 280;
+    if (isPhoneLandscape(context)) return 210;
+    if (isTabletLandscape(context)) return 399;
+    if (isTablet(context)) return 315;
+    return 294;
   }
 
   /// Returns a responsive mini album art size.

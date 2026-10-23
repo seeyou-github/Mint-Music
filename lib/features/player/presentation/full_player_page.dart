@@ -188,13 +188,31 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
                           itemBuilder: (context, index) {
                             if (index == 0) {
                               return _KeepAlivePage(
-                                child: _PlayerCoverPage(
-                                  isPlaying: isPlaying,
-                                  onTapCover: () {
-                                    if (_currentPage == 0) {
-                                      _activateLyricsPage();
-                                      _pageController.jumpToPage(1);
-                                    }
+                                // 封面按可用区域夹紧：小屏 + 封面放大 5% 之后
+                                // 也不会顶出 Expanded 触发溢出。
+                                child: LayoutBuilder(
+                                  builder: (context, constraints) {
+                                    final available = math.min(
+                                      constraints.maxWidth,
+                                      constraints.maxHeight,
+                                    );
+                                    final coverSize = math.min(
+                                      ResponsiveLayout.albumArtSize(context),
+                                      available,
+                                    );
+                                    return _PlayerCoverPage(
+                                      isPlaying: isPlaying,
+                                      coverSize: coverSize,
+                                      // 竖屏：封面贴底，歌名/歌手才能紧挨着封面下方，
+                                      // 而不是被推到底部操作栏附近。
+                                      alignment: Alignment.bottomCenter,
+                                      onTapCover: () {
+                                        if (_currentPage == 0) {
+                                          _activateLyricsPage();
+                                          _pageController.jumpToPage(1);
+                                        }
+                                      },
+                                    );
                                   },
                                 ),
                               );
@@ -328,7 +346,7 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
               final coverSize = math.max(
                 96.0,
                 math.min(
-                  math.min(constraints.maxWidth * 0.62, 300.0),
+                  math.min(constraints.maxWidth * 0.62, 315.0),
                   constraints.maxHeight - 300,
                 ),
               );
@@ -391,10 +409,12 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
                 constraints.maxHeight - _phoneLandscapeReservedHeight,
               );
               // 封面：给下方歌名/歌手留出空间，且不超过左栏宽度的 62%。
-              final coverSize = math.max(
-                56.0,
-                math.min(constraints.maxWidth * 0.62, topArea - 54),
-              );
+              final coverSize =
+                  math.max(
+                    56.0,
+                    math.min(constraints.maxWidth * 0.62, topArea - 54),
+                  ) *
+                  1.05;
               return Column(
                 children: [
                   Expanded(
@@ -747,10 +767,15 @@ class _PlayerCoverPage extends ConsumerWidget {
   /// 手机横屏用剩余高度动态计算，避免溢出。
   final double? coverSize;
 
+  /// 封面在可用区域内的对齐方式。竖屏用 [Alignment.bottomCenter]，
+  /// 让下方的歌曲信息紧贴封面；其它布局保持居中。
+  final Alignment alignment;
+
   const _PlayerCoverPage({
     required this.isPlaying,
     this.onTapCover,
     this.coverSize,
+    this.alignment = Alignment.center,
   });
 
   @override
@@ -767,7 +792,8 @@ class _PlayerCoverPage extends ConsumerWidget {
     final borderRadius = math.min(radius, coverSize * 0.12);
 
     // 音源名称放在顶部栏（与封面居中对齐），封面页不再重复显示。
-    return Center(
+    return Align(
+      alignment: alignment,
       child: GestureDetector(
         onTap: onTapCover,
         child: AnimatedScale(
@@ -1157,6 +1183,8 @@ class _PlayerActions extends ConsumerWidget {
           fontSize: wordFontSize,
           height: 1.2,
           fontWeight: FontWeight.w600,
+          // Windows 端固定使用系统默认字体，不跟随应用自定义字体。
+          fontFamily: Platform.isWindows ? 'Segoe UI' : null,
           color: desktopLyricEnabled ? themeColors.primary : idleColor,
         ),
       ),

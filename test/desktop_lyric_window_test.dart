@@ -6,6 +6,10 @@ import 'package:mintmusic/features/player/domain/models/desktop_lyric_settings.d
 import 'package:mintmusic/features/player/domain/models/lyric_line.dart';
 import 'package:mintmusic/features/player/presentation/desktop_lyric_window.dart';
 
+/// 面板高度按默认字号推算：两个槽位 × (正文 + 译文/音译) 还要留余量。
+/// 写死数值会在默认字号调整（42 → 50）后让面板溢出，这里跟着字号走。
+double get _panelHeight => DesktopLyricSettings.defaults.fontSize * 6;
+
 Widget _host(Widget child) {
   return MaterialApp(
     home: L10n(
@@ -18,7 +22,7 @@ Widget _host(Widget child) {
                 left: 0,
                 top: 0,
                 width: 360,
-                height: 220,
+                height: _panelHeight,
                 child: child,
               ),
             ],
@@ -181,7 +185,7 @@ void main() {
                     left: 0,
                     top: 0,
                     width: 360,
-                    height: 220,
+                    height: _panelHeight,
                     child: Stack(
                       children: [
                         Positioned.fill(

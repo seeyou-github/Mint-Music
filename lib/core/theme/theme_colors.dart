@@ -30,7 +30,8 @@ class ThemeColors {
   final Color coverShadow;
   final Color shadow;
 
-  const ThemeColors({    required this.primary,
+  const ThemeColors({
+    required this.primary,
     required this.primaryLight,
     required this.primaryDark,
     required this.accent,
@@ -54,10 +55,7 @@ class ThemeColors {
   });
 
   /// 复制并覆盖文字颜色（设置里的「字体颜色」「第二字体颜色」）。
-  ThemeColors copyWithTextColors({
-    Color? textPrimary,
-    Color? textSecondary,
-  }) {
+  ThemeColors copyWithTextColors({Color? textPrimary, Color? textSecondary}) {
     return ThemeColors(
       primary: primary,
       primaryLight: primaryLight,
@@ -84,8 +82,19 @@ class ThemeColors {
   }
 
   /// 复制并覆盖背景颜色（设置里的「背景颜色」）。
+  ///
+  /// 侧边栏、选项、搜索框、歌单/榜单卡片等控件都用 [surface] /
+  /// [surfaceVariant] 着色；如果只替换 [background]，这些控件仍会保持
+  /// 固定的灰/白，和自定义背景完全不搭。这里按背景色的 HSL 亮度派生
+  /// 一套同色调、略亮的控件颜色：surface 比背景亮一档，surfaceVariant
+  /// 再亮一档；分隔线在浅色下压暗、深色下提亮，保证仍然可见。
   ThemeColors copyWithBackground(Color? background) {
     if (background == null) return this;
+    // 按「用户选的那个背景色」判断明暗，而不是主题原本的背景色：
+    // 深色模式下也可以选浅背景，控件颜色要跟着实际背景走。
+    final isLight =
+        ThemeData.estimateBrightnessForColor(background) == Brightness.light;
+    final surface = _shiftLightness(background, isLight ? 0.06 : 0.08);
     return ThemeColors(
       primary: primary,
       primaryLight: primaryLight,
@@ -94,7 +103,7 @@ class ThemeColors {
       accentLight: accentLight,
       background: background,
       surface: surface,
-      surfaceVariant: surfaceVariant,
+      surfaceVariant: _shiftLightness(background, isLight ? 0.11 : 0.13),
       textPrimary: textPrimary,
       textSecondary: textSecondary,
       textHint: textHint,
@@ -102,13 +111,18 @@ class ThemeColors {
       error: error,
       success: success,
       warning: warning,
-      divider: divider,
+      divider: _shiftLightness(background, isLight ? -0.08 : 0.13),
       disabled: disabled,
-      miniPlayerBackground: miniPlayerBackground,
+      miniPlayerBackground: surface,
       miniPlayerProgress: miniPlayerProgress,
       coverShadow: coverShadow,
       shadow: shadow,
     );
+  }
+
+  static Color _shiftLightness(Color color, double delta) {
+    final hsl = HSLColor.fromColor(color);
+    return hsl.withLightness((hsl.lightness + delta).clamp(0.0, 1.0)).toColor();
   }
 
   static ThemeColors lightWithPrimary(Color primary) {

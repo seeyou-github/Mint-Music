@@ -382,36 +382,12 @@ class DownloadRepository {
       }
     }
 
-    // 照搬 CeruMusic downloadSingleSong：先获取 URL，再创建任务
-    String resolvedUrl = url ?? '';
-    var taskSong = song;
-    if (resolvedUrl.isEmpty && _urlFetcher != null) {
-      final tempTask = DownloadTask(
-        id: '',
-        song: song,
-        url: '',
-        quality: quality,
-        filePath: filePath,
-        priority: priority,
-        createdAt: DateTime.now().millisecondsSinceEpoch,
-      );
-      final fetched = await _urlFetcher!(tempTask);
-      if (fetched != null && fetched.url.isNotEmpty) {
-        resolvedUrl = fetched.url;
-        // 换源后（内置源改用其它插件解析）同步歌曲来源，下载列表里显示出来。
-        final resolvedSource = fetched.source;
-        if (resolvedSource != null &&
-            resolvedSource.isNotEmpty &&
-            resolvedSource != song.source) {
-          taskSong = song.copyWith(source: resolvedSource);
-        }
-      }
-    }
-
+    // 先入队、立刻显示在下载管理里；播放地址留空，由 _startTask 异步解析，
+    // 避免解析耗时期间列表里看不到刚点的这首歌。
     final task = DownloadTask(
       id: DownloadTask.generateId(),
-      song: taskSong,
-      url: resolvedUrl,
+      song: song,
+      url: url ?? '',
       quality: quality,
       filePath: filePath,
       priority: priority,
@@ -419,9 +395,11 @@ class DownloadRepository {
     );
 
     _tasks.add(task);
-    await _flushTasks();
+    // 先把任务推给界面再落盘：下载管理页立刻就能看到这条记录，
+    // 不用等数据库写完（以前是先解析播放地址再入队，网络慢时要等好几秒）。
     _emitUpdate();
     _processQueue();
+    await _flushTasks();
     onTaskStarted?.call(task);
     return task.id;
   }

@@ -14,6 +14,7 @@ import 'features/settings/application/font_providers.dart';
 import 'features/settings/application/settings_providers.dart';
 import 'shared/services/app_image_cache.dart';
 import 'shared/services/cache_paths.dart';
+import 'features/player/application/playback_controller.dart';
 import 'features/player/domain/services/lyric_cache.dart';
 
 void main() async {
@@ -96,7 +97,7 @@ void main() async {
   runApp(
     UncontrolledProviderScope(
       container: container,
-      child: const _AppLifecycleFlush(child: App()),
+      child: _AppLifecycleFlush(container: container, child: const App()),
     ),
   );
 }
@@ -109,9 +110,12 @@ void main() async {
 /// 桌面端关窗时，Flutter 引擎会先发 `System.requestAppExit` 等待 Dart 确认，
 /// [didRequestAppExit] 利用这段时间完成落盘，之后再让窗口销毁。
 class _AppLifecycleFlush extends StatefulWidget {
-  const _AppLifecycleFlush({required this.child});
+  const _AppLifecycleFlush({required this.child, required this.container});
 
   final Widget child;
+
+  /// 退出前要用它结算当前歌曲的收听时长。
+  final ProviderContainer container;
 
   @override
   State<_AppLifecycleFlush> createState() => _AppLifecycleFlushState();
@@ -143,6 +147,19 @@ class _AppLifecycleFlushState extends State<_AppLifecycleFlush>
 
   @override
   Future<AppExitResponse> didRequestAppExit() async {
+    // 先把正在播放的这一段真实收听时长结算进待写队列，再统一落盘，
+    // 否则「听了一半就关软件」的那段统计会丢。
+    try {
+      final container = widget.container;
+      if (container.exists(playbackControllerProvider)) {
+        container
+            .read(playbackControllerProvider.notifier)
+            .settleListenSession();
+      }
+    } catch (e) {
+      debugPrint('[App] 退出前结算收听时长失败: $e');
+    }
+
     // 设上限，避免数据库异常时卡住关窗；超时后仍然正常退出。
     try {
       await AppDatabase.flushAll()

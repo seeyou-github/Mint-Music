@@ -331,6 +331,13 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   /// 避免随后 playSongAt 里的 _finalizeListenSession 再记一次。
   bool _completedListenCounted = false;
 
+  /// 当前这首歌真实出声的累计时长（不含暂停 / 缓冲 / 加载）。
+  ///
+  /// 之前用播放位置结算：整首播完按歌曲总时长记、中途切歌按 position 记，
+  /// 拖动进度条和暂停的时间都会被算进去，且重复播放只能整首累加。
+  /// 现在改为计时器，只有 [PlayerState.playing] 且处于 ready 时才走表。
+  final Stopwatch _listenWatch = Stopwatch();
+
   /// CeruMusic 风格的自动下一首防重入标志。
   /// completed 事件中设为 true，Future.microtask 排空后执行 next()
   /// 前检查此标志。任何用户操作通过 _cancelPendingAutoNext() 清 false，
@@ -580,6 +587,8 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     });
     _playerStateSub = _audioHandler.playerStateStream.listen((playerState) {
       if (!mounted) return;
+      // 真实收听时长：只有真正出声时走表，暂停 / 缓冲 / 加载 / 播完都停。
+      _syncListenWatch(playerState);
       // 注意：这里不再用 _settingQueue 门控整个监听器。
       // 之前在 setQueue / playSongAt 期间整体忽略 playerStateStream，
       // 会导致 ready 等关键事件被丢弃，isPlaying / isLoading 长期错乱
@@ -727,34 +736,51 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   static const Duration _audioSetTimeout = Duration(seconds: 10);
   static const Duration _musicSourceReadyTimeout = Duration(seconds: 12);
 
+  /// 播放器状态 → 计时开关。
+  ///
+  /// `playing` 在缓冲 / 加载时也可能为 true（playWhenReady），所以必须同时
+  /// 要求 `processingState == ready`，否则把等待缓冲的时间也算进听歌时长。
+  void _syncListenWatch(PlayerState playerState) {
+    final audible =
+        playerState.playing &&
+        playerState.processingState == ProcessingState.ready;
+    if (audible) {
+      if (!_listenWatch.isRunning) _listenWatch.start();
+    } else if (_listenWatch.isRunning) {
+      _listenWatch.stop();
+    }
+  }
+
   /// 结算上一首的收听时长。
   ///
-  /// 用「切歌时的播放位置」当实际收听时长：整首听完 ≈ 歌曲时长，
-  /// 中途切歌就是听到哪儿算哪儿。
+  /// 用计时器累计的真实出声时长：暂停、缓冲、拖动进度条跳过的部分都不计入；
+  /// 同一首歌重复播放时，每次结算都会单独累加。
   void _finalizeListenSession() {
-    if (_completedListenCounted) {
-      // 已经按整首时长结算过，这次只清理标记，等下一首开始时重新计数。
-      _completedListenCounted = false;
-      return;
-    }
+    _listenWatch.stop();
+    final listened = _listenWatch.elapsedMilliseconds;
+    _listenWatch.reset();
+    // 自然播完已经结算过的话，这里计时器已被清零，不会重复上报。
+    _completedListenCounted = false;
     final song = state.currentSong;
-    if (song == null) return;
-    final listened = state.position.inMilliseconds;
-    if (listened < 1000) return;
+    if (song == null || listened < 1000) return;
     onListenEnded?.call(song, listened);
   }
 
-  /// 自然播完时结算整首：此时 position 可能已被播放器复位为 0，
-  /// 直接用歌曲时长记录，保证单曲播完停住也能写进统计。
+  /// 应用退出前主动调用：把当前这段真实收听时长结算掉。
+  ///
+  /// 退出时 provider 不一定会被 dispose，最后一小段统计会丢，所以由退出流程
+  /// 调一次；[_finalizeListenSession] 会清零计时器，重复调用没有副作用。
+  void settleListenSession() => _finalizeListenSession();
+
+  /// 自然播完时结算：用计时器累计的真实出声时长，而不是歌曲总时长。
   void _recordCompletedListen() {
     if (_completedListenCounted) return;
-    final song = state.currentSong;
-    if (song == null) return;
-    final listened = song.duration > 0
-        ? song.duration * 1000
-        : state.position.inMilliseconds;
-    if (listened < 1000) return;
     _completedListenCounted = true;
+    _listenWatch.stop();
+    final listened = _listenWatch.elapsedMilliseconds;
+    _listenWatch.reset();
+    final song = state.currentSong;
+    if (song == null || listened < 1000) return;
     onListenEnded?.call(song, listened);
   }
 
@@ -1577,6 +1603,8 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   ///     点播放还能继续播」的根因；
   ///   · 队列已空时 `state.queue.length <= 1` 成立 → 弹出「播放中断，请手动重试」。
   Future<void> clearQueue() async {
+    // 清空队列前先把这首歌的真实收听时长结算掉。
+    _finalizeListenSession();
     // 1) 作废所有在途的加载 / 换源 / 音质切换请求
     _currentPlayRequestId++;
     _qualitySwitchRequestId = null;

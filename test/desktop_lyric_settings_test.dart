@@ -8,7 +8,8 @@ void main() {
     test('默认值', () {
       final s = DesktopLyricSettings.defaults;
       expect(s.enable, false);
-      expect(s.fontSize, Platform.isWindows ? 42 : 18);
+      // Windows 端默认字号已从 42 调整为 50（配置版本 v4）。
+      expect(s.fontSize, Platform.isWindows ? 50 : 18);
       expect(s.positionX, 50);
       expect(s.positionY, Platform.isWindows ? 85 : 0);
       expect(s.playedColor, 0xFF07C556);
@@ -45,7 +46,8 @@ void main() {
 
     test('越界数值被夹紧到合法区间', () {
       final s = DesktopLyricSettings.fromJson({
-        'v': 3,
+        // 用当前版本号，否则会被当成旧配置、字号直接回退成默认值。
+        'v': DesktopLyricSettings.configVersion,
         'fontSize': 999,
         'positionX': 150,
         'positionY': -30,

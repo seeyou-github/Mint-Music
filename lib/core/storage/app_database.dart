@@ -496,7 +496,10 @@ class DeferredWriter {
     }
     if (!_dirty) return;
 
-    _dirty = false;
+    // 这里**不能**先把 _dirty 置为 false：_doWrite() 是 `while (_dirty)` 循环，
+    // 提前清掉标记会让循环一次都不执行，等于所有延迟写永远不落盘
+    // （表现为最近播放 / 下载记录 / 播放会话退出后全空，而直接写库的
+    // 歌词缓存、图片缓存索引却是好的）。_dirty 由 _doWrite() 自己清。
     final future = _doWrite();
     _inFlight = future;
     try {
