@@ -51,13 +51,8 @@ class PlayedProgressNotifier extends StateNotifier<Map<String, double>> {
     ratio = ratio.clamp(0.0, 1.0);
 
     final current = state[songId] ?? 0;
-    // 只增不减：往回拖进度条 / 重头再听不会把「已听」降级。
+    // 已经有记录、且这次进度不比它大（重复播放 / 往回拖进度条）就不保存。
     if (ratio <= current) return;
-    // 只在「显示出来的百分比」变化时才更新界面 / 写库。
-    // 按百分点比较（而不是差值 ≥ 1%）才能和标签文案严格对齐：
-    // 播放器那边是按百分点上报的，45.7% → 46% 这种差值不足 1% 的也要记。
-    final percent = (ratio * 100).floor();
-    if (percent <= (current * 100).floor()) return;
 
     state = {...state, songId: ratio};
     // 恢复数据库之前产生的进度也要落盘：upsert 按 songId 覆盖，

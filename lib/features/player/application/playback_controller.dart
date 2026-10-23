@@ -586,7 +586,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
           _lastEmittedPosition = position;
           state = state.copyWith(position: position);
         }
-        _reportProgress(position);
       }
     });
     _bufferedSub = _audioHandler.bufferedPositionStream.listen((buffered) {
@@ -606,6 +605,8 @@ class PlaybackController extends StateNotifier<PlaybackState> {
       if (!mounted) return;
       // 真实收听时长：只有真正出声时走表，暂停 / 缓冲 / 加载 / 播完都停。
       _syncListenWatch(playerState);
+      // 暂停 / 停止时记录一次播放进度。
+      _maybeReportProgressOnStateChange(playerState);
       // 注意：这里不再用 _settingQueue 门控整个监听器。
       // 之前在 setQueue / playSongAt 期间整体忽略 playerStateStream，
       // 会导致 ready 等关键事件被丢弃，isPlaying / isLoading 长期错乱
@@ -753,38 +754,31 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   static const Duration _audioSetTimeout = Duration(seconds: 10);
   static const Duration _musicSourceReadyTimeout = Duration(seconds: 12);
 
-  /// 上一次上报的歌曲与百分比。
-  ///
-  /// 位置流大约每 200ms 来一次（≈5 次/秒），但「已听 N%」只关心整数百分比，
-  /// 所以这里按「跨过一个百分点」才回调一次：一首 4 分钟的歌从 0 播到 100
-  /// 最多回调 100 次（约每 2.4 秒一次），不会每 200ms 就穿一次层。
-  /// 记的是「见过的最大百分点」，往回拖进度条也不会重复上报。
-  String? _lastProgressSongId;
-  int _lastProgressPercent = -1;
+  /// 上一次看到的「是否正在播放」，用来捕捉「播放 → 暂停 / 停止」这一下。
+  bool _wasPlaying = false;
 
-  /// 上报当前播放位置（用于「已听 N%」标签）。
+  /// 上报当前播放进度（用于「已听 N%」标签）。
   ///
-  /// 这里只做「百分点是否变化」的判断，真正的 1% 粒度落库与列表刷新
-  /// 由 `playedProgressProvider` 负责；总时长取播放器给的，拿不到时
-  /// 退回歌曲自带的时长。
-  void _reportProgress(Duration position) {
+  /// 播放进度不是关键数据，没必要跟着位置流逐秒记录：只在
+  /// 切上一首 / 下一首、暂停、停止、退出这几个节点各记一次。
+  /// 位置流每秒 5 次的高频回调在这里完全不参与。
+  void _reportProgressNow() {
     final song = state.currentSong;
     if (song == null || !mounted) return;
     final durationMs = state.duration.inMilliseconds > 0
         ? state.duration.inMilliseconds
         : song.duration * 1000;
     if (durationMs <= 0) return;
+    onProgress?.call(song, state.position.inMilliseconds, durationMs);
+  }
 
-    if (song.id != _lastProgressSongId) {
-      _lastProgressSongId = song.id;
-      _lastProgressPercent = -1;
+  /// 播放状态从「正在播」变成「不播」时（暂停 / 停止 / 播完）记一次进度。
+  void _maybeReportProgressOnStateChange(PlayerState playerState) {
+    final wasPlaying = _wasPlaying;
+    _wasPlaying = playerState.playing;
+    if (wasPlaying && !playerState.playing) {
+      _reportProgressNow();
     }
-    final percent = ((position.inMilliseconds * 100) ~/ durationMs)
-        .clamp(0, 100)
-        .toInt();
-    if (percent <= _lastProgressPercent) return;
-    _lastProgressPercent = percent;
-    onProgress?.call(song, position.inMilliseconds, durationMs);
   }
 
   /// 播放器状态 → 计时开关。
@@ -807,6 +801,8 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   /// 用计时器累计的真实出声时长：暂停、缓冲、拖动进度条跳过的部分都不计入；
   /// 同一首歌重复播放时，每次结算都会单独累加。
   void _finalizeListenSession() {
+    // 切上一首 / 下一首、清空队列、退出应用都会走到这里：先记一次播放进度。
+    _reportProgressNow();
     _listenWatch.stop();
     final listened = _listenWatch.elapsedMilliseconds;
     _listenWatch.reset();

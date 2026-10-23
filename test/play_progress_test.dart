@@ -27,7 +27,7 @@ void main() {
   });
 
   group('PlayedProgressNotifier', () {
-    test('只增不减，且按 1% 粒度节流', () async {
+    test('只在进度变大时保存（重复播放 / 往回拖不覆盖）', () async {
       final dir = Directory.systemTemp.createTempSync('mintmusic_played_test');
       AppPaths.debugRootOverride = dir.path;
       try {
@@ -41,11 +41,7 @@ void main() {
         notifier.record(songId: 's1', positionMs: 10000, durationMs: 300000);
         expect(notifier.state['s1'], closeTo(0.1, 0.0001));
 
-        // 不足 1% 的变化先不记录（避免列表被频繁重建）。
-        notifier.record(songId: 's1', positionMs: 32000, durationMs: 300000);
-        expect(notifier.state['s1'], closeTo(0.1, 0.0001));
-
-        // 跨过下一个百分点就更新。
+        // 只要进度更大就更新（记录发生在暂停 / 切歌等节点，不会很频繁）。
         notifier.record(songId: 's1', positionMs: 40000, durationMs: 300000);
         expect(notifier.state['s1'], closeTo(0.1333, 0.001));
 
@@ -53,15 +49,13 @@ void main() {
         notifier.record(songId: 's1', positionMs: 300000, durationMs: 300000);
         expect(playedProgressLabel(notifier.state['s1']), '已听');
 
-        // 按「百分点」比较：45.7% → 46% 差值不足 1% 也要记，
-        // 否则播放器每跨一个百分点上报一次时会被这里漏掉一半。
+        // 45.7% → 46% → 46.4%：只要变大就记录。
         notifier.record(songId: 's2', positionMs: 45700, durationMs: 100000);
         expect(notifier.state['s2'], closeTo(0.457, 0.0001));
         notifier.record(songId: 's2', positionMs: 46000, durationMs: 100000);
         expect(notifier.state['s2'], closeTo(0.46, 0.0001));
-        // 同一个百分点内（46.4%）不再刷新界面。
         notifier.record(songId: 's2', positionMs: 46400, durationMs: 100000);
-        expect(notifier.state['s2'], closeTo(0.46, 0.0001));
+        expect(notifier.state['s2'], closeTo(0.464, 0.0001));
 
         notifier.dispose();
       } finally {
