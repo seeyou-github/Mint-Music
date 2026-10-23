@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
+import '../../../shared/widgets/load_more_footer.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../../../shared/widgets/song_action_sheet.dart';
 import '../../../shared/widgets/song_list_item.dart';
@@ -23,6 +24,10 @@ import '../domain/models/search_collection.dart';
 /// 布局与歌单详情一致：顶部信息卡（封面 / 名称 / 播放全部 / 收藏），
 /// 下面是歌曲列表。收藏时会在「收藏」页面生成一个歌单：
 /// 「专辑：xxx」或「作者：xxx」。
+///
+/// 作者作品、部分专辑详情都是分页接口，所以这里按「首屏 + 加载更多」处理：
+///   * 首屏失败 → 整页显示失败原因 + 重试；
+///   * 下一页失败 → 列表底部显示「加载失败，点击重试」，已加载的内容保留。
 class CollectionDetailPage extends ConsumerStatefulWidget {
   const CollectionDetailPage({super.key, required this.collection});
 
@@ -34,50 +39,130 @@ class CollectionDetailPage extends ConsumerStatefulWidget {
 }
 
 class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
-  CollectionDetail? _detail;
+  final ScrollController _scrollController = ScrollController();
+
+  SearchCollection? _item;
+  final List<Song> _songs = [];
+
+  /// 已成功加载到的页码（0 表示还没加载过）。
+  int _page = 0;
+  bool _isEnd = false;
   bool _loading = true;
-  bool _updating = false;
+  bool _loadingMore = false;
+
+  /// 首屏失败原因。
+  String? _error;
+
+  /// 下一页失败原因。
+  String? _loadMoreError;
 
   bool get _isArtist => widget.collection.type == CollectionType.artist;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _load());
+    _scrollController.addListener(_onScroll);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadFirst());
   }
 
-  Future<void> _load() async {
-    final manager = ref.read(musicSourceManagerProvider);
+  @override
+  void dispose() {
+    _scrollController.removeListener(_onScroll);
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _onScroll() {
+    if (!_scrollController.hasClients) return;
+    if (_loading || _loadingMore || _isEnd || _loadMoreError != null) return;
+    final position = _scrollController.position;
+    if (position.maxScrollExtent - position.pixels <= 480) {
+      unawaited(_loadMore());
+    }
+  }
+
+  Future<void> _loadFirst() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+      _loadMoreError = null;
+    });
     try {
-      final detail = await manager.getCollectionDetail(widget.collection);
+      final detail = await _fetch(1);
       if (!mounted) return;
       setState(() {
-        _detail = detail;
+        _item = detail.item;
+        _songs
+          ..clear()
+          ..addAll(detail.songs);
+        _page = 1;
+        _isEnd = detail.isEnd;
         _loading = false;
       });
+      _scheduleAutoFill();
     } catch (e) {
-      debugPrint('[CollectionDetail] 加载失败: $e');
       if (!mounted) return;
-      setState(() => _loading = false);
+      setState(() {
+        _loading = false;
+        _error = _messageOf(e);
+      });
     }
   }
 
-  /// 作者：重新拉取最新作品（收藏后可用它把新作品补进收藏）。
-  Future<void> _refreshWorks() async {
-    if (_updating) return;
-    setState(() => _updating = true);
+  Future<void> _loadMore() async {
+    if (_loading || _loadingMore || _isEnd) return;
+    setState(() => _loadingMore = true);
     try {
-      await _load();
+      final detail = await _fetch(_page + 1);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(context.tr('已获取最新作品')),
-          duration: const Duration(seconds: 2),
-        ),
-      );
-    } finally {
-      if (mounted) setState(() => _updating = false);
+      final seen = _songs.map((s) => s.id).toSet();
+      final appended = detail.songs.where((s) => seen.add(s.id)).toList();
+      setState(() {
+        _songs.addAll(appended);
+        _page += 1;
+        _isEnd = detail.isEnd;
+        _loadingMore = false;
+        _loadMoreError = null;
+      });
+      // 一页全被去重（插件重复返回同一批）时继续往后翻，避免卡住。
+      if (appended.isEmpty && !detail.isEnd) _scheduleAutoFill();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loadingMore = false;
+        _loadMoreError = _messageOf(e);
+      });
     }
+  }
+
+  /// 底部「加载失败，点击重试」。
+  Future<void> _retryLoadMore() async {
+    setState(() => _loadMoreError = null);
+    await _loadMore();
+  }
+
+  /// 内容不足一屏时继续补齐，保证短列表也能翻页。
+  void _scheduleAutoFill() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _isEnd || _loadingMore) return;
+      if (!_scrollController.hasClients) return;
+      if (_scrollController.position.maxScrollExtent <= 0 &&
+          _songs.length < 40) {
+        unawaited(_loadMore());
+      }
+    });
+  }
+
+  Future<CollectionDetail> _fetch(int page) {
+    return ref
+        .read(musicSourceManagerProvider)
+        .getCollectionDetail(widget.collection, page: page);
+  }
+
+  static String _messageOf(Object error) {
+    if (error is CollectionDetailException) return error.message;
+    final text = error.toString();
+    return text.startsWith('Exception: ') ? text.substring(11) : text;
   }
 
   Future<void> _playAll(List<Song> songs) async {
@@ -93,7 +178,7 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
   }
 
   Future<void> _toggleFavorite(List<Song> songs) async {
-    final name = widget.collection.favoriteName;
+    final name = (_item ?? widget.collection).favoriteName;
     final playlists = ref.read(playlistsProvider).valueOrNull ?? const [];
     final existing = playlists.where((p) => p.name == name).firstOrNull;
     final notifier = ref.read(playlistsProvider.notifier);
@@ -107,7 +192,8 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
     await notifier.createPlaylistWithSongs(
       name,
       songs.map((s) => s.toJson()).toList(),
-      description: 'mintmusic:${widget.collection.type.id}:'
+      description:
+          'mintmusic:${widget.collection.type.id}:'
           '${widget.collection.source}:${widget.collection.id}',
     );
     if (!mounted) return;
@@ -123,44 +209,81 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
   @override
   Widget build(BuildContext context) {
     final colors = ref.watch(themeColorsProvider);
-    final detail = _detail;
-    final item = detail?.item ?? widget.collection;
-    final songs = detail?.songs ?? const <Song>[];
+    final item = _item ?? widget.collection;
     final favoriteName = item.favoriteName;
-    final favorited =
-        (ref.watch(playlistsProvider).valueOrNull ?? const [])
-            .any((p) => p.name == favoriteName);
+    final favorited = (ref.watch(playlistsProvider).valueOrNull ?? const [])
+        .any((p) => p.name == favoriteName);
 
     return Scaffold(
       backgroundColor: colors.background,
       body: SafeArea(
         child: Column(
           children: [
-            _buildHeader(colors, item, songs, favorited),
-            Expanded(
-              child: _loading
-                  ? const Center(child: CircularProgressIndicator())
-                  : songs.isEmpty
-                  ? Center(
-                      child: Text(
-                        context.tr('没有获取到歌曲'),
-                        style: TextStyle(color: colors.textHint),
-                      ),
-                    )
-                  : _buildSongList(colors, songs),
-            ),
+            _buildHeader(colors, item, favorited),
+            Expanded(child: _buildBody(colors)),
           ],
         ),
       ),
     );
   }
 
+  Widget _buildBody(ThemeColors colors) {
+    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_error != null) {
+      return LoadErrorView(
+        colors: colors,
+        title: context.tr('加载失败'),
+        message: _error,
+        onRetry: () => unawaited(_loadFirst()),
+      );
+    }
+    if (_songs.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              context.tr('没有获取到歌曲'),
+              style: TextStyle(color: colors.textHint),
+            ),
+            const SizedBox(height: AppSpacing.md),
+            GestureDetector(
+              onTap: () => unawaited(_loadFirst()),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.lg,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(AppRadius.full),
+                  border: Border.all(color: colors.divider),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.refresh, size: 14, color: colors.primary),
+                    const SizedBox(width: 4),
+                    Text(
+                      context.tr('重试'),
+                      style: TextStyle(fontSize: 12, color: colors.primary),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    return _buildSongList(colors, _songs);
+  }
+
   Widget _buildHeader(
     ThemeColors colors,
     SearchCollection item,
-    List<Song> songs,
     bool favorited,
   ) {
+    final songs = _songs;
     return Padding(
       padding: const EdgeInsets.fromLTRB(
         AppSpacing.lg,
@@ -249,9 +372,7 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
                           icon: Icons.play_arrow,
                           label: context.tr('播放全部'),
                           primary: true,
-                          onTap: songs.isEmpty
-                              ? null
-                              : () => _playAll(songs),
+                          onTap: songs.isEmpty ? null : () => _playAll(songs),
                         ),
                         const SizedBox(width: AppSpacing.sm),
                         _actionChip(
@@ -264,15 +385,8 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
                               : context.tr('收藏'),
                           onTap: () => _toggleFavorite(songs),
                         ),
-                        if (_isArtist) ...[
-                          const SizedBox(width: AppSpacing.sm),
-                          _actionChip(
-                            colors,
-                            icon: Icons.refresh,
-                            label: context.tr('更新'),
-                            onTap: _updating ? null : _refreshWorks,
-                          ),
-                        ],
+                        // 「更新」按钮只在收藏页打开『作者：xxx』时出现
+                        // （见 local_playlist_detail_page），这里不再提供。
                       ],
                     ),
                   ],
@@ -317,9 +431,7 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
         decoration: BoxDecoration(
           color: primary ? colors.primary : Colors.transparent,
           borderRadius: BorderRadius.circular(AppRadius.full),
-          border: Border.all(
-            color: primary ? colors.primary : colors.divider,
-          ),
+          border: Border.all(color: primary ? colors.primary : colors.divider),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -337,15 +449,18 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
     final currentSongId = ref.watch(
       playbackControllerProvider.select((s) => s.currentSong?.id),
     );
+    final footer = _footer(colors);
     return ListView.builder(
+      controller: _scrollController,
       padding: const EdgeInsets.fromLTRB(
         AppSpacing.sm,
         0,
         AppSpacing.sm,
         AppSpacing.xxxl,
       ),
-      itemCount: songs.length,
+      itemCount: songs.length + (footer != null ? 1 : 0),
       itemBuilder: (context, index) {
+        if (index >= songs.length) return footer!;
         final song = songs[index];
         return SongListItem(
           song: song,
@@ -366,5 +481,21 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
         );
       },
     );
+  }
+
+  Widget? _footer(ThemeColors colors) {
+    if (_loadingMore) {
+      return LoadMoreFooter(status: LoadMoreStatus.loading, colors: colors);
+    }
+    if (_loadMoreError != null) {
+      return LoadMoreFooter(
+        status: LoadMoreStatus.error,
+        colors: colors,
+        message: _loadMoreError,
+        onRetry: () => unawaited(_retryLoadMore()),
+      );
+    }
+    if (!_isEnd) return null;
+    return LoadMoreFooter(status: LoadMoreStatus.noMore, colors: colors);
   }
 }

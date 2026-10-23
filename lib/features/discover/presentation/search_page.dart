@@ -10,6 +10,7 @@ import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
+import '../../../shared/widgets/load_more_footer.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../../../shared/widgets/song_list_item.dart';
 import '../../../shared/widgets/source_icon.dart';
@@ -1060,6 +1061,27 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     );
   }
 
+  /// 歌曲搜索列表底部的状态条；返回 null 表示不需要占位。
+  Widget? _searchFooter(ThemeColors colors, SearchResultsState state) {
+    if (state.isLoadingMore) {
+      return LoadMoreFooter(status: LoadMoreStatus.loading, colors: colors);
+    }
+    if (state.loadMoreError != null) {
+      return LoadMoreFooter(
+        status: LoadMoreStatus.error,
+        colors: colors,
+        message: state.loadMoreError,
+        onRetry: () => unawaited(
+          ref.read(searchResultsControllerProvider.notifier).retryLoadMore(),
+        ),
+      );
+    }
+    if (!state.hasMore && state.songs.isNotEmpty) {
+      return LoadMoreFooter(status: LoadMoreStatus.noMore, colors: colors);
+    }
+    return null;
+  }
+
   Widget _buildSearchResults(
     ThemeColors colors,
     SearchResultsState state, {
@@ -1069,17 +1091,22 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       return const Center(child: CircularProgressIndicator());
     }
     if (state.error != null && state.songs.isEmpty) {
-      return Center(
-        child: Text(
-          context.tr('搜索失败'),
-          style: TextStyle(color: colors.textHint),
+      return LoadErrorView(
+        colors: colors,
+        title: context.tr('搜索失败'),
+        message: state.error,
+        onRetry: () => unawaited(
+          ref
+              .read(searchResultsControllerProvider.notifier)
+              .start(state.query, state.sourceId, force: true),
         ),
       );
     }
     if (state.songs.isEmpty) return _buildEmptyResult(colors);
 
     final songs = state.songs;
-    final showLoadingRow = state.isLoadingMore;
+    final footer = _searchFooter(colors, state);
+    final showLoadingRow = footer != null;
     final selecting = _selection.isActive;
     // 宽屏下内容区没有迷你播放器，列表底部只需避开批量操作栏。
     final bottomInset = ResponsiveLayout.hasBottomMiniPlayer(context)
@@ -1096,18 +1123,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       addAutomaticKeepAlives: false,
       addRepaintBoundaries: true,
       itemBuilder: (context, index) {
-        if (index >= songs.length) {
-          return const Padding(
-            padding: EdgeInsets.symmetric(vertical: AppSpacing.lg),
-            child: Center(
-              child: SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-            ),
-          );
-        }
+        if (index >= songs.length) return footer!;
         final song = songs[index];
         return SongListItem(
           song: song,
@@ -1294,8 +1310,20 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         ),
       );
     }
-    if (state.loading) {
+    if (state.loading && state.results.isEmpty) {
       return const Center(child: CircularProgressIndicator());
+    }
+    if (state.error != null && state.results.isEmpty) {
+      return LoadErrorView(
+        colors: colors,
+        title: context.tr('搜索失败'),
+        message: state.error,
+        onRetry: () => unawaited(
+          ref
+              .read(collectionSearchProvider.notifier)
+              .search(state.query, ref.read(searchSourceIdProvider), type),
+        ),
+      );
     }
     if (state.results.isEmpty) {
       return Center(
@@ -1308,22 +1336,44 @@ class _SearchPageState extends ConsumerState<SearchPage> {
 
     final width = MediaQuery.sizeOf(context).width;
     final columns = Platform.isAndroid ? 3 : math.max(2, (width / 260).ceil());
-    return GridView.builder(
-      padding: const EdgeInsets.fromLTRB(
-        AppSpacing.lg,
-        AppSpacing.sm,
-        AppSpacing.lg,
-        AppSpacing.xxxl,
+    return _buildLoadMoreScrollView(
+      onReachEnd: () =>
+          unawaited(ref.read(collectionSearchProvider.notifier).loadMore()),
+      sliver: SliverPadding(
+        padding: const EdgeInsets.fromLTRB(
+          AppSpacing.lg,
+          AppSpacing.sm,
+          AppSpacing.lg,
+          AppSpacing.lg,
+        ),
+        sliver: SliverGrid(
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: columns,
+            mainAxisSpacing: AppSpacing.md,
+            crossAxisSpacing: AppSpacing.md,
+            mainAxisExtent: 210,
+          ),
+          delegate: SliverChildBuilderDelegate(
+            (context, index) =>
+                _buildCollectionCard(colors, state.results[index]),
+            childCount: state.results.length,
+          ),
+        ),
       ),
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: columns,
-        mainAxisSpacing: AppSpacing.md,
-        crossAxisSpacing: AppSpacing.md,
-        mainAxisExtent: 210,
-      ),
-      itemCount: state.results.length,
-      itemBuilder: (context, index) =>
-          _buildCollectionCard(colors, state.results[index]),
+      footer: state.loadingMore
+          ? LoadMoreFooter(status: LoadMoreStatus.loading, colors: colors)
+          : state.loadMoreError != null
+          ? LoadMoreFooter(
+              status: LoadMoreStatus.error,
+              colors: colors,
+              message: state.loadMoreError,
+              onRetry: () => unawaited(
+                ref.read(collectionSearchProvider.notifier).retryLoadMore(),
+              ),
+            )
+          : state.hasMore
+          ? null
+          : LoadMoreFooter(status: LoadMoreStatus.noMore, colors: colors),
     );
   }
 
@@ -1424,10 +1474,14 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       return const Center(child: CircularProgressIndicator());
     }
     if (state.error != null && state.playlists.isEmpty) {
-      return Center(
-        child: Text(
-          context.tr('搜索失败'),
-          style: TextStyle(color: colors.textHint),
+      return LoadErrorView(
+        colors: colors,
+        title: context.tr('搜索失败'),
+        message: state.error,
+        onRetry: () => unawaited(
+          ref
+              .read(playlistSearchControllerProvider.notifier)
+              .search(state.query, ref.read(searchSourceIdProvider)),
         ),
       );
     }
@@ -1438,22 +1492,68 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     final crossAxisCount = ResponsiveLayout.gridCrossAxisCount(context);
     final isTablet = ResponsiveLayout.isTablet(context);
 
-    return GridView.builder(
-      padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveLayout.horizontalPadding(context),
-        vertical: AppSpacing.lg,
+    return _buildLoadMoreScrollView(
+      onReachEnd: () => unawaited(
+        ref.read(playlistSearchControllerProvider.notifier).loadMore(),
       ),
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: crossAxisCount,
-        mainAxisSpacing: isTablet ? 16 : AppSpacing.md,
-        crossAxisSpacing: isTablet ? 16 : AppSpacing.md,
-        childAspectRatio: isTablet ? 0.88 : 0.82,
+      sliver: SliverPadding(
+        padding: EdgeInsets.symmetric(
+          horizontal: ResponsiveLayout.horizontalPadding(context),
+          vertical: AppSpacing.lg,
+        ),
+        sliver: SliverGrid(
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: crossAxisCount,
+            mainAxisSpacing: isTablet ? 16 : AppSpacing.md,
+            crossAxisSpacing: isTablet ? 16 : AppSpacing.md,
+            childAspectRatio: isTablet ? 0.88 : 0.82,
+          ),
+          delegate: SliverChildBuilderDelegate((context, index) {
+            final playlist = state.playlists[index];
+            return _buildPlaylistSearchCard(colors, playlist, index);
+          }, childCount: state.playlists.length),
+        ),
       ),
-      itemCount: state.playlists.length,
-      itemBuilder: (context, index) {
-        final playlist = state.playlists[index];
-        return _buildPlaylistSearchCard(colors, playlist, index);
+      footer: state.isLoadingMore
+          ? LoadMoreFooter(status: LoadMoreStatus.loading, colors: colors)
+          : state.loadMoreError != null
+          ? LoadMoreFooter(
+              status: LoadMoreStatus.error,
+              colors: colors,
+              message: state.loadMoreError,
+              onRetry: () => unawaited(
+                ref
+                    .read(playlistSearchControllerProvider.notifier)
+                    .retryLoadMore(),
+              ),
+            )
+          : state.hasMore
+          ? null
+          : LoadMoreFooter(status: LoadMoreStatus.noMore, colors: colors),
+    );
+  }
+
+  /// 网格 + 底部状态条的通用滚动容器（滚动到底自动加载下一页）。
+  Widget _buildLoadMoreScrollView({
+    required VoidCallback onReachEnd,
+    required Widget sliver,
+    Widget? footer,
+  }) {
+    return NotificationListener<ScrollNotification>(
+      onNotification: (notification) {
+        final metrics = notification.metrics;
+        if (metrics.maxScrollExtent - metrics.pixels < 400) {
+          onReachEnd();
+        }
+        return false;
       },
+      child: CustomScrollView(
+        slivers: [
+          sliver,
+          if (footer != null) SliverToBoxAdapter(child: Center(child: footer)),
+          const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.xxxl)),
+        ],
+      ),
     );
   }
 

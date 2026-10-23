@@ -9,6 +9,7 @@ import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../../../core/utils/scroll_locate.dart';
 import '../../../shared/widgets/music_cover_image.dart';
+import '../../../shared/widgets/load_more_footer.dart';
 import '../../../shared/widgets/song_action_sheet.dart';
 import '../../../shared/widgets/song_list_item.dart';
 import '../../../shared/widgets/song_selection.dart';
@@ -48,15 +49,22 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
   // ---- 插件源歌单翻页状态 ----
   /// 已初始化翻页状态的歌单 id，避免每次 build 重复重置。
   String? _pagedPlaylistId;
+
   /// 首屏（第 1 页）歌曲。
   List<Song> _baseSongs = const [];
+
   /// 后续页追加的歌曲。
   final List<Song> _extraSongs = [];
+
   /// 当前已加载到的页码。
   int _page = 1;
+
   /// 是否已到末页（内置源一次给全，恒为 true）。
   bool _isEnd = true;
   bool _loadingMore = false;
+
+  /// 加载下一页失败的原因（显示「加载失败，点击重试」，不再当成没有更多）。
+  String? _loadMoreError;
 
   /// 连续多少页没有新歌后放弃翻页（兜底，防止插件异常时无限请求）。
   static const int _maxConsecutiveEmptyPages = 5;
@@ -122,7 +130,12 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
   }
 
   void _onScroll() {
-    if (!_scrollController.hasClients || _loadingMore || _isEnd) return;
+    if (!_scrollController.hasClients ||
+        _loadingMore ||
+        _isEnd ||
+        _loadMoreError != null) {
+      return;
+    }
     final position = _scrollController.position;
     if (position.maxScrollExtent - position.pixels <= 480) {
       unawaited(_loadMore());
@@ -132,9 +145,10 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
   /// 内容不足一屏时继续补齐，保证短歌单 / 大窗口下也能翻页。
   void _scheduleAutoFill() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || _isEnd || _loadingMore) return;
+      if (!mounted || _isEnd || _loadingMore || _loadMoreError != null) return;
       if (!_scrollController.hasClients) return;
-      if (_scrollController.position.maxScrollExtent <= 0 && _songs.length < 40) {
+      if (_scrollController.position.maxScrollExtent <= 0 &&
+          _songs.length < 40) {
         unawaited(_loadMore());
       }
     });
@@ -144,7 +158,11 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
     if (_loadingMore || _isEnd || _pagedPlaylistId != widget.playlistId) return;
 
     _loadingMore = true;
-    if (mounted) setState(() {});
+    if (mounted) {
+      setState(() {
+        _loadMoreError = null;
+      });
+    }
 
     try {
       var page = _page;
@@ -177,6 +195,7 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
             _page = page;
             _extraSongs.addAll(appended);
             _isEnd = isEnd;
+            _loadMoreError = null;
           });
           return;
         }
@@ -194,13 +213,26 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
       }
     } catch (e) {
       debugPrint('[PlaylistDetailPage] 加载下一页失败: $e');
-      if (mounted) setState(() => _isEnd = true);
+      // 不能当成「没有更多」：可能是网络抖动 / 服务器异常，
+      // 已加载的内容保留，底部显示「加载失败，点击重试」。
+      if (mounted) {
+        setState(() {
+          _loadMoreError = e.toString().replaceFirst('Exception: ', '');
+        });
+      }
     } finally {
       if (mounted) {
         setState(() => _loadingMore = false);
         _scheduleAutoFill();
       }
     }
+  }
+
+  /// 底部「加载失败，点击重试」。
+  Future<void> _retryLoadMore() async {
+    if (!mounted) return;
+    setState(() => _loadMoreError = null);
+    await _loadMore();
   }
 
   void _checkIfFavorited() {
@@ -327,7 +359,10 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
                       final playlist = page.playlist;
                       if (playlist == null) {
                         return Center(
-                          child: Text(context.tr('歌单未找到'), style: TextStyle(color: colors.textHint)),
+                          child: Text(
+                            context.tr('歌单未找到'),
+                            style: TextStyle(color: colors.textHint),
+                          ),
                         );
                       }
                       return Column(
@@ -345,9 +380,16 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
                         ],
                       );
                     },
-                    loading: () => const Center(child: CircularProgressIndicator()),
-                    error: (_, __) => Center(
-                      child: Text(context.tr('加载失败'), style: TextStyle(color: colors.textHint)),
+                    loading: () =>
+                        const Center(child: CircularProgressIndicator()),
+                    error: (error, __) => LoadErrorView(
+                      colors: colors,
+                      message: error.toString().replaceFirst('Exception: ', ''),
+                      onRetry: () {
+                        ref.invalidate(
+                          playlistDetailProvider(widget.playlistId),
+                        );
+                      },
                     ),
                   ),
                 ),
@@ -393,7 +435,12 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
   /// 歌单页顶部：返回按钮 + 封面 + 名称 / 歌曲数量 + 操作按钮。
   ///
   /// 不显示歌单描述；名称 + 歌曲数量 + 按钮这一列的高度与歌单封面保持一致。
-  Widget _buildHeader(BuildContext context, WidgetRef ref, ThemeColors colors, playlist) {
+  Widget _buildHeader(
+    BuildContext context,
+    WidgetRef ref,
+    ThemeColors colors,
+    playlist,
+  ) {
     // 与歌单封面同高，去掉描述后顶部不会跳动
     final headerHeight = ResponsiveLayout.isTablet(context) ? 96.0 : 72.0;
     return Container(
@@ -405,10 +452,7 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
       ),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [
-            colors.primary.withValues(alpha: 0.15),
-            colors.background,
-          ],
+          colors: [colors.primary.withValues(alpha: 0.15), colors.background],
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
         ),
@@ -423,7 +467,11 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
               onTap: () => context.pop(),
               child: Padding(
                 padding: const EdgeInsets.all(AppSpacing.xs),
-                child: Icon(Icons.arrow_back, size: 24, color: colors.textPrimary),
+                child: Icon(
+                  Icons.arrow_back,
+                  size: 24,
+                  color: colors.textPrimary,
+                ),
               ),
             ),
             const SizedBox(width: AppSpacing.sm),
@@ -449,7 +497,11 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
                       end: Alignment.bottomRight,
                     ),
                   ),
-                  child: Icon(Icons.music_note, size: 48, color: colors.textHint),
+                  child: Icon(
+                    Icons.music_note,
+                    size: 48,
+                    color: colors.textHint,
+                  ),
                 ),
               ),
             ),
@@ -485,9 +537,14 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
                   const SizedBox(height: AppSpacing.xs),
                   Row(
                     children: [
-                      _buildActionButton(colors, Icons.play_arrow, context.tr('播放全部'), () {
-                        _playAll(_songs);
-                      }),
+                      _buildActionButton(
+                        colors,
+                        Icons.play_arrow,
+                        context.tr('播放全部'),
+                        () {
+                          _playAll(_songs);
+                        },
+                      ),
                       const SizedBox(width: AppSpacing.sm),
                       _buildFavoriteButton(colors, playlist),
                     ],
@@ -500,7 +557,11 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
               onTap: () => _showMoreActions(context, colors, playlist),
               child: Padding(
                 padding: const EdgeInsets.all(AppSpacing.xs),
-                child: Icon(Icons.more_horiz, size: 24, color: colors.textSecondary),
+                child: Icon(
+                  Icons.more_horiz,
+                  size: 24,
+                  color: colors.textSecondary,
+                ),
               ),
             ),
           ],
@@ -509,11 +570,19 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
     );
   }
 
-  Widget _buildActionButton(ThemeColors colors, IconData icon, String label, VoidCallback onTap) {
+  Widget _buildActionButton(
+    ThemeColors colors,
+    IconData icon,
+    String label,
+    VoidCallback onTap,
+  ) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.xs),
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md,
+          vertical: AppSpacing.xs,
+        ),
         decoration: BoxDecoration(
           color: colors.primary,
           borderRadius: BorderRadius.circular(AppRadius.full),
@@ -537,9 +606,14 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
     return GestureDetector(
       onTap: () => _toggleFavorite(playlist),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.xs),
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md,
+          vertical: AppSpacing.xs,
+        ),
         decoration: BoxDecoration(
-          color: _isFavorited ? colors.primary.withValues(alpha: 0.15) : colors.surfaceVariant,
+          color: _isFavorited
+              ? colors.primary.withValues(alpha: 0.15)
+              : colors.surfaceVariant,
           borderRadius: BorderRadius.circular(AppRadius.full),
           border: Border.all(
             color: _isFavorited ? colors.primary : colors.divider,
@@ -570,7 +644,10 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
   Widget _buildSongList(WidgetRef ref, ThemeColors colors, List<Song> songs) {
     if (songs.isEmpty) {
       return Center(
-        child: Text(context.tr('暂无歌曲'), style: TextStyle(color: colors.textHint)),
+        child: Text(
+          context.tr('暂无歌曲'),
+          style: TextStyle(color: colors.textHint),
+        ),
       );
     }
 
@@ -620,7 +697,8 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
             final controller = ref.read(playbackControllerProvider.notifier);
             await controller.setQueue(songs, startIndex: index);
           },
-          onMenuTap: () => SongActionSheet.show(context, song: song, playlistSongs: songs),
+          onMenuTap: () =>
+              SongActionSheet.show(context, song: song, playlistSongs: songs),
         );
       },
     );
@@ -634,8 +712,46 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
             right: 0,
             bottom: AppSpacing.miniPlayerHeight + AppSpacing.lg,
             child: Center(child: _buildLoadingMoreIndicator(colors)),
+          )
+        else if (_loadMoreError != null)
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: AppSpacing.miniPlayerHeight + AppSpacing.lg,
+            child: Center(
+              child: _buildLoadMoreErrorIndicator(colors, _loadMoreError!),
+            ),
           ),
       ],
+    );
+  }
+
+  /// 翻页失败提示（悬浮于列表底部，点击重试）。
+  Widget _buildLoadMoreErrorIndicator(ThemeColors colors, String message) {
+    return GestureDetector(
+      onTap: () => unawaited(_retryLoadMore()),
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md,
+          vertical: AppSpacing.xs,
+        ),
+        decoration: BoxDecoration(
+          color: colors.surface,
+          borderRadius: BorderRadius.circular(AppRadius.full),
+          border: Border.all(color: colors.primary.withValues(alpha: 0.4)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.refresh, size: 14, color: colors.primary),
+            const SizedBox(width: 6),
+            Text(
+              context.tr('加载失败，点击重试'),
+              style: TextStyle(fontSize: 12, color: colors.primary),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -759,16 +875,27 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
     );
   }
 
-  Widget _buildMenuItem(ThemeColors colors, {required IconData icon, required String label, required VoidCallback onTap}) {
+  Widget _buildMenuItem(
+    ThemeColors colors, {
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
     return InkWell(
       onTap: onTap,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg, vertical: AppSpacing.md),
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.lg,
+          vertical: AppSpacing.md,
+        ),
         child: Row(
           children: [
             Icon(icon, size: 22, color: colors.textSecondary),
             const SizedBox(width: AppSpacing.md),
-            Text(label, style: TextStyle(fontSize: 15, color: colors.textPrimary)),
+            Text(
+              label,
+              style: TextStyle(fontSize: 15, color: colors.textPrimary),
+            ),
           ],
         ),
       ),
@@ -804,13 +931,12 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
       createTime: DateTime.now(),
       updateTime: DateTime.now(),
       songs: _songs,
-      meta: {
-        'discoverId': widget.playlistId,
-        'type': 'discover_playlist',
-      },
+      meta: {'discoverId': widget.playlistId, 'type': 'discover_playlist'},
     );
 
-    await ref.read(playlistsProvider.notifier).createPlaylistFromModel(localPlaylist);
+    await ref
+        .read(playlistsProvider.notifier)
+        .createPlaylistFromModel(localPlaylist);
 
     setState(() {
       _isFavorited = true;
@@ -818,7 +944,10 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(context.tr('已收藏到我的歌单')), duration: Duration(seconds: 2)),
+        SnackBar(
+          content: Text(context.tr('已收藏到我的歌单')),
+          duration: Duration(seconds: 2),
+        ),
       );
     }
   }
@@ -830,7 +959,9 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
         (p) => p.meta['discoverId'] == widget.playlistId,
         orElse: () => throw Exception('未找到收藏的歌单'),
       );
-      await ref.read(playlistsProvider.notifier).deletePlaylist(existingPlaylist.id);
+      await ref
+          .read(playlistsProvider.notifier)
+          .deletePlaylist(existingPlaylist.id);
     });
 
     setState(() {
@@ -839,9 +970,11 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(context.tr('已取消收藏')), duration: Duration(seconds: 2)),
+        SnackBar(
+          content: Text(context.tr('已取消收藏')),
+          duration: Duration(seconds: 2),
+        ),
       );
     }
   }
-
 }

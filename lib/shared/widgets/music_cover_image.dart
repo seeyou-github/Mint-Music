@@ -306,6 +306,14 @@ class _MusicCoverImageState extends State<MusicCoverImage> {
   }
 
   Future<void> _fetchImage(String imageUrl, String cacheKey) async {
+    // 有些插件自己拼协议头，会得到 `https:////host/x.jpg`（多余斜杠）。
+    // 这种 URL 在 Uri 里 host 会被解析成空，请求必然失败（表现为图片一直空白），
+    // 这里统一压成 `https://host/x.jpg`。
+    imageUrl = imageUrl.replaceFirstMapped(
+      RegExp(r'^(https?:)/+'),
+      (match) => '${match[1]}//',
+    );
+
     // URL 处理：Referer 头、CDN 降级
     var needsReferer = imageUrl.contains('music.126.net');
     if (needsReferer && imageUrl.startsWith('http://')) {

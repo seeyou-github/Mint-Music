@@ -164,7 +164,8 @@ class PluginHost {
           isLxAdapter = lxResult.stringResult.trim() == '1';
           if (isLxAdapter) {
             final initedResult = _engine.evaluate('__lxInited ? 1 : 0');
-            if (!initedResult.isError && initedResult.stringResult.trim() == '1') {
+            if (!initedResult.isError &&
+                initedResult.stringResult.trim() == '1') {
               break;
             }
           }
@@ -186,7 +187,8 @@ class PluginHost {
         final handlerResult = _engine.evaluate(
           'typeof __lxRequestHandler === "function" ? 1 : 0',
         );
-        if (!handlerResult.isError && handlerResult.stringResult.trim() == '0') {
+        if (!handlerResult.isError &&
+            handlerResult.stringResult.trim() == '0') {
           throw Exception('洛雪脚本没有注册 request 事件，无法解析播放地址');
         }
       }
@@ -228,9 +230,7 @@ JSON.stringify((function() {
 
         // 插件必须真的导出了内容：既没有插件信息也没有音源，说明这根本不是
         // 一个可用的插件脚本（混淆插件无法靠静态关键字判断，只能运行时查）。
-        if (_pluginInfo == null &&
-            _sources.isEmpty &&
-            _sourceActions.isEmpty) {
+        if (_pluginInfo == null && _sources.isEmpty && _sourceActions.isEmpty) {
           throw Exception('插件没有导出任何内容（module.exports 缺失或为空）');
         }
 
@@ -353,9 +353,11 @@ JSON.stringify((function() {
     if (data is Map) {
       data.forEach((key, value) {
         if (value is Map) {
-          final name = _safeString(value['name']) ??
+          final name =
+              _safeString(value['name']) ??
               SourceInfo.getNameById(key as String);
-          final qualitys = _safeStringList(value['qualitys']) ??
+          final qualitys =
+              _safeStringList(value['qualitys']) ??
               _safeStringList(value['qualities']) ??
               [];
           final sourceActions =
@@ -817,36 +819,38 @@ JSON.stringify((function() {
       'typeof module.exports.searchTyped === "function"',
     );
     if (hasMethod.stringResult != 'true') return null;
-    try {
-      return await _engine.callPluginMethod(
-        "module.exports.searchTyped('$source', '${_escapeForJs(keyword)}', "
-        "$page, $limit, '$type')",
-        timeout: const Duration(seconds: 45),
-      );
-    } catch (e) {
-      print('[PluginHost] searchTyped 异常: $e');
-      return null;
-    }
+    // 同 [search]：异常抛出，让上层区分「没有更多」和「加载失败」。
+    return await _engine.callPluginMethod(
+      "module.exports.searchTyped('$source', '${_escapeForJs(keyword)}', "
+      "$page, $limit, '$type')",
+      timeout: const Duration(seconds: 45),
+    );
   }
 
   /// 专辑详情（含歌曲列表）。
+  ///
+  /// 失败时**抛出**异常（不再吞掉返回 null）：上层需要区分「插件报错」和
+  /// 「这个专辑确实没有歌曲」，前者要在界面上给「重试」。
+  /// 插件没有实现该方法时返回 null。
   Future<String?> getAlbumInfo(
     String source,
-    Map<String, dynamic> albumItem,
-  ) async {
+    Map<String, dynamic> albumItem, {
+    int page = 1,
+  }) async {
     _ensureLoaded();
-    try {
-      return await _engine.callPluginMethod(
-        "module.exports.getAlbumInfo('$source', ${jsonEncode(albumItem)})",
-        timeout: const Duration(seconds: 45),
-      );
-    } catch (e) {
-      print('[PluginHost] getAlbumInfo 异常: $e');
-      return null;
-    }
+    final hasMethod = _engine.evaluate(
+      'typeof module.exports.getAlbumInfo === "function"',
+    );
+    if (hasMethod.stringResult != 'true') return null;
+    return _engine.callPluginMethod(
+      "module.exports.getAlbumInfo('$source', ${jsonEncode(albumItem)}, $page)",
+      timeout: const Duration(seconds: 45),
+    );
   }
 
   /// 作者作品（type = music / album）。
+  ///
+  /// 与 [getAlbumInfo] 一样：异常直接抛出，交给上层决定是否显示重试。
   Future<String?> getArtistWorks(
     String source,
     Map<String, dynamic> artistItem, {
@@ -854,16 +858,15 @@ JSON.stringify((function() {
     String type = 'music',
   }) async {
     _ensureLoaded();
-    try {
-      return await _engine.callPluginMethod(
-        "module.exports.getArtistWorks('$source', "
-        "${jsonEncode(artistItem)}, $page, '$type')",
-        timeout: const Duration(seconds: 45),
-      );
-    } catch (e) {
-      print('[PluginHost] getArtistWorks 异常: $e');
-      return null;
-    }
+    final hasMethod = _engine.evaluate(
+      'typeof module.exports.getArtistWorks === "function"',
+    );
+    if (hasMethod.stringResult != 'true') return null;
+    return _engine.callPluginMethod(
+      "module.exports.getArtistWorks('$source', "
+      "${jsonEncode(artistItem)}, $page, '$type')",
+      timeout: const Duration(seconds: 45),
+    );
   }
 
   Future<String?> search(
@@ -884,20 +887,17 @@ JSON.stringify((function() {
 
     final escapedKeyword = _escapeForJs(keyword);
 
-    try {
-      print(
-        '[PluginHost] 调用search: source=$source, keyword=$keyword, page=$page, limit=$limit',
-      );
-      final result = await _engine.callPluginMethod(
-        "module.exports.search('$source', '$escapedKeyword', $page, $limit)",
-        timeout: const Duration(seconds: 45),
-      );
-      print('[PluginHost] search结果长度: ${result?.length ?? 0}');
-      return result;
-    } catch (e) {
-      print('[PluginHost] search异常: $e');
-      return null;
-    }
+    // 异常直接抛出：上层需要区分「这个音源没有更多结果」和「这次请求失败了」，
+    // 后者要在界面上给「重试」。
+    print(
+      '[PluginHost] 调用search: source=$source, keyword=$keyword, page=$page, limit=$limit',
+    );
+    final result = await _engine.callPluginMethod(
+      "module.exports.search('$source', '$escapedKeyword', $page, $limit)",
+      timeout: const Duration(seconds: 45),
+    );
+    print('[PluginHost] search结果长度: ${result?.length ?? 0}');
+    return result;
   }
 
   Future<String?> searchWithHandler(

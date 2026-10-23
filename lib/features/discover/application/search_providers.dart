@@ -73,7 +73,15 @@ class SearchResultsState {
   final bool isLoading;
   final bool isLoadingMore;
   final bool hasMore;
+
+  /// 首屏加载失败的原因。
   final String? error;
+
+  /// 「加载下一页」失败的原因。
+  ///
+  /// 和 [error] 分开：首屏失败要把整页换成错误页，下一页失败只在列表底部
+  /// 显示「加载失败，点击重试」，已经加载出来的内容不能丢。
+  final String? loadMoreError;
 
   const SearchResultsState({
     this.query = '',
@@ -84,6 +92,7 @@ class SearchResultsState {
     this.isLoadingMore = false,
     this.hasMore = false,
     this.error,
+    this.loadMoreError,
   });
 
   SearchResultsState copyWith({
@@ -95,7 +104,9 @@ class SearchResultsState {
     bool? isLoadingMore,
     bool? hasMore,
     String? error,
+    String? loadMoreError,
     bool clearError = false,
+    bool clearLoadMoreError = false,
   }) {
     return SearchResultsState(
       query: query ?? this.query,
@@ -106,6 +117,9 @@ class SearchResultsState {
       isLoadingMore: isLoadingMore ?? this.isLoadingMore,
       hasMore: hasMore ?? this.hasMore,
       error: clearError ? null : (error ?? this.error),
+      loadMoreError: clearLoadMoreError
+          ? null
+          : (loadMoreError ?? this.loadMoreError),
     );
   }
 }
@@ -158,9 +172,18 @@ class SearchResultsNotifier extends StateNotifier<SearchResultsState> {
     if (state.query.isEmpty ||
         state.isLoading ||
         state.isLoadingMore ||
-        !state.hasMore) {
+        !state.hasMore ||
+        // 上一次已经失败了：等用户点重试，不要被滚动反复触发。
+        state.loadMoreError != null) {
       return;
     }
+    await _loadPage(_requestId, state.page + 1, replace: false);
+  }
+
+  /// 底部「加载失败，点击重试」：重试同一页，失败原因清掉。
+  Future<void> retryLoadMore() async {
+    if (state.query.isEmpty || state.isLoading || state.isLoadingMore) return;
+    state = state.copyWith(clearLoadMoreError: true, hasMore: true);
     await _loadPage(_requestId, state.page + 1, replace: false);
   }
 
@@ -182,7 +205,8 @@ class SearchResultsNotifier extends StateNotifier<SearchResultsState> {
     state = state.copyWith(
       isLoading: replace,
       isLoadingMore: !replace,
-      clearError: true,
+      clearError: replace,
+      clearLoadMoreError: true,
     );
 
     try {
@@ -212,12 +236,23 @@ class SearchResultsNotifier extends StateNotifier<SearchResultsState> {
       );
     } catch (error) {
       if (requestId != _requestId) return;
-      state = state.copyWith(
-        isLoading: false,
-        isLoadingMore: false,
-        error: error.toString(),
-        hasMore: false,
-      );
+      if (replace) {
+        // 首屏失败：整页显示错误 + 重试。
+        state = state.copyWith(
+          isLoading: false,
+          isLoadingMore: false,
+          error: _readableError(error),
+          hasMore: false,
+        );
+      } else {
+        // 下一页失败：保留已加载的内容，底部显示重试。
+        state = state.copyWith(
+          isLoading: false,
+          isLoadingMore: false,
+          loadMoreError: _readableError(error),
+          hasMore: true,
+        );
+      }
     }
   }
 
@@ -315,6 +350,14 @@ class SearchResultsNotifier extends StateNotifier<SearchResultsState> {
     }
     return result;
   }
+}
+
+/// 把异常整理成一句能显示给用户的话。
+String _readableError(Object error) {
+  if (error is CollectionDetailException) return error.message;
+  final text = error.toString();
+  if (text.startsWith('Exception: ')) return text.substring(11);
+  return text;
 }
 
 final searchResultsControllerProvider =
@@ -513,30 +556,53 @@ final allAvailableSourcesProvider = Provider<List<SourceInfo>>((ref) {
 
 /// 歌单搜索结果状态。
 class PlaylistSearchState {
-  final String query;
-  final List<Playlist> playlists;
-  final bool isLoading;
-  final String? error;
-
   const PlaylistSearchState({
     this.query = '',
     this.playlists = const [],
+    this.page = 0,
     this.isLoading = false,
+    this.isLoadingMore = false,
+    this.hasMore = false,
     this.error,
+    this.loadMoreError,
   });
+
+  final String query;
+  final List<Playlist> playlists;
+  final int page;
+  final bool isLoading;
+  final bool isLoadingMore;
+  final bool hasMore;
+
+  /// 首屏加载失败原因。
+  final String? error;
+
+  /// 下一页加载失败原因（列表底部显示重试）。
+  final String? loadMoreError;
 
   PlaylistSearchState copyWith({
     String? query,
     List<Playlist>? playlists,
+    int? page,
     bool? isLoading,
+    bool? isLoadingMore,
+    bool? hasMore,
     String? error,
+    String? loadMoreError,
     bool clearError = false,
+    bool clearLoadMoreError = false,
   }) {
     return PlaylistSearchState(
       query: query ?? this.query,
       playlists: playlists ?? this.playlists,
+      page: page ?? this.page,
       isLoading: isLoading ?? this.isLoading,
+      isLoadingMore: isLoadingMore ?? this.isLoadingMore,
+      hasMore: hasMore ?? this.hasMore,
       error: clearError ? null : (error ?? this.error),
+      loadMoreError: clearLoadMoreError
+          ? null
+          : (loadMoreError ?? this.loadMoreError),
     );
   }
 }
@@ -544,8 +610,11 @@ class PlaylistSearchState {
 class PlaylistSearchNotifier extends StateNotifier<PlaylistSearchState> {
   PlaylistSearchNotifier(this._manager) : super(const PlaylistSearchState());
 
+  static const _pageSize = 30;
+
   final MusicSourceManager _manager;
   int _requestId = 0;
+  String _sourceId = 'all';
 
   Future<void> search(String query, String sourceId) async {
     final normalizedQuery = query.trim();
@@ -555,29 +624,106 @@ class PlaylistSearchNotifier extends StateNotifier<PlaylistSearchState> {
     }
 
     final requestId = ++_requestId;
+    _sourceId = sourceId;
     state = PlaylistSearchState(query: normalizedQuery, isLoading: true);
+    await _loadPage(requestId, normalizedQuery, sourceId, 1, replace: true);
+  }
 
+  /// 加载下一页（滚动到底部时调用）。
+  Future<void> loadMore() async {
+    if (state.query.isEmpty ||
+        state.isLoading ||
+        state.isLoadingMore ||
+        !state.hasMore ||
+        state.loadMoreError != null) {
+      return;
+    }
+    await _loadPage(
+      _requestId,
+      state.query,
+      _sourceId,
+      state.page + 1,
+      replace: false,
+    );
+  }
+
+  /// 底部「加载失败，点击重试」。
+  Future<void> retryLoadMore() async {
+    if (state.query.isEmpty || state.isLoading || state.isLoadingMore) return;
+    state = state.copyWith(clearLoadMoreError: true, hasMore: true);
+    await _loadPage(
+      _requestId,
+      state.query,
+      _sourceId,
+      state.page + 1,
+      replace: false,
+    );
+  }
+
+  Future<void> _loadPage(
+    int requestId,
+    String query,
+    String sourceId,
+    int page, {
+    required bool replace,
+  }) async {
+    if (requestId != _requestId) return;
+    if (!replace) {
+      state = state.copyWith(isLoadingMore: true, clearLoadMoreError: true);
+    }
     try {
       final playlists = await _manager.searchPlaylists(
-        normalizedQuery,
+        query,
         sourceId: sourceId,
+        page: page,
+        limit: _pageSize,
       );
-      if (requestId == _requestId) {
-        state = PlaylistSearchState(
-          query: normalizedQuery,
-          playlists: playlists,
-          isLoading: false,
-        );
-      }
+      if (!mounted || requestId != _requestId) return;
+      final merged = replace
+          ? playlists
+          : _appendUniquePlaylists(state.playlists, playlists);
+      final appended = merged.length > state.playlists.length;
+      state = state.copyWith(
+        query: query,
+        playlists: merged,
+        page: page,
+        isLoading: false,
+        isLoadingMore: false,
+        // 只有确实拿到新数据才认为还有下一页，避免同一页反复请求。
+        hasMore: playlists.length >= _pageSize && (replace || appended),
+        clearError: true,
+        clearLoadMoreError: true,
+      );
     } catch (e) {
-      if (requestId == _requestId) {
-        state = PlaylistSearchState(
-          query: normalizedQuery,
+      if (!mounted || requestId != _requestId) return;
+      if (replace) {
+        state = state.copyWith(
+          query: query,
           isLoading: false,
-          error: e.toString(),
+          isLoadingMore: false,
+          error: _readableError(e),
+          hasMore: false,
+        );
+      } else {
+        state = state.copyWith(
+          isLoadingMore: false,
+          loadMoreError: _readableError(e),
+          hasMore: true,
         );
       }
     }
+  }
+
+  List<Playlist> _appendUniquePlaylists(
+    List<Playlist> current,
+    List<Playlist> next,
+  ) {
+    final result = [...current];
+    final seen = result.map((p) => p.id).toSet();
+    for (final playlist in next) {
+      if (seen.add(playlist.id)) result.add(playlist);
+    }
+    return result;
   }
 
   void reset() {
@@ -598,6 +744,11 @@ class CollectionSearchState {
     this.loading = false,
     this.unsupported = false,
     this.results = const [],
+    this.page = 0,
+    this.loadingMore = false,
+    this.hasMore = false,
+    this.error,
+    this.loadMoreError,
   });
 
   final String query;
@@ -607,6 +758,43 @@ class CollectionSearchState {
   final bool unsupported;
 
   final List<SearchCollection> results;
+  final int page;
+  final bool loadingMore;
+  final bool hasMore;
+
+  /// 首屏加载失败原因。
+  final String? error;
+
+  /// 下一页加载失败原因。
+  final String? loadMoreError;
+
+  CollectionSearchState copyWith({
+    String? query,
+    bool? loading,
+    bool? unsupported,
+    List<SearchCollection>? results,
+    int? page,
+    bool? loadingMore,
+    bool? hasMore,
+    String? error,
+    String? loadMoreError,
+    bool clearError = false,
+    bool clearLoadMoreError = false,
+  }) {
+    return CollectionSearchState(
+      query: query ?? this.query,
+      loading: loading ?? this.loading,
+      unsupported: unsupported ?? this.unsupported,
+      results: results ?? this.results,
+      page: page ?? this.page,
+      loadingMore: loadingMore ?? this.loadingMore,
+      hasMore: hasMore ?? this.hasMore,
+      error: clearError ? null : (error ?? this.error),
+      loadMoreError: clearLoadMoreError
+          ? null
+          : (loadMoreError ?? this.loadMoreError),
+    );
+  }
 }
 
 final collectionSearchProvider =
@@ -620,8 +808,12 @@ class CollectionSearchController extends StateNotifier<CollectionSearchState> {
   CollectionSearchController(this._manager)
     : super(const CollectionSearchState());
 
+  static const _pageSize = 30;
+
   final MusicSourceManager _manager;
   int _requestId = 0;
+  String _sourceId = 'all';
+  CollectionType _type = CollectionType.album;
 
   Future<void> search(
     String query,
@@ -634,22 +826,112 @@ class CollectionSearchController extends StateNotifier<CollectionSearchState> {
       state = const CollectionSearchState();
       return;
     }
+    _sourceId = sourceId;
+    _type = type;
     if (!_manager.sourceSupportsCollectionSearch(sourceId, type)) {
       state = CollectionSearchState(query: keyword, unsupported: true);
       return;
     }
     state = CollectionSearchState(query: keyword, loading: true);
+    await _loadPage(requestId, keyword, sourceId, type, 1, replace: true);
+  }
+
+  /// 加载下一页（网格滚动到底部时调用）。
+  Future<void> loadMore() async {
+    if (state.query.isEmpty ||
+        state.loading ||
+        state.loadingMore ||
+        !state.hasMore ||
+        state.loadMoreError != null) {
+      return;
+    }
+    await _loadPage(
+      _requestId,
+      state.query,
+      _sourceId,
+      _type,
+      state.page + 1,
+      replace: false,
+    );
+  }
+
+  /// 底部「加载失败，点击重试」。
+  Future<void> retryLoadMore() async {
+    if (state.query.isEmpty || state.loading || state.loadingMore) return;
+    state = state.copyWith(clearLoadMoreError: true, hasMore: true);
+    await _loadPage(
+      _requestId,
+      state.query,
+      _sourceId,
+      _type,
+      state.page + 1,
+      replace: false,
+    );
+  }
+
+  Future<void> _loadPage(
+    int requestId,
+    String keyword,
+    String sourceId,
+    CollectionType type,
+    int page, {
+    required bool replace,
+  }) async {
+    if (requestId != _requestId) return;
+    if (!replace) {
+      state = state.copyWith(loadingMore: true, clearLoadMoreError: true);
+    }
     try {
-      final results = await _manager.searchCollections(
+      final result = await _manager.searchCollections(
         keyword,
         sourceId: sourceId,
         type: type,
+        page: page,
+        limit: _pageSize,
       );
       if (!mounted || requestId != _requestId) return;
-      state = CollectionSearchState(query: keyword, results: results);
-    } catch (_) {
+      final merged = replace
+          ? result.items
+          : _appendUniqueCollections(state.results, result.items);
+      state = state.copyWith(
+        query: keyword,
+        results: merged,
+        page: page,
+        loading: false,
+        loadingMore: false,
+        hasMore: !result.isEnd,
+        clearError: true,
+        clearLoadMoreError: true,
+      );
+    } catch (e) {
       if (!mounted || requestId != _requestId) return;
-      state = CollectionSearchState(query: keyword);
+      if (replace) {
+        state = state.copyWith(
+          query: keyword,
+          loading: false,
+          loadingMore: false,
+          error: _readableError(e),
+          hasMore: false,
+        );
+      } else {
+        state = state.copyWith(
+          loadingMore: false,
+          loadMoreError: _readableError(e),
+          hasMore: true,
+        );
+      }
     }
+  }
+
+  List<SearchCollection> _appendUniqueCollections(
+    List<SearchCollection> current,
+    List<SearchCollection> next,
+  ) {
+    final result = [...current];
+    final seen = result.map((c) => '${c.source}:${c.id}').toSet();
+    for (final item in next) {
+      if (seen.add('${item.source}:${item.id}')) result.add(item);
+    }
+    return result;
   }
 }

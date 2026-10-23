@@ -76,18 +76,37 @@ class SearchCollection {
     final raw = json['raw'] is Map
         ? (json['raw'] as Map).map((k, v) => MapEntry('$k', v))
         : <String, dynamic>{};
+    // 各音源的封 / 头像字段不统一：
+    //   内置源：coverUrl / picUrl
+    //   MusicFree 专辑：artwork
+    //   MusicFree 作者：avatar（以前没读，导致作者头像一直加载不出来）
+    final cover = _firstString([
+      json['coverUrl'],
+      json['artwork'],
+      json['avatar'],
+      json['picUrl'],
+      json['cover'],
+      json['face'],
+    ]);
     return SearchCollection(
       id: '${json['id'] ?? ''}',
       title: '${json['title'] ?? json['name'] ?? ''}',
       type: type ?? CollectionTypeX.fromId(json['type'] as String?),
       source: source ?? '${json['source'] ?? ''}',
-      coverUrl: (json['coverUrl'] ?? json['artwork']) as String?,
+      coverUrl: cover,
       artist: json['artist'] as String?,
       worksNum: (json['worksNum'] as num?)?.toInt() ?? 0,
       date: json['date'] as String?,
-      description: json['description'] as String?,
+      description: (json['description'] ?? json['desc']) as String?,
       raw: raw,
     );
+  }
+
+  static String? _firstString(List<dynamic> candidates) {
+    for (final value in candidates) {
+      if (value is String && value.trim().isNotEmpty) return value.trim();
+    }
+    return null;
   }
 }
 
@@ -102,4 +121,27 @@ class CollectionDetail {
   final SearchCollection item;
   final List<Song> songs;
   final bool isEnd;
+}
+
+/// 一页专辑 / 作者搜索结果。
+class CollectionSearchPage {
+  const CollectionSearchPage({this.items = const [], this.isEnd = true});
+
+  final List<SearchCollection> items;
+
+  /// 是否已经到最后一页（插件明确返回 isEnd 才算，默认按「还有下一页」处理）。
+  final bool isEnd;
+}
+
+/// 专辑 / 作者详情加载失败。
+///
+/// 与「这个专辑 / 作者确实没有作品」区分开：界面遇到它要显示错误信息和
+/// 「重试」按钮，而不是一句「没有获取到歌曲」。
+class CollectionDetailException implements Exception {
+  const CollectionDetailException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
 }

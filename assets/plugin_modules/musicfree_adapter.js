@@ -333,7 +333,13 @@ function __mfSearch(source, keyword, page, limit) {
     .then(function () {
       var plugin = __mfPluginObject();
       if (!__mfSupportsMusicSearch(plugin)) {
-        return { list: [], total: 0, isEnd: true, source: source };
+        return {
+          list: [],
+          total: 0,
+          isEnd: true,
+          source: source,
+          error: __mfErrorMessage(error),
+        };
       }
       var keywordText = __mfText(keyword, '');
       var pageNumber = typeof page === 'number' && page > 0 ? page : 1;
@@ -368,7 +374,13 @@ function __mfSearch(source, keyword, page, limit) {
         if (typeof console !== 'undefined' && console.log) {
           console.log('[MusicFree] search 失败: ' + (error && error.message ? error.message : error));
         }
-        return { list: [], total: 0, isEnd: true, source: source };
+        return {
+          list: [],
+          total: 0,
+          isEnd: true,
+          source: source,
+          error: __mfErrorMessage(error),
+        };
       }
     );
 }
@@ -468,19 +480,22 @@ function __mfSearchTyped(source, keyword, page, limit, type) {
               (error && error.message ? error.message : error)
           );
         }
-        return { list: [], isEnd: true };
+        return { list: [], isEnd: true, error: __mfErrorMessage(error) };
       }
     );
 }
 
-function __mfGetAlbumInfo(source, albumItem) {
+function __mfGetAlbumInfo(source, albumItem, page) {
   return Promise.resolve()
     .then(function () {
       var plugin = __mfPluginObject();
       if (typeof plugin.getAlbumInfo !== 'function') {
         return { list: [], isEnd: true };
       }
-      return Promise.resolve(plugin.getAlbumInfo(albumItem || {})).then(
+      var pageNumber = typeof page === 'number' && page > 0 ? page : 1;
+      return Promise.resolve(
+        plugin.getAlbumInfo(albumItem || {}, pageNumber)
+      ).then(
         function (res) {
           var sourceId = __mfSourceId();
           var raw = [];
@@ -514,7 +529,7 @@ function __mfGetAlbumInfo(source, albumItem) {
               (error && error.message ? error.message : error)
           );
         }
-        return { list: [], isEnd: true };
+        return { list: [], isEnd: true, error: __mfErrorMessage(error) };
       }
     );
 }
@@ -565,7 +580,7 @@ function __mfGetArtistWorks(source, artistItem, page, type) {
               (error && error.message ? error.message : error)
           );
         }
-        return { list: [], isEnd: true };
+        return { list: [], isEnd: true, error: __mfErrorMessage(error) };
       }
     );
 }
@@ -805,6 +820,24 @@ function __mfFirstArray(values) {
  * - 网易 CDN 的 `?param=NyN` 只是服务端缩略图（榜单页给的通常是 200x200），
  *   卡片按 2 倍图解码时会被放大到发糊，这里与内置音源保持一致换成 400x400。
  */
+/** 把插件抛出的异常整理成一行可读文案，交给 Dart 侧显示在「加载失败」里。 */
+function __mfErrorMessage(error) {
+  if (!error) return '未知错误';
+  if (typeof error === 'string') return error;
+  var message = error.message || error.msg || '';
+  if (!message && error.response && error.response.status) {
+    message = 'HTTP ' + error.response.status;
+  }
+  if (!message) {
+    try {
+      message = String(error);
+    } catch (e) {
+      message = '未知错误';
+    }
+  }
+  return message;
+}
+
 function __mfNormalizeCover(value) {
   var url = __mfText(value, '');
   if (!url) return '';
@@ -813,6 +846,10 @@ function __mfNormalizeCover(value) {
   } else if (/^http:\/\//i.test(url)) {
     url = 'https://' + url.substring(7);
   }
+  // 有些插件自己拼协议头，会把 `//host/x.jpg` 拼成 `https:////host/x.jpg`
+  // （例如哔哩哔哩插件的 upic / pic）。这种 URL 在 Dart 里 host 会解析成空，
+  // 图片永远加载失败（表现为作者头像 / 封面一直空白），这里统一压掉多余斜杠。
+  url = url.replace(/^(https?:)\/+/, '$1//');
   if (url.indexOf('music.126.net') !== -1) {
     var queryIndex = url.indexOf('?');
     if (queryIndex !== -1) url = url.substring(0, queryIndex);

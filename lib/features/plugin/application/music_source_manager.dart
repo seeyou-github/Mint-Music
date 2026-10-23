@@ -122,7 +122,8 @@ class MusicSourceManager {
   }
 
   /// 所有内置音源的 id 与展示名（不受启用/卸载状态影响，供管理页展示）。
-  static List<SourceInfo> get allBuiltInSourceInfos => SourceIdMapping.idToName
+  static List<SourceInfo> get allBuiltInSourceInfos => SourceIdMapping
+      .idToName
       .entries
       .where((entry) => entry.key != 'qsvip')
       .map((entry) => SourceInfo(id: entry.key, name: entry.value))
@@ -132,19 +133,14 @@ class MusicSourceManager {
   List<SourceInfo> get enabledBuiltInSourceInfos {
     return _builtInSources.keys
         .where(isBuiltInSourceAvailable)
-        .map(
-          (id) => SourceInfo(
-            id: id,
-            name: _sourceIdToName[id] ?? id,
-          ),
-        )
+        .map((id) => SourceInfo(id: id, name: _sourceIdToName[id] ?? id))
         .toList();
   }
 
-  Iterable<MapEntry<String, MusicSourceProvider>> get _availableBuiltInSources =>
-      _builtInSources.entries.where(
-        (entry) => isBuiltInSourceAvailable(entry.key),
-      );
+  Iterable<MapEntry<String, MusicSourceProvider>>
+  get _availableBuiltInSources => _builtInSources.entries.where(
+    (entry) => isBuiltInSourceAvailable(entry.key),
+  );
 
   Future<void> loadBuiltInSourceStates() async {
     if (_builtInSourceStatesLoaded) return;
@@ -170,7 +166,8 @@ class MusicSourceManager {
   Future<void> removeBuiltInSource(String sourceId) async {
     await loadBuiltInSourceStates();
     final removed = <String>{..._builtInSourceStates.removed, sourceId};
-    final disabled = <String>{..._builtInSourceStates.disabled}..remove(sourceId);
+    final disabled = <String>{..._builtInSourceStates.disabled}
+      ..remove(sourceId);
     await _applyBuiltInSourceStates(
       _builtInSourceStates.copyWith(removed: removed, disabled: disabled),
     );
@@ -832,6 +829,10 @@ class MusicSourceManager {
   }) async {
     if (query.isEmpty) return [];
 
+    // 记录最后一次失败原因：全部音源都失败时抛给上层，
+    // 让「加载下一页」能区分「确实没有更多」和「这次请求失败了」。
+    Object? lastError;
+
     final effectiveSourceId = _canonicalSourceId(sourceId);
     final cacheKey = '$effectiveSourceId:$query:$page:$limit';
     final cached = _searchPageCache[cacheKey];
@@ -854,6 +855,8 @@ class MusicSourceManager {
               page: page,
               limit: limit,
             );
+            final pluginError = _pluginErrorOf(resultJson);
+            if (pluginError != null) lastError = pluginError;
             if (resultJson != null && resultJson.isNotEmpty) {
               print(
                 '[MusicSourceManager] 插件搜索成功: source=$sourceId, 结果长度=${resultJson.length}',
@@ -874,6 +877,7 @@ class MusicSourceManager {
             print(
               '[MusicSourceManager] Plugin search failed for $sourceId: $e',
             );
+            lastError = e;
           }
 
           try {
@@ -903,6 +907,7 @@ class MusicSourceManager {
             print(
               '[MusicSourceManager] Plugin searchWithHandler failed for $sourceId: $e',
             );
+            lastError = e;
           }
         }
       }
@@ -923,18 +928,38 @@ class MusicSourceManager {
         final tagged = pluginId == null
             ? results
             : results
-                .map((song) => song.copyWith(source: effectiveSourceId))
-                .toList();
+                  .map((song) => song.copyWith(source: effectiveSourceId))
+                  .toList();
         _searchPageCache[cacheKey] = _CacheEntry(tagged, _searchResultsTTL);
         return tagged;
       } catch (e) {
         print('[MusicSourceManager] Built-in search failed for $sourceId: $e');
-        return [];
+        lastError = e;
       }
     }
 
+    if (lastError != null) {
+      // 有音源尝试过但都失败了：抛出真实原因，界面据此显示「加载失败 + 重试」。
+      throw lastError;
+    }
     print('[MusicSourceManager] 没有找到可用的搜索源: $sourceId');
     return [];
+  }
+
+  /// 插件返回体里如果带 `error`（洛雪式 requestHandler 抛错时会这样返回），
+  /// 取出这条错误文案。
+  static String? _pluginErrorOf(String? raw) {
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) {
+        final message = decoded['error'];
+        if (message is String && message.trim().isNotEmpty) {
+          return message.trim();
+        }
+      }
+    } catch (_) {}
+    return null;
   }
 
   Future<Map<String, List<Song>>> aggregateSearch(
@@ -1685,7 +1710,8 @@ class MusicSourceManager {
       albumId: read(['albumId', 'albumid']),
       albumMid: read(['albumMid', 'albummid']),
       strMediaMid: read(['strMediaMid']),
-      copyrightId: readString(['copyrightId']) ??
+      copyrightId:
+          readString(['copyrightId']) ??
           // 咪咕的 copyrightId 就是歌曲 id（内置源搜索结果里没有 lx 元数据）。
           (sourceId == 'mg' ? cleanId : null),
       source: sourceId,
@@ -1841,7 +1867,10 @@ class MusicSourceManager {
     );
     for (final candidate in candidates) {
       if (candidate.url.isEmpty) continue;
-      return (url: candidate.url, source: candidate.source ?? song.source ?? '');
+      return (
+        url: candidate.url,
+        source: candidate.source ?? song.source ?? '',
+      );
     }
 
     final source = song.source;
@@ -1926,37 +1955,55 @@ class MusicSourceManager {
     return false;
   }
 
-  /// 搜索专辑 / 作者。
-  Future<List<SearchCollection>> searchCollections(
+  /// 搜索专辑 / 作者（支持分页）。
+  ///
+  /// 插件明确返回 `isEnd: false` 才认为还有下一页；抛出的异常（网络 / 插件
+  /// 报错）原样传给上层，界面据此显示「加载失败 + 重试」。
+  Future<CollectionSearchPage> searchCollections(
     String keyword, {
     required String sourceId,
     required CollectionType type,
+    int page = 1,
     int limit = 30,
   }) async {
     final query = keyword.trim();
-    if (query.isEmpty) return const [];
+    if (query.isEmpty) return const CollectionSearchPage();
+
     final effective = _canonicalSourceId(sourceId);
-    // 「聚合搜索」：逐个插件音源查一遍再合并。
+    // 「聚合搜索」：逐个插件音源查一遍再合并，只要有一个还有下一页就算没到底。
     if (effective == 'all') {
       final merged = <SearchCollection>[];
       final seenIds = <String>{};
+      var anyMore = false;
+      var succeeded = 0;
+      Object? lastError;
       for (final id in pluginSourceIds) {
-        final part = await searchCollections(
-          query,
-          sourceId: id,
-          type: type,
-          limit: limit,
-        );
-        for (final item in part) {
-          if (seenIds.add('${item.source}:${item.id}')) merged.add(item);
+        try {
+          final part = await searchCollections(
+            query,
+            sourceId: id,
+            type: type,
+            page: page,
+            limit: limit,
+          );
+          succeeded++;
+          if (!part.isEnd) anyMore = true;
+          for (final item in part.items) {
+            if (seenIds.add('${item.source}:${item.id}')) merged.add(item);
+          }
+        } catch (e) {
+          lastError = e;
         }
       }
-      return merged;
+      if (succeeded == 0 && lastError != null) throw lastError;
+      return CollectionSearchPage(items: merged, isEnd: !anyMore);
     }
 
     final wantAlbum = type == CollectionType.album;
     final results = <SearchCollection>[];
     final seen = <String>{};
+    var isEnd = true;
+    Object? lastError;
     for (final host in _findPluginHostsForSource(effective)) {
       if (!(wantAlbum ? host.supportsAlbumSearch : host.supportsArtistSearch)) {
         continue;
@@ -1966,19 +2013,29 @@ class MusicSourceManager {
       final raw = await host.searchTyped(
         _resolvePluginSourceId(pluginSourceId),
         query,
+        page: page,
         type: type.id,
         limit: limit,
       );
       if (raw == null || raw.isEmpty) continue;
+      final pluginError = _pluginErrorOf(raw);
+      if (pluginError != null) {
+        lastError = CollectionDetailException(pluginError);
+        continue;
+      }
       final resultSource = _pluginSourceAppId(host, pluginSourceId);
-      for (final item in _parseCollectionList(raw, resultSource, type)) {
+      final parsed = _parseCollectionList(raw, resultSource, type);
+      if (!parsed.isEnd) isEnd = false;
+      for (final item in parsed.items) {
         if (seen.add('${item.source}:${item.id}')) results.add(item);
       }
     }
-    return results;
+    if (results.isEmpty && lastError != null) throw lastError;
+    return CollectionSearchPage(items: results, isEnd: isEnd);
   }
 
-  List<SearchCollection> _parseCollectionList(
+  /// 解析 `{list, isEnd}` 形式的专辑 / 作者搜索结果。
+  ({List<SearchCollection> items, bool isEnd}) _parseCollectionList(
     String rawJson,
     String sourceId,
     CollectionType type,
@@ -1990,9 +2047,14 @@ class MusicSourceManager {
           decoded = jsonDecode(decoded);
         } catch (_) {}
       }
-      dynamic list;
-      if (decoded is Map) list = decoded['list'] ?? decoded['data'];
-      if (list is! List) return const [];
+      if (decoded is! Map) {
+        return (items: const <SearchCollection>[], isEnd: true);
+      }
+      final list = decoded['list'] ?? decoded['data'];
+      final isEnd = decoded['isEnd'] != false;
+      if (list is! List) {
+        return (items: const <SearchCollection>[], isEnd: isEnd);
+      }
       final items = <SearchCollection>[];
       for (final entry in list) {
         if (entry is! Map) continue;
@@ -2005,13 +2067,16 @@ class MusicSourceManager {
         if (item.id.isEmpty || item.title.isEmpty) continue;
         items.add(item);
       }
-      return items;
+      return (items: items, isEnd: isEnd);
     } catch (_) {
-      return const [];
+      return (items: const <SearchCollection>[], isEnd: true);
     }
   }
 
-  /// 专辑 / 作者详情（含歌曲列表）。
+  /// 专辑 / 作者详情（含歌曲列表），支持分页。
+  ///
+  /// 失败时抛 [CollectionDetailException]：调用方需要区分「这次加载失败了」
+  /// 和「这个专辑 / 作者确实没有作品」，前者要显示重试按钮。
   Future<CollectionDetail> getCollectionDetail(
     SearchCollection item, {
     int page = 1,
@@ -2019,23 +2084,38 @@ class MusicSourceManager {
     final effective = _canonicalSourceId(item.source);
     final hosts = _findPluginHostsForSource(effective);
     if (hosts.isEmpty) {
-      return CollectionDetail(item: item, songs: const []);
+      throw CollectionDetailException(
+        '没有找到提供该${item.type.label}的音源，请在插件管理里检查是否已启用',
+      );
     }
     final host = hosts.first;
     final pluginSourceId = _getSourceIdForHost(host, effective) ?? effective;
-    final raw = item.type == CollectionType.album
-        ? await host.getAlbumInfo(
-            _resolvePluginSourceId(pluginSourceId),
-            item.raw,
-          )
-        : await host.getArtistWorks(
-            _resolvePluginSourceId(pluginSourceId),
-            item.raw,
-            page: page,
-          );
-    if (raw == null || raw.isEmpty) {
-      return CollectionDetail(item: item, songs: const []);
+
+    String? raw;
+    try {
+      raw = item.type == CollectionType.album
+          ? await host.getAlbumInfo(
+              _resolvePluginSourceId(pluginSourceId),
+              item.raw,
+              page: page,
+            )
+          : await host.getArtistWorks(
+              _resolvePluginSourceId(pluginSourceId),
+              item.raw,
+              page: page,
+            );
+    } catch (e) {
+      throw CollectionDetailException('音源返回异常：$e');
     }
+
+    if (raw == null) {
+      throw CollectionDetailException('该音源没有提供${item.type.label}详情接口');
+    }
+    if (raw.isEmpty) {
+      throw CollectionDetailException('音源返回了空数据，请稍后重试');
+    }
+
+    Map<String, dynamic> map;
     try {
       var decoded = jsonDecode(raw);
       if (decoded is String) {
@@ -2044,48 +2124,57 @@ class MusicSourceManager {
         } catch (_) {}
       }
       if (decoded is! Map) {
-        return CollectionDetail(item: item, songs: const []);
+        throw const FormatException('返回结构不是对象');
       }
-      final map = decoded.map((k, v) => MapEntry('$k', v));
-      final list = map['list'] ?? map['data'];
-      final songs = list is List
-          ? _parsePluginSearchResult(jsonEncode({'list': list}), effective)
-          : const <Song>[];
-
-      var merged = item;
-      final detailItem = map['albumItem'] ?? map['artistItem'];
-      if (detailItem is Map) {
-        final json = detailItem.map((k, v) => MapEntry('$k', v));
-        final parsed = SearchCollection.fromJson(
-          json,
-          source: effective,
-          type: item.type,
-        );
-        merged = SearchCollection(
-          id: parsed.id.isEmpty ? item.id : parsed.id,
-          title: parsed.title.isEmpty ? item.title : parsed.title,
-          type: item.type,
-          source: effective,
-          coverUrl: (parsed.coverUrl?.isNotEmpty ?? false)
-              ? parsed.coverUrl
-              : item.coverUrl,
-          artist: parsed.artist ?? item.artist,
-          worksNum: parsed.worksNum > 0 ? parsed.worksNum : item.worksNum,
-          date: (parsed.date?.isNotEmpty ?? false) ? parsed.date : item.date,
-          description: (parsed.description?.isNotEmpty ?? false)
-              ? parsed.description
-              : item.description,
-          raw: item.raw,
-        );
-      }
-      return CollectionDetail(
-        item: merged,
-        songs: songs,
-        isEnd: map['isEnd'] != false,
-      );
-    } catch (_) {
-      return CollectionDetail(item: item, songs: const []);
+      map = decoded.map((k, v) => MapEntry('$k', v));
+    } catch (e) {
+      throw CollectionDetailException('解析${item.type.label}详情失败：$e');
     }
+
+    final pluginError = map['error'];
+    if (pluginError is String && pluginError.trim().isNotEmpty) {
+      throw CollectionDetailException(pluginError.trim());
+    }
+
+    // MusicFree 的专辑 / 歌单详情用 musicList，作者作品用 data / list，
+    // 以前只读 list / data，导致 musicList 的专辑详情永远是「没有获取到歌曲」。
+    final list = map['musicList'] ?? map['list'] ?? map['data'];
+    final songs = list is List
+        ? _parsePluginSearchResult(jsonEncode({'list': list}), effective)
+        : const <Song>[];
+
+    var merged = item;
+    final detailItem =
+        map['albumItem'] ?? map['artistItem'] ?? map['sheetItem'];
+    if (detailItem is Map) {
+      final json = detailItem.map((k, v) => MapEntry('$k', v));
+      final parsed = SearchCollection.fromJson(
+        json,
+        source: effective,
+        type: item.type,
+      );
+      merged = SearchCollection(
+        id: parsed.id.isEmpty ? item.id : parsed.id,
+        title: parsed.title.isEmpty ? item.title : parsed.title,
+        type: item.type,
+        source: effective,
+        coverUrl: (parsed.coverUrl?.isNotEmpty ?? false)
+            ? parsed.coverUrl
+            : item.coverUrl,
+        artist: parsed.artist ?? item.artist,
+        worksNum: parsed.worksNum > 0 ? parsed.worksNum : item.worksNum,
+        date: (parsed.date?.isNotEmpty ?? false) ? parsed.date : item.date,
+        description: (parsed.description?.isNotEmpty ?? false)
+            ? parsed.description
+            : item.description,
+        raw: item.raw,
+      );
+    }
+    return CollectionDetail(
+      item: merged,
+      songs: songs,
+      isEnd: map['isEnd'] != false,
+    );
   }
 
   Future<LyricResult?> getLyricResult(Song song) async {
@@ -2157,7 +2246,9 @@ class MusicSourceManager {
           final result = await baseSource.getLyricResult(song.id);
           if (_hasLyric(result)) return result;
         } catch (e) {
-          print('[MusicSourceManager] getLyricResult: $baseId built-in fallback error: $e');
+          print(
+            '[MusicSourceManager] getLyricResult: $baseId built-in fallback error: $e',
+          );
         }
       }
     }
@@ -2980,6 +3071,7 @@ class MusicSourceManager {
   Future<List<Playlist>> searchPlaylists(
     String query, {
     String sourceId = 'all',
+    int page = 1,
     int limit = 30,
   }) async {
     if (query.isEmpty) return [];
@@ -2999,7 +3091,7 @@ class MusicSourceManager {
       final futures = _availableBuiltInSources.map((entry) async {
         try {
           final playlists = await entry.value
-              .searchPlaylists(query, limit: limit)
+              .searchPlaylists(query, page: page, limit: limit)
               .timeout(_perSourceTimeout);
           return playlists;
         } catch (_) {
@@ -3019,7 +3111,7 @@ class MusicSourceManager {
       if (builtIn != null) {
         try {
           final playlists = await builtIn
-              .searchPlaylists(query, limit: limit)
+              .searchPlaylists(query, page: page, limit: limit)
               .timeout(_perSourceTimeout);
           for (final p in playlists) {
             addUnique(p);
