@@ -529,6 +529,30 @@ const List<(String, String)> _presetColors = [
   ('#06B6D4', '蓝绿'),
 ];
 
+/// 浅色模式「背景颜色」的内置颜色：整体偏浅，避免选中后看不清文字。
+const List<(String, String)> _lightBackgroundPresets = [
+  ('#FFFFFF', '纯白'),
+  ('#F5F5F5', '浅灰'),
+  ('#F0F4F8', '雾蓝'),
+  ('#F5F0E8', '米白'),
+  ('#EDF3EE', '薄荷'),
+  ('#F6EFF6', '淡紫'),
+  ('#FBF0EC', '浅粉'),
+  ('#FFF9E6', '奶油'),
+];
+
+/// 深色模式「背景颜色」的内置颜色：整体偏深，保持深色外观。
+const List<(String, String)> _darkBackgroundPresets = [
+  ('#000000', '纯黑'),
+  ('#121212', '深灰'),
+  ('#1A1A1A', '炭黑'),
+  ('#14181C', '深蓝灰'),
+  ('#1A1620', '深紫灰'),
+  ('#101A16', '墨绿'),
+  ('#1A1414', '深褐'),
+  ('#0F172A', '午夜蓝'),
+];
+
 /// 合并内置颜色与用户自定义颜色（按色值去重，内置颜色优先）。
 List<(String, String)> _mergeColors(
   List<(String, String)> presets,
@@ -658,8 +682,55 @@ class _AppearanceContent extends ConsumerWidget {
     final themeMode = ref.watch(themeModeProvider);
     final themeName = _themeModeLabel(themeMode);
     final primaryHex = ref.watch(themePrimaryColorProvider);
-    final fontColorHex = ref.watch(themeFontColorProvider);
-    final secondaryFontColorHex = ref.watch(themeSecondaryFontColorProvider);
+
+    // 字体颜色 / 第二字体颜色 / 背景颜色都按浅色、深色各保存一套；
+    // 界面只显示当前实际生效模式的那一套，跟随系统时随亮暗自动切换。
+    final isLight = ref.watch(isLightThemeActiveProvider);
+    final modeLabel = isLight ? '浅色模式' : '深色模式';
+
+    Widget buildColorRow({
+      required IconData icon,
+      required String title,
+      required Color emptyColor,
+      required String resetValue,
+      required StateProvider<String> currentProvider,
+      required StateProvider<List<String>> customProvider,
+      required Future<void> Function(SettingsService svc, String hex)
+      persistCurrent,
+      required Future<void> Function(SettingsService svc, List<String> colors)
+      persistCustom,
+      List<(String, String)> presets = _presetColors,
+    }) {
+      final hex = ref.watch(currentProvider);
+      return SettingRow(
+        icon: icon,
+        title: title,
+        trailing: Container(
+          width: 24,
+          height: 24,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: hex.isEmpty ? emptyColor : _parseHexColor(hex),
+            border: Border.all(color: colors.divider, width: 1.5),
+          ),
+        ),
+        colors: colors,
+        onTap: () => _showPalettePicker(
+          context,
+          colors,
+          title: '选择$title',
+          currentProvider: currentProvider,
+          customProvider: customProvider,
+          persistCurrent: persistCurrent,
+          persistCustom: persistCustom,
+          showReset: true,
+          emptyInitialColor: emptyColor,
+          resetValue: resetValue,
+          presets: presets,
+        ),
+      );
+    }
+
     // 选中的应用字体（右侧显示名称）
     final selectedFont = ref.watch(appFontSelectedProvider);
     final fontName = _appFontDisplayName(selectedFont);
@@ -726,61 +797,70 @@ class _AppearanceContent extends ConsumerWidget {
           ),
         ),
         SettingDivider(colors: colors),
-        SettingRow(
-          icon: Icons.text_fields,
-          title: '字体颜色',
-          trailing: Container(
-            width: 24,
-            height: 24,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: fontColorHex.isEmpty
-                  ? colors.textPrimary
-                  : _parseHexColor(fontColorHex),
-              border: Border.all(color: colors.divider, width: 1.5),
-            ),
-          ),
-          colors: colors,
-          onTap: () => _showPalettePicker(
-            context,
-            colors,
-            title: '选择字体颜色',
-            currentProvider: themeFontColorProvider,
-            customProvider: customFontColorsProvider,
-            persistCurrent: (s, hex) => s.setThemeFontColor(hex),
-            persistCustom: (s, list) => s.setCustomFontColors(list),
-            showReset: true,
-            emptyInitialColor: colors.textPrimary,
-            resetValue: defaultThemeFontColor,
-          ),
+        buildColorRow(
+          icon: Icons.wallpaper,
+          title: '背景颜色（$modeLabel）',
+          emptyColor: isLight
+              ? ThemeColors.light.background
+              : ThemeColors.dark.background,
+          resetValue: '',
+          currentProvider: isLight
+              ? lightThemeBackgroundColorProvider
+              : darkThemeBackgroundColorProvider,
+          customProvider: isLight
+              ? customBackgroundColorsLightProvider
+              : customBackgroundColorsDarkProvider,
+          persistCurrent: (s, hex) => isLight
+              ? s.setThemeBackgroundColorLight(hex)
+              : s.setThemeBackgroundColorDark(hex),
+          persistCustom: (s, list) => isLight
+              ? s.setCustomBackgroundColorsLight(list)
+              : s.setCustomBackgroundColorsDark(list),
+          presets: isLight
+              ? _lightBackgroundPresets
+              : _darkBackgroundPresets,
         ),
         SettingDivider(colors: colors),
-        SettingRow(
+        buildColorRow(
+          icon: Icons.text_fields,
+          title: '字体颜色（$modeLabel）',
+          emptyColor: isLight
+              ? ThemeColors.light.textPrimary
+              : ThemeColors.dark.textPrimary,
+          resetValue: isLight ? '' : defaultThemeFontColor,
+          currentProvider: isLight
+              ? lightThemeFontColorProvider
+              : darkThemeFontColorProvider,
+          customProvider: isLight
+              ? customFontColorsLightProvider
+              : customFontColorsDarkProvider,
+          persistCurrent: (s, hex) => isLight
+              ? s.setThemeFontColorLight(hex)
+              : s.setThemeFontColorDark(hex),
+          persistCustom: (s, list) => isLight
+              ? s.setCustomFontColorsLight(list)
+              : s.setCustomFontColorsDark(list),
+        ),
+        SettingDivider(colors: colors),
+        buildColorRow(
           icon: Icons.text_fields_outlined,
-          title: '第二字体颜色',
-          trailing: Container(
-            width: 24,
-            height: 24,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: secondaryFontColorHex.isEmpty
-                  ? colors.textSecondary
-                  : _parseHexColor(secondaryFontColorHex),
-              border: Border.all(color: colors.divider, width: 1.5),
-            ),
-          ),
-          colors: colors,
-          onTap: () => _showPalettePicker(
-            context,
-            colors,
-            title: '选择第二字体颜色',
-            currentProvider: themeSecondaryFontColorProvider,
-            customProvider: customSecondaryFontColorsProvider,
-            persistCurrent: (s, hex) => s.setThemeSecondaryFontColor(hex),
-            persistCustom: (s, list) => s.setCustomSecondaryFontColors(list),
-            showReset: true,
-            emptyInitialColor: colors.textSecondary,
-          ),
+          title: '第二字体颜色（$modeLabel）',
+          emptyColor: isLight
+              ? ThemeColors.light.textSecondary
+              : ThemeColors.dark.textSecondary,
+          resetValue: '',
+          currentProvider: isLight
+              ? lightThemeSecondaryFontColorProvider
+              : darkThemeSecondaryFontColorProvider,
+          customProvider: isLight
+              ? customSecondaryFontColorsLightProvider
+              : customSecondaryFontColorsDarkProvider,
+          persistCurrent: (s, hex) => isLight
+              ? s.setThemeSecondaryFontColorLight(hex)
+              : s.setThemeSecondaryFontColorDark(hex),
+          persistCustom: (s, list) => isLight
+              ? s.setCustomSecondaryFontColorsLight(list)
+              : s.setCustomSecondaryFontColorsDark(list),
         ),
         SettingDivider(colors: colors),
         SettingRow(
@@ -804,10 +884,10 @@ class _AppearanceContent extends ConsumerWidget {
     );
   }
 
-  /// 主题色 / 字体颜色 / 第二字体颜色的通用选择面板。
+  /// 主题色 / 字体颜色 / 第二字体颜色 / 背景颜色的通用选择面板。
   ///
   /// 内置颜色与用户新增的自定义颜色一起显示；长按自定义颜色可以编辑或删除。
-  /// [showReset] 为 true 时第一个圆圈表示恢复主题默认色（字体颜色用）。
+  /// [showReset] 为 true 时第一个圆圈表示恢复主题默认色（字体颜色 / 背景颜色用）。
   void _showPalettePicker(
     BuildContext context,
     ThemeColors colors, {
@@ -823,6 +903,9 @@ class _AppearanceContent extends ConsumerWidget {
 
     /// 「恢复默认」时写入的值（为空表示恢复主题默认色）。
     String resetValue = '',
+
+    /// 面板里展示的内置颜色，默认是主题色 / 文字颜色用的高饱和色。
+    List<(String, String)> presets = _presetColors,
   }) {
     final container = ProviderScope.containerOf(context);
     showModalBottomSheet<void>(
@@ -837,7 +920,7 @@ class _AppearanceContent extends ConsumerWidget {
           final currentHex = ref.watch(currentProvider);
           final custom = ref.watch(customProvider);
           final customUpper = custom.map((e) => e.toUpperCase()).toSet();
-          final allColors = _mergeColors(_presetColors, custom);
+          final allColors = _mergeColors(presets, custom);
 
           void apply(String hex) {
             ref.read(currentProvider.notifier).state = hex;
@@ -858,6 +941,8 @@ class _AppearanceContent extends ConsumerWidget {
               persistCustom: persistCustom,
               showReset: showReset,
               emptyInitialColor: emptyInitialColor,
+              resetValue: resetValue,
+              presets: presets,
             );
           }
 

@@ -12,27 +12,55 @@ final themeModeProvider = StateProvider<ThemeMode>((ref) => ThemeMode.system);
 
 final themePrimaryColorProvider = StateProvider<String>((ref) => '#1DB954');
 
-/// 「字体颜色」的默认值。
+/// 深色模式「字体颜色」的默认值。
 ///
-/// 为空表示使用主题默认色；这里给了具体色值，所以默认是暖调的米黄色。
+/// 浅色模式默认留空、跟随主题自带的深色文字，避免暖米色在浅色背景上
+/// 看不清。这里给了具体色值，所以深色模式默认是暖调的米黄色。
 const String defaultThemeFontColor = '#D9C8B1';
 
-/// 「字体颜色」：主文字颜色（十六进制），为空表示使用主题默认色。
-final themeFontColorProvider =
+/// 深色模式「字体颜色」：主文字颜色（十六进制），为空表示使用主题默认色。
+final darkThemeFontColorProvider =
     StateProvider<String>((ref) => defaultThemeFontColor);
 
-/// 「第二字体颜色」：次级文字颜色（十六进制），为空表示使用主题默认色。
-final themeSecondaryFontColorProvider = StateProvider<String>((ref) => '');
+/// 浅色模式「字体颜色」：主文字颜色（十六进制），为空表示使用主题默认色。
+final lightThemeFontColorProvider = StateProvider<String>((ref) => '');
+
+/// 深色模式「第二字体颜色」：次级文字颜色（十六进制），为空表示使用主题默认色。
+final darkThemeSecondaryFontColorProvider = StateProvider<String>(
+  (ref) => '',
+);
+
+/// 浅色模式「第二字体颜色」：次级文字颜色（十六进制），为空表示使用主题默认色。
+final lightThemeSecondaryFontColorProvider = StateProvider<String>(
+  (ref) => '',
+);
+
+/// 深色模式「背景颜色」：十六进制，为空表示使用主题默认背景。
+final darkThemeBackgroundColorProvider = StateProvider<String>((ref) => '');
+
+/// 浅色模式「背景颜色」：十六进制，为空表示使用主题默认背景。
+final lightThemeBackgroundColorProvider = StateProvider<String>((ref) => '');
 
 /// 系统当前的亮/暗偏好。
 ///
 /// [ThemeMode.system] 下由它决定实际使用亮色还是暗色主题。初始值取自
-/// [PlatformDispatcher]；运行期间由 App 的 `WidgetsBindingObserver` 在
-/// `didChangePlatformBrightness` 中更新（见 `app.dart`），因此系统切换
-/// 亮/暗时界面会实时跟随，无需重启。
+/// [PlatformDispatcher]；运行期间由 `SystemBrightnessSync` 在
+/// `didChangePlatformBrightness` 中更新（见 `system_brightness_sync.dart`），
+/// 因此系统切换亮/暗时界面会实时跟随，无需重启。
 final platformBrightnessProvider = StateProvider<Brightness>(
   (ref) => PlatformDispatcher.instance.platformBrightness,
 );
+
+/// 当前实际生效的是否为浅色外观（「跟随系统」时按系统亮度展开）。
+///
+/// [themeColorsProvider] 以及外观设置用它决定当前编辑的是浅色还是深色那一套
+/// 字体颜色 / 背景颜色。
+final isLightThemeActiveProvider = Provider<bool>((ref) {
+  return isThemeModeLight(
+    ref.watch(themeModeProvider),
+    ref.watch(platformBrightnessProvider),
+  );
+});
 
 /// 主题模式 -> 持久化值。
 String themeModeToPref(ThemeMode mode) => switch (mode) {
@@ -81,22 +109,33 @@ final _cachedLightColors = <String, ThemeColors>{};
 final _cachedDarkColors = <String, ThemeColors>{};
 
 final themeColorsProvider = Provider<ThemeColors>((ref) {
-  final themeMode = ref.watch(themeModeProvider);
+  final isLight = ref.watch(isLightThemeActiveProvider);
   final primaryHex = ref.watch(themePrimaryColorProvider);
-  final fontHex = ref.watch(themeFontColorProvider);
-  final secondaryHex = ref.watch(themeSecondaryFontColorProvider);
-  final platformBrightness = ref.watch(platformBrightnessProvider);
-  final isLight = isThemeModeLight(themeMode, platformBrightness);
+  final fontHex = ref.watch(
+    isLight ? lightThemeFontColorProvider : darkThemeFontColorProvider,
+  );
+  final secondaryHex = ref.watch(
+    isLight
+        ? lightThemeSecondaryFontColorProvider
+        : darkThemeSecondaryFontColorProvider,
+  );
+  final backgroundHex = ref.watch(
+    isLight
+        ? lightThemeBackgroundColorProvider
+        : darkThemeBackgroundColorProvider,
+  );
   final cache = isLight ? _cachedLightColors : _cachedDarkColors;
-  final key = '$primaryHex|$fontHex|$secondaryHex';
+  final key = '$primaryHex|$fontHex|$secondaryHex|$backgroundHex';
   return cache.putIfAbsent(key, () {
     final primaryColor = _parseThemeColor(primaryHex);
     final base = isLight
         ? ThemeColors.lightWithPrimary(primaryColor)
         : ThemeColors.darkWithPrimary(primaryColor);
-    return base.copyWithTextColors(
-      textPrimary: _parseOptionalColor(fontHex),
-      textSecondary: _parseOptionalColor(secondaryHex),
-    );
+    return base
+        .copyWithTextColors(
+          textPrimary: _parseOptionalColor(fontHex),
+          textSecondary: _parseOptionalColor(secondaryHex),
+        )
+        .copyWithBackground(_parseOptionalColor(backgroundHex));
   });
 });

@@ -19,23 +19,94 @@ class SettingsService {
   Future<void> setThemePrimaryColor(String v) =>
       _prefs.setString('theme_primary_color', v);
 
-  /// 「字体颜色」：为空表示使用主题默认色，默认值是暖调的米黄色。
-  String getThemeFontColor() =>
-      _prefs.getString('theme_font_color') ?? defaultThemeFontColor;
-  Future<void> setThemeFontColor(String v) =>
-      _prefs.setString('theme_font_color', v);
+  // -- theme font colors（浅色 / 深色各一套） --
+  static const _fontColorLightKey = 'theme_font_color_light';
+  static const _fontColorDarkKey = 'theme_font_color_dark';
+  static const _secondaryFontColorLightKey =
+      'theme_secondary_font_color_light';
+  static const _secondaryFontColorDarkKey =
+      'theme_secondary_font_color_dark';
 
-  /// 「第二字体颜色」：为空表示使用主题默认色。
-  String getThemeSecondaryFontColor() =>
-      _prefs.getString('theme_secondary_font_color') ?? '';
-  Future<void> setThemeSecondaryFontColor(String v) =>
-      _prefs.setString('theme_secondary_font_color', v);
+  /// 旧版本深浅色共用的键，只用于迁移读取。
+  static const _legacyFontColorKey = 'theme_font_color';
+  static const _legacySecondaryFontColorKey = 'theme_secondary_font_color';
+
+  /// 浅色模式「字体颜色」。
+  ///
+  /// 未设置过时沿用旧版的值；旧版默认的暖米色是给深色主题用的，浅色模式
+  /// 改用主题自带的深色文字。
+  String getThemeFontColorLight() {
+    final value = _prefs.getString(_fontColorLightKey);
+    if (value != null) return value;
+    final legacy = _prefs.getString(_legacyFontColorKey);
+    if (legacy == null) return '';
+    if (legacy.toUpperCase() == defaultThemeFontColor.toUpperCase()) return '';
+    return legacy;
+  }
+
+  Future<void> setThemeFontColorLight(String v) =>
+      _prefs.setString(_fontColorLightKey, v);
+
+  /// 深色模式「字体颜色」：为空表示使用主题默认色。
+  String getThemeFontColorDark() =>
+      _prefs.getString(_fontColorDarkKey) ??
+      _prefs.getString(_legacyFontColorKey) ??
+      defaultThemeFontColor;
+
+  Future<void> setThemeFontColorDark(String v) =>
+      _prefs.setString(_fontColorDarkKey, v);
+
+  /// 浅色模式「第二字体颜色」：为空表示使用主题默认色。
+  String getThemeSecondaryFontColorLight() =>
+      _prefs.getString(_secondaryFontColorLightKey) ??
+      _prefs.getString(_legacySecondaryFontColorKey) ??
+      '';
+
+  Future<void> setThemeSecondaryFontColorLight(String v) =>
+      _prefs.setString(_secondaryFontColorLightKey, v);
+
+  /// 深色模式「第二字体颜色」：为空表示使用主题默认色。
+  String getThemeSecondaryFontColorDark() =>
+      _prefs.getString(_secondaryFontColorDarkKey) ??
+      _prefs.getString(_legacySecondaryFontColorKey) ??
+      '';
+
+  Future<void> setThemeSecondaryFontColorDark(String v) =>
+      _prefs.setString(_secondaryFontColorDarkKey, v);
+
+  // -- theme background colors（浅色 / 深色各一套） --
+  static const _backgroundColorLightKey = 'theme_background_color_light';
+  static const _backgroundColorDarkKey = 'theme_background_color_dark';
+
+  /// 浅色模式「背景颜色」：为空表示使用主题默认背景。
+  String getThemeBackgroundColorLight() =>
+      _prefs.getString(_backgroundColorLightKey) ?? '';
+
+  Future<void> setThemeBackgroundColorLight(String v) =>
+      _prefs.setString(_backgroundColorLightKey, v);
+
+  /// 深色模式「背景颜色」：为空表示使用主题默认背景。
+  String getThemeBackgroundColorDark() =>
+      _prefs.getString(_backgroundColorDarkKey) ?? '';
+
+  Future<void> setThemeBackgroundColorDark(String v) =>
+      _prefs.setString(_backgroundColorDarkKey, v);
 
   // -- 自定义颜色列表（外观设置里「新增颜色」保存的颜色） --
   static const _themeCustomColorsKey = 'theme_custom_colors';
   static const _fontCustomColorsKey = 'font_custom_colors';
   static const _secondaryFontCustomColorsKey =
       'secondary_font_custom_colors';
+  static const _fontCustomColorsLightKey = 'font_custom_colors_light';
+  static const _fontCustomColorsDarkKey = 'font_custom_colors_dark';
+  static const _secondaryFontCustomColorsLightKey =
+      'secondary_font_custom_colors_light';
+  static const _secondaryFontCustomColorsDarkKey =
+      'secondary_font_custom_colors_dark';
+  static const _backgroundCustomColorsLightKey =
+      'background_custom_colors_light';
+  static const _backgroundCustomColorsDarkKey =
+      'background_custom_colors_dark';
 
   List<String> _getColorList(String key) {
     final list = _prefs.getStringList(key);
@@ -45,21 +116,58 @@ class SettingsService {
         .toList(growable: false);
   }
 
-  /// 主题色的自定义颜色列表。
+  /// 新键不存在时回退到旧版共用的列表，升级后不丢用户已保存的颜色。
+  List<String> _getColorListWithLegacy(String key, String legacyKey) {
+    if (_prefs.containsKey(key)) return _getColorList(key);
+    return _getColorList(legacyKey);
+  }
+
+  /// 主题色的自定义颜色列表（深浅色共用）。
   List<String> getCustomThemeColors() => _getColorList(_themeCustomColorsKey);
   Future<void> setCustomThemeColors(List<String> values) =>
       _prefs.setStringList(_themeCustomColorsKey, values);
 
-  /// 字体颜色的自定义颜色列表。
-  List<String> getCustomFontColors() => _getColorList(_fontCustomColorsKey);
-  Future<void> setCustomFontColors(List<String> values) =>
-      _prefs.setStringList(_fontCustomColorsKey, values);
+  /// 浅色模式「字体颜色」的自定义颜色列表。
+  List<String> getCustomFontColorsLight() =>
+      _getColorListWithLegacy(_fontCustomColorsLightKey, _fontCustomColorsKey);
+  Future<void> setCustomFontColorsLight(List<String> values) =>
+      _prefs.setStringList(_fontCustomColorsLightKey, values);
 
-  /// 第二字体颜色的自定义颜色列表。
-  List<String> getCustomSecondaryFontColors() =>
-      _getColorList(_secondaryFontCustomColorsKey);
-  Future<void> setCustomSecondaryFontColors(List<String> values) =>
-      _prefs.setStringList(_secondaryFontCustomColorsKey, values);
+  /// 深色模式「字体颜色」的自定义颜色列表。
+  List<String> getCustomFontColorsDark() =>
+      _getColorListWithLegacy(_fontCustomColorsDarkKey, _fontCustomColorsKey);
+  Future<void> setCustomFontColorsDark(List<String> values) =>
+      _prefs.setStringList(_fontCustomColorsDarkKey, values);
+
+  /// 浅色模式「第二字体颜色」的自定义颜色列表。
+  List<String> getCustomSecondaryFontColorsLight() =>
+      _getColorListWithLegacy(
+        _secondaryFontCustomColorsLightKey,
+        _secondaryFontCustomColorsKey,
+      );
+  Future<void> setCustomSecondaryFontColorsLight(List<String> values) =>
+      _prefs.setStringList(_secondaryFontCustomColorsLightKey, values);
+
+  /// 深色模式「第二字体颜色」的自定义颜色列表。
+  List<String> getCustomSecondaryFontColorsDark() =>
+      _getColorListWithLegacy(
+        _secondaryFontCustomColorsDarkKey,
+        _secondaryFontCustomColorsKey,
+      );
+  Future<void> setCustomSecondaryFontColorsDark(List<String> values) =>
+      _prefs.setStringList(_secondaryFontCustomColorsDarkKey, values);
+
+  /// 浅色模式「背景颜色」的自定义颜色列表。
+  List<String> getCustomBackgroundColorsLight() =>
+      _getColorList(_backgroundCustomColorsLightKey);
+  Future<void> setCustomBackgroundColorsLight(List<String> values) =>
+      _prefs.setStringList(_backgroundCustomColorsLightKey, values);
+
+  /// 深色模式「背景颜色」的自定义颜色列表。
+  List<String> getCustomBackgroundColorsDark() =>
+      _getColorList(_backgroundCustomColorsDarkKey);
+  Future<void> setCustomBackgroundColorsDark(List<String> values) =>
+      _prefs.setStringList(_backgroundCustomColorsDarkKey, values);
 
   // -- audio quality --
   String getAudioQuality() => _prefs.getString('audio_quality') ?? '128k';

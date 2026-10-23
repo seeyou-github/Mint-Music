@@ -309,12 +309,22 @@ final webDavConfigProvider = StateProvider<WebDavConfig>((ref) {
 final appearanceJumpLyricProvider = StateProvider<bool>((ref) => true);
 final appearanceBgAnimationProvider = StateProvider<bool>((ref) => false);
 
-/// 「主题色 / 字体颜色 / 第二字体颜色」里用户新增的自定义颜色列表。
+/// 「主题色 / 字体颜色 / 第二字体颜色 / 背景颜色」里用户新增的自定义颜色列表。
 ///
 /// 颜色以 `#RRGGBB` 形式保存；选择面板里长按可以编辑或删除。
+/// 主题色深浅色共用，其余颜色各保存一套。
 final customThemeColorsProvider = StateProvider<List<String>>((ref) => const []);
-final customFontColorsProvider = StateProvider<List<String>>((ref) => const []);
-final customSecondaryFontColorsProvider =
+final customFontColorsLightProvider =
+    StateProvider<List<String>>((ref) => const []);
+final customFontColorsDarkProvider =
+    StateProvider<List<String>>((ref) => const []);
+final customSecondaryFontColorsLightProvider =
+    StateProvider<List<String>>((ref) => const []);
+final customSecondaryFontColorsDarkProvider =
+    StateProvider<List<String>>((ref) => const []);
+final customBackgroundColorsLightProvider =
+    StateProvider<List<String>>((ref) => const []);
+final customBackgroundColorsDarkProvider =
     StateProvider<List<String>>((ref) => const []);
 
 /// 桌面歌词(悬浮歌词窗)的完整配置。
@@ -430,15 +440,32 @@ final settingsInitProvider = FutureProvider<void>((ref) async {
   );
   ref.read(themePrimaryColorProvider.notifier).state = svc
       .getThemePrimaryColor();
-  ref.read(themeFontColorProvider.notifier).state = svc.getThemeFontColor();
-  ref.read(themeSecondaryFontColorProvider.notifier).state =
-      svc.getThemeSecondaryFontColor();
+  ref.read(lightThemeFontColorProvider.notifier).state =
+      svc.getThemeFontColorLight();
+  ref.read(darkThemeFontColorProvider.notifier).state =
+      svc.getThemeFontColorDark();
+  ref.read(lightThemeSecondaryFontColorProvider.notifier).state =
+      svc.getThemeSecondaryFontColorLight();
+  ref.read(darkThemeSecondaryFontColorProvider.notifier).state =
+      svc.getThemeSecondaryFontColorDark();
+  ref.read(lightThemeBackgroundColorProvider.notifier).state =
+      svc.getThemeBackgroundColorLight();
+  ref.read(darkThemeBackgroundColorProvider.notifier).state =
+      svc.getThemeBackgroundColorDark();
   ref.read(customThemeColorsProvider.notifier).state =
       svc.getCustomThemeColors();
-  ref.read(customFontColorsProvider.notifier).state =
-      svc.getCustomFontColors();
-  ref.read(customSecondaryFontColorsProvider.notifier).state =
-      svc.getCustomSecondaryFontColors();
+  ref.read(customFontColorsLightProvider.notifier).state =
+      svc.getCustomFontColorsLight();
+  ref.read(customFontColorsDarkProvider.notifier).state =
+      svc.getCustomFontColorsDark();
+  ref.read(customSecondaryFontColorsLightProvider.notifier).state =
+      svc.getCustomSecondaryFontColorsLight();
+  ref.read(customSecondaryFontColorsDarkProvider.notifier).state =
+      svc.getCustomSecondaryFontColorsDark();
+  ref.read(customBackgroundColorsLightProvider.notifier).state =
+      svc.getCustomBackgroundColorsLight();
+  ref.read(customBackgroundColorsDarkProvider.notifier).state =
+      svc.getCustomBackgroundColorsDark();
 
   ref.read(audioQualityProvider.notifier).state = svc.getAudioQuality();
   ref.read(autoQualityDowngradeProvider.notifier).state = svc

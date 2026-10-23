@@ -83,6 +83,34 @@ class ThemeColors {
     );
   }
 
+  /// 复制并覆盖背景颜色（设置里的「背景颜色」）。
+  ThemeColors copyWithBackground(Color? background) {
+    if (background == null) return this;
+    return ThemeColors(
+      primary: primary,
+      primaryLight: primaryLight,
+      primaryDark: primaryDark,
+      accent: accent,
+      accentLight: accentLight,
+      background: background,
+      surface: surface,
+      surfaceVariant: surfaceVariant,
+      textPrimary: textPrimary,
+      textSecondary: textSecondary,
+      textHint: textHint,
+      textOnPrimary: textOnPrimary,
+      error: error,
+      success: success,
+      warning: warning,
+      divider: divider,
+      disabled: disabled,
+      miniPlayerBackground: miniPlayerBackground,
+      miniPlayerProgress: miniPlayerProgress,
+      coverShadow: coverShadow,
+      shadow: shadow,
+    );
+  }
+
   static ThemeColors lightWithPrimary(Color primary) {
     return ThemeColors(
       primary: primary,
