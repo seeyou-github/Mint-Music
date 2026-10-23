@@ -117,7 +117,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   /// 退出搜索页面时清空本次会话的搜索状态，再次进入时回到初始页
   /// （搜索历史 + 热门搜索），搜索栏不再保留上次的关键词。
   ///
-  /// 搜索历史本身由偏好设置持久化，不受影响。
+  /// 搜索历史本身存在临时库的 search_history 表里，不受影响。
   /// 在 dispose 中同步修改 provider 会触发 Riverpod 生命周期报错，因此
   /// 延迟到 microtask 提交。
   void _resetSearchState() {
