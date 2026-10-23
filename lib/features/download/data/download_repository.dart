@@ -6,8 +6,8 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 
+import '../../../core/storage/app_database.dart';
 import '../../../core/storage/app_preferences.dart';
 import '../../../core/platform/download_paths.dart';
 import '../../../core/platform/media_scanner.dart';
@@ -47,12 +47,24 @@ class TagWriteOptions {
 }
 
 class DownloadRepository {
+  DownloadRepository() {
+    AppDatabase.registerWriter(_writer);
+  }
+
+  /// 旧版把下载任务列表存在设置文件里的键（首次启动时迁移）。
+  static const _tasksKey = 'download_tasks';
   static const _maxRetries = 3;
 
-  final Dio _dio = Dio(BaseOptions(
-    connectTimeout: const Duration(seconds: 30),
-    receiveTimeout: const Duration(minutes: 10),
-  ));
+  /// 下载记录存在临时库：丢失只是看不到历史记录，不影响已下载的文件。
+  /// 进度更新频繁，统一走合并延迟写，只在状态变化时立即落盘。
+  late final DeferredWriter _writer = DeferredWriter(() => _persistTasks());
+
+  final Dio _dio = Dio(
+    BaseOptions(
+      connectTimeout: const Duration(seconds: 30),
+      receiveTimeout: const Duration(minutes: 10),
+    ),
+  );
   final List<DownloadTask> _tasks = [];
   final Map<String, CancelToken> _cancelTokens = {};
   final Map<String, DateTime> _lastProgressTime = {};
@@ -84,27 +96,28 @@ class DownloadRepository {
 
   void Function(DownloadTask task, {Color? backgroundColor})? onTaskStarted;
   void Function(DownloadTask task, {Color? backgroundColor})? onTaskCompleted;
-  void Function(DownloadTask task, String error, {Color? backgroundColor})? onTaskError;
+  void Function(DownloadTask task, String error, {Color? backgroundColor})?
+  onTaskError;
 
   Stream<List<DownloadTask>> get taskStream async* {
     yield List.unmodifiable(_tasks);
     yield* _taskController.stream;
   }
+
   int get maxConcurrent => _maxConcurrent;
   List<DownloadTask> get tasks => List.unmodifiable(_tasks);
 
   void setUrlFetcher(UrlFetcher fetcher) => _urlFetcher = fetcher;
-  void setTagWriteOptionsFetcher(TagWriteOptionsFetcher fetcher) => _tagWriteOptionsFetcher = fetcher;
+  void setTagWriteOptionsFetcher(TagWriteOptionsFetcher fetcher) =>
+      _tagWriteOptionsFetcher = fetcher;
   void setLyricFetcher(LyricFetcher fetcher) => _lyricFetcher = fetcher;
-  void setLyricResultFetcher(LyricResultFetcher fetcher) => _lyricResultFetcher = fetcher;
+  void setLyricResultFetcher(LyricResultFetcher fetcher) =>
+      _lyricResultFetcher = fetcher;
   void setCoverFetcher(CoverUrlFetcher fetcher) => _coverFetcher = fetcher;
-  void setQualityValidator(QualityValidator validator) => _qualityValidator = validator;
+  void setQualityValidator(QualityValidator validator) =>
+      _qualityValidator = validator;
 
-  Future<void> init({
-    String? downloadDir,
-    bool? wifiOnly,
-    int? maxConcurrent,
-  }) {
+  Future<void> init({String? downloadDir, bool? wifiOnly, int? maxConcurrent}) {
     // 只初始化一次；并发调用方（provider 的异步初始化与首次下载的
     // _ensureInitialized）共享同一个 Future，避免目录被重复改写。
     return _initFuture ??= _init(
@@ -132,7 +145,8 @@ class DownloadRepository {
     if (wifiOnly != null) _wifiOnly = wifiOnly;
     if (maxConcurrent != null) _maxConcurrent = maxConcurrent;
 
-    // 下载列表只保存在运行内存里：退出应用就清空，不再落库。
+    // 任务列表存在临时库里（丢了可以重新下载，不算重要数据）。
+    await _loadTasksFromDb();
 
     // 修正旧版本写错的路径：先迁移桌面上被写到 Android 默认目录里的
     // 已完成文件，再让所有未完成任务跟随当前下载目录。
@@ -278,7 +292,11 @@ class DownloadRepository {
     return dir.isNotEmpty && file.startsWith('$dir/');
   }
 
-  void updateSettings({String? downloadDir, bool? wifiOnly, int? maxConcurrent}) {
+  void updateSettings({
+    String? downloadDir,
+    bool? wifiOnly,
+    int? maxConcurrent,
+  }) {
     if (downloadDir != null &&
         downloadDir.isNotEmpty &&
         downloadDir != _downloadDir) {
@@ -332,7 +350,8 @@ class DownloadRepository {
 
     // 验证音质是否受当前音源支持
     final sourceId = song.source ?? 'wy';
-    final supportedQualities = _qualityValidator?.call(sourceId) ??
+    final supportedQualities =
+        _qualityValidator?.call(sourceId) ??
         (sourceId == 'local' ? <String>[] : ['128k', '320k', 'flac']);
     if (sourceId != 'local' && !supportedQualities.contains(quality)) {
       throw Exception('UNSUPPORTED_QUALITY:$quality');
@@ -466,11 +485,9 @@ class DownloadRepository {
     _initializingTasks.remove(taskId);
     _fileLocks.remove(task.filePath);
 
-    _tasks[index] = _retargeted(task).copyWith(
-      status: DownloadStatus.queued,
-      retries: 0,
-      error: null,
-    );
+    _tasks[index] = _retargeted(
+      task,
+    ).copyWith(status: DownloadStatus.queued, retries: 0, error: null);
     await _flushTasks();
     _emitUpdate();
     _processQueue();
@@ -588,10 +605,9 @@ class DownloadRepository {
 
   /// 恢复所有暂停的任务
   Future<void> resumeAllTasks() async {
-    final pausedTasks = _tasks
-        .where((t) => t.status == DownloadStatus.paused)
-        .toList()
-      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    final pausedTasks =
+        _tasks.where((t) => t.status == DownloadStatus.paused).toList()
+          ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
     for (final task in pausedTasks) {
       await resumeTask(task.id);
     }
@@ -686,7 +702,9 @@ class DownloadRepository {
         if (resolvedSource != null &&
             resolvedSource.isNotEmpty &&
             resolvedSource != task.song.source) {
-          task = task.copyWith(song: task.song.copyWith(source: resolvedSource));
+          task = task.copyWith(
+            song: task.song.copyWith(source: resolvedSource),
+          );
         }
         _tasks[index] = task;
       }
@@ -750,9 +768,7 @@ class DownloadRepository {
       int startByte = 0;
       if (await tempFile.exists()) {
         startByte = await tempFile.length();
-        _tasks[index] = _tasks[index].copyWith(
-          downloadedSize: startByte,
-        );
+        _tasks[index] = _tasks[index].copyWith(downloadedSize: startByte);
         _emitUpdate();
       }
 
@@ -826,7 +842,8 @@ class DownloadRepository {
             final baseNoExt = filePath.substring(0, filePath.lastIndexOf('.'));
             var proposed = '$baseNoExt$shouldExt';
             if (await File(proposed).exists()) {
-              proposed = '$baseNoExt.${DateTime.now().millisecondsSinceEpoch}$shouldExt';
+              proposed =
+                  '$baseNoExt.${DateTime.now().millisecondsSinceEpoch}$shouldExt';
             }
             await File(filePath).rename(proposed);
             finalPath = proposed;
@@ -836,18 +853,28 @@ class DownloadRepository {
         // 写入标签（对齐 CeruMusic processSongFiles 逻辑）
         var coverOk = true;
         try {
-          final tagOpts = _tagWriteOptionsFetcher?.call() ?? const TagWriteOptions();
+          final tagOpts =
+              _tagWriteOptionsFetcher?.call() ?? const TagWriteOptions();
           Song songForTag = task.song;
-          debugPrint('[DownloadRepository] 标签写入选项: basicInfo=${tagOpts.basicInfo}, cover=${tagOpts.cover}, lyrics=${tagOpts.lyrics}, downloadLyrics=${tagOpts.downloadLyrics}, lyricFormat=${tagOpts.lyricFormat}');
-          debugPrint('[DownloadRepository] 歌词获取器: ${_lyricFetcher != null}, song.lrc: ${songForTag.lrc != null ? "has ${songForTag.lrc!.length} chars" : "null"}');
-          if ((tagOpts.lyrics || tagOpts.downloadLyrics) && _lyricResultFetcher != null) {
+          debugPrint(
+            '[DownloadRepository] 标签写入选项: basicInfo=${tagOpts.basicInfo}, cover=${tagOpts.cover}, lyrics=${tagOpts.lyrics}, downloadLyrics=${tagOpts.downloadLyrics}, lyricFormat=${tagOpts.lyricFormat}',
+          );
+          debugPrint(
+            '[DownloadRepository] 歌词获取器: ${_lyricFetcher != null}, song.lrc: ${songForTag.lrc != null ? "has ${songForTag.lrc!.length} chars" : "null"}',
+          );
+          if ((tagOpts.lyrics || tagOpts.downloadLyrics) &&
+              _lyricResultFetcher != null) {
             try {
               final lyricResult = await _lyricResultFetcher!(songForTag);
-              debugPrint('[DownloadRepository] 歌词获取结果: lrc=${lyricResult?.lrc != null ? "has ${lyricResult!.lrc!.length} chars" : "null"}, crlyric=${lyricResult?.crlyric != null ? "has ${lyricResult!.crlyric!.length} chars" : "null"}');
+              debugPrint(
+                '[DownloadRepository] 歌词获取结果: lrc=${lyricResult?.lrc != null ? "has ${lyricResult!.lrc!.length} chars" : "null"}, crlyric=${lyricResult?.crlyric != null ? "has ${lyricResult!.crlyric!.length} chars" : "null"}',
+              );
               if (lyricResult != null) {
                 // 优先使用逐字歌词（crlyric），否则使用标准歌词（lrc）
                 final preferredLyric = tagOpts.lyricFormat == 'word-by-word'
-                    ? (lyricResult.crlyric?.isNotEmpty == true ? lyricResult.crlyric : lyricResult.lrc)
+                    ? (lyricResult.crlyric?.isNotEmpty == true
+                          ? lyricResult.crlyric
+                          : lyricResult.lrc)
                     : lyricResult.lrc;
                 if (preferredLyric != null && preferredLyric.isNotEmpty) {
                   songForTag = songForTag.copyWith(lrc: preferredLyric);
@@ -856,10 +883,13 @@ class DownloadRepository {
             } catch (e) {
               debugPrint('[DownloadRepository] 获取歌词失败: $e');
             }
-          } else if ((tagOpts.lyrics || tagOpts.downloadLyrics) && _lyricFetcher != null) {
+          } else if ((tagOpts.lyrics || tagOpts.downloadLyrics) &&
+              _lyricFetcher != null) {
             try {
               final lrc = await _lyricFetcher!(songForTag);
-              debugPrint('[DownloadRepository] 歌词获取结果: ${lrc != null ? "has ${lrc.length} chars" : "null"}');
+              debugPrint(
+                '[DownloadRepository] 歌词获取结果: ${lrc != null ? "has ${lrc.length} chars" : "null"}',
+              );
               if (lrc != null && lrc.isNotEmpty) {
                 songForTag = songForTag.copyWith(lrc: lrc);
               }
@@ -881,15 +911,17 @@ class DownloadRepository {
           var cachedCover = tagOpts.cover
               ? await CoverFetcher.fetchCached(songForTag.coverUrl)
               : null;
-          debugPrint('[DownloadRepository] 本地缓存封面: '
-              '${cachedCover != null ? "${cachedCover.length} bytes" : "未命中"}');
+          debugPrint(
+            '[DownloadRepository] 本地缓存封面: '
+            '${cachedCover != null ? "${cachedCover.length} bytes" : "未命中"}',
+          );
 
-          if (tagOpts.cover &&
-              cachedCover == null &&
-              _coverFetcher != null) {
+          if (tagOpts.cover && cachedCover == null && _coverFetcher != null) {
             try {
               final highResCover = await _coverFetcher!(songForTag);
-              debugPrint('[DownloadRepository] 高清封面获取结果: ${highResCover != null ? highResCover.substring(0, highResCover.length.clamp(0, 80)) : "null"}');
+              debugPrint(
+                '[DownloadRepository] 高清封面获取结果: ${highResCover != null ? highResCover.substring(0, highResCover.length.clamp(0, 80)) : "null"}',
+              );
               if (highResCover != null && highResCover.isNotEmpty) {
                 songForTag = songForTag.copyWith(coverUrl: highResCover);
                 addCover(highResCover);
@@ -940,7 +972,11 @@ class DownloadRepository {
         if (await tempFile.exists()) {
           await tempFile.delete();
         }
-        _handleError(taskId, '下载失败: HTTP ${response.statusCode}', tempFilePath: filePath);
+        _handleError(
+          taskId,
+          '下载失败: HTTP ${response.statusCode}',
+          tempFilePath: filePath,
+        );
       }
     } on DioException catch (e) {
       if (e.type == DioExceptionType.cancel) return;
@@ -1027,15 +1063,16 @@ class DownloadRepository {
   }
 
   bool isSongDownloaded(String songId) {
-    return _tasks.any((t) =>
-        t.song.id == songId && t.status == DownloadStatus.completed);
+    return _tasks.any(
+      (t) => t.song.id == songId && t.status == DownloadStatus.completed,
+    );
   }
 
   String? getDownloadedPath(String songId) {
     final task = _tasks.cast<DownloadTask?>().firstWhere(
-          (t) => t!.song.id == songId && t.status == DownloadStatus.completed,
-          orElse: () => null,
-        );
+      (t) => t!.song.id == songId && t.status == DownloadStatus.completed,
+      orElse: () => null,
+    );
     if (task != null) {
       final file = File(task.filePath);
       if (file.existsSync()) return task.filePath;
@@ -1045,16 +1082,113 @@ class DownloadRepository {
 
   // ==================== 持久化 ====================
 
-  /// 标记任务列表有变化。
+  /// 标记任务列表有变化（延迟落盘）。
   ///
-  /// 下载列表只保存在运行内存里（退出应用即清空），这里不需要落库。
-  Future<void> _saveTasks() async {}
+  /// 下载过程中的进度更新只改内存，不会每次都写数据库。
+  Future<void> _saveTasks() async {
+    _writer.schedule();
+  }
 
-  /// 下载列表不落库（只保留在内存里），这里保留调用点是为了少改代码。
-  Future<void> _flushTasks() async {}
+  /// 立刻把任务列表写入数据库。
+  ///
+  /// 在下载完成（封面 / 歌词写入之后）、失败、暂停、删除等时机调用，
+  /// 保证任务状态不会因为进程被杀而丢失。
+  Future<void> _flushTasks() async {
+    await _writer.writeNow();
+  }
 
-  /// 下载列表不落库：这里保留一个空实现，方便以后要恢复持久化时再接回来。
-  Future<void> _persistTasks() async {}
+  Future<void> _persistTasks() async {
+    try {
+      final db = await AppDatabase.cacheDatabase();
+      final now = DateTime.now().millisecondsSinceEpoch;
+      await db.transaction((txn) async {
+        await txn.delete('download_tasks');
+        final batch = txn.batch();
+        for (final task in _tasks) {
+          batch.insert('download_tasks', {
+            'id': task.id,
+            'status': task.status.name,
+            'file_path': task.filePath,
+            'created_at': task.createdAt,
+            'updated_at': now,
+            'data': jsonEncode(task.toJson()),
+          });
+        }
+        await batch.commit(noResult: true);
+      });
+    } catch (e) {
+      debugPrint('[DownloadRepository] 保存任务失败: $e');
+    }
+  }
+
+  /// 从临时库读取任务列表。
+  Future<void> _loadTasksFromDb() async {
+    try {
+      final db = await AppDatabase.cacheDatabase();
+      final rows = await db.query(
+        'download_tasks',
+        orderBy: 'created_at ASC, rowid ASC',
+      );
+      for (final row in rows) {
+        final data = AppDatabase.decodeMap(row['data']);
+        if (data.isEmpty) continue;
+        try {
+          _tasks.add(_restoredTask(DownloadTask.fromJson(data)));
+        } catch (_) {
+          // 单条数据损坏就跳过
+        }
+      }
+    } catch (e) {
+      debugPrint('[DownloadRepository] 加载任务失败: $e');
+    }
+
+    if (!await AppDatabase.isMigrated('download_tasks')) {
+      if (_tasks.isEmpty) {
+        await _importLegacyTasks();
+      } else {
+        // 数据库里已经有记录，旧设置里的那份可以丢掉了。
+        await AppDatabase.removeLegacyKey(_tasksKey);
+      }
+      if (AppDatabase.isPersistent) {
+        await AppDatabase.markMigrated('download_tasks');
+      }
+    }
+  }
+
+  /// 修正从数据库恢复出来的任务状态。
+  DownloadTask _restoredTask(DownloadTask task) {
+    var restored = task;
+    // 上次退出时还在下载的任务不会自己继续：标成暂停，等用户点「继续」。
+    if (restored.status == DownloadStatus.downloading) {
+      restored = restored.copyWith(status: DownloadStatus.paused, speed: 0);
+    }
+    // 在线地址会过期，未完成的任务恢复时清空，继续 / 重试时重新解析。
+    if (restored.status != DownloadStatus.completed &&
+        restored.url.isNotEmpty) {
+      restored = restored.copyWith(url: '');
+    }
+    return restored;
+  }
+
+  /// 首次启动：把旧设置文件里的下载任务导入数据库。
+  Future<void> _importLegacyTasks() async {
+    try {
+      final prefs = await AppPreferences.getInstance();
+      final raw = prefs.getString(_tasksKey);
+      if (raw == null || raw.isEmpty) return;
+      final list = jsonDecode(raw) as List;
+      for (final item in list) {
+        _tasks.add(_restoredTask(DownloadTask.fromJson(item)));
+      }
+      if (_tasks.isNotEmpty) {
+        await _persistTasks();
+        await AppDatabase.removeLegacyKey(_tasksKey);
+        debugPrint('[DownloadRepository] 已从旧设置迁移 ${_tasks.length} 个下载任务');
+      }
+    } catch (e) {
+      debugPrint('[DownloadRepository] 迁移旧任务失败: $e');
+    }
+  }
 
   void _emitUpdate() {
     if (!_taskController.isClosed) {
@@ -1082,10 +1216,26 @@ class DownloadRepository {
 
       if (s3 == 'ID3') return 'mp3';
       if (s4 == 'fLaC') return 'flac';
-      if (header[0] == 0x4f && header[1] == 0x67 && header[2] == 0x67 && header[3] == 0x53) return 'ogg';
-      if (header[0] == 0x30 && header[1] == 0x26 && header[2] == 0xb2 && header[3] == 0x75) return 'wma';
-      if (header[0] == 0x52 && header[1] == 0x49 && header[2] == 0x46 && header[3] == 0x46 &&
-          header[8] == 0x57 && header[9] == 0x41 && header[10] == 0x56 && header[11] == 0x45) {
+      if (header[0] == 0x4f &&
+          header[1] == 0x67 &&
+          header[2] == 0x67 &&
+          header[3] == 0x53) {
+        return 'ogg';
+      }
+      if (header[0] == 0x30 &&
+          header[1] == 0x26 &&
+          header[2] == 0xb2 &&
+          header[3] == 0x75) {
+        return 'wma';
+      }
+      if (header[0] == 0x52 &&
+          header[1] == 0x49 &&
+          header[2] == 0x46 &&
+          header[3] == 0x46 &&
+          header[8] == 0x57 &&
+          header[9] == 0x41 &&
+          header[10] == 0x56 &&
+          header[11] == 0x45) {
         return 'wav';
       }
       if (sFtyp == 'ftyp') return 'm4a';
@@ -1099,13 +1249,20 @@ class DownloadRepository {
 
   String _extForFormat(String format) {
     switch (format) {
-      case 'mp3': return '.mp3';
-      case 'flac': return '.flac';
-      case 'm4a': return '.m4a';
-      case 'wav': return '.wav';
-      case 'ogg': return '.ogg';
-      case 'wma': return '.wma';
-      default: return '';
+      case 'mp3':
+        return '.mp3';
+      case 'flac':
+        return '.flac';
+      case 'm4a':
+        return '.m4a';
+      case 'wav':
+        return '.wav';
+      case 'ogg':
+        return '.ogg';
+      case 'wma':
+        return '.wma';
+      default:
+        return '';
     }
   }
 

@@ -35,7 +35,12 @@ class DownloadPage extends ConsumerWidget {
         bottom: false,
         child: Column(
           children: [
-            _buildHeader(context, ref, colors, tasksAsync.valueOrNull ?? const []),
+            _buildHeader(
+              context,
+              ref,
+              colors,
+              tasksAsync.valueOrNull ?? const [],
+            ),
             Expanded(
               child: tasksAsync.when(
                 data: (tasks) {
@@ -55,10 +60,8 @@ class DownloadPage extends ConsumerWidget {
                     itemCount: sorted.length,
                     addAutomaticKeepAlives: false,
                     addRepaintBoundaries: true,
-                    itemBuilder: (context, index) => _DownloadTaskItem(
-                      task: sorted[index],
-                      index: index,
-                    ),
+                    itemBuilder: (context, index) =>
+                        _DownloadTaskItem(task: sorted[index], index: index),
                   );
                 },
                 loading: () => const Center(child: CircularProgressIndicator()),
@@ -233,7 +236,11 @@ class DownloadPage extends ConsumerWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.delete_sweep_outlined, size: 16, color: colors.textSecondary),
+              Icon(
+                Icons.delete_sweep_outlined,
+                size: 16,
+                color: colors.textSecondary,
+              ),
               const SizedBox(width: 4),
               Text(
                 context.tr('清除'),
@@ -308,6 +315,7 @@ class DownloadPage extends ConsumerWidget {
 /// 布局与「发现页 → 歌单详情」的歌曲列表一致：序号 + 封面 + 曲名 / 来源 / 歌手，
 /// 右侧固定「删除」按钮。四种状态：
 /// * 下载中：行下方显示进度条与下载信息（不再显示「下载中」徽标）；
+/// * 已暂停（上次退出时还没下完）：右侧显示「继续」按钮；
 /// * 失败 / 文件不存在：右侧显示「重试」按钮，其下方显示文字提示；
 /// * 成功：右侧只显示文件大小（不再显示进度条与下载信息）。
 class _DownloadTaskItem extends ConsumerStatefulWidget {
@@ -374,6 +382,9 @@ class _DownloadTaskItemState extends ConsumerState<_DownloadTaskItem> {
       task.status == DownloadStatus.error ||
       task.status == DownloadStatus.cancelled;
 
+  /// 上次退出时未下载完的任务：恢复后显示「继续」按钮。
+  bool get _isPaused => task.status == DownloadStatus.paused;
+
   @override
   Widget build(BuildContext context) {
     final colors = ref.watch(themeColorsProvider);
@@ -402,8 +413,11 @@ class _DownloadTaskItemState extends ConsumerState<_DownloadTaskItem> {
       return Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.insert_drive_file_outlined,
-              size: 13, color: colors.textHint),
+          Icon(
+            Icons.insert_drive_file_outlined,
+            size: 13,
+            color: colors.textHint,
+          ),
           const SizedBox(width: 4),
           Text(
             _formatSize(
@@ -418,8 +432,11 @@ class _DownloadTaskItemState extends ConsumerState<_DownloadTaskItem> {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.image_not_supported_outlined,
-                      size: 13, color: colors.warning),
+                  Icon(
+                    Icons.image_not_supported_outlined,
+                    size: 13,
+                    color: colors.warning,
+                  ),
                   const SizedBox(width: 2),
                   Text(
                     context.tr('无封面'),
@@ -435,8 +452,9 @@ class _DownloadTaskItemState extends ConsumerState<_DownloadTaskItem> {
       );
     }
 
-    if (_isFailed || _isMissing) {
-      // 失败 / 文件不存在：显示「重试」+「删除」，文字提示在按钮下方。
+    if (_isFailed || _isMissing || _isPaused) {
+      // 失败 / 文件不存在 / 上次未下完：显示「继续（重试）」+「删除」，
+      // 文字提示在按钮下方。
       return Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.end,
@@ -444,7 +462,17 @@ class _DownloadTaskItemState extends ConsumerState<_DownloadTaskItem> {
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _buildRetryButton(context, colors, repo),
+              _buildRetryButton(
+                context,
+                colors,
+                label: _isPaused ? context.tr('继续') : context.tr('重试'),
+                icon: _isPaused
+                    ? Icons.play_arrow_rounded
+                    : Icons.refresh_rounded,
+                onPressed: _isPaused
+                    ? () => repo.resumeTask(task.id)
+                    : () => repo.retryTask(task.id),
+              ),
               _buildDeleteButton(context, colors, repo),
             ],
           ),
@@ -452,10 +480,15 @@ class _DownloadTaskItemState extends ConsumerState<_DownloadTaskItem> {
           Text(
             _isMissing
                 ? context.tr('文件已删除')
+                : _isPaused
+                ? context.tr('已暂停')
                 : (task.status == DownloadStatus.cancelled
-                    ? context.tr('已取消')
-                    : context.tr('失败')),
-            style: TextStyle(fontSize: 11, color: colors.error),
+                      ? context.tr('已取消')
+                      : context.tr('失败')),
+            style: TextStyle(
+              fontSize: 11,
+              color: _isPaused ? colors.textSecondary : colors.error,
+            ),
           ),
         ],
       );
@@ -481,14 +514,16 @@ class _DownloadTaskItemState extends ConsumerState<_DownloadTaskItem> {
     );
   }
 
-  /// 重试按钮。
+  /// 继续 / 重试按钮。
   Widget _buildRetryButton(
     BuildContext context,
-    ThemeColors colors,
-    DownloadRepository repo,
-  ) {
+    ThemeColors colors, {
+    required String label,
+    required IconData icon,
+    required VoidCallback onPressed,
+  }) {
     return GestureDetector(
-      onTap: () => repo.retryTask(task.id),
+      onTap: onPressed,
       child: Container(
         margin: const EdgeInsets.only(right: 4),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
@@ -500,12 +535,9 @@ class _DownloadTaskItemState extends ConsumerState<_DownloadTaskItem> {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.refresh_rounded, size: 13, color: colors.primary),
+            Icon(icon, size: 13, color: colors.primary),
             const SizedBox(width: 3),
-            Text(
-              context.tr('重试'),
-              style: TextStyle(fontSize: 12, color: colors.primary),
-            ),
+            Text(label, style: TextStyle(fontSize: 12, color: colors.primary)),
           ],
         ),
       ),
@@ -570,9 +602,9 @@ class _DownloadTaskItemState extends ConsumerState<_DownloadTaskItem> {
       filePath: task.filePath,
       clearSourceHeaders: true,
     );
-    await ref
-        .read(playbackControllerProvider.notifier)
-        .setQueue([song], startIndex: 0);
+    await ref.read(playbackControllerProvider.notifier).setQueue([
+      song,
+    ], startIndex: 0);
   }
 
   /// 删除确认：同时删除歌曲文件与该条下载记录。
