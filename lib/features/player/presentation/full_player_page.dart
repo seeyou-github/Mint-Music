@@ -343,8 +343,8 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
 
   /// Split mode: cover on left (upper), controls at bottom, lyrics on right.
   ///
-  /// 左栏自上而下：封面（比之前小一点、往上靠）→ 歌名/歌手（封面左下方，
-  /// 宽度与封面一致，超出省略）→ 操作按钮 → 进度条 → 播放控制。
+  /// 左栏自上而下：封面 → 歌名/歌手（紧贴封面，宽度与封面一致）→ 弹性留白
+  /// → 操作按钮（进度条上方均匀铺开）→ 进度条 → 播放控制。
   Widget _buildTabletSplitMode({required bool isPlaying}) {
     return Row(
       children: [
@@ -370,12 +370,21 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
                     onTapCover: null,
                   ),
                   const SizedBox(height: 10),
-                  // 歌名 / 歌手 + 操作按钮：宽度与封面一致，左对齐。
+                  // 歌名 / 歌手：宽度与封面一致，始终紧贴封面下方。
                   SizedBox(
                     width: coverSize,
-                    child: const _PlayerSongInfo(padded: false),
+                    child: const _PlayerSongInfo(
+                      padded: false,
+                      showActions: false,
+                    ),
                   ),
                   const Spacer(),
+                  // 操作按钮靠近播放条，在进度条上方均匀分布。
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 32),
+                    child: _PlayerActions(),
+                  ),
+                  const SizedBox(height: 4),
                   _PlayerProgressBar(),
                   const SizedBox(height: 8),
                   _PlayerControls(onQueue: _openPlayQueue),
@@ -395,8 +404,9 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
   /// (equal halves, split line aligned with the centered play-mode label in the
   /// header), with compact controls.
   ///
-  /// Left column: cover on the left, song title/artist + favorite/menu buttons
-  /// stacked in a column on its right, then progress bar and controls below.
+  /// Left column: cover with song title/artist directly underneath, then the
+  /// action buttons evenly spread above the progress bar, controls at the
+  /// bottom.
   Widget _buildPhoneSplitMode({required bool isPlaying}) {
     return Row(
       children: [
@@ -404,48 +414,53 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
           flex: 4,
           child: LayoutBuilder(
             builder: (context, constraints) {
-              // 上半区（封面 + 信息列）吃掉底部控件之外的全部高度。
+              // 上半区（封面 + 歌名）吃掉底部控件之外的全部高度。
               final topArea = math.max(
-                72.0,
+                96.0,
                 constraints.maxHeight - _phoneLandscapeReservedHeight,
               );
-              // 封面：不超过上半区高度，也不超过左栏宽度的 46%。
-              final coverSize = math.min(
-                topArea - 8,
-                math.max(64.0, constraints.maxWidth * 0.46),
+              // 封面：给下方歌名/歌手留出空间，且不超过左栏宽度的 62%。
+              final coverSize = math.max(
+                56.0,
+                math.min(constraints.maxWidth * 0.62, topArea - 54),
               );
               return Column(
                 children: [
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    child: SizedBox(
-                      height: topArea,
-                      child: Row(
-                        children: [
-                          // scaleDown 兜底：极小屏（如分屏）时自动缩小封面而不是溢出。
-                          FittedBox(
-                            fit: BoxFit.scaleDown,
-                            child: _PlayerCoverPage(
+                  Expanded(
+                    child: Center(
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _PlayerCoverPage(
                               isPlaying: isPlaying,
                               coverSize: coverSize,
                               onTapCover: null,
                             ),
-                          ),
-                          const SizedBox(width: 12),
-                          // 歌名/歌手 + 收藏/功能菜单：右端与进度条右端齐平。
-                          const Expanded(
-                            child: _PlayerSongInfo(
-                              compact: true,
-                              padded: false,
+                            const SizedBox(height: 8),
+                            // 歌名 / 歌手紧贴封面下方，宽度与封面一致。
+                            SizedBox(
+                              width: coverSize,
+                              child: const _PlayerSongInfo(
+                                compact: true,
+                                padded: false,
+                                showActions: false,
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
                   ),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    child: const _PlayerProgressBar(compact: true),
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 16),
+                    child: _PlayerActions(compact: true),
+                  ),
+                  const SizedBox(height: 2),
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 8),
+                    child: _PlayerProgressBar(compact: true),
                   ),
                   const SizedBox(height: 10),
                   _PlayerControls(compact: true, onQueue: _openPlayQueue),
@@ -498,10 +513,10 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
     );
   }
 
-  /// 手机横屏左栏底部固定区（进度条 + 播放控制 + 内边距）的高度。
-  /// 封面 + 信息列的上半区高度 = 左栏可用高度 - 该值；封面再由
-  /// [FittedBox] 兜底缩放，因此任何机型都不会溢出。
-  static const double _phoneLandscapeReservedHeight = 104;
+  /// 手机横屏左栏底部固定区（操作按钮 + 进度条 + 播放控制 + 间距）的高度。
+  /// 上半区高度 = 左栏可用高度 - 该值；封面再由 [FittedBox] 兜底缩放，
+  /// 因此任何机型都不会溢出。
+  static const double _phoneLandscapeReservedHeight = 116;
 }
 
 class _PlayerHeader extends ConsumerWidget {
@@ -1073,11 +1088,80 @@ class _PlayerSongInfo extends ConsumerWidget {
   /// 是否在歌手名下方显示当前歌词行（Android 手机）。
   final bool showInlineLyric;
 
+  /// 是否在歌名下方显示操作按钮。
+  /// 横屏把按钮单独放在进度条上方，这里只保留歌名 / 歌手紧贴封面。
+  final bool showActions;
+
   const _PlayerSongInfo({
     this.compact = false,
     this.padded = true,
     this.showInlineLyric = false,
+    this.showActions = true,
   });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    ref.watch(currentSongIdentityProvider);
+    final song = ref.read(playbackControllerProvider).currentSong;
+
+    final title = Text(
+      song?.title ?? context.tr('未知歌曲'),
+      style: TextStyle(
+        fontSize: compact ? 18 : 20,
+        fontWeight: FontWeight.w600,
+        color: Colors.white,
+      ),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+    );
+    final artist = Text(
+      song?.artist ?? context.tr('未知歌手'),
+      style: TextStyle(
+        fontSize: compact ? 13 : 14,
+        color: Colors.white.withValues(alpha: 0.6),
+      ),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+    );
+
+    final content = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        title,
+        SizedBox(height: compact ? 1 : 4),
+        artist,
+        if (showInlineLyric) ...[
+          const SizedBox(height: 6),
+          _InlineLyricLine(fontSize: compact ? 12 : 14),
+        ],
+        if (showActions) ...[
+          SizedBox(height: compact ? 6 : 10),
+          _PlayerActions(compact: compact),
+        ],
+      ],
+    );
+
+    if (!padded) return content;
+    return Padding(
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 12 : 32,
+        vertical: compact ? 2 : 8,
+      ),
+      child: content,
+    );
+  }
+}
+
+/// 收藏 / 下载 / 定时 / 桌面歌词 / 更多。
+///
+/// 竖屏放在歌名下方；横屏放在进度条上方，由 [MainAxisAlignment.spaceBetween]
+/// 在整栏宽度内均匀铺开。
+class _PlayerActions extends ConsumerWidget {
+  /// 紧凑模式：手机横屏等高度受限的场景。
+  final bool compact;
+
+  const _PlayerActions({this.compact = false});
 
   void _toggleFavorite(WidgetRef ref, Song? song) {
     if (song == null) return;
@@ -1117,10 +1201,10 @@ class _PlayerSongInfo extends ConsumerWidget {
     final themeColors = ref.watch(themeColorsProvider);
     final isAndroid = Platform.isAndroid;
 
-    // 图标尺寸：收藏 / 下载 / 定时 / 更多 与「词」文字图标保持一致。
-    // Material 图标自带留白，图标 22 与 20 号的汉字视觉高度接近。
-    final iconSize = compact ? 18.0 : 22.0;
-    final wordFontSize = compact ? 16.0 : 20.0;
+    // Material 图标自带留白，24/20 号图标与 18/16 号汉字视觉高度接近，
+    // 「词」不再比收藏等图标显眼。
+    final iconSize = compact ? 20.0 : 24.0;
+    final wordFontSize = compact ? 16.0 : 18.0;
     final buttonConstraints = BoxConstraints.tightFor(
       width: compact ? 30 : 40,
       height: compact ? 30 : 40,
@@ -1207,28 +1291,8 @@ class _PlayerSongInfo extends ConsumerWidget {
       tooltip: context.tr('更多'),
     );
 
-    final title = Text(
-      song?.title ?? context.tr('未知歌曲'),
-      style: TextStyle(
-        fontSize: compact ? 18 : 20,
-        fontWeight: FontWeight.w600,
-        color: Colors.white,
-      ),
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-    );
-    final artist = Text(
-      song?.artist ?? context.tr('未知歌手'),
-      style: TextStyle(
-        fontSize: compact ? 13 : 14,
-        color: Colors.white.withValues(alpha: 0.6),
-      ),
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-    );
-
     // 顺序固定为：收藏、下载、定时、桌面歌词（Android 为倍速）、更多。
-    final actions = Row(
+    return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         favoriteButton,
@@ -1237,31 +1301,6 @@ class _PlayerSongInfo extends ConsumerWidget {
         if (isAndroid) speedButton else desktopLyricButton,
         moreButton,
       ],
-    );
-
-    final content = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        title,
-        SizedBox(height: compact ? 1 : 4),
-        artist,
-        if (showInlineLyric) ...[
-          const SizedBox(height: 6),
-          _InlineLyricLine(fontSize: compact ? 12 : 14),
-        ],
-        SizedBox(height: compact ? 6 : 10),
-        actions,
-      ],
-    );
-
-    if (!padded) return content;
-    return Padding(
-      padding: EdgeInsets.symmetric(
-        horizontal: compact ? 12 : 32,
-        vertical: compact ? 2 : 8,
-      ),
-      child: content,
     );
   }
 }
