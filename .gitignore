@@ -51,3 +51,5 @@ node_modules/
 tools/
 fix_encoding.js
 tx_qrc_hex*.txt
+.workbuddy
+.workbuddy-ai

@@ -740,6 +740,7 @@ class _LyricLineWidget extends StatelessWidget {
             child: Text(
               line.romanLyric!,
               textAlign: centerAlign ? TextAlign.center : TextAlign.start,
+              textScaler: TextScaler.noScaling,
               style: TextStyle(
                 fontFamily: resolvedFontFamily,
                 fontSize: romanFontSize,
@@ -790,6 +791,7 @@ class _LyricLineWidget extends StatelessWidget {
             Text(
               line.translatedLyric!,
               textAlign: centerAlign ? TextAlign.center : TextAlign.start,
+              textScaler: TextScaler.noScaling,
               style: TextStyle(
                 fontFamily: resolvedFontFamily,
                 fontSize: transFontSize,
@@ -803,6 +805,7 @@ class _LyricLineWidget extends StatelessWidget {
               child: Text(
                 line.adLibText!,
                 textAlign: centerAlign ? TextAlign.center : TextAlign.start,
+                textScaler: TextScaler.noScaling,
                 style: TextStyle(
                   fontFamily: resolvedFontFamily,
                   fontSize: transFontSize * 0.85,
@@ -821,6 +824,7 @@ class _LyricLineWidget extends StatelessWidget {
         child: Text(
           line.translatedLyric!,
           textAlign: centerAlign ? TextAlign.center : TextAlign.start,
+          textScaler: TextScaler.noScaling,
           style: TextStyle(
             fontFamily: resolvedFontFamily,
             fontSize: transFontSize,
@@ -836,6 +840,7 @@ class _LyricLineWidget extends StatelessWidget {
         child: Text(
           line.adLibText!,
           textAlign: centerAlign ? TextAlign.center : TextAlign.start,
+          textScaler: TextScaler.noScaling,
           style: TextStyle(
             fontFamily: resolvedFontFamily,
             fontSize: transFontSize * 0.85,
@@ -972,7 +977,6 @@ class _PaintedPlainLine extends StatelessWidget {
           inactiveColor: inactiveColor,
           fontFamily: fontFamily,
           fontWeight: fontWeight,
-          textScaler: MediaQuery.textScalerOf(context),
           locale: Localizations.maybeLocaleOf(context),
         );
         // 始终占满可用宽度，由画笔自己决定居中/横向滚动位置：
@@ -1089,7 +1093,6 @@ class _PlainLineLayout {
     required Color inactiveColor,
     required String? fontFamily,
     required FontWeight fontWeight,
-    required TextScaler textScaler,
     required Locale? locale,
   }) {
     final key = Object.hash(
@@ -1099,7 +1102,6 @@ class _PlainLineLayout {
       inactiveColor.toARGB32(),
       fontFamily ?? '',
       fontWeight.value,
-      textScaler.scale(fontSize).round(),
       locale?.toLanguageTag() ?? '',
     );
     final cached = _cache[key];
@@ -1112,7 +1114,6 @@ class _PlainLineLayout {
       inactiveColor: inactiveColor,
       fontFamily: fontFamily,
       fontWeight: fontWeight,
-      textScaler: textScaler,
       locale: locale,
     );
     if (_cache.length >= _maxCacheEntries) {
@@ -1129,7 +1130,6 @@ class _PlainLineLayout {
     required Color inactiveColor,
     required String? fontFamily,
     required FontWeight fontWeight,
-    required TextScaler textScaler,
     required Locale? locale,
   }) {
     final style = TextStyle(
@@ -1140,6 +1140,8 @@ class _PlainLineLayout {
       letterSpacing: -0.25,
     );
 
+    // 歌词由自定义画笔排版，字号只由应用内歌词字号设置控制；
+    // 不传 textScaler（默认不缩放），与逐字歌词保持一致。
     TextPainter painter(Color color) {
       return TextPainter(
         text: TextSpan(
@@ -1148,7 +1150,6 @@ class _PlainLineLayout {
         ),
         textAlign: TextAlign.left,
         textDirection: TextDirection.ltr,
-        textScaler: textScaler,
         locale: locale,
         maxLines: 1,
       )..layout();
