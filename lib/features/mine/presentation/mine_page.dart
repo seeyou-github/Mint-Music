@@ -71,14 +71,6 @@ class MinePage extends ConsumerWidget {
             // 每个入口单独一组（组与组之间留间距）
             _buildEntryGroup(context, colors, [
               _MineEntry(
-                icon: Icons.history,
-                title: '最近播放',
-                route: AppRoutes.recentlyPlayed,
-              ),
-            ]),
-            const SizedBox(height: AppSpacing.md),
-            _buildEntryGroup(context, colors, [
-              _MineEntry(
                 icon: Icons.extension_outlined,
                 title: '插件管理',
                 route: AppRoutes.pluginManagement,
@@ -98,6 +90,14 @@ class MinePage extends ConsumerWidget {
                 icon: Icons.download_outlined,
                 title: '下载',
                 route: AppRoutes.download,
+              ),
+            ]),
+            const SizedBox(height: AppSpacing.md),
+            _buildEntryGroup(context, colors, [
+              _MineEntry(
+                icon: Icons.history,
+                title: '最近播放',
+                route: AppRoutes.recentlyPlayed,
               ),
             ]),
             // 听歌识曲的音频指纹模块依赖 WebView 运行时，Windows 端不可用，隐藏入口。
