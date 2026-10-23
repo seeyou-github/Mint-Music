@@ -21,10 +21,6 @@ class PlayedProgressNotifier extends StateNotifier<Map<String, double>> {
 
   final PlayProgressStore _store;
 
-  /// 标签的最小粒度：进度变化不足 1% 时不刷新界面、也不写库，
-  /// 否则列表会被每秒一次的位置更新拖着反复重建。
-  static const double _granularity = 0.01;
-
   Future<void> _restore() async {
     try {
       final stored = await _store.loadAll();
@@ -57,8 +53,11 @@ class PlayedProgressNotifier extends StateNotifier<Map<String, double>> {
     final current = state[songId] ?? 0;
     // 只增不减：往回拖进度条 / 重头再听不会把「已听」降级。
     if (ratio <= current) return;
-    // 不足 1% 的变化先不落库，等跨过下一个百分点再记。
-    if (ratio < 1.0 && ratio - current < _granularity) return;
+    // 只在「显示出来的百分比」变化时才更新界面 / 写库。
+    // 按百分点比较（而不是差值 ≥ 1%）才能和标签文案严格对齐：
+    // 播放器那边是按百分点上报的，45.7% → 46% 这种差值不足 1% 的也要记。
+    final percent = (ratio * 100).floor();
+    if (percent <= (current * 100).floor()) return;
 
     state = {...state, songId: ratio};
     // 恢复数据库之前产生的进度也要落盘：upsert 按 songId 覆盖，

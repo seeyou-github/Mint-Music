@@ -53,6 +53,16 @@ void main() {
         notifier.record(songId: 's1', positionMs: 300000, durationMs: 300000);
         expect(playedProgressLabel(notifier.state['s1']), '已听');
 
+        // 按「百分点」比较：45.7% → 46% 差值不足 1% 也要记，
+        // 否则播放器每跨一个百分点上报一次时会被这里漏掉一半。
+        notifier.record(songId: 's2', positionMs: 45700, durationMs: 100000);
+        expect(notifier.state['s2'], closeTo(0.457, 0.0001));
+        notifier.record(songId: 's2', positionMs: 46000, durationMs: 100000);
+        expect(notifier.state['s2'], closeTo(0.46, 0.0001));
+        // 同一个百分点内（46.4%）不再刷新界面。
+        notifier.record(songId: 's2', positionMs: 46400, durationMs: 100000);
+        expect(notifier.state['s2'], closeTo(0.46, 0.0001));
+
         notifier.dispose();
       } finally {
         AppPaths.debugRootOverride = null;

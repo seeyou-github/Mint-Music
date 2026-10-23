@@ -753,10 +753,20 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   static const Duration _audioSetTimeout = Duration(seconds: 10);
   static const Duration _musicSourceReadyTimeout = Duration(seconds: 12);
 
+  /// 上一次上报的歌曲与百分比。
+  ///
+  /// 位置流大约每 200ms 来一次（≈5 次/秒），但「已听 N%」只关心整数百分比，
+  /// 所以这里按「跨过一个百分点」才回调一次：一首 4 分钟的歌从 0 播到 100
+  /// 最多回调 100 次（约每 2.4 秒一次），不会每 200ms 就穿一次层。
+  /// 记的是「见过的最大百分点」，往回拖进度条也不会重复上报。
+  String? _lastProgressSongId;
+  int _lastProgressPercent = -1;
+
   /// 上报当前播放位置（用于「已听 N%」标签）。
   ///
-  /// 进度按 1% 粒度记录（由 provider 侧节流），这里只负责把位置和总时长
-  /// 换算成毫秒传出去；总时长取播放器给的，拿不到时退回歌曲自带的时长。
+  /// 这里只做「百分点是否变化」的判断，真正的 1% 粒度落库与列表刷新
+  /// 由 `playedProgressProvider` 负责；总时长取播放器给的，拿不到时
+  /// 退回歌曲自带的时长。
   void _reportProgress(Duration position) {
     final song = state.currentSong;
     if (song == null || !mounted) return;
@@ -764,6 +774,16 @@ class PlaybackController extends StateNotifier<PlaybackState> {
         ? state.duration.inMilliseconds
         : song.duration * 1000;
     if (durationMs <= 0) return;
+
+    if (song.id != _lastProgressSongId) {
+      _lastProgressSongId = song.id;
+      _lastProgressPercent = -1;
+    }
+    final percent = ((position.inMilliseconds * 100) ~/ durationMs)
+        .clamp(0, 100)
+        .toInt();
+    if (percent <= _lastProgressPercent) return;
+    _lastProgressPercent = percent;
     onProgress?.call(song, position.inMilliseconds, durationMs);
   }
 
