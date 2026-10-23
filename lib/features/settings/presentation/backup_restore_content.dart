@@ -462,40 +462,12 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
     required VoidCallback? onTap,
     required bool primary,
   }) {
-    final enabled = onTap != null;
-    final accent = primary ? colors.primary : colors.textPrimary;
-    final color = enabled ? accent : colors.textHint;
-    final borderColor = enabled
-        ? (primary
-              ? colors.primary.withValues(alpha: 0.8)
-              : colors.divider)
-        : colors.divider.withValues(alpha: 0.5);
-    return InkWell(
+    return _PairButton(
+      colors: colors,
+      icon: icon,
+      label: label,
       onTap: onTap,
-      borderRadius: BorderRadius.circular(AppRadius.full),
-      child: Container(
-        height: 34,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(AppRadius.full),
-          border: Border.all(color: borderColor),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 16, color: color),
-            const SizedBox(width: 6),
-            Flexible(
-              child: Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 13, color: color),
-              ),
-            ),
-          ],
-        ),
-      ),
+      primary: primary,
     );
   }
 
@@ -797,6 +769,86 @@ class _RemoteBackupSheetState extends ConsumerState<_RemoteBackupSheet> {
               ),
             const SizedBox(height: AppSpacing.sm),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 备份 / 还原胶囊按钮：桌面端悬浮时给背景加一层淡色，明确可点击。
+class _PairButton extends StatefulWidget {
+  final ThemeColors colors;
+  final IconData icon;
+  final String label;
+  final VoidCallback? onTap;
+  final bool primary;
+
+  const _PairButton({
+    required this.colors,
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    required this.primary,
+  });
+
+  @override
+  State<_PairButton> createState() => _PairButtonState();
+}
+
+class _PairButtonState extends State<_PairButton> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = widget.colors;
+    final enabled = widget.onTap != null;
+    final accent = widget.primary ? colors.primary : colors.textPrimary;
+    final color = enabled ? accent : colors.textHint;
+    final borderColor = enabled
+        ? (widget.primary
+              ? colors.primary.withValues(alpha: 0.8)
+              : colors.divider)
+        : colors.divider.withValues(alpha: 0.5);
+    final hoverColor = widget.primary ? colors.primary : colors.textPrimary;
+
+    return MouseRegion(
+      cursor: enabled ? SystemMouseCursors.click : MouseCursor.defer,
+      onEnter: (_) {
+        if (enabled && !_hovered) setState(() => _hovered = true);
+      },
+      onExit: (_) {
+        if (_hovered) setState(() => _hovered = false);
+      },
+      child: InkWell(
+        onTap: widget.onTap,
+        borderRadius: BorderRadius.circular(AppRadius.full),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          curve: Curves.easeOut,
+          height: 34,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: _hovered && enabled
+                ? hoverColor.withValues(alpha: widget.primary ? 0.12 : 0.07)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(AppRadius.full),
+            border: Border.all(color: borderColor),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(widget.icon, size: 16, color: color),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  widget.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 13, color: color),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
