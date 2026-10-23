@@ -728,6 +728,9 @@ class _LyricLineWidget extends StatelessWidget {
         ? CrossAxisAlignment.center
         : CrossAxisAlignment.start;
 
+    // 翻译 / 音译 / 和声与所在行同色：当前行用已播放色，其余行用未播放色。
+    final subColor = isActive ? activeColor : inactiveColor;
+
     Widget mainContent = _buildMainLyric();
     if (showRoman && (line.romanLyric?.isNotEmpty ?? false)) {
       mainContent = Column(
@@ -746,35 +749,13 @@ class _LyricLineWidget extends StatelessWidget {
                 fontSize: romanFontSize,
                 height: 1.3,
                 fontWeight: FontWeight.w400,
-                // 翻译 / 音译统一用「未播放颜色」。
-                color: inactiveColor,
+                color: subColor,
               ),
             ),
           ),
         ],
       );
     }
-
-    final shouldBlur =
-        enableBlur && !userScrolling && !isActive && distance > 0;
-
-    Widget animatedLine = RepaintBoundary(
-      child: AnimatedOpacity(
-        duration: const Duration(milliseconds: 500),
-        curve: Curves.easeOutCubic,
-        opacity: opacity,
-        child: AnimatedScale(
-          duration: const Duration(milliseconds: 500),
-          curve: const Cubic(0.25, 0.46, 0.45, 0.94),
-          alignment: Alignment.center,
-          scale: scale,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 13),
-            child: mainContent,
-          ),
-        ),
-      ),
-    );
 
     final hasAdLib = line.adLibText != null && line.adLibText!.isNotEmpty;
     final hasTrans =
@@ -797,7 +778,7 @@ class _LyricLineWidget extends StatelessWidget {
                 fontSize: transFontSize,
                 height: 1.35,
                 fontWeight: FontWeight.w500,
-                color: inactiveColor,
+                color: subColor,
               ),
             ),
             Padding(
@@ -811,7 +792,7 @@ class _LyricLineWidget extends StatelessWidget {
                   fontSize: transFontSize * 0.85,
                   height: 1.3,
                   fontWeight: FontWeight.w400,
-                  color: inactiveColor,
+                  color: subColor,
                 ),
               ),
             ),
@@ -830,7 +811,7 @@ class _LyricLineWidget extends StatelessWidget {
             fontSize: transFontSize,
             height: 1.35,
             fontWeight: FontWeight.w500,
-            color: inactiveColor,
+            color: subColor,
           ),
         ),
       );
@@ -846,29 +827,42 @@ class _LyricLineWidget extends StatelessWidget {
             fontSize: transFontSize * 0.85,
             height: 1.3,
             fontWeight: FontWeight.w400,
-            color: inactiveColor,
+            color: subColor,
           ),
         ),
       );
     }
 
+    final shouldBlur =
+        enableBlur && !userScrolling && !isActive && distance > 0;
+
+    // 翻译与歌词同属一行：一起缩放、一起淡出，颜色/透明度才真正一致。
+    Widget lineContent = Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 13),
+      child: mainContent,
+    );
     if (subLine != null) {
-      final combined = Column(
+      lineContent = Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: crossAlign,
-        children: [animatedLine, subLine],
+        children: [lineContent, subLine],
       );
-      if (shouldBlur) {
-        final sigma = min(1.2 + pow(distance, 0.7) * 1.5, 8).toDouble();
-        return ClipRect(
-          child: ImageFiltered(
-            imageFilter: ui.ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
-            child: combined,
-          ),
-        );
-      }
-      return combined;
     }
+
+    final animatedLine = RepaintBoundary(
+      child: AnimatedOpacity(
+        duration: const Duration(milliseconds: 500),
+        curve: Curves.easeOutCubic,
+        opacity: opacity,
+        child: AnimatedScale(
+          duration: const Duration(milliseconds: 500),
+          curve: const Cubic(0.25, 0.46, 0.45, 0.94),
+          alignment: Alignment.center,
+          scale: scale,
+          child: lineContent,
+        ),
+      ),
+    );
 
     if (shouldBlur) {
       final sigma = min(1.2 + pow(distance, 0.7) * 1.5, 8).toDouble();

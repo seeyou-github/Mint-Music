@@ -7,9 +7,7 @@ void main() {
   LyricLine plainLine() => LyricLine(
     startTimeMs: 0,
     endTimeMs: 4000,
-    words: [
-      LyricWord(word: '我听到传来的谁的声音', startTimeMs: 0, endTimeMs: 4000),
-    ],
+    words: [LyricWord(word: '我听到传来的谁的声音', startTimeMs: 0, endTimeMs: 4000)],
   );
 
   Future<Size> pumpLyric(
@@ -43,7 +41,9 @@ void main() {
     await tester.pump();
     final paint = find.descendant(
       of: find.byType(LyricScrollView),
-      matching: find.byWidgetPredicate((w) => w is CustomPaint && w.painter != null),
+      matching: find.byWidgetPredicate(
+        (w) => w is CustomPaint && w.painter != null,
+      ),
     );
     return tester.getSize(paint.first);
   }
@@ -87,5 +87,62 @@ void main() {
     expect(yrcScaled.height, yrcNormal.height);
     // 普通 LRC 与逐字歌词的行高一致。
     expect(plainNormal.height, yrcNormal.height);
+  });
+
+  testWidgets('翻译颜色与所在行一致（当前行已播放色 / 其余行未播放色）', (tester) async {
+    const activeColor = Color(0xFF00FF00);
+    const inactiveColor = Color(0x40FFFFFF);
+
+    await tester.pumpWidget(
+      const MediaQuery(
+        data: MediaQueryData(),
+        child: Directionality(
+          textDirection: TextDirection.ltr,
+          child: Center(
+            child: SizedBox(
+              width: 600,
+              height: 600,
+              child: LyricScrollView(
+                lines: [
+                  LyricLine(
+                    startTimeMs: 0,
+                    endTimeMs: 4000,
+                    words: [
+                      LyricWord(word: '当前行', startTimeMs: 0, endTimeMs: 4000),
+                    ],
+                    translatedLyric: '当前行翻译',
+                  ),
+                  LyricLine(
+                    startTimeMs: 4000,
+                    endTimeMs: 8000,
+                    words: [
+                      LyricWord(
+                        word: '其它行',
+                        startTimeMs: 4000,
+                        endTimeMs: 8000,
+                      ),
+                    ],
+                    translatedLyric: '其它行翻译',
+                  ),
+                ],
+                currentTimeMs: 1200,
+                hasYrc: false,
+                activeColor: activeColor,
+                inactiveColor: inactiveColor,
+                enableBlur: false,
+                enableScale: false,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    Color? colorOf(String text) =>
+        tester.widget<Text>(find.text(text)).style?.color;
+
+    expect(colorOf('当前行翻译'), activeColor);
+    expect(colorOf('其它行翻译'), inactiveColor);
   });
 }
