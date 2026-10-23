@@ -62,7 +62,14 @@ class AppPaths {
   }
 
   /// 应用数据根目录（Windows 为 `<exe 目录>\AppData`）。
+  ///
+  /// 单元测试用 [debugRootOverride] 把它指到临时目录，避免测试往
+  /// Flutter SDK 目录（`flutter_tester.exe` 所在处）里写 `AppData`。
   static Future<Directory> rootDirectory() async {
+    final override = debugRootOverride;
+    if (override != null && override.isNotEmpty) {
+      return _ensureDirectory(Directory(override));
+    }
     if (Platform.isWindows) {
       final base = executableDirectory;
       if (base != null && base.isNotEmpty) {
@@ -71,6 +78,9 @@ class AppPaths {
     }
     return _ensureDirectory(await getApplicationSupportDirectory());
   }
+
+  /// 仅测试使用：覆盖数据根目录。正式运行时始终为 null。
+  static String? debugRootOverride;
 
   /// 配置文件目录：设置、字体、均衡器配置等。
   static Future<Directory> configDirectory() async {

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:sqflite/sqflite.dart' show ConflictAlgorithm;
 
 import '../../../core/storage/app_database.dart';
 import '../../../core/storage/app_preferences.dart';
@@ -408,8 +409,7 @@ class SearchHistoryNotifier extends StateNotifier<List<String>> {
       );
       var stored = rows.map((r) => '${r['keyword']}').toList();
 
-      if (stored.isEmpty &&
-          !await AppDatabase.isMigrated('search_history')) {
+      if (stored.isEmpty && !await AppDatabase.isMigrated('search_history')) {
         stored = await _importLegacy();
         if (AppDatabase.isPersistent) {
           await AppDatabase.markMigrated('search_history');
@@ -434,11 +434,13 @@ class SearchHistoryNotifier extends StateNotifier<List<String>> {
       await db.transaction((txn) async {
         await txn.delete('search_history');
         final batch = txn.batch();
-        for (final keyword in keywords) {
+        for (var i = 0; i < keywords.length; i++) {
+          // 时间戳按顺序递减：重新读取时 `ORDER BY searched_at DESC`
+          // 才能还原「最近搜的在前」的顺序（以前全用同一个 now，顺序会乱）。
           batch.insert('search_history', {
-            'keyword': keyword,
-            'searched_at': now,
-          });
+            'keyword': keywords[i],
+            'searched_at': now - i,
+          }, conflictAlgorithm: ConflictAlgorithm.replace);
         }
         await batch.commit(noResult: true);
       });
@@ -457,11 +459,11 @@ class SearchHistoryNotifier extends StateNotifier<List<String>> {
       final now = DateTime.now().millisecondsSinceEpoch;
       await db.transaction((txn) async {
         final batch = txn.batch();
-        for (final keyword in legacy) {
+        for (var i = 0; i < legacy.length; i++) {
           batch.insert('search_history', {
-            'keyword': keyword,
-            'searched_at': now,
-          });
+            'keyword': legacy[i],
+            'searched_at': now - i,
+          }, conflictAlgorithm: ConflictAlgorithm.replace);
         }
         await batch.commit(noResult: true);
       });
@@ -553,10 +555,7 @@ class PlaylistSearchNotifier extends StateNotifier<PlaylistSearchState> {
     }
 
     final requestId = ++_requestId;
-    state = PlaylistSearchState(
-      query: normalizedQuery,
-      isLoading: true,
-    );
+    state = PlaylistSearchState(query: normalizedQuery, isLoading: true);
 
     try {
       final playlists = await _manager.searchPlaylists(

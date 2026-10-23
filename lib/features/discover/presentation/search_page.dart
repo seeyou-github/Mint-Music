@@ -26,7 +26,6 @@ import 'collection_detail_page.dart';
 import '../../player/application/playback_controller.dart';
 import '../../player/domain/models/song.dart';
 import '../../plugin/domain/plugin_types.dart';
-import '../../settings/application/settings_providers.dart';
 
 class SearchPage extends ConsumerStatefulWidget {
   const SearchPage({super.key});
@@ -69,11 +68,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         ref.read(searchQueryProvider.notifier).state = '';
         ref.read(searchResultsControllerProvider.notifier).reset();
       }
-      final defaultSource = ref.read(defaultSourceIdProvider);
-      final currentSource = ref.read(searchSourceIdProvider);
-      if (currentSource == 'all' || currentSource != defaultSource) {
-        ref.read(searchSourceIdProvider.notifier).state = defaultSource;
-      }
+      // 搜索音源与主页 / 歌单的音源各自独立：进页面不再把主页音源同步过来，
+      // 沿用上一次在搜索页选的那个（首次为「聚合搜索」）。
       final currentQuery = ref.read(searchQueryProvider).trim();
       if (currentQuery.isNotEmpty) {
         unawaited(
@@ -193,29 +189,19 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     final sources = ref.watch(allAvailableSourcesProvider);
     final searchHistory = ref.watch(searchHistoryProvider);
 
-    ref.listen<String>(defaultSourceIdProvider, (previous, next) {
-      if (previous != null && previous != next) {
-        ref.read(searchSourceIdProvider.notifier).state = next;
-        ref.read(searchPageProvider.notifier).state = 1;
-        final query = ref.read(searchQueryProvider);
-        if (query.isNotEmpty) {
-          final currentTab = ref.read(searchTabProvider);
-          if (currentTab == SearchTab.songs) {
-            unawaited(
-              ref
-                  .read(searchResultsControllerProvider.notifier)
-                  .start(query, next, force: true),
-            );
-          } else {
-            unawaited(
-              ref
-                  .read(playlistSearchControllerProvider.notifier)
-                  .search(query, next),
-            );
-          }
+    // 这里**不监听** defaultSourceIdProvider：搜索音源是独立的一套，
+    // 主页 / 歌单那边切换音源不应该改变搜索页当前选的音源。
+
+    // 但当前选的音源可能已经被禁用 / 卸载（搜索音源现在会一直保留到下次切换），
+    // 这种情况回退到「聚合搜索」，避免拿着一个不存在的音源搜出空结果。
+    if (sourceId != 'all' && sources.every((s) => s.id != sourceId)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        if (ref.read(searchSourceIdProvider) == sourceId) {
+          ref.read(searchSourceIdProvider.notifier).state = 'all';
         }
-      }
-    });
+      });
+    }
 
     ref.listen<String>(searchQueryProvider, (previous, next) {
       // 换了关键词就丢弃旧的选中集合，避免选中「上一批搜索结果」里的歌曲。
@@ -574,148 +560,157 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       child: AnimatedOpacity(
         opacity: 1.0,
         duration: const Duration(milliseconds: 200),
-        child: Container(
-          margin: const EdgeInsets.fromLTRB(
-            AppSpacing.md,
-            AppSpacing.xs,
-            AppSpacing.md,
-            0,
-          ),
-          decoration: BoxDecoration(
-            color: colors.surface,
-            borderRadius: BorderRadius.circular(AppRadius.lg),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: () => _performSearch(_inputText),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: AppSpacing.lg,
-                    vertical: AppSpacing.md,
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.search, size: 18, color: colors.textHint),
-                      const SizedBox(width: AppSpacing.sm),
-                      Expanded(
-                        child: RichText(
-                          overflow: TextOverflow.ellipsis,
-                          text: TextSpan(
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: colors.textSecondary,
-                            ),
-                            children: [
-                              TextSpan(text: context.tr('直接搜索：')),
-                              TextSpan(
-                                text: _inputText,
-                                style: TextStyle(
-                                  color: colors.primary,
-                                  fontWeight: FontWeight.w500,
-                                ),
+        // 预测面板必须算作「搜索框的一部分」：
+        // 否则鼠标按下时 TextField 会先判定为「点了输入框外面」并失焦，
+        // 面板随 _showSuggest 变成 false 被移除，tap 还没抬起来控件就没了，
+        // 表现就是「预测词点不动」。加了这个 Region 后焦点保持，点击生效。
+        child: TextFieldTapRegion(
+          child: Container(
+            margin: const EdgeInsets.fromLTRB(
+              AppSpacing.md,
+              AppSpacing.xs,
+              AppSpacing.md,
+              0,
+            ),
+            decoration: BoxDecoration(
+              color: colors.surface,
+              borderRadius: BorderRadius.circular(AppRadius.lg),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => _performSearch(_inputText),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.lg,
+                      vertical: AppSpacing.md,
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(Icons.search, size: 18, color: colors.textHint),
+                        const SizedBox(width: AppSpacing.sm),
+                        Expanded(
+                          child: RichText(
+                            overflow: TextOverflow.ellipsis,
+                            text: TextSpan(
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: colors.textSecondary,
                               ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              Divider(height: 1, color: colors.surfaceVariant),
-              Flexible(
-                child: suggestAsync.when(
-                  data: (suggestions) {
-                    if (suggestions.isEmpty) {
-                      return Padding(
-                        padding: const EdgeInsets.all(AppSpacing.xl),
-                        child: Center(
-                          child: Text(
-                            context.tr('暂无搜索建议'),
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: colors.textHint,
-                            ),
-                          ),
-                        ),
-                      );
-                    }
-                    return ListView.separated(
-                      shrinkWrap: true,
-                      padding: const EdgeInsets.symmetric(
-                        vertical: AppSpacing.xs,
-                      ),
-                      itemCount: suggestions.length,
-                      separatorBuilder: (_, __) => Divider(
-                        height: 1,
-                        indent: AppSpacing.xxl,
-                        color: colors.surfaceVariant,
-                      ),
-                      itemBuilder: (context, index) {
-                        final suggestion = suggestions[index];
-                        return GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          onTap: () {
-                            _controller.text = suggestion;
-                            _performSearch(suggestion);
-                          },
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: AppSpacing.lg,
-                              vertical: AppSpacing.md,
-                            ),
-                            child: Row(
                               children: [
-                                Icon(
-                                  Icons.music_note,
-                                  size: 16,
-                                  color: colors.textHint,
-                                ),
-                                const SizedBox(width: AppSpacing.sm),
-                                Expanded(
-                                  child: Text(
-                                    suggestion,
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      color: colors.textPrimary,
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
+                                TextSpan(text: context.tr('直接搜索：')),
+                                TextSpan(
+                                  text: _inputText,
+                                  style: TextStyle(
+                                    color: colors.primary,
+                                    fontWeight: FontWeight.w500,
                                   ),
                                 ),
                               ],
                             ),
                           ),
-                        );
-                      },
-                    );
-                  },
-                  loading: () => const Padding(
-                    padding: EdgeInsets.all(AppSpacing.xl),
-                    child: Center(
-                      child: SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
+                        ),
+                      ],
                     ),
                   ),
-                  error: (_, __) => Padding(
-                    padding: const EdgeInsets.all(AppSpacing.xl),
-                    child: Center(
-                      child: Text(
-                        context.tr('获取建议失败'),
-                        style: TextStyle(fontSize: 13, color: colors.textHint),
+                ),
+                Divider(height: 1, color: colors.surfaceVariant),
+                Flexible(
+                  child: suggestAsync.when(
+                    data: (suggestions) {
+                      if (suggestions.isEmpty) {
+                        return Padding(
+                          padding: const EdgeInsets.all(AppSpacing.xl),
+                          child: Center(
+                            child: Text(
+                              context.tr('暂无搜索建议'),
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: colors.textHint,
+                              ),
+                            ),
+                          ),
+                        );
+                      }
+                      return ListView.separated(
+                        shrinkWrap: true,
+                        padding: const EdgeInsets.symmetric(
+                          vertical: AppSpacing.xs,
+                        ),
+                        itemCount: suggestions.length,
+                        separatorBuilder: (_, __) => Divider(
+                          height: 1,
+                          indent: AppSpacing.xxl,
+                          color: colors.surfaceVariant,
+                        ),
+                        itemBuilder: (context, index) {
+                          final suggestion = suggestions[index];
+                          return GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: () {
+                              _controller.text = suggestion;
+                              _performSearch(suggestion);
+                            },
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: AppSpacing.lg,
+                                vertical: AppSpacing.md,
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    Icons.music_note,
+                                    size: 16,
+                                    color: colors.textHint,
+                                  ),
+                                  const SizedBox(width: AppSpacing.sm),
+                                  Expanded(
+                                    child: Text(
+                                      suggestion,
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        color: colors.textPrimary,
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      );
+                    },
+                    loading: () => const Padding(
+                      padding: EdgeInsets.all(AppSpacing.xl),
+                      child: Center(
+                        child: SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      ),
+                    ),
+                    error: (_, __) => Padding(
+                      padding: const EdgeInsets.all(AppSpacing.xl),
+                      child: Center(
+                        child: Text(
+                          context.tr('获取建议失败'),
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: colors.textHint,
+                          ),
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -789,16 +784,9 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       }).toList(),
     ).then((selectedId) {
       if (selectedId != null) {
+        // 只改搜索页自己的音源，不写「默认音源」设置：
+        // 否则主页 / 歌单的音源会被搜索页带着一起变。
         ref.read(searchSourceIdProvider.notifier).state = selectedId;
-        // 用户最后切换的音源即成为默认音源。
-        if (selectedId != 'all') {
-          unawaited(
-            persistDefaultSourceId(
-              ProviderScope.containerOf(context),
-              selectedId,
-            ),
-          );
-        }
         ref.read(searchPageProvider.notifier).state = 1;
         final query = ref.read(searchQueryProvider);
         if (query.isNotEmpty) {
@@ -822,14 +810,9 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     });
   }
 
-  Widget _buildSourceIcon(
-    String sourceId, {
-    double size = 20,
-    String? label,
-  }) {
+  Widget _buildSourceIcon(String sourceId, {double size = 20, String? label}) {
     return SourceIcon(sourceId: sourceId, size: size, label: label);
   }
-
 
   Widget _buildSearchHistory(ThemeColors colors, List<String> history) {
     return Padding(
@@ -1032,7 +1015,10 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       },
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (_, __) => Center(
-        child: Text(context.tr('搜索失败'), style: TextStyle(color: colors.textHint)),
+        child: Text(
+          context.tr('搜索失败'),
+          style: TextStyle(color: colors.textHint),
+        ),
       ),
     );
   }
@@ -1084,7 +1070,10 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     }
     if (state.error != null && state.songs.isEmpty) {
       return Center(
-        child: Text(context.tr('搜索失败'), style: TextStyle(color: colors.textHint)),
+        child: Text(
+          context.tr('搜索失败'),
+          style: TextStyle(color: colors.textHint),
+        ),
       );
     }
     if (state.songs.isEmpty) return _buildEmptyResult(colors);
@@ -1182,7 +1171,11 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                 unawaited(
                   ref
                       .read(searchResultsControllerProvider.notifier)
-                      .start(query, ref.read(searchSourceIdProvider), force: true),
+                      .start(
+                        query,
+                        ref.read(searchSourceIdProvider),
+                        force: true,
+                      ),
                 );
               }
             },
@@ -1211,20 +1204,16 @@ class _SearchPageState extends ConsumerState<SearchPage> {
             label: context.tr('专辑'),
             isActive: currentTab == SearchTab.albums,
             colors: colors,
-            onTap: () => _switchCollectionTab(
-              SearchTab.albums,
-              CollectionType.album,
-            ),
+            onTap: () =>
+                _switchCollectionTab(SearchTab.albums, CollectionType.album),
           ),
           const SizedBox(width: AppSpacing.sm),
           _buildTabChip(
             label: context.tr('作者'),
             isActive: currentTab == SearchTab.artists,
             colors: colors,
-            onTap: () => _switchCollectionTab(
-              SearchTab.artists,
-              CollectionType.artist,
-            ),
+            onTap: () =>
+                _switchCollectionTab(SearchTab.artists, CollectionType.artist),
           ),
         ],
       ),
@@ -1311,18 +1300,14 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     if (state.results.isEmpty) {
       return Center(
         child: Text(
-          context.tr(
-            state.query.isEmpty ? '输入关键词开始搜索' : '未找到相关结果',
-          ),
+          context.tr(state.query.isEmpty ? '输入关键词开始搜索' : '未找到相关结果'),
           style: TextStyle(fontSize: 14, color: colors.textHint),
         ),
       );
     }
 
     final width = MediaQuery.sizeOf(context).width;
-    final columns = Platform.isAndroid
-        ? 3
-        : math.max(2, (width / 260).ceil());
+    final columns = Platform.isAndroid ? 3 : math.max(2, (width / 260).ceil());
     return GridView.builder(
       padding: const EdgeInsets.fromLTRB(
         AppSpacing.lg,
@@ -1350,10 +1335,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       if (item.worksNum > 0) context.tr('${item.worksNum} 首'),
     ].join(' · ');
     return GestureDetector(
-      onTap: () => context.push(
-        AppRoutes.collectionDetail,
-        extra: item,
-      ),
+      onTap: () => context.push(AppRoutes.collectionDetail, extra: item),
       child: Container(
         decoration: BoxDecoration(
           color: colors.surface,
@@ -1443,7 +1425,10 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     }
     if (state.error != null && state.playlists.isEmpty) {
       return Center(
-        child: Text(context.tr('搜索失败'), style: TextStyle(color: colors.textHint)),
+        child: Text(
+          context.tr('搜索失败'),
+          style: TextStyle(color: colors.textHint),
+        ),
       );
     }
     if (state.playlists.isEmpty) return _buildEmptyPlaylistResult(colors);
