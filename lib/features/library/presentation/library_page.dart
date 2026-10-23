@@ -14,9 +14,11 @@ import '../../../core/utils/responsive_layout.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../../../shared/widgets/playlist_sync_button.dart';
 import '../application/playlist_providers.dart';
+import '../../player/application/playback_context.dart';
 import '../../player/application/playback_controller.dart';
 import '../../plugin/application/plugin_providers.dart';
 import '../domain/models/playlist.dart' as local_playlist;
+import '../domain/models/recently_played.dart';
 import '../../discover/domain/models/playlist.dart' as discover_playlist;
 import '../utils/cerumusic_playlist_importer.dart';
 
@@ -278,6 +280,11 @@ class LibraryPage extends ConsumerWidget {
                         color: colors.primary,
                         onTap: () {
                           if (playlist.songs.isNotEmpty) {
+                            PlaybackContext.instance.set(
+                              PlaybackSourceType.playlist,
+                              id: playlist.id,
+                              name: playlist.name,
+                            );
                             ref
                                 .read(playbackControllerProvider.notifier)
                                 .setQueue(playlist.songs, startIndex: 0);

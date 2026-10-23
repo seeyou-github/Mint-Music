@@ -1,11 +1,11 @@
 import '../../../player/domain/models/song.dart';
 
-/// 歌曲的播放来源：决定网格上的「歌单 / 专辑 / 榜单 / 搜索」标签。
+/// 歌曲的播放来源：决定网格上的「歌单 / 专辑 / 榜单 / 搜索 / 作者 / 本地」标签。
 enum PlaybackSourceType {
   /// 未知来源（例如直接从播放队列开始播放）。
   unknown,
 
-  /// 从歌单里播放。
+  /// 从歌单里播放（含本地歌单、「我的收藏」）。
   playlist,
 
   /// 从专辑里播放。
@@ -17,7 +17,10 @@ enum PlaybackSourceType {
   /// 从搜索结果里播放。
   search,
 
-  /// 本地音乐 / 本地歌单。
+  /// 从作者作品里播放。
+  artist,
+
+  /// 本地音乐。
   local,
 }
 
@@ -28,6 +31,7 @@ extension PlaybackSourceTypeX on PlaybackSourceType {
     PlaybackSourceType.album => 'album',
     PlaybackSourceType.rank => 'rank',
     PlaybackSourceType.search => 'search',
+    PlaybackSourceType.artist => 'artist',
     PlaybackSourceType.local => 'local',
     PlaybackSourceType.unknown => 'unknown',
   };
@@ -38,6 +42,7 @@ extension PlaybackSourceTypeX on PlaybackSourceType {
     PlaybackSourceType.album => '专辑',
     PlaybackSourceType.rank => '榜单',
     PlaybackSourceType.search => '搜索',
+    PlaybackSourceType.artist => '作者',
     PlaybackSourceType.local => '本地',
     PlaybackSourceType.unknown => '',
   };
@@ -47,6 +52,7 @@ extension PlaybackSourceTypeX on PlaybackSourceType {
     'album' => PlaybackSourceType.album,
     'rank' => PlaybackSourceType.rank,
     'search' => PlaybackSourceType.search,
+    'artist' => PlaybackSourceType.artist,
     'local' => PlaybackSourceType.local,
     _ => PlaybackSourceType.unknown,
   };

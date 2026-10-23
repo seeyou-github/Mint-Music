@@ -18,7 +18,10 @@ import '../../../shared/widgets/music_cover_image.dart';
 import '../../../shared/widgets/song_list_item.dart';
 import '../../../shared/widgets/song_selection.dart';
 import '../application/playlist_providers.dart';
+import '../application/recently_played_providers.dart';
 import '../domain/models/playlist.dart';
+import '../domain/models/recently_played.dart';
+import '../../player/application/playback_context.dart';
 import '../../player/application/playback_controller.dart';
 import '../../player/domain/models/song.dart';
 import '../../player/presentation/mini_player.dart';
@@ -51,6 +54,9 @@ class _LocalPlaylistDetailPageState
 
   /// 批量选择控制器（长按歌曲或右上角菜单进入）。
   final SongSelectionController _selection = SongSelectionController();
+
+  /// 已经记录过「最近打开」的歌单 id，避免每帧 rebuild 都写一次。
+  String? _recordedOpenedId;
 
   @override
   void dispose() {
@@ -298,6 +304,25 @@ class _LocalPlaylistDetailPageState
                                 style: TextStyle(color: colors.textHint)),
                           );
                         }
+                        if (_recordedOpenedId != playlist.id) {
+                          _recordedOpenedId = playlist.id;
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            if (!mounted) return;
+                            unawaited(
+                              ref
+                                  .read(
+                                    recentlyPlayedPlaylistsProvider.notifier,
+                                  )
+                                  .recordOpened(
+                                    id: playlist.id,
+                                    name: playlist.name,
+                                    coverUrl: playlist.coverImgUrl,
+                                    songCount: playlist.songCount,
+                                    source: 'local',
+                                  ),
+                            );
+                          });
+                        }
                         if (_originalSongs.length != playlist.songs.length ||
                             !_listEquals(_originalSongs, playlist.songs)) {
                           _updateSortedSongs(playlist.songs);
@@ -507,6 +532,11 @@ class _LocalPlaylistDetailPageState
                       _buildActionButton(
                           colors, Icons.play_arrow, context.tr('播放全部'), () {
                         if (_sortedSongs.isNotEmpty) {
+                          PlaybackContext.instance.set(
+                            PlaybackSourceType.playlist,
+                            id: playlist.id,
+                            name: playlist.name,
+                          );
                           final controller = ref
                               .read(playbackControllerProvider.notifier);
                           controller.setQueue(_sortedSongs);
@@ -516,6 +546,11 @@ class _LocalPlaylistDetailPageState
                       _buildActionButton(colors, Icons.shuffle, context.tr('随机播放'),
                           () {
                         if (_sortedSongs.isNotEmpty) {
+                          PlaybackContext.instance.set(
+                            PlaybackSourceType.playlist,
+                            id: playlist.id,
+                            name: playlist.name,
+                          );
                           final songs = [..._sortedSongs]..shuffle();
                           final controller = ref
                               .read(playbackControllerProvider.notifier);
@@ -983,6 +1018,11 @@ class _LocalPlaylistDetailPageState
               // 长按进入批量选择模式
               onLongPress: () => _enterSelection(song),
               onPlayTap: () {
+                PlaybackContext.instance.set(
+                  PlaybackSourceType.playlist,
+                  id: playlist.id,
+                  name: playlist.name,
+                );
                 final controller = ref.read(playbackControllerProvider.notifier);
                 controller.setQueue(_sortedSongs, startIndex: index);
               },

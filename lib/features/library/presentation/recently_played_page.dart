@@ -10,12 +10,14 @@ import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../shared/widgets/music_cover_image.dart';
-import '../application/recently_played_providers.dart';
-import '../domain/models/recently_played.dart';
 import '../../discover/domain/models/search_collection.dart';
 import '../../player/application/playback_context.dart';
 import '../../player/application/playback_controller.dart';
 import '../../player/domain/models/song.dart';
+import '../application/playlist_providers.dart';
+import '../application/recently_played_providers.dart';
+import '../domain/models/playlist.dart';
+import '../domain/models/recently_played.dart';
 
 /// 最近播放：歌曲 / 歌单 / 排行 / 统计。
 class RecentlyPlayedPage extends ConsumerStatefulWidget {
@@ -29,6 +31,9 @@ class _RecentlyPlayedPageState extends ConsumerState<RecentlyPlayedPage> {
   int _tab = 0;
 
   static const _tabs = ['歌曲', '歌单', '排行', '统计'];
+
+  /// 卡片内边距（封面左右各留这么多）。
+  static const double _cardPadding = AppSpacing.sm;
 
   @override
   Widget build(BuildContext context) {
@@ -106,12 +111,22 @@ class _RecentlyPlayedPageState extends ConsumerState<RecentlyPlayedPage> {
               label: context.tr(_tabs[i]),
               selected: _tab == i,
               colors: colors,
-              onTap: () => setState(() => _tab = i),
+              onTap: () => _selectTab(i),
             ),
           ],
         ],
       ),
     );
+  }
+
+  void _selectTab(int index) {
+    if (_tab == index) return;
+    setState(() => _tab = index);
+    if (index == 3) {
+      // 刚听完歌就切到统计：播放事件可能还在内存待写队列里，
+      // 重新读一次，保证看到的是最新数据。
+      ref.invalidate(playbackStatsProvider);
+    }
   }
 
   Widget _buildBody(ThemeColors colors) {
@@ -142,25 +157,12 @@ class _RecentlyPlayedPageState extends ConsumerState<RecentlyPlayedPage> {
           );
         }
         final queue = items.map((e) => e.song).toList(growable: false);
-        return GridView.builder(
-          padding: const EdgeInsets.fromLTRB(
-            AppSpacing.lg,
-            AppSpacing.sm,
-            AppSpacing.lg,
-            AppSpacing.xxxl,
-          ),
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: _gridColumns(context),
-            mainAxisSpacing: AppSpacing.md,
-            crossAxisSpacing: AppSpacing.md,
-            mainAxisExtent: 150,
-          ),
+        return _CardGrid(
+          columns: _gridColumns(context),
           itemCount: items.length,
-          itemBuilder: (context, index) => _SongCard(
-            item: items[index],
-            queue: queue,
-            index: index,
-          ),
+          extraHeight: _songExtraHeight(context),
+          itemBuilder: (context, index) =>
+              _SongCard(item: items[index], queue: queue, index: index),
         );
       },
       loading: () => const Center(child: CircularProgressIndicator()),
@@ -179,6 +181,12 @@ class _RecentlyPlayedPageState extends ConsumerState<RecentlyPlayedPage> {
     return math.max(2, (width / 300).ceil());
   }
 
+  /// 歌曲卡片封面之外的高度（标题 + 歌手 + 内边距），随系统字体缩放。
+  double _songExtraHeight(BuildContext context) {
+    final scale = MediaQuery.textScalerOf(context).scale(1);
+    return 38 + 35 * scale;
+  }
+
   // ---------------------------------------------------------------- 歌单
 
   Widget _buildPlaylistsTab(ThemeColors colors) {
@@ -193,20 +201,10 @@ class _RecentlyPlayedPageState extends ConsumerState<RecentlyPlayedPage> {
             colors: colors,
           );
         }
-        return GridView.builder(
-          padding: const EdgeInsets.fromLTRB(
-            AppSpacing.lg,
-            AppSpacing.sm,
-            AppSpacing.lg,
-            AppSpacing.xxxl,
-          ),
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: _gridColumns(context),
-            mainAxisSpacing: AppSpacing.md,
-            crossAxisSpacing: AppSpacing.md,
-            mainAxisExtent: 220,
-          ),
+        return _CardGrid(
+          columns: _gridColumns(context),
           itemCount: playlists.length,
+          extraHeight: _playlistExtraHeight(context),
           itemBuilder: (context, index) =>
               _PlaylistCard(playlist: playlists[index]),
         );
@@ -218,6 +216,12 @@ class _RecentlyPlayedPageState extends ConsumerState<RecentlyPlayedPage> {
         colors: colors,
       ),
     );
+  }
+
+  /// 歌单卡片封面之外的高度（两行名称 + 内边距），随系统字体缩放。
+  double _playlistExtraHeight(BuildContext context) {
+    final scale = MediaQuery.textScalerOf(context).scale(1);
+    return 30 + 33 * scale;
   }
 
   // ---------------------------------------------------------------- 排行
@@ -337,9 +341,13 @@ class _RecentlyPlayedPageState extends ConsumerState<RecentlyPlayedPage> {
                         selected: g == granularity,
                         colors: colors,
                         dense: true,
-                        onTap: () => ref
-                            .read(playbackStatsGranularityProvider.notifier)
-                            .state = g,
+                        onTap: () =>
+                            ref
+                                    .read(
+                                      playbackStatsGranularityProvider.notifier,
+                                    )
+                                    .state =
+                                g,
                       ),
                       if (g != PlaybackStatsGranularity.values.last)
                         const SizedBox(width: 6),
@@ -349,10 +357,7 @@ class _RecentlyPlayedPageState extends ConsumerState<RecentlyPlayedPage> {
                 const SizedBox(height: AppSpacing.lg),
                 SizedBox(
                   height: 220,
-                  child: _StatsBarChart(
-                    buckets: stats.buckets,
-                    colors: colors,
-                  ),
+                  child: _StatsBarChart(buckets: stats.buckets, colors: colors),
                 ),
               ],
             ),
@@ -414,6 +419,56 @@ class _RecentlyPlayedPageState extends ConsumerState<RecentlyPlayedPage> {
 
 // ---------------------------------------------------------------- 组件
 
+/// 等宽卡片网格：卡片高度 = 正方形封面 + [extraHeight]，避免字体缩放时溢出。
+class _CardGrid extends StatelessWidget {
+  const _CardGrid({
+    required this.columns,
+    required this.itemCount,
+    required this.extraHeight,
+    required this.itemBuilder,
+  });
+
+  final int columns;
+  final int itemCount;
+
+  /// 封面下方还需要的高度（标题 / 歌手 / 两行歌单名 + 内边距）。
+  final double extraHeight;
+
+  final Widget Function(BuildContext context, int index) itemBuilder;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        const spacing = AppSpacing.md;
+        final available =
+            constraints.maxWidth - AppSpacing.lg * 2 - spacing * (columns - 1);
+        final itemWidth = math.max(96.0, available / columns);
+        final coverSize = math.max(
+          80.0,
+          itemWidth - _RecentlyPlayedPageState._cardPadding * 2,
+        );
+        return GridView.builder(
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.lg,
+            AppSpacing.sm,
+            AppSpacing.lg,
+            AppSpacing.xxxl,
+          ),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: columns,
+            mainAxisSpacing: spacing,
+            crossAxisSpacing: spacing,
+            mainAxisExtent: coverSize + extraHeight,
+          ),
+          itemCount: itemCount,
+          itemBuilder: itemBuilder,
+        );
+      },
+    );
+  }
+}
+
 class _TabPill extends StatelessWidget {
   const _TabPill({
     required this.label,
@@ -442,9 +497,7 @@ class _TabPill extends StatelessWidget {
         decoration: BoxDecoration(
           color: selected ? colors.primary : Colors.transparent,
           borderRadius: BorderRadius.circular(AppRadius.full),
-          border: Border.all(
-            color: selected ? colors.primary : colors.divider,
-          ),
+          border: Border.all(color: selected ? colors.primary : colors.divider),
         ),
         child: Text(
           label,
@@ -497,56 +550,52 @@ class _EmptyState extends StatelessWidget {
   }
 }
 
-/// 来源标签（歌单 / 榜单 / 专辑 / 搜索）。
+/// 封面右上角的来源标签（歌单 / 榜单 / 专辑 / 搜索 / 作者 / 本地）。
 class _SourceBadge extends StatelessWidget {
-  const _SourceBadge({
-    required this.type,
-    required this.colors,
-    this.onTap,
-    this.dense = false,
-  });
+  const _SourceBadge({required this.type, required this.colors, this.onTap});
 
   final PlaybackSourceType type;
   final ThemeColors colors;
   final VoidCallback? onTap;
-  final bool dense;
 
   Color get _color => switch (type) {
     PlaybackSourceType.playlist => const Color(0xFFE0913C),
     PlaybackSourceType.rank => const Color(0xFFE05B5B),
     PlaybackSourceType.album => const Color(0xFFD9B44A),
+    PlaybackSourceType.search => const Color(0xFF5B9BFF),
+    PlaybackSourceType.artist => const Color(0xFFB07CFF),
     PlaybackSourceType.local => colors.primary,
-    _ => colors.textHint,
+    PlaybackSourceType.unknown => colors.textHint,
   };
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: EdgeInsets.symmetric(
-          horizontal: dense ? 6 : 10,
-          vertical: dense ? 2 : 4,
-        ),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(AppRadius.sm),
-          border: Border.all(color: _color.withValues(alpha: 0.7)),
-          color: _color.withValues(alpha: 0.08),
-        ),
-        child: Text(
-          context.tr(type.label),
-          style: TextStyle(
-            fontSize: dense ? 10 : 12,
-            fontWeight: FontWeight.w500,
-            color: _color,
-          ),
+    final badge = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.45),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: _color.withValues(alpha: 0.85)),
+      ),
+      child: Text(
+        context.tr(type.label),
+        style: TextStyle(
+          fontSize: 11,
+          height: 1.1,
+          fontWeight: FontWeight.w500,
+          color: _color,
         ),
       ),
+    );
+    if (onTap == null) return badge;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(onTap: onTap, child: badge),
     );
   }
 }
 
-/// 歌曲网格卡片：封面 + 来源标签 + 歌名 + 歌手。
+/// 歌曲网格卡片：正方形封面 + 右上角来源标签 + 封面下方的歌名 / 歌手。
 class _SongCard extends ConsumerWidget {
   const _SongCard({
     required this.item,
@@ -557,6 +606,13 @@ class _SongCard extends ConsumerWidget {
   final RecentlyPlayedItem item;
   final List<Song> queue;
   final int index;
+
+  bool get _sourceClickable => switch (item.sourceType) {
+    PlaybackSourceType.playlist ||
+    PlaybackSourceType.rank ||
+    PlaybackSourceType.album => true,
+    _ => false,
+  };
 
   void _play(WidgetRef ref) {
     // 从最近播放里再播一次，仍然沿用这首歌原来的来源。
@@ -570,27 +626,49 @@ class _SongCard extends ConsumerWidget {
         .setQueue(queue, startIndex: index);
   }
 
-  void _openSource(BuildContext context) {
+  Future<void> _openSource(BuildContext context, WidgetRef ref) async {
     final id = item.sourceId;
     if (id == null || id.isEmpty) return;
     switch (item.sourceType) {
       case PlaybackSourceType.playlist:
-        context.push('/playlist/${Uri.encodeComponent(id)}');
+        // 本地歌单（含「我的收藏」）和远端歌单是不同的路由。
+        var local = false;
+        try {
+          final playlists = await ref.read(playlistsProvider.future);
+          local = playlists.any((p) => p.id == id);
+        } catch (_) {
+          // 本地歌单读取失败就按远端歌单打开。
+        }
+        if (!context.mounted) return;
+        context.push(
+          local
+              ? '/library/playlist/${Uri.encodeComponent(id)}'
+              : '/playlist/${Uri.encodeComponent(id)}',
+        );
       case PlaybackSourceType.rank:
         context.push('/playlist/${Uri.encodeComponent(id)}?type=rank');
       case PlaybackSourceType.album:
-        // 打开专辑详情（用歌曲所在平台 + 专辑 id 重新拉取）。
+        final song = item.song;
+        final albumName = item.sourceName ?? song.album;
         context.push(
           AppRoutes.collectionDetail,
           extra: SearchCollection(
             id: id,
-            title: item.sourceName ?? '',
+            title: albumName,
             type: CollectionType.album,
-            source: item.song.source ?? '',
-            raw: {'id': id},
+            source: song.source ?? '',
+            coverUrl: song.coverUrl,
+            artist: song.artist,
+            raw: {
+              'id': id,
+              'name': albumName,
+              'artist': song.artist,
+              'picUrl': song.coverUrl ?? '',
+            },
           ),
         );
       case PlaybackSourceType.search:
+      case PlaybackSourceType.artist:
       case PlaybackSourceType.local:
       case PlaybackSourceType.unknown:
         break;
@@ -602,121 +680,86 @@ class _SongCard extends ConsumerWidget {
     final colors = ref.watch(themeColorsProvider);
     final song = item.song;
 
-    final coverImage = MusicCoverImage(
-      url: song.coverUrl,
-      songId: song.id,
-      mediaStoreId: song.mediaStoreId,
-      fit: BoxFit.cover,
-      errorWidget: Container(
-        color: colors.surfaceVariant,
-        child: Icon(Icons.music_note, color: colors.textHint),
-      ),
-    );
-
-    final title = Text(
-      song.title,
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-      style: TextStyle(
-        fontSize: 13,
-        fontWeight: FontWeight.w500,
-        color: colors.textPrimary,
-      ),
-    );
-    final artist = Text(
-      song.artist,
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-      style: TextStyle(fontSize: 12, color: colors.textHint),
-    );
-
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        // 宽卡片：封面在左、来源标签在右（与截图一致）；
-        // 窄卡片（Android 三列）：封面铺满、标签浮在右上角。
-        final wide = constraints.maxWidth >= 170;
-        return Material(
-          color: colors.surface,
-          borderRadius: BorderRadius.circular(AppRadius.md),
-          clipBehavior: Clip.antiAlias,
-          child: InkWell(
-            onTap: () => _play(ref),
-            child: Padding(
-              padding: const EdgeInsets.all(AppSpacing.sm),
-              child: wide
-                  ? Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(
-                                AppRadius.sm,
-                              ),
-                              child: SizedBox(
-                                width: 76,
-                                height: 76,
-                                child: coverImage,
-                              ),
+    return Material(
+      color: colors.surface,
+      borderRadius: BorderRadius.circular(AppRadius.md),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => _play(ref),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(
+            _RecentlyPlayedPageState._cardPadding,
+            _RecentlyPlayedPageState._cardPadding,
+            _RecentlyPlayedPageState._cardPadding,
+            10,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              AspectRatio(
+                aspectRatio: 1,
+                child: Stack(
+                  children: [
+                    Positioned.fill(
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(AppRadius.sm),
+                        child: MusicCoverImage(
+                          url: song.coverUrl,
+                          songId: song.id,
+                          mediaStoreId: song.mediaStoreId,
+                          fit: BoxFit.cover,
+                          errorWidget: Container(
+                            color: colors.surfaceVariant,
+                            child: Icon(
+                              Icons.music_note,
+                              color: colors.textHint,
                             ),
-                            const Spacer(),
-                            if (item.hasSourceLabel)
-                              _SourceBadge(
-                                type: item.sourceType,
-                                colors: colors,
-                                onTap: () => _openSource(context),
-                              ),
-                          ],
-                        ),
-                        const Spacer(),
-                        title,
-                        const SizedBox(height: 2),
-                        artist,
-                      ],
-                    )
-                  : Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: Stack(
-                            children: [
-                              Positioned.fill(
-                                child: ClipRRect(
-                                  borderRadius: BorderRadius.circular(
-                                    AppRadius.sm,
-                                  ),
-                                  child: coverImage,
-                                ),
-                              ),
-                              if (item.hasSourceLabel)
-                                Positioned(
-                                  top: 4,
-                                  right: 4,
-                                  child: _SourceBadge(
-                                    type: item.sourceType,
-                                    colors: colors,
-                                    dense: true,
-                                    onTap: () => _openSource(context),
-                                  ),
-                                ),
-                            ],
                           ),
                         ),
-                        const SizedBox(height: 6),
-                        title,
-                        artist,
-                      ],
+                      ),
                     ),
-            ),
+                    if (item.hasSourceLabel)
+                      Positioned(
+                        top: 6,
+                        right: 6,
+                        child: _SourceBadge(
+                          type: item.sourceType,
+                          colors: colors,
+                          onTap: _sourceClickable
+                              ? () => _openSource(context, ref)
+                              : null,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                song.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  color: colors.textPrimary,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                song.artist,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 12, color: colors.textHint),
+              ),
+            ],
           ),
-        );
-      },
+        ),
+      ),
     );
   }
 }
 
-/// 歌单网格卡片。
+/// 歌单网格卡片：封面 + 右上角歌曲数量 + 两行歌单名。
 class _PlaylistCard extends ConsumerWidget {
   const _PlaylistCard({required this.playlist});
 
@@ -725,26 +768,59 @@ class _PlaylistCard extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final colors = ref.watch(themeColorsProvider);
+
+    Playlist? localPlaylist;
+    final localPlaylists = ref.watch(playlistsProvider).valueOrNull;
+    if (localPlaylists != null) {
+      for (final p in localPlaylists) {
+        if (p.id == playlist.id) {
+          localPlaylist = p;
+          break;
+        }
+      }
+    }
+    final isLocal = localPlaylist != null || playlist.source == 'local';
+
+    var coverUrl = playlist.coverUrl;
+    Song? coverSong;
+    if (coverUrl.isEmpty && localPlaylist != null) {
+      coverUrl = localPlaylist.coverImgUrl;
+      if (coverUrl.isEmpty && localPlaylist.songs.isNotEmpty) {
+        coverSong = localPlaylist.songs.first;
+      }
+    }
+
+    final route = isLocal
+        ? '/library/playlist/${Uri.encodeComponent(playlist.id)}'
+        : '/playlist/${Uri.encodeComponent(playlist.id)}';
+
     return Material(
       color: colors.surface,
       borderRadius: BorderRadius.circular(AppRadius.md),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
-        onTap: () =>
-            context.push('/playlist/${Uri.encodeComponent(playlist.id)}'),
+        onTap: () => context.push(route),
         child: Padding(
-          padding: const EdgeInsets.all(AppSpacing.sm),
+          padding: const EdgeInsets.fromLTRB(
+            _RecentlyPlayedPageState._cardPadding,
+            _RecentlyPlayedPageState._cardPadding,
+            _RecentlyPlayedPageState._cardPadding,
+            10,
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
+              AspectRatio(
+                aspectRatio: 1,
                 child: Stack(
                   children: [
                     Positioned.fill(
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(AppRadius.sm),
                         child: MusicCoverImage(
-                          url: playlist.coverUrl,
+                          url: coverUrl.isNotEmpty ? coverUrl : coverSong?.coverUrl,
+                          songId: coverSong?.id,
+                          mediaStoreId: coverSong?.mediaStoreId,
                           fit: BoxFit.cover,
                           errorWidget: Container(
                             color: colors.surfaceVariant,
@@ -762,17 +838,18 @@ class _PlaylistCard extends ConsumerWidget {
                         right: 6,
                         child: Container(
                           padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 2,
+                            horizontal: 7,
+                            vertical: 3,
                           ),
                           decoration: BoxDecoration(
                             color: Colors.black.withValues(alpha: 0.55),
-                            borderRadius: BorderRadius.circular(AppRadius.sm),
+                            borderRadius: BorderRadius.circular(6),
                           ),
                           child: Text(
                             context.tr('${playlist.songCount}首'),
                             style: const TextStyle(
-                              fontSize: 10,
+                              fontSize: 11,
+                              height: 1.1,
                               color: Colors.white,
                             ),
                           ),
@@ -784,19 +861,14 @@ class _PlaylistCard extends ConsumerWidget {
               const SizedBox(height: 6),
               Text(
                 playlist.name,
-                maxLines: 1,
+                maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  fontSize: 13,
+                  fontSize: 14,
+                  height: 1.25,
                   fontWeight: FontWeight.w500,
                   color: colors.textPrimary,
                 ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                context.tr('${playlist.songCount} 首歌曲'),
-                maxLines: 1,
-                style: TextStyle(fontSize: 11, color: colors.textHint),
               ),
             ],
           ),
@@ -806,8 +878,8 @@ class _PlaylistCard extends ConsumerWidget {
   }
 }
 
-/// 排行列表项：名次 + 封面 + 歌名/歌手 + 播放次数柱形。
-class _RankRow extends ConsumerWidget {
+/// 排行列表项：名次 + 封面 + 按播放次数伸缩的柱形（歌名 / 歌手叠在柱形上）+ 次数。
+class _RankRow extends ConsumerStatefulWidget {
   const _RankRow({
     required this.item,
     required this.rank,
@@ -823,110 +895,178 @@ class _RankRow extends ConsumerWidget {
   final int index;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final colors = ref.watch(themeColorsProvider);
-    final song = item.song;
-    final ratio = maxCount > 0 ? item.playCount / maxCount : 0.0;
+  ConsumerState<_RankRow> createState() => _RankRowState();
+}
 
-    return InkWell(
-      onTap: () {
-        PlaybackContext.instance.set(
-          item.sourceType,
-          id: item.sourceId,
-          name: item.sourceName,
-        );
-        ref
-            .read(playbackControllerProvider.notifier)
-            .setQueue(queue, startIndex: index);
-      },
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
-        child: Row(
-          children: [
-            SizedBox(
-              width: 28,
-              child: Text(
-                '$rank',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: rank <= 3 ? colors.primary : colors.textHint,
-                ),
-              ),
-            ),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(AppRadius.sm),
-              child: MusicCoverImage(
-                url: song.coverUrl,
-                songId: song.id,
-                mediaStoreId: song.mediaStoreId,
-                width: 44,
-                height: 44,
-                fit: BoxFit.cover,
-                errorWidget: Container(
-                  width: 44,
-                  height: 44,
-                  color: colors.surfaceVariant,
-                  child: Icon(
-                    Icons.music_note,
-                    size: 20,
-                    color: colors.textHint,
+class _RankRowState extends ConsumerState<_RankRow> {
+  bool _hovered = false;
+
+  void _play() {
+    PlaybackContext.instance.set(
+      widget.item.sourceType,
+      id: widget.item.sourceId,
+      name: widget.item.sourceName,
+    );
+    ref
+        .read(playbackControllerProvider.notifier)
+        .setQueue(widget.queue, startIndex: widget.index);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = ref.watch(themeColorsProvider);
+    final item = widget.item;
+    final song = item.song;
+    final scale = MediaQuery.textScalerOf(context).scale(1);
+
+    final rowHeight = math.max(52.0, 36 * scale + 16);
+    final ratio = widget.maxCount > 0
+        ? (item.playCount / widget.maxCount).clamp(0.0, 1.0)
+        : 0.0;
+    final isDark =
+        ThemeData.estimateBrightnessForColor(colors.background) ==
+        Brightness.dark;
+    // 柱形颜色：深色主题比背景浅一点，浅色主题比背景深一点。
+    final barColor = isDark
+        ? Color.alphaBlend(
+            Colors.white.withValues(alpha: 0.07),
+            colors.background,
+          )
+        : Color.alphaBlend(
+            Colors.black.withValues(alpha: 0.06),
+            colors.background,
+          );
+    final hoverColor = isDark
+        ? Colors.white.withValues(alpha: 0.05)
+        : Colors.black.withValues(alpha: 0.04);
+
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: _play,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 140),
+          margin: const EdgeInsets.symmetric(vertical: 2),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: _hovered ? hoverColor : Colors.transparent,
+            borderRadius: BorderRadius.circular(AppRadius.md),
+          ),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 30,
+                child: Text(
+                  '${widget.rank}',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: widget.rank <= 3 ? colors.primary : colors.textHint,
                   ),
                 ),
               ),
-            ),
-            const SizedBox(width: AppSpacing.md),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    song.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 14, color: colors.textPrimary),
+              const SizedBox(width: 4),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(AppRadius.sm),
+                child: MusicCoverImage(
+                  url: song.coverUrl,
+                  songId: song.id,
+                  mediaStoreId: song.mediaStoreId,
+                  width: 48,
+                  height: 48,
+                  fit: BoxFit.cover,
+                  errorWidget: Container(
+                    width: 48,
+                    height: 48,
+                    color: colors.surfaceVariant,
+                    child: Icon(
+                      Icons.music_note,
+                      size: 20,
+                      color: colors.textHint,
+                    ),
                   ),
-                  const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(3),
-                          child: Stack(
-                            children: [
-                              Container(
-                                height: 6,
-                                color: colors.surfaceVariant,
+                ),
+              ),
+              const SizedBox(width: AppSpacing.md),
+              Expanded(
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final barWidth = math.max(
+                      56.0,
+                      constraints.maxWidth * ratio,
+                    );
+                    return SizedBox(
+                      height: rowHeight,
+                      child: Stack(
+                        alignment: Alignment.centerLeft,
+                        children: [
+                          AnimatedContainer(
+                            duration: const Duration(milliseconds: 140),
+                            width: barWidth,
+                            height: rowHeight,
+                            decoration: BoxDecoration(
+                              color: _hovered
+                                  ? Color.alphaBlend(hoverColor, barColor)
+                                  : barColor,
+                              borderRadius: BorderRadius.circular(AppRadius.xs),
+                            ),
+                          ),
+                          Positioned.fill(
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
                               ),
-                              FractionallySizedBox(
-                                widthFactor: ratio.clamp(0.02, 1.0),
-                                child: Container(
-                                  height: 6,
-                                  decoration: BoxDecoration(
-                                    gradient: LinearGradient(
-                                      colors: [
-                                        colors.primary,
-                                        colors.primary.withValues(alpha: 0.45),
-                                      ],
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    song.title,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w500,
+                                      color: colors.textPrimary,
                                     ),
                                   ),
-                                ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    song.artist,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: colors.textSecondary,
+                                    ),
+                                  ),
+                                ],
                               ),
-                            ],
+                            ),
                           ),
-                        ),
+                        ],
                       ),
-                      const SizedBox(width: AppSpacing.sm),
-                      Text(
-                        context.tr('${item.playCount} 次'),
-                        style: TextStyle(fontSize: 11, color: colors.textHint),
-                      ),
-                    ],
-                  ),
-                ],
+                    );
+                  },
+                ),
               ),
-            ),
-          ],
+              const SizedBox(width: AppSpacing.md),
+              SizedBox(
+                width: 56,
+                child: Text(
+                  context.tr('${item.playCount} 次'),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.right,
+                  style: TextStyle(fontSize: 12, color: colors.textSecondary),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

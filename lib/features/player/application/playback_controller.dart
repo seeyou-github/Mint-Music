@@ -27,6 +27,7 @@ bool _hasPlayableUrl(String? url) => url != null && url.isNotEmpty;
 
 final playbackControllerProvider =
     StateNotifierProvider<PlaybackController, PlaybackState>((ref) {
+      var disposed = false;
       final audioHandler = ref.watch(audioHandlerProvider);
       final musicSourceManager = ref.watch(musicSourceManagerProvider);
       final controller = PlaybackController(
@@ -80,11 +81,16 @@ final playbackControllerProvider =
       };
       controller.onListenEnded = (song, listenedMs) {
         unawaited(
-          recentRepo.recordListen(
-            songId: song.id,
-            listenedMs: listenedMs,
-            durationMs: song.duration * 1000,
-          ),
+          recentRepo
+              .recordListen(
+                songId: song.id,
+                listenedMs: listenedMs,
+                durationMs: song.duration * 1000,
+              )
+              .then((_) {
+                // 退出应用时会结算最后一首歌，此时 provider 已经销毁。
+                if (!disposed) ref.invalidate(playbackStatsProvider);
+              }),
         );
       };
 
@@ -141,7 +147,10 @@ final playbackControllerProvider =
             debugPrint('[PlaybackController] settingsService error: $e');
           });
 
-      ref.onDispose(() => controller.dispose());
+      ref.onDispose(() {
+        disposed = true;
+        controller.dispose();
+      });
       return controller;
     });
 
@@ -249,6 +258,10 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   /// 保持 true，seek(0) 后会错误地发出 playing=true 事件）。
   /// 带一个微任务周期后由 _playerStateSub 或 next() 清除。
   bool _justCompleted = false;
+
+  /// 当前这首歌是否已经在「自然播完」时按整首时长结算过，
+  /// 避免随后 playSongAt 里的 _finalizeListenSession 再记一次。
+  bool _completedListenCounted = false;
 
   /// CeruMusic 风格的自动下一首防重入标志。
   /// completed 事件中设为 true，Future.microtask 排空后执行 next()
@@ -562,6 +575,9 @@ class PlaybackController extends StateNotifier<PlaybackState> {
       } else if (processingState == ProcessingState.completed) {
         debugPrint('[PlaybackController] 歌曲播放完成');
         _justCompleted = true;
+        // 换队列期间收到的 completed 属于上一首，setQueue 已经结算过，
+        // 这里不再重复记录。
+        if (!_settingQueue) _recordCompletedListen();
         state = state.copyWith(isPlaying: false, isLoading: false);
         // 使用 Future.microtask 延迟 next() 到所有 pending 的
         // playerStateStream 事件（idle/loading 等）处理完毕之后。
@@ -620,6 +636,11 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   /// 用「切歌时的播放位置」当实际收听时长：整首听完 ≈ 歌曲时长，
   /// 中途切歌就是听到哪儿算哪儿。
   void _finalizeListenSession() {
+    if (_completedListenCounted) {
+      // 已经按整首时长结算过，这次只清理标记，等下一首开始时重新计数。
+      _completedListenCounted = false;
+      return;
+    }
     final song = state.currentSong;
     if (song == null) return;
     final listened = state.position.inMilliseconds;
@@ -627,7 +648,21 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     onListenEnded?.call(song, listened);
   }
 
-  Future<void> playSongAt(int index) async {
+  /// 自然播完时结算整首：此时 position 可能已被播放器复位为 0，
+  /// 直接用歌曲时长记录，保证单曲播完停住也能写进统计。
+  void _recordCompletedListen() {
+    if (_completedListenCounted) return;
+    final song = state.currentSong;
+    if (song == null) return;
+    final listened = song.duration > 0
+        ? song.duration * 1000
+        : state.position.inMilliseconds;
+    if (listened < 1000) return;
+    _completedListenCounted = true;
+    onListenEnded?.call(song, listened);
+  }
+
+  Future<void> playSongAt(int index, {bool finalizePrevious = true}) async {
     if (index < 0 || index >= state.queue.length) return;
 
     _cancelPendingAutoNext();
@@ -650,7 +685,8 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     if (_currentPlayRequestId != requestId) return;
 
     // 切歌前先把上一首的收听时长结算掉，再记录这首歌的播放。
-    _finalizeListenSession();
+    // setQueue 会先重置 position / currentSong，因此它传入 false 并自己提前结算。
+    if (finalizePrevious) _finalizeListenSession();
     onPlayStarted?.call(song);
 
     _errorListenerSub?.cancel();
@@ -1165,6 +1201,8 @@ class PlaybackController extends StateNotifier<PlaybackState> {
         debugPrint('[PlaybackController] singleLoop: 重新播放当前歌曲');
         await _audioHandler.seek(Duration.zero);
         await _audioHandler.play();
+        // 单曲循环重新开始，允许下一次播完继续结算。
+        _completedListenCounted = false;
         return;
       }
 
@@ -1224,6 +1262,8 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     _cancelPendingAutoNext();
     // 用户主动播放，清除 completed 标记
     _justCompleted = false;
+    // 播完后用户又点了播放：这是一次新的收听，重新允许结算。
+    _completedListenCounted = false;
     await _audioHandler.play();
     // 遵循 CeruMusic：不乐观设 isPlaying=true。
     // 由 _playerStateSub 的 ready(playing=true) 或微任务兜底同步。
@@ -1306,6 +1346,10 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     _settingQueue = true;
     final index = startIndex.clamp(0, songs.length - 1);
 
+    // 先按「上一首的当前位置」结算收听时长，再重置状态；
+    // 否则 position 已被清零，统计事件会永远记不到。
+    _finalizeListenSession();
+
     // 更新队列状态
     state = state.copyWith(
       queue: List.from(songs),
@@ -1318,7 +1362,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     _settingQueue = false;
 
     // 播放指定索引的歌曲
-    await playSongAt(index);
+    await playSongAt(index, finalizePrevious: false);
   }
 
   /// 添加到队列末尾（照搬 CeruMusic addToPlaylistEnd）

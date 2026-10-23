@@ -128,15 +128,17 @@ class RecentlyPlayedRepository {
     PlaybackStatsGranularity granularity = PlaybackStatsGranularity.day,
   }) async {
     final events = <({DateTime at, int listenedMs})>[];
-    var songCount = 0;
+    final songIds = <String>{};
     try {
       final db = await AppDatabase.cacheDatabase();
       final rows = await db.query(
         'play_events',
-        columns: ['played_at', 'listened_ms'],
+        columns: ['song_id', 'played_at', 'listened_ms'],
         orderBy: 'played_at ASC',
       );
       for (final row in rows) {
+        final songId = '${row['song_id'] ?? ''}';
+        if (songId.isNotEmpty) songIds.add(songId);
         events.add((
           at: DateTime.fromMillisecondsSinceEpoch(
             (row['played_at'] as num?)?.toInt() ?? 0,
@@ -144,14 +146,23 @@ class RecentlyPlayedRepository {
           listenedMs: (row['listened_ms'] as num?)?.toInt() ?? 0,
         ));
       }
-      final distinct = await db.rawQuery(
-        'SELECT COUNT(DISTINCT song_id) AS c FROM play_events',
-      );
-      songCount = distinct.isEmpty
-          ? 0
-          : (distinct.first['c'] as num?)?.toInt() ?? 0;
     } catch (e) {
       debugPrint('[RecentlyPlayed] 读取播放事件失败: $e');
+    }
+
+    // 还没落盘的播放事件也要算进去：刚听完歌就打开「统计」时，
+    // 数据库里可能还是旧的（攒批写盘有 15 秒窗口）。
+    for (final event in List<Map<String, Object?>>.of(_pendingEvents)) {
+      final listenedMs = (event['listened_ms'] as num?)?.toInt() ?? 0;
+      if (listenedMs <= 0) continue;
+      final songId = '${event['song_id'] ?? ''}';
+      if (songId.isNotEmpty) songIds.add(songId);
+      events.add((
+        at: DateTime.fromMillisecondsSinceEpoch(
+          (event['played_at'] as num?)?.toInt() ?? 0,
+        ),
+        listenedMs: listenedMs,
+      ));
     }
 
     var totalMs = 0;
@@ -162,7 +173,7 @@ class RecentlyPlayedRepository {
     return PlaybackStats(
       totalListenedMs: totalMs,
       totalPlays: events.length,
-      songCount: songCount,
+      songCount: songIds.length,
       buckets: _buildBuckets(events, granularity),
     );
   }

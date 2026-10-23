@@ -83,7 +83,7 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
   Future<void> _playAll(List<Song> songs) async {
     if (songs.isEmpty) return;
     PlaybackContext.instance.set(
-      _isArtist ? PlaybackSourceType.unknown : PlaybackSourceType.album,
+      _isArtist ? PlaybackSourceType.artist : PlaybackSourceType.album,
       id: widget.collection.id,
       name: widget.collection.title,
     );
@@ -353,7 +353,7 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
           isPlaying: currentSongId == song.id,
           onPlayTap: () async {
             PlaybackContext.instance.set(
-              _isArtist ? PlaybackSourceType.unknown : PlaybackSourceType.album,
+              _isArtist ? PlaybackSourceType.artist : PlaybackSourceType.album,
               id: widget.collection.id,
               name: widget.collection.title,
             );
