@@ -466,6 +466,7 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
           song: song,
           index: index,
           isPlaying: currentSongId == song.id,
+          showPlayedTag: true,
           onPlayTap: () async {
             PlaybackContext.instance.set(
               _isArtist ? PlaybackSourceType.artist : PlaybackSourceType.album,

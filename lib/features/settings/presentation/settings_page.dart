@@ -1868,6 +1868,7 @@ class _PlaybackContent extends ConsumerWidget {
   ) {
     final autoQualityDowngrade = ref.watch(autoQualityDowngradeProvider);
     final autoSwitchSource = ref.watch(autoSwitchSourceProvider);
+    final markPlayedStatus = ref.watch(markPlayedStatusProvider);
     return SettingGroup(
       title: '播放设置',
       colors: colors,
@@ -1899,6 +1900,24 @@ class _PlaybackContent extends ConsumerWidget {
               autoSwitchSourceProvider,
               v,
               (s) => s.setAutoSwitchSource(v),
+            ),
+            activeTrackColor: colors.primary.withValues(alpha: 0.3),
+            activeThumbColor: colors.primary,
+          ),
+          colors: colors,
+        ),
+        SettingDivider(colors: colors),
+        SettingRow(
+          icon: Icons.playlist_add_check,
+          title: '标记歌曲播放状态',
+          subtitle: '记录每首歌的播放进度，歌曲列表显示「已听 N%」',
+          trailing: Switch(
+            value: markPlayedStatus,
+            onChanged: (v) => _persistBool(
+              context,
+              markPlayedStatusProvider,
+              v,
+              (s) => s.setMarkPlayedStatus(v),
             ),
             activeTrackColor: colors.primary.withValues(alpha: 0.3),
             activeThumbColor: colors.primary,

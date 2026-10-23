@@ -250,6 +250,11 @@ class SettingsService {
   Future<void> setAutoSwitchSource(bool v) =>
       _prefs.setBool('auto_switch_source', v);
 
+  // -- 标记歌曲播放状态（已听标签，默认开启）--
+  bool getMarkPlayedStatus() => _prefs.getBool('mark_played_status') ?? true;
+  Future<void> setMarkPlayedStatus(bool v) =>
+      _prefs.setBool('mark_played_status', v);
+
   // -- 备份还原 / WebDAV --
   String getWebDavConfigJson() => _prefs.getString('webdav_config') ?? '';
   Future<void> setWebDavConfigJson(String v) =>

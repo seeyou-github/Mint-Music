@@ -16,6 +16,7 @@ import '../../plugin/application/plugin_providers.dart';
 import '../../plugin/domain/plugin_types.dart';
 import '../../settings/application/settings_providers.dart';
 import 'auto_switch_source_service.dart';
+import 'play_progress_providers.dart';
 import 'playback_context.dart';
 import '../../library/application/recently_played_providers.dart';
 import '../../local/application/local_providers.dart';
@@ -88,6 +89,18 @@ final playbackControllerProvider =
                 // 退出应用时会结算最后一首歌，此时 provider 已经销毁。
                 if (!disposed) ref.invalidate(playbackStatsProvider);
               }),
+        );
+      };
+
+      // 「已听 / 已听 N%」：播放位置按 1% 粒度记进临时库。
+      // 开关在「设置 - 播放设置 - 标记歌曲播放状态」，关掉就完全不记录。
+      final playedProgress = ref.read(playedProgressProvider.notifier);
+      controller.onProgress = (song, positionMs, durationMs) {
+        if (!ref.read(markPlayedStatusProvider)) return;
+        playedProgress.record(
+          songId: song.id,
+          positionMs: positionMs,
+          durationMs: durationMs,
         );
       };
 
@@ -281,6 +294,9 @@ class PlaybackController extends StateNotifier<PlaybackState> {
 
   /// 一段收听结束（切歌 / 退出）时回调：实际收听时长 + 歌曲总时长。
   void Function(Song song, int listenedMs)? onListenEnded;
+
+  /// 播放位置变化时回调（写「已听 N%」进度）。位置 / 时长单位均为毫秒。
+  void Function(Song song, int positionMs, int durationMs)? onProgress;
 
   int _currentPlayRequestId = 0;
   int? _qualitySwitchRequestId;
@@ -570,6 +586,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
           _lastEmittedPosition = position;
           state = state.copyWith(position: position);
         }
+        _reportProgress(position);
       }
     });
     _bufferedSub = _audioHandler.bufferedPositionStream.listen((buffered) {
@@ -736,6 +753,20 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   static const Duration _audioSetTimeout = Duration(seconds: 10);
   static const Duration _musicSourceReadyTimeout = Duration(seconds: 12);
 
+  /// 上报当前播放位置（用于「已听 N%」标签）。
+  ///
+  /// 进度按 1% 粒度记录（由 provider 侧节流），这里只负责把位置和总时长
+  /// 换算成毫秒传出去；总时长取播放器给的，拿不到时退回歌曲自带的时长。
+  void _reportProgress(Duration position) {
+    final song = state.currentSong;
+    if (song == null || !mounted) return;
+    final durationMs = state.duration.inMilliseconds > 0
+        ? state.duration.inMilliseconds
+        : song.duration * 1000;
+    if (durationMs <= 0) return;
+    onProgress?.call(song, position.inMilliseconds, durationMs);
+  }
+
   /// 播放器状态 → 计时开关。
   ///
   /// `playing` 在缓冲 / 加载时也可能为 true（playWhenReady），所以必须同时
@@ -780,7 +811,12 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     final listened = _listenWatch.elapsedMilliseconds;
     _listenWatch.reset();
     final song = state.currentSong;
-    if (song == null || listened < 1000) return;
+    if (song == null) return;
+    // 整首播完 = 进度 100%，界面显示「已听」。
+    if (song.duration > 0) {
+      onProgress?.call(song, song.duration * 1000, song.duration * 1000);
+    }
+    if (listened < 1000) return;
     onListenEnded?.call(song, listened);
   }
 

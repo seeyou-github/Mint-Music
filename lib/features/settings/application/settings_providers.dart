@@ -34,6 +34,12 @@ final rememberProgressProvider = StateProvider<bool>((ref) => false);
 /// 无论开关如何，播放失败都不会自动播放下一首。
 final autoSwitchSourceProvider = StateProvider<bool>((ref) => false);
 
+/// 是否记录并显示「已听 / 已听 N%」标记（默认开启）。
+///
+/// 开启后播放过的歌曲会按 1% 粒度把进度写进临时库，
+/// 歌曲列表在时长左侧显示已听进度；关闭后不再记录也不再显示。
+final markPlayedStatusProvider = StateProvider<bool>((ref) => true);
+
 // -- download --
 final downloadDirProvider = StateProvider<String>(
   (ref) => defaultDownloadDirSync(),
@@ -500,6 +506,7 @@ final settingsInitProvider = FutureProvider<void>((ref) async {
   ref.read(autoPlayProvider.notifier).state = svc.getAutoPlay();
   ref.read(rememberProgressProvider.notifier).state = svc.getRememberProgress();
   ref.read(autoSwitchSourceProvider.notifier).state = svc.getAutoSwitchSource();
+  ref.read(markPlayedStatusProvider.notifier).state = svc.getMarkPlayedStatus();
   ref.read(notificationEnabledProvider.notifier).state = svc
       .getNotificationEnabled();
   ref.read(defaultSourceIdSettingProvider.notifier).state = svc

@@ -1281,6 +1281,7 @@ class _LocalPlaylistDetailPageState
                   song: song,
                   index: index,
                   isPlaying: isPlaying,
+                  showPlayedTag: true,
                   selectionMode: selecting,
                   selected: _selection.isSelected(song.id),
                   onSelectionToggle: (s) => _selection.toggle(s.id),

@@ -4,7 +4,9 @@ import 'package:cached_network_image/cached_network_image.dart';
 import '../../core/l10n/l10n.dart';
 import '../../core/theme/app_spacing.dart';
 import '../../core/theme/theme_provider.dart';
+import '../../features/player/application/play_progress_providers.dart';
 import '../../features/player/domain/models/song.dart';
+import '../../features/settings/application/settings_providers.dart';
 import '../../shared/services/app_image_cache.dart';
 import '../../features/plugin/application/music_source_manager.dart';
 import '../../features/plugin/domain/plugin_types.dart';
@@ -19,6 +21,7 @@ class SongListItem extends ConsumerWidget {
   final bool showIndex;
   final bool showCover;
   final bool showQuality;
+
   /// 是否在歌曲名下方显示音源名称。
   ///
   /// 默认关闭：各处的歌曲列表（歌单、榜单、我的收藏、收藏的歌单、搜索结果、
@@ -26,6 +29,12 @@ class SongListItem extends ConsumerWidget {
   final bool showSource;
   final bool showDuration;
   final bool showMenuButton;
+
+  /// 是否在时长左侧显示「已听 / 已听 N%」标签。
+  ///
+  /// 只在搜索、歌单、专辑 / 作者、榜单等浏览类列表里打开；
+  /// 下载管理等列表不需要这个标记。
+  final bool showPlayedTag;
   final VoidCallback? onTap;
   final VoidCallback? onPlayTap;
   final VoidCallback? onMenuTap;
@@ -63,6 +72,7 @@ class SongListItem extends ConsumerWidget {
     this.showSource = false,
     this.showDuration = true,
     this.showMenuButton = true,
+    this.showPlayedTag = false,
     this.onTap,
     this.onPlayTap,
     this.onMenuTap,
@@ -120,6 +130,8 @@ class SongListItem extends ConsumerWidget {
                   if (trailing != null)
                     trailing!
                   else ...[
+                    if (showPlayedTag && !selectionMode)
+                      _buildPlayedTag(colors, context, ref),
                     if (showDuration && !selectionMode) _buildDuration(colors),
                     if (showMenuButton && !selectionMode)
                       _buildMenuButton(colors, context),
@@ -200,7 +212,11 @@ class SongListItem extends ConsumerWidget {
     );
   }
 
-  Widget _buildSongInfo(ThemeColors colors, BuildContext context, WidgetRef ref) {
+  Widget _buildSongInfo(
+    ThemeColors colors,
+    BuildContext context,
+    WidgetRef ref,
+  ) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
@@ -257,7 +273,11 @@ class SongListItem extends ConsumerWidget {
     );
   }
 
-  Widget _buildSourceTag(ThemeColors colors, BuildContext context, WidgetRef ref) {
+  Widget _buildSourceTag(
+    ThemeColors colors,
+    BuildContext context,
+    WidgetRef ref,
+  ) {
     final sourceName = _getSourceName(song.source!, ref);
     return Container(
       margin: const EdgeInsets.only(right: 4),
@@ -276,6 +296,42 @@ class SongListItem extends ConsumerWidget {
       ),
     );
   }
+
+  /// 「已听 / 已听 N%」标签：进度不足 1% 或开关关闭时不显示。
+  Widget _buildPlayedTag(
+    ThemeColors colors,
+    BuildContext context,
+    WidgetRef ref,
+  ) {
+    if (!ref.watch(markPlayedStatusProvider)) return const SizedBox.shrink();
+    // select 只在本行这首歌曲的进度变化时重建，列表其它行不受影响。
+    final ratio = ref.watch(
+      playedProgressProvider.select((map) => map[song.id]),
+    );
+    final label = playedProgressLabel(ratio);
+    if (label == null) return const SizedBox.shrink();
+    final done = (ratio ?? 0) >= 0.999;
+    return Padding(
+      padding: const EdgeInsets.only(left: AppSpacing.sm),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+        decoration: BoxDecoration(
+          color: colors.primary.withValues(alpha: done ? 0.16 : 0.10),
+          borderRadius: BorderRadius.circular(AppRadius.xs),
+        ),
+        child: Text(
+          context.tr(label),
+          style: TextStyle(
+            fontSize: 10,
+            height: 1.2,
+            fontWeight: done ? FontWeight.w600 : FontWeight.w500,
+            color: colors.primary,
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildDuration(ThemeColors colors) {
     if (song.duration <= 0) return const SizedBox.shrink();
     return Padding(

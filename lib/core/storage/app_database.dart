@@ -235,7 +235,8 @@ class AppDatabase {
           );
     return openDatabase(
       path,
-      version: 3,
+      // v4：新增 song_play_progress（已播放进度，用于「已听 N%」标签）。
+      version: 4,
       onConfigure: (db) async {
         await db.execute('PRAGMA journal_mode=WAL');
         // NORMAL：写 WAL 不用每次 fsync，浏览时缓存索引写入不至于卡顿。
@@ -345,6 +346,21 @@ class AppDatabase {
             updated_at INTEGER NOT NULL DEFAULT 0
           )
         ''');
+    // 每首歌一条「已播放进度」：ratio 只增不减，1.0 表示完整听过一遍。
+    // 用于歌曲列表里的「已听 / 已听 N%」标签。
+    await db.execute('''
+          CREATE TABLE IF NOT EXISTS song_play_progress (
+            song_id TEXT PRIMARY KEY,
+            ratio REAL NOT NULL DEFAULT 0,
+            position_ms INTEGER NOT NULL DEFAULT 0,
+            duration_ms INTEGER NOT NULL DEFAULT 0,
+            updated_at INTEGER NOT NULL DEFAULT 0
+          )
+        ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_song_play_progress_time '
+      'ON song_play_progress (updated_at DESC)',
+    );
     await db.execute('''
           CREATE TABLE IF NOT EXISTS playback_state (
             key TEXT PRIMARY KEY,

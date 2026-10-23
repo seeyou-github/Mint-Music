@@ -1133,6 +1133,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           showQuality: true,
           showDuration: true,
           showMenuButton: true,
+          showPlayedTag: true,
           // 正在播放的歌曲高亮显示。
           isPlaying: currentSongId != null && currentSongId == song.id,
           // 主操作为「下一首播放」：插到当前播放歌曲之后，
