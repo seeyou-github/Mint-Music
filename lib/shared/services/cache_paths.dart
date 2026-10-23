@@ -51,10 +51,11 @@ class CachePaths {
     'artwork_cache',
     'covers',
     'image_cache',
+    'image_discovery_cache',
     'audio_cache',
   ];
 
-  /// 按最大缓存大小清理应用自己的缓存子目录（三个目录合计，只删最旧的文件）。
+  /// 按最大缓存大小清理应用自己的缓存子目录（合计，只删最旧的文件）。
   static Future<void> enforceLimit() async {
     final limit = maxBytes;
     if (limit <= 0) return;

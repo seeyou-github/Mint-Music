@@ -822,6 +822,7 @@ class _PlaylistCard extends ConsumerWidget {
                           songId: coverSong?.id,
                           mediaStoreId: coverSong?.mediaStoreId,
                           fit: BoxFit.cover,
+                          useDiscoveryCache: true,
                           errorWidget: Container(
                             color: colors.surfaceVariant,
                             child: Icon(

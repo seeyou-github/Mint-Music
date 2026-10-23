@@ -435,6 +435,7 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
                 width: headerHeight,
                 height: headerHeight,
                 fit: BoxFit.cover,
+                useDiscoveryCache: true,
                 errorWidget: Container(
                   width: headerHeight,
                   height: headerHeight,

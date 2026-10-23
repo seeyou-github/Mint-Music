@@ -362,6 +362,7 @@ class LibraryPage extends ConsumerWidget {
         child: MusicCoverImage(
           url: playlist.coverImgUrl,
           fit: BoxFit.cover,
+          useDiscoveryCache: true,
           errorWidget: Center(
             child: Icon(Icons.music_note, size: 40, color: colors.textHint),
           ),

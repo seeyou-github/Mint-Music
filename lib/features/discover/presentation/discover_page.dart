@@ -813,6 +813,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
                     child: MusicCoverImage(
                       url: playlist.coverUrl,
                       fit: BoxFit.cover,
+                      useDiscoveryCache: true,
                       cacheWidth: 400,
                       cacheHeight: 400,
                       filterQuality: FilterQuality.high,
@@ -993,6 +994,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
                     child: MusicCoverImage(
                       url: board.coverUrl,
                       fit: BoxFit.cover,
+                      useDiscoveryCache: true,
                       errorWidget: Icon(
                         Icons.show_chart,
                         size: 40,

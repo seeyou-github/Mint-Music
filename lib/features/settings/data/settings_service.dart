@@ -411,8 +411,8 @@ class SettingsService {
   /// 清理应用缓存的子目录（不删除用户选择的目录本身）。
   ///
   /// 只清理应用自己创建的 `artwork_cache` / `covers` / `image_cache` /
-  /// `audio_cache`（音频缓存），不会误删用户缓存目录里的其它文件，
-  /// 也不再动系统临时目录。
+  /// `image_discovery_cache` / `audio_cache`（音频缓存），不会误删用户
+  /// 缓存目录里的其它文件，也不再动系统临时目录。
   Future<int> clearCache() async {
     int total = 0;
     final roots = <Directory>[];
@@ -428,6 +428,7 @@ class SettingsService {
       'artwork_cache',
       'covers',
       'image_cache',
+      'image_discovery_cache',
       'audio_cache',
       'lyric_cache',
     ];

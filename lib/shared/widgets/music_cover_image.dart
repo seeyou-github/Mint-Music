@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:collection';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import '../services/cover_cache_service.dart';
+import '../services/discovery_image_cache.dart';
 
 /// 统一的封面图片组件，支持：
 /// - HTTP/HTTPS URL（网络图片）
@@ -23,6 +25,10 @@ class MusicCoverImage extends StatefulWidget {
   final int? cacheHeight;
   final FilterQuality filterQuality;
 
+  /// 歌单 / 榜单封面：网络图片额外写入 `image_discovery_cache` 磁盘缓存，
+  /// 下次启动时优先从磁盘读取，不再重新下载。
+  final bool useDiscoveryCache;
+
   const MusicCoverImage({
     super.key,
     this.url,
@@ -37,6 +43,7 @@ class MusicCoverImage extends StatefulWidget {
     this.cacheWidth,
     this.cacheHeight,
     this.filterQuality = FilterQuality.medium,
+    this.useDiscoveryCache = false,
   });
 
   /// 封面被改动（编辑标签页上传 / 删除封面）后调用。
@@ -176,6 +183,10 @@ class _MusicCoverImageState extends State<MusicCoverImage> {
     }
 
     // 网络 URL
+    if (widget.useDiscoveryCache) {
+      _loadFromDiscoveryCache(url, cacheKey);
+      return;
+    }
     _fetchImage(url, cacheKey);
   }
 
@@ -210,6 +221,22 @@ class _MusicCoverImageState extends State<MusicCoverImage> {
       debugPrint('[MusicCoverImage] 本地文件读取失败: $path - $e');
     }
     _onError(cacheKey);
+  }
+
+  Future<void> _loadFromDiscoveryCache(String url, String cacheKey) async {
+    final bytes = await DiscoveryImageCache.read(url);
+    if (bytes != null && bytes.isNotEmpty) {
+      _putCache(cacheKey, bytes);
+      if (mounted && _lastKey == cacheKey) {
+        setState(() {
+          _bytes = bytes;
+          _loading = false;
+        });
+      }
+      _notifyPending(cacheKey, bytes);
+      return;
+    }
+    await _fetchImage(url, cacheKey);
   }
 
   void _loadFromCoverCache() {
@@ -264,6 +291,11 @@ class _MusicCoverImageState extends State<MusicCoverImage> {
     _cacheBytes += bytes.length;
   }
 
+  void _cacheDiscoveryImage(String cacheKey, Uint8List bytes) {
+    if (!widget.useDiscoveryCache) return;
+    unawaited(DiscoveryImageCache.write(cacheKey, bytes));
+  }
+
   void _notifyPending(String key, Uint8List bytes) {
     final callbacks = _pending.remove(key);
     if (callbacks != null) {
@@ -313,6 +345,7 @@ class _MusicCoverImageState extends State<MusicCoverImage> {
       }
 
       _putCache(cacheKey, bytes);
+      _cacheDiscoveryImage(cacheKey, bytes);
 
       if (mounted && _lastKey == cacheKey) {
         setState(() {
@@ -333,6 +366,7 @@ class _MusicCoverImageState extends State<MusicCoverImage> {
           if (response.data != null && response.data!.length >= 100) {
             final bytes = Uint8List.fromList(response.data!);
             _putCache(cacheKey, bytes);
+            _cacheDiscoveryImage(cacheKey, bytes);
             if (mounted && _lastKey == cacheKey) {
               setState(() {
                 _bytes = bytes;
