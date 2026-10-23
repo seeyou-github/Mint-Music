@@ -49,9 +49,9 @@ class AppDatabase {
 
   /// 把 WAL 落盘（checkpoint）。
   ///
-  /// Windows 关闭应用时是直接结束进程，不会给 Dart 任何收尾的机会，
-  /// 所以关键数据写完后要显式 checkpoint 一次，否则进程被强杀时
-  /// WAL 里还没落盘的数据会一起丢掉（表现为「刚写完就退出，重启后没了」）。
+  /// 正常关窗时 Dart 会先 flush 再 checkpoint；但断电、崩溃或在任务管理器里
+  /// 结束进程仍然不会给应用收尾机会，所以关键数据写完后仍要显式 checkpoint
+  /// 一次，避免 WAL 里还没落盘的数据丢失（表现为「刚写完就退出，重启后没了」）。
   static Future<void> checkpoint() async {
     try {
       final db = await cacheDatabase();
@@ -240,7 +240,7 @@ class AppDatabase {
         await db.execute('PRAGMA journal_mode=WAL');
         // NORMAL：写 WAL 不用每次 fsync，浏览时缓存索引写入不至于卡顿。
         // 关键数据（本地歌曲 / 最近播放 / 搜索历史）写完后会显式
-        // checkpoint 一次（见 [checkpoint]），保证进程被强杀也不丢。
+        // checkpoint 一次（见 [checkpoint]），进程被强杀时也能兜底。
         await db.execute('PRAGMA synchronous=NORMAL');
       },
       onCreate: (db, version) async {

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui' show AppExitResponse;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:just_audio_media_kit/just_audio_media_kit.dart';
@@ -104,6 +105,9 @@ void main() async {
 ///
 /// 本地歌曲列表、最近播放、下载列表、搜索历史这些数据在运行期只在内存里改，
 /// 攒够一批才写进数据库；如果不在这里强制落盘，进程被杀就会丢掉最近的一段。
+///
+/// 桌面端关窗时，Flutter 引擎会先发 `System.requestAppExit` 等待 Dart 确认，
+/// [didRequestAppExit] 利用这段时间完成落盘，之后再让窗口销毁。
 class _AppLifecycleFlush extends StatefulWidget {
   const _AppLifecycleFlush({required this.child});
 
@@ -135,6 +139,19 @@ class _AppLifecycleFlushState extends State<_AppLifecycleFlush>
         state == AppLifecycleState.hidden) {
       unawaited(AppDatabase.flushAll());
     }
+  }
+
+  @override
+  Future<AppExitResponse> didRequestAppExit() async {
+    // 设上限，避免数据库异常时卡住关窗；超时后仍然正常退出。
+    try {
+      await AppDatabase.flushAll()
+          .then((_) => AppDatabase.checkpoint())
+          .timeout(const Duration(seconds: 2));
+    } catch (e) {
+      debugPrint('[App] 退出前落盘失败或超时: $e');
+    }
+    return AppExitResponse.exit;
   }
 
   @override

@@ -207,6 +207,12 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  // 桌面歌词是独立的顶层窗口，主窗口销毁时一并清理，避免进程退出前残留。
+  auto& desktop_lyric = mintmusic::DesktopLyricWindow::Instance();
+  if (desktop_lyric.IsShowing()) {
+    desktop_lyric.Hide();
+  }
+
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }
@@ -355,8 +361,10 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               WPARAM const wparam,
                               LPARAM const lparam) noexcept {
   // 退出前先把窗口尺寸落盘，下次启动按上次的尺寸恢复。
-  // 之后继续交给默认窗口过程处理，走正常的 WM_DESTROY -> PostQuitMessage
-  // 退出流程。
+  //
+  // 之后交给 Flutter 引擎处理 WM_CLOSE：引擎会向 Dart 发送
+  // System.requestAppExit 并等待确认，Dart 侧完成数据落盘后返回 exit，
+  // 引擎再销毁窗口，走正常的 WM_DESTROY -> PostQuitMessage 退出流程。
   if (message == WM_CLOSE) {
     SaveWindowSize();
   }
