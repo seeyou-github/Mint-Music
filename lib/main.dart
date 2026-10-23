@@ -11,11 +11,9 @@ import 'core/theme/app_font_manager.dart';
 import 'core/theme/app_typography.dart';
 import 'features/settings/application/font_providers.dart';
 import 'features/settings/application/settings_providers.dart';
-import 'shared/services/amll_toggle_service.dart';
 import 'shared/services/app_image_cache.dart';
 import 'shared/services/cache_paths.dart';
 import 'features/player/domain/services/lyric_cache.dart';
-import 'features/player/presentation/widgets/amll_lyric_player.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -61,20 +59,15 @@ void main() async {
     print('>>> main: 堆栈: $stack');
   }
 
-  // 初始化 AMLL 开关
-  await AmllToggleService().loadFromPrefs();
-  print('>>> main: AMLL toggle loaded: ${AmllToggleService().enabled}');
-
   // 加载导入的字体文件，并恢复上次选择的应用字体。
   // 没有选择过就用内置的思源宋体。
   unawaited(
     AppFontManager.instance.load().then((_) {
       final selected = AppFontManager.instance.selectedFamily;
       container.read(appFontSelectedProvider.notifier).state = selected;
-      AppTypography.fontFamily =
-          (selected == null || selected.isEmpty)
-              ? AppTypography.defaultFontFamily
-              : selected;
+      AppTypography.fontFamily = (selected == null || selected.isEmpty)
+          ? AppTypography.defaultFontFamily
+          : selected;
       print('>>> main: 应用字体 -> ${AppTypography.fontFamily}');
     }),
   );
@@ -82,8 +75,7 @@ void main() async {
   // 缓存目录：封面 / 网络图片等缓存统一写到「设置 - 存储管理」里指定的目录。
   try {
     CachePaths.configure(container.read(cacheDirProvider));
-    CachePaths.maxBytes =
-        container.read(maxCacheSizeMbProvider) * 1024 * 1024;
+    CachePaths.maxBytes = container.read(maxCacheSizeMbProvider) * 1024 * 1024;
     await AppImageCache.configure();
     unawaited(CachePaths.enforceLimit());
     print('>>> main: 缓存目录 -> ${CachePaths.root ?? "应用默认缓存目录"}');
@@ -93,17 +85,6 @@ void main() async {
 
   // 旧版把歌词缓存成「一首歌一个 JSON 文件」，现在搬进临时库。
   unawaited(LyricCache.migrateLegacyFiles());
-
-  // Route preload is an idle-time optimization controlled by settings. It
-  // only prepares the cached AMLL document; no WebView or audio resource is
-  // created until the lyric route is actually shown.
-  // Windows 端不启用 AMLL（WebView 合成异常），无需预热。
-  if (container.read(routePreloadEnabledProvider) &&
-      AmllToggleService.isPlatformSupported) {
-    unawaited(AmllLyricPlayerState.prewarm());
-    // 预热字体缓存：在后台完成 base64 编码，避免首次打开歌词页时阻塞 UI
-    unawaited(AmllLyricPlayerState.prewarmFonts('lyricfont'));
-  }
 
   // Windows 任务栏缩略图工具栏（悬停任务栏图标时缩略图下方显示播放等按钮）。
   if (Platform.isWindows) {

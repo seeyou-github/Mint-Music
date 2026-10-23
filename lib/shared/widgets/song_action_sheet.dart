@@ -20,7 +20,6 @@ import '../../features/download/application/download_providers.dart';
 import '../../features/settings/application/font_providers.dart';
 import '../../features/settings/application/settings_providers.dart';
 import '../../features/settings/data/settings_service.dart';
-import '../services/amll_toggle_service.dart';
 import '../../features/plugin/application/plugin_providers.dart';
 import 'music_cover_image.dart';
 
@@ -239,35 +238,36 @@ class SongActionSheet extends ConsumerStatefulWidget {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                const SizedBox(height: 12),
-                Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(2),
+                  const SizedBox(height: 12),
+                  Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
                   ),
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  ctx.tr('选择下载音质'),
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.white,
+                  const SizedBox(height: 16),
+                  Text(
+                    ctx.tr('选择下载音质'),
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 8),
-                ...qualities.map((q) => _buildQualityItem(ctx, q, song)),
-                const SizedBox(height: 16),
-              ],
+                  const SizedBox(height: 8),
+                  ...qualities.map((q) => _buildQualityItem(ctx, q, song)),
+                  const SizedBox(height: 16),
+                ],
+              ),
             ),
-          ),
           ),
         ),
       ),
     );
   }
+
   static Widget _buildQualityItem(BuildContext ctx, String q, Song song) {
     return InkWell(
       // startDownload 内部会关闭这个弹层，这里不要再 pop 一次。
@@ -313,7 +313,6 @@ class SongActionSheet extends ConsumerStatefulWidget {
     );
   }
 
-
   /// 开始下载（静态版，供播放页的下载按钮复用）。
   static Future<void> startDownload(
     BuildContext context,
@@ -324,9 +323,9 @@ class SongActionSheet extends ConsumerStatefulWidget {
     final messenger = ScaffoldMessenger.of(context);
     Navigator.pop(context);
     try {
-      final repo = ProviderScope.containerOf(context).read(
-        downloadRepositoryProvider,
-      );
+      final repo = ProviderScope.containerOf(
+        context,
+      ).read(downloadRepositoryProvider);
       await repo.addTask(song: song, quality: quality);
       // onTaskStarted 回调会显示 "开始下载 xxx" 通知
     } catch (e) {
@@ -357,7 +356,6 @@ class SongActionSheet extends ConsumerStatefulWidget {
       );
     }
   }
-
 
   @override
   ConsumerState<SongActionSheet> createState() => _SongActionSheetState();
@@ -668,7 +666,6 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
     );
   }
 
-
   Widget _buildFavoriteItem(ThemeColors colors) {
     return InkWell(
       onTap: () {
@@ -753,16 +750,12 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                 isSelected
                     ? Icons.radio_button_checked
                     : Icons.radio_button_unchecked,
-                color: isSelected
-                    ? AppColors.primary
-                    : AppColors.textSecondary,
+                color: isSelected ? AppColors.primary : AppColors.textSecondary,
               ),
               title: Text(
                 label,
                 style: TextStyle(
-                  color: isSelected
-                      ? AppColors.primary
-                      : AppColors.textPrimary,
+                  color: isSelected ? AppColors.primary : AppColors.textPrimary,
                 ),
               ),
               onTap: () {
@@ -902,11 +895,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
 
   /// 歌词字体的显示名。
   String _lyricFontLabel(String family) {
-    const map = {
-      '': '系统默认',
-      'lyricfont': '阿里巴巴圆润体',
-      'PingFangSC-Semibold': '苹方-简 中粗体',
-    };
+    const map = {'': '系统默认', 'lyricfont': '阿里巴巴圆润体'};
     final label = map[family];
     if (label != null) return label;
     for (final font in AppFontManager.bundledFonts) {
@@ -960,18 +949,10 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
     BuildContext ctx,
     ProviderContainer container,
   ) {
-    final fonts = ['系统默认', '阿里巴巴圆润体', '苹方-简 中粗体'];
+    final fonts = ['系统默认', '阿里巴巴圆润体'];
     final current = container.read(lyricFontFamilyProvider);
-    final map = {
-      '': '系统默认',
-      'lyricfont': '阿里巴巴圆润体',
-      'PingFangSC-Semibold': '苹方-简 中粗体',
-    };
-    final revMap = {
-      '系统默认': '',
-      '阿里巴巴圆润体': 'lyricfont',
-      '苹方-简 中粗体': 'PingFangSC-Semibold',
-    };
+    final map = {'': '系统默认', 'lyricfont': '阿里巴巴圆润体'};
+    final revMap = {'系统默认': '', '阿里巴巴圆润体': 'lyricfont'};
     // 「设置 - 外观设置 - 应用字体」里导入的字体也出现在字体列表中。
     final importedFonts = container.read(appFontsProvider);
     for (final font in importedFonts) {
@@ -1007,11 +988,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                 ),
               ),
               trailing: f == currentLabel
-                  ? const Icon(
-                      Icons.check,
-                      size: 18,
-                      color: AppColors.primary,
-                    )
+                  ? const Icon(Icons.check, size: 18, color: AppColors.primary)
                   : null,
               onTap: () async {
                 final val = revMap[f]!;
@@ -1121,63 +1098,65 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                  const SizedBox(height: 8),
-                  Container(
-                    width: 40,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: AppColors.divider,
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    context.tr('字重'),
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.textPrimary,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  ...weights.map((w) {
-                    final v = int.parse(w.split(' ')[0]);
-                    return ListTile(
-                      title: Text(
-                        context.tr(w),
-                        style: TextStyle(
-                          color: v == current
-                              ? AppColors.primary
-                              : AppColors.textPrimary,
-                        ),
+                    const SizedBox(height: 8),
+                    Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: AppColors.divider,
+                        borderRadius: BorderRadius.circular(2),
                       ),
-                      trailing: v == current
-                          ? const Icon(
-                              Icons.check,
-                              size: 18,
-                              color: AppColors.primary,
-                            )
-                          : null,
-                      onTap: () async {
-                        container.read(lyricFontWeightProvider.notifier).state =
-                            v;
-                        await _persistIntSetting(
-                          container,
-                          lyricFontWeightProvider,
-                          v,
-                          (s) => s.setLyricFontWeight(v),
-                        );
-                        if (ctx2.mounted) {
-                          setState(() {});
-                          Navigator.pop(ctx2);
-                        }
-                      },
-                    );
-                  }),
-                  const SizedBox(height: 16),
-                ],
-              ),
-            );
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      context.tr('字重'),
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    ...weights.map((w) {
+                      final v = int.parse(w.split(' ')[0]);
+                      return ListTile(
+                        title: Text(
+                          context.tr(w),
+                          style: TextStyle(
+                            color: v == current
+                                ? AppColors.primary
+                                : AppColors.textPrimary,
+                          ),
+                        ),
+                        trailing: v == current
+                            ? const Icon(
+                                Icons.check,
+                                size: 18,
+                                color: AppColors.primary,
+                              )
+                            : null,
+                        onTap: () async {
+                          container
+                                  .read(lyricFontWeightProvider.notifier)
+                                  .state =
+                              v;
+                          await _persistIntSetting(
+                            container,
+                            lyricFontWeightProvider,
+                            v,
+                            (s) => s.setLyricFontWeight(v),
+                          );
+                          if (ctx2.mounted) {
+                            setState(() {});
+                            Navigator.pop(ctx2);
+                          }
+                        },
+                      );
+                    }),
+                    const SizedBox(height: 16),
+                  ],
+                ),
+              );
             },
           ),
         ),
@@ -1257,9 +1236,9 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
     final playback = ref.read(playbackControllerProvider);
     final willAutoPlay = playback.queue.isEmpty || playback.currentSong == null;
 
-    await ref
-        .read(playbackControllerProvider.notifier)
-        .insertNext([widget.song]);
+    await ref.read(playbackControllerProvider.notifier).insertNext([
+      widget.song,
+    ]);
 
     // 队列原本为空 → insertNext 直接开始播放了，无需再提示「已添加」。
     if (willAutoPlay) return;
@@ -1300,8 +1279,6 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
   void _showQualityDialog() {
     SongActionSheet.showDownloadQualityPicker(context, widget.song);
   }
-
-
 
   void _showAddToPlaylist(
     ThemeColors colors,
@@ -1387,9 +1364,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                             ),
                             onTap: () async {
                               // 转换文案需在 pop 之前捕获（ctx 在 pop 后失效）
-                              final addedMsg = ctx.tr(
-                                '已添加到"${playlist.name}"',
-                              );
+                              final addedMsg = ctx.tr('已添加到"${playlist.name}"');
                               final existsMsg = ctx.tr(
                                 '歌曲已在歌单"${playlist.name}"中',
                               );

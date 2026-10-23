@@ -1,25 +1,16 @@
 import 'dart:async';
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../shared/services/app_image_cache.dart';
-import '../../../shared/services/webview_availability.dart';
 import '../../player/application/playback_controller.dart';
 import '../application/recognize_provider.dart';
 import '../application/search_providers.dart';
 import '../domain/models/recognize_result.dart';
-import 'widgets/afp_webview_host.dart';
-
-/// 桌面端（Windows/macOS/Linux）没有 `webview_flutter`，
-/// 音频指纹模块改用 InAppWebView 承载。
-bool get useDesktopFingerprint =>
-    Platform.isWindows || Platform.isLinux || Platform.isMacOS;
 
 class RecognizePage extends ConsumerStatefulWidget {
   const RecognizePage({super.key});
@@ -149,28 +140,10 @@ class _RecognizePageState extends ConsumerState<RecognizePage> {
     return Scaffold(
       backgroundColor: colors.background,
       body: SafeArea(
-        child: Stack(
+        child: Column(
           children: [
-            Column(
-              children: [
-                _buildHeader(context, colors),
-                Expanded(child: _buildContent(state, colors)),
-              ],
-            ),
-            // 桌面端的音频指纹模块需要一个真实存在的 WebView 来跑 afp.js，
-            // 放在屏幕外，只执行 JS 不显示内容。
-            // 没有 WebView 运行时（Windows 未装 WebView2）时干脆不创建。
-            if (useDesktopFingerprint && WebViewAvailability.isAvailable)
-              Positioned(
-                left: -400,
-                top: -400,
-                child: AfpWebViewHost(
-                  bridge: ref
-                      .read(recognizeProvider.notifier)
-                      .fingerprintService
-                      .desktopBridge,
-                ),
-              ),
+            _buildHeader(context, colors),
+            Expanded(child: _buildContent(state, colors)),
           ],
         ),
       ),
@@ -234,33 +207,10 @@ class _RecognizePageState extends ConsumerState<RecognizePage> {
 
     if (state.status == RecognizeStatus.failed) {
       final message = state.errorMessage ?? tr('未能识别到歌曲');
-      // 缺少 WebView 运行时（Windows）时，给出下载入口。
-      final needsWebView = useDesktopFingerprint &&
-          !WebViewAvailability.isAvailable &&
-          message.contains('WebView2');
-      return Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            message,
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 15, color: colors.error),
-          ),
-          if (needsWebView) ...[
-            const SizedBox(height: AppSpacing.sm),
-            TextButton.icon(
-              onPressed: () => unawaited(
-                launchUrl(
-                  Uri.parse(WebViewAvailability.webView2DownloadUrl),
-                  mode: LaunchMode.externalApplication,
-                ),
-              ),
-              icon: const Icon(Icons.open_in_new, size: 16),
-              label: Text(context.tr('下载 WebView2 运行时')),
-              style: TextButton.styleFrom(foregroundColor: colors.primary),
-            ),
-          ],
-        ],
+      return Text(
+        message,
+        textAlign: TextAlign.center,
+        style: TextStyle(fontSize: 15, color: colors.error),
       );
     }
 
@@ -434,7 +384,9 @@ class _RecognizePageState extends ConsumerState<RecognizePage> {
                       borderRadius: BorderRadius.circular(4),
                     ),
                     child: Text(
-                      context.tr('识别片段: ${_formatTime(song.startTime ~/ 1000)}'),
+                      context.tr(
+                        '识别片段: ${_formatTime(song.startTime ~/ 1000)}',
+                      ),
                       style: TextStyle(fontSize: 11, color: colors.primary),
                     ),
                   ),
@@ -522,8 +474,9 @@ class _RecognizePageState extends ConsumerState<RecognizePage> {
                   : colors.primary,
               boxShadow: [
                 BoxShadow(
-                  color: (isRecording ? Colors.red : colors.primary)
-                      .withValues(alpha: 0.3),
+                  color: (isRecording ? Colors.red : colors.primary).withValues(
+                    alpha: 0.3,
+                  ),
                   blurRadius: 12,
                   spreadRadius: 1,
                 ),
@@ -576,10 +529,7 @@ class _RecognizePageState extends ConsumerState<RecognizePage> {
                   const SizedBox(width: AppSpacing.xs),
                   Text(
                     context.tr(canUpload ? '上传文件' : '取消'),
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: colors.textSecondary,
-                    ),
+                    style: TextStyle(fontSize: 13, color: colors.textSecondary),
                   ),
                 ],
               ),

@@ -100,8 +100,10 @@ class MinePage extends ConsumerWidget {
                 route: AppRoutes.recentlyPlayed,
               ),
             ]),
-            // 听歌识曲的音频指纹模块依赖 WebView 运行时，Windows 端不可用，隐藏入口。
-            if (!Platform.isWindows) ...[
+            // 听歌识曲的音频指纹模块依赖移动端 WebView，桌面端不提供，隐藏入口。
+            if (!Platform.isWindows &&
+                !Platform.isLinux &&
+                !Platform.isMacOS) ...[
               const SizedBox(height: AppSpacing.md),
               _buildEntryGroup(context, colors, [
                 _MineEntry(

@@ -4,12 +4,10 @@
 -keep class io.flutter.view.** { *; }
 -keep class io.flutter.embedding.** { *; }
 
--keep class com.pichillilorenzo.flutter_inappwebview_android.** { *; }
 -keep class com.ryanheise.audioservice.** { *; }
 -keep class com.ryanheise.just_audio.** { *; }
 -keep class org.jaudiotagger.** { *; }
 
--dontwarn com.pichillilorenzo.flutter_inappwebview_android.**
 -dontwarn com.ryanheise.audioservice.**
 -dontwarn com.ryanheise.just_audio.**
 -dontwarn org.jaudiotagger.**

@@ -28,9 +28,7 @@ import '../../plugin/application/plugin_providers.dart';
 import '../../settings/application/settings_providers.dart';
 import '../../../shared/widgets/song_action_sheet.dart';
 import '../../../shared/widgets/sleep_timer_picker.dart';
-import '../../../shared/services/amll_toggle_service.dart';
 import 'widgets/lyric_scroll_view.dart';
-import 'widgets/amll_lyric_player.dart';
 import 'widgets/play_queue_sheet.dart';
 import 'widgets/player_controls.dart';
 import '../platform/audio_effect_service.dart';
@@ -52,11 +50,7 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
   /// (cover hidden).
   bool _landscapeLyricsFullMode = false;
 
-  /// 退出动画期间隐藏 AMLL WebView：滑动阶段平台视图不参与合成，
-  /// 中低端手机上也能流畅滑动（平台视图随路由变换会导致严重掉帧/闪回）。
-  bool _isLeaving = false;
   bool _exiting = false;
-  final GlobalKey<AmllLyricPlayerState> _amllKey = GlobalKey();
 
   @override
   void initState() {
@@ -72,22 +66,10 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
     super.dispose();
   }
 
-  /// 退出全屏播放页：先冻结 AMLL WebView 的 JS 动画（若在歌词页），
-  /// 再隐藏平台视图并 pop。滑动动画只剩纯 Flutter 图层（背景 + 控件），
-  /// 与「封面页退出」一致，无闪烁、不掉帧。
-  Future<void> _beginExit() async {
-    if (_exiting || _isLeaving) return;
+  void _beginExit() {
+    if (_exiting) return;
     _exiting = true;
     FocusManager.instance.primaryFocus?.unfocus();
-
-    final amllState = _amllKey.currentState;
-    final amllEnabled = AmllToggleService().isActive;
-    if (amllEnabled && amllState != null) {
-      // 等待 JS rAF 循环真正停止（WebView 画布稳定为静态帧）
-      await amllState.freeze();
-    }
-    if (!mounted) return;
-    setState(() => _isLeaving = true);
     context.pop();
   }
 
@@ -129,8 +111,7 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
     );
 
     return PopScope<void>(
-      // 拦截系统返回键，统一走 _beginExit（先冻结/隐藏 AMLL WebView 再 pop，
-      // 避免滑动动画卡顿/闪回）
+      // 拦截系统返回键，统一走 _beginExit。
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) _beginExit();
@@ -194,62 +175,52 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
                         },
                       ),
                       Expanded(
-                        child: ListenableBuilder(
-                          listenable: AmllToggleService(),
-                          builder: (context, _) {
-                            final amllEnabled = AmllToggleService().isActive;
-                            return PageView.builder(
-                              controller: _pageController,
-                              physics: const NeverScrollableScrollPhysics(),
-                              itemCount: 2,
-                              onPageChanged: (index) {
-                                if (mounted) {
-                                  setState(() => _currentPage = index);
-                                }
-                                if (index == 1) _activateLyricsPage();
-                              },
-                              itemBuilder: (context, index) {
-                                if (index == 0) {
-                                  return _KeepAlivePage(
-                                    child: _PlayerCoverPage(
-                                      isPlaying: isPlaying,
-                                      onTapCover: () {
-                                        if (_currentPage == 0) {
-                                          _activateLyricsPage();
-                                          _pageController.jumpToPage(1);
+                        child: PageView.builder(
+                          controller: _pageController,
+                          physics: const NeverScrollableScrollPhysics(),
+                          itemCount: 2,
+                          onPageChanged: (index) {
+                            if (mounted) {
+                              setState(() => _currentPage = index);
+                            }
+                            if (index == 1) _activateLyricsPage();
+                          },
+                          itemBuilder: (context, index) {
+                            if (index == 0) {
+                              return _KeepAlivePage(
+                                child: _PlayerCoverPage(
+                                  isPlaying: isPlaying,
+                                  onTapCover: () {
+                                    if (_currentPage == 0) {
+                                      _activateLyricsPage();
+                                      _pageController.jumpToPage(1);
+                                    }
+                                  },
+                                ),
+                              );
+                            }
+                            if (!_lyricsPageBuilt) {
+                              return const SizedBox.expand();
+                            }
+                            const lyricsPage = _PlayerLyricsPage();
+                            return _KeepAlivePage(
+                              // Android：点歌词区域切回封面页。
+                              child: Platform.isAndroid
+                                  ? GestureDetector(
+                                      behavior: HitTestBehavior.translucent,
+                                      onTap: () {
+                                        if (_currentPage == 1) {
+                                          _pageController.jumpToPage(0);
                                         }
                                       },
-                                    ),
-                                  );
-                                }
-                                if (!_lyricsPageBuilt)
-                                  return const SizedBox.expand();
-                                final lyricsPage = _PlayerLyricsPage(
-                                  amllKey: _amllKey,
-                                  hideWebView: _isLeaving,
-                                );
-                                return _KeepAlivePage(
-                                  // Android：点歌词区域切回封面页。
-                                  child: Platform.isAndroid
-                                      ? GestureDetector(
-                                          behavior: HitTestBehavior.translucent,
-                                          onTap: () {
-                                            if (_currentPage == 1) {
-                                              _pageController.jumpToPage(0);
-                                            }
-                                          },
-                                          child: lyricsPage,
-                                        )
-                                      : lyricsPage,
-                                );
-                              },
+                                      child: lyricsPage,
+                                    )
+                                  : lyricsPage,
                             );
                           },
                         ),
                       ),
-                      _PlayerSongInfo(
-                        showInlineLyric: Platform.isAndroid,
-                      ),
+                      _PlayerSongInfo(showInlineLyric: Platform.isAndroid),
                       _PlayerProgressBar(),
                       const SizedBox(height: 12),
                       _PlayerControls(onQueue: _openPlayQueue),
@@ -483,25 +454,14 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
 
   /// Shared lyrics panel builder.
   Widget _buildLandscapeLyricsPanel() {
-    return ListenableBuilder(
-      listenable: AmllToggleService(),
-      builder: (context, _) {
-        if (!_lyricsPageBuilt) {
-          // Defer setState to after the current build frame to avoid
-          // "setState() called during build" error.
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) _activateLyricsPage();
-          });
-        }
-        return _KeepAlivePage(
-          child: _PlayerLyricsPage(
-            amllKey: _amllKey,
-            hideWebView: _isLeaving,
-            landscape: true,
-          ),
-        );
-      },
-    );
+    if (!_lyricsPageBuilt) {
+      // Defer setState to after the current build frame to avoid
+      // "setState() called during build" error.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _activateLyricsPage();
+      });
+    }
+    return const _KeepAlivePage(child: _PlayerLyricsPage(landscape: true));
   }
 
   /// 打开播放队列（竖屏 / 平板横屏 / 手机横屏共用）。
@@ -667,8 +627,7 @@ class _SourceSelectorState extends ConsumerState<_SourceSelector> {
   }
 
   Future<void> _showSourceMenu(String baseId) async {
-    final box =
-        _anchorKey.currentContext?.findRenderObject() as RenderBox?;
+    final box = _anchorKey.currentContext?.findRenderObject() as RenderBox?;
     if (box == null) return;
     final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
     final position = RelativeRect.fromRect(
@@ -747,11 +706,7 @@ class _SourceSelectorState extends ConsumerState<_SourceSelector> {
     String sourceId,
     String sourceName,
   ) async {
-    await setPreferredSource(
-      ref,
-      baseSourceId: baseId,
-      sourceId: sourceId,
-    );
+    await setPreferredSource(ref, baseSourceId: baseId, sourceId: sourceId);
     if (!mounted) return;
 
     final playback = ref.read(playbackControllerProvider);
@@ -909,19 +864,10 @@ class _PlayerCoverPage extends ConsumerWidget {
 const double _landscapeLyricFontScale = 1.55;
 
 class _PlayerLyricsPage extends ConsumerWidget {
-  final GlobalKey<AmllLyricPlayerState> amllKey;
-
-  /// 退出动画期间隐藏 AMLL WebView（平台视图不参与滑动合成）。
-  final bool hideWebView;
-
   /// 是否处于横屏布局。横屏时歌词区域更宽但更矮，字号相应放大。
   final bool landscape;
 
-  const _PlayerLyricsPage({
-    required this.amllKey,
-    required this.hideWebView,
-    this.landscape = false,
-  });
+  const _PlayerLyricsPage({this.landscape = false});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -938,7 +884,6 @@ class _PlayerLyricsPage extends ConsumerWidget {
     final showRoman = ref.watch(lyricShowRomanProvider);
     final enableBlur = ref.watch(lyricEnableBlurProvider);
     final enableScale = ref.watch(lyricEnableScaleProvider);
-    final enableJumpLyric = ref.watch(appearanceJumpLyricProvider);
     final fontSizeScale = ref.watch(lyricFontSizeProvider);
     final themeColors = ref.watch(themeColorsProvider);
 
@@ -954,125 +899,66 @@ class _PlayerLyricsPage extends ConsumerWidget {
     final watchFontRate = ref.watch(lyricFontRateProvider);
     final watchFontWeight = ref.watch(lyricFontWeightProvider);
     final lyricCenterAlign = ref.watch(lyricCenterAlignProvider);
-    final amllCenterAlign = ref.watch(amllCenterAlignProvider);
 
-    return ListenableBuilder(
-      listenable: AmllToggleService(),
-      builder: (context, _) {
-        final amll = AmllToggleService().isActive;
-        if (lyricState.isLoading && lyricState.lines.isEmpty) {
-          return Center(
-            child: Text(
-              context.tr('加载歌词中...'),
-              style: TextStyle(
-                fontSize: 14,
-                color: Colors.white.withValues(alpha: 0.4),
-                letterSpacing: 2,
-              ),
-            ),
-          );
-        }
-        if (lyricState.error != null && lyricState.lines.isEmpty) {
-          return Center(
-            child: Text(
-              lyricState.error!,
-              style: TextStyle(
-                fontSize: 14,
-                color: Colors.white.withValues(alpha: 0.4),
-                letterSpacing: 2,
-              ),
-            ),
-          );
-        }
-        if (lyricState.lines.isEmpty) {
-          return Center(
-            child: Text(
-              context.tr('暂无歌词'),
-              style: TextStyle(
-                fontSize: 14,
-                color: Colors.white.withValues(alpha: 0.4),
-                letterSpacing: 2,
-              ),
-            ),
-          );
-        }
-        return Stack(
-          children: [
-            // Keep the native AMLL WebView mounted in a stable platform-view
-            // slot. Switching only the Flutter lyric layer prevents the first
-            // WebView detach/attach from flashing after a cold app start.
-            //
-            // Windows 端 AMLL 的 WebView 合成异常，整块都不构建，
-            // 直接使用原生歌词层渲染。
-            if (AmllToggleService.isPlatformSupported)
-              RepaintBoundary(
-                child: TickerMode(
-                  enabled: !hideWebView,
-                  child: Offstage(
-                    offstage: hideWebView,
-                    child: AmllLyricPlayer(
-                      key: amllKey,
-                      lines: lyricState.lines,
-                      currentTimeMs: lyricPosition.inMilliseconds,
-                      isPlaying: isPlaying,
-                      isSeekPreview: seekPreview != null,
-                      fontSizeRate: watchFontRate * layoutScale,
-                      fontFamily: watchFontFamily,
-                      fontWeight: watchFontWeight,
-                      showTranslation: showTranslation,
-                      showRoman: showRoman,
-                      enableBlur: enableBlur,
-                      enableScale: enableScale,
-                      enableJumpLyric: enableJumpLyric,
-                      centerAlign: amllCenterAlign,
-                      isVisible: amll,
-                      isActive: !hideWebView,
-                      onLineClick: (startTimeMs) {
-                        ref
-                            .read(playbackControllerProvider.notifier)
-                            .seek(Duration(milliseconds: startTimeMs));
-                      },
-                    ),
-                  ),
-                ),
-              ),
-            IgnorePointer(
-              ignoring: amll,
-              child: Visibility(
-                visible: !amll,
-                maintainState: true,
-                maintainAnimation: true,
-                maintainSize: true,
-                maintainInteractivity: false,
-                child: LyricScrollView(
-                  lines: lyricState.lines,
-                  currentTimeMs: lyricPosition.inMilliseconds,
-                  isPlaying: isPlaying,
-                  isSeekPreview: seekPreview != null,
-                  hasYrc: hasYrc,
-                  activeColor: activeColor,
-                  inactiveColor: inactiveColor,
-                  mainFontSize: baseFontSize,
-                  transFontSize: transFontSize,
-                  romanFontSize: romanFontSize,
-                  fontSizeRate: watchFontRate,
-                  showTranslation: showTranslation,
-                  showRoman: showRoman,
-                  enableBlur: enableBlur,
-                  enableScale: enableScale,
-                  centerAlign: lyricCenterAlign,
-                  fontFamily: watchFontFamily,
-                  fontWeight: watchFontWeight,
-                  onSeek: (startTimeMs) {
-                    ref
-                        .read(playbackControllerProvider.notifier)
-                        .seek(Duration(milliseconds: startTimeMs));
-                  },
-                ),
-              ),
-            ),
-          ],
-        );
+    if (lyricState.isLoading && lyricState.lines.isEmpty) {
+      return Center(
+        child: Text(
+          context.tr('加载歌词中...'),
+          style: TextStyle(
+            fontSize: 14,
+            color: Colors.white.withValues(alpha: 0.4),
+            letterSpacing: 2,
+          ),
+        ),
+      );
+    }
+    if (lyricState.error != null && lyricState.lines.isEmpty) {
+      return Center(
+        child: Text(
+          lyricState.error!,
+          style: TextStyle(
+            fontSize: 14,
+            color: Colors.white.withValues(alpha: 0.4),
+            letterSpacing: 2,
+          ),
+        ),
+      );
+    }
+    if (lyricState.lines.isEmpty) {
+      return Center(
+        child: Text(
+          context.tr('暂无歌词'),
+          style: TextStyle(
+            fontSize: 14,
+            color: Colors.white.withValues(alpha: 0.4),
+            letterSpacing: 2,
+          ),
+        ),
+      );
+    }
+    return LyricScrollView(
+      lines: lyricState.lines,
+      currentTimeMs: lyricPosition.inMilliseconds,
+      isPlaying: isPlaying,
+      isSeekPreview: seekPreview != null,
+      hasYrc: hasYrc,
+      activeColor: activeColor,
+      inactiveColor: inactiveColor,
+      mainFontSize: baseFontSize,
+      transFontSize: transFontSize,
+      romanFontSize: romanFontSize,
+      fontSizeRate: watchFontRate,
+      showTranslation: showTranslation,
+      showRoman: showRoman,
+      enableBlur: enableBlur,
+      enableScale: enableScale,
+      centerAlign: lyricCenterAlign,
+      fontFamily: watchFontFamily,
+      fontWeight: watchFontWeight,
+      onSeek: (startTimeMs) {
+        ref
+            .read(playbackControllerProvider.notifier)
+            .seek(Duration(milliseconds: startTimeMs));
       },
     );
   }

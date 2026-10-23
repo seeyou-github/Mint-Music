@@ -114,14 +114,9 @@ class RecognizeNotifier extends StateNotifier<RecognizeState> {
       );
       if (!afpReady) {
         debugPrint('[Recognize] AFP 初始化失败');
-        // Windows 上最常见的原因是缺少 Edge WebView2 运行时，给出可操作的提示
-        final missingRuntime = _afpService.usesDesktopBridge &&
-            !_afpService.isWebViewAvailable;
         state = state.copyWith(
           status: RecognizeStatus.failed,
-          errorMessage: missingRuntime
-              ? tr('音频指纹模块需要 Microsoft Edge WebView2 运行时，请安装后重试')
-              : tr('音频指纹模块初始化失败，请重试'),
+          errorMessage: tr('音频指纹模块初始化失败，请重试'),
         );
         _active = false;
         _resumePlayback();
@@ -274,13 +269,9 @@ class RecognizeNotifier extends StateNotifier<RecognizeState> {
         onTimeout: () => false,
       );
       if (!afpReady) {
-        final missingRuntime = _afpService.usesDesktopBridge &&
-            !_afpService.isWebViewAvailable;
         state = state.copyWith(
           status: RecognizeStatus.failed,
-          errorMessage: missingRuntime
-              ? tr('音频指纹模块需要 Microsoft Edge WebView2 运行时，请安装后重试')
-              : tr('音频指纹模块初始化失败'),
+          errorMessage: tr('音频指纹模块初始化失败'),
         );
         _active = false;
         return;

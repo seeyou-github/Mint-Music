@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../app/app_shell.dart';
@@ -77,21 +79,22 @@ final appRouter = GoRouter(
                   ),
                   transitionDuration: const Duration(milliseconds: 220),
                   reverseTransitionDuration: const Duration(milliseconds: 180),
-                  transitionsBuilder: (context, animation, secondaryAnimation,
-                      child) {
-                    return SlideTransition(
-                      position: Tween<Offset>(
-                        begin: const Offset(1, 0),
-                        end: Offset.zero,
-                      ).animate(
-                        CurvedAnimation(
-                          parent: animation,
-                          curve: Curves.easeOutCubic,
-                        ),
-                      ),
-                      child: child,
-                    );
-                  },
+                  transitionsBuilder:
+                      (context, animation, secondaryAnimation, child) {
+                        return SlideTransition(
+                          position:
+                              Tween<Offset>(
+                                begin: const Offset(1, 0),
+                                end: Offset.zero,
+                              ).animate(
+                                CurvedAnimation(
+                                  parent: animation,
+                                  curve: Curves.easeOutCubic,
+                                ),
+                              ),
+                          child: child,
+                        );
+                      },
                 );
               },
             ),
@@ -112,19 +115,22 @@ final appRouter = GoRouter(
                 child: const SearchPage(),
                 transitionDuration: const Duration(milliseconds: 220),
                 reverseTransitionDuration: const Duration(milliseconds: 180),
-                transitionsBuilder: (context, animation, secondaryAnimation,
-                    child) {
-                  return SlideTransition(
-                    position: Tween<Offset>(begin: const Offset(1, 0), end: Offset.zero)
-                        .animate(
-                      CurvedAnimation(
-                        parent: animation,
-                        curve: Curves.easeOutCubic,
-                      ),
-                    ),
-                    child: child,
-                  );
-                },
+                transitionsBuilder:
+                    (context, animation, secondaryAnimation, child) {
+                      return SlideTransition(
+                        position:
+                            Tween<Offset>(
+                              begin: const Offset(1, 0),
+                              end: Offset.zero,
+                            ).animate(
+                              CurvedAnimation(
+                                parent: animation,
+                                curve: Curves.easeOutCubic,
+                              ),
+                            ),
+                        child: child,
+                      );
+                    },
               ),
             ),
           ],
@@ -146,21 +152,22 @@ final appRouter = GoRouter(
                   child: LocalPlaylistDetailPage(playlistId: playlistId),
                   transitionDuration: const Duration(milliseconds: 220),
                   reverseTransitionDuration: const Duration(milliseconds: 180),
-                  transitionsBuilder: (context, animation, secondaryAnimation,
-                      child) {
-                    return SlideTransition(
-                      position: Tween<Offset>(
-                        begin: const Offset(1, 0),
-                        end: Offset.zero,
-                      ).animate(
-                        CurvedAnimation(
-                          parent: animation,
-                          curve: Curves.easeOutCubic,
-                        ),
-                      ),
-                      child: child,
-                    );
-                  },
+                  transitionsBuilder:
+                      (context, animation, secondaryAnimation, child) {
+                        return SlideTransition(
+                          position:
+                              Tween<Offset>(
+                                begin: const Offset(1, 0),
+                                end: Offset.zero,
+                              ).animate(
+                                CurvedAnimation(
+                                  parent: animation,
+                                  curve: Curves.easeOutCubic,
+                                ),
+                              ),
+                          child: child,
+                        );
+                      },
                 );
               },
             ),
@@ -187,17 +194,13 @@ final appRouter = GoRouter(
             ),
             GoRoute(
               path: AppRoutes.settings,
-              pageBuilder: (context, state) => _slidePage(
-                key: state.pageKey,
-                child: const SettingsPage(),
-              ),
+              pageBuilder: (context, state) =>
+                  _slidePage(key: state.pageKey, child: const SettingsPage()),
             ),
             GoRoute(
               path: AppRoutes.download,
-              pageBuilder: (context, state) => _slidePage(
-                key: state.pageKey,
-                child: const DownloadPage(),
-              ),
+              pageBuilder: (context, state) =>
+                  _slidePage(key: state.pageKey, child: const DownloadPage()),
             ),
             GoRoute(
               path: AppRoutes.pluginManagement,
@@ -206,19 +209,22 @@ final appRouter = GoRouter(
                 child: const PluginManagementPage(),
                 transitionDuration: const Duration(milliseconds: 220),
                 reverseTransitionDuration: const Duration(milliseconds: 180),
-                transitionsBuilder: (context, animation, secondaryAnimation,
-                    child) {
-                  return SlideTransition(
-                    position: Tween<Offset>(begin: const Offset(1, 0), end: Offset.zero)
-                        .animate(
-                      CurvedAnimation(
-                        parent: animation,
-                        curve: Curves.easeOutCubic,
-                      ),
-                    ),
-                    child: child,
-                  );
-                },
+                transitionsBuilder:
+                    (context, animation, secondaryAnimation, child) {
+                      return SlideTransition(
+                        position:
+                            Tween<Offset>(
+                              begin: const Offset(1, 0),
+                              end: Offset.zero,
+                            ).animate(
+                              CurvedAnimation(
+                                parent: animation,
+                                curve: Curves.easeOutCubic,
+                              ),
+                            ),
+                        child: child,
+                      );
+                    },
               ),
             ),
             GoRoute(
@@ -228,41 +234,52 @@ final appRouter = GoRouter(
                 child: const RecentlyPlayedPage(),
                 transitionDuration: const Duration(milliseconds: 220),
                 reverseTransitionDuration: const Duration(milliseconds: 180),
-                transitionsBuilder: (context, animation, secondaryAnimation,
-                    child) {
-                  return SlideTransition(
-                    position: Tween<Offset>(begin: const Offset(1, 0), end: Offset.zero)
-                        .animate(
-                      CurvedAnimation(
-                        parent: animation,
-                        curve: Curves.easeOutCubic,
-                      ),
-                    ),
-                    child: child,
-                  );
-                },
+                transitionsBuilder:
+                    (context, animation, secondaryAnimation, child) {
+                      return SlideTransition(
+                        position:
+                            Tween<Offset>(
+                              begin: const Offset(1, 0),
+                              end: Offset.zero,
+                            ).animate(
+                              CurvedAnimation(
+                                parent: animation,
+                                curve: Curves.easeOutCubic,
+                              ),
+                            ),
+                        child: child,
+                      );
+                    },
               ),
             ),
             GoRoute(
               path: AppRoutes.recognize,
+              // 听歌识曲依赖移动端 WebView，桌面端不提供该功能。
+              redirect: (context, state) =>
+                  Platform.isWindows || Platform.isLinux || Platform.isMacOS
+                  ? AppRoutes.mine
+                  : null,
               pageBuilder: (context, state) => CustomTransitionPage(
                 key: state.pageKey,
                 child: const RecognizePage(),
                 transitionDuration: const Duration(milliseconds: 220),
                 reverseTransitionDuration: const Duration(milliseconds: 180),
-                transitionsBuilder: (context, animation, secondaryAnimation,
-                    child) {
-                  return SlideTransition(
-                    position: Tween<Offset>(begin: const Offset(1, 0), end: Offset.zero)
-                        .animate(
-                      CurvedAnimation(
-                        parent: animation,
-                        curve: Curves.easeOutCubic,
-                      ),
-                    ),
-                    child: child,
-                  );
-                },
+                transitionsBuilder:
+                    (context, animation, secondaryAnimation, child) {
+                      return SlideTransition(
+                        position:
+                            Tween<Offset>(
+                              begin: const Offset(1, 0),
+                              end: Offset.zero,
+                            ).animate(
+                              CurvedAnimation(
+                                parent: animation,
+                                curve: Curves.easeOutCubic,
+                              ),
+                            ),
+                        child: child,
+                      );
+                    },
               ),
             ),
           ],
@@ -282,10 +299,16 @@ final appRouter = GoRouter(
           reverseTransitionDuration: const Duration(milliseconds: 180),
           transitionsBuilder: (context, animation, secondaryAnimation, child) {
             return SlideTransition(
-              position: Tween<Offset>(begin: const Offset(1, 0), end: Offset.zero)
-                  .animate(
-                CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
-              ),
+              position:
+                  Tween<Offset>(
+                    begin: const Offset(1, 0),
+                    end: Offset.zero,
+                  ).animate(
+                    CurvedAnimation(
+                      parent: animation,
+                      curve: Curves.easeOutCubic,
+                    ),
+                  ),
               child: child,
             );
           },
@@ -297,16 +320,11 @@ final appRouter = GoRouter(
       pageBuilder: (context, state) => CustomTransitionPage(
         key: state.pageKey,
         child: const FullPlayerPage(),
-        // Fade transition avoids platform-view (AMLL WebView) compositing
-        // issues that cause flickering/flash on slide transitions.
         transitionDuration: const Duration(milliseconds: 200),
         reverseTransitionDuration: const Duration(milliseconds: 160),
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
           return FadeTransition(
-            opacity: CurvedAnimation(
-              parent: animation,
-              curve: Curves.easeOut,
-            ),
+            opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut),
             child: child,
           );
         },
@@ -323,8 +341,11 @@ final appRouter = GoRouter(
           return SlideTransition(
             position: Tween<Offset>(begin: const Offset(0, 1), end: Offset.zero)
                 .animate(
-              CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
-            ),
+                  CurvedAnimation(
+                    parent: animation,
+                    curve: Curves.easeOutCubic,
+                  ),
+                ),
             child: child,
           );
         },

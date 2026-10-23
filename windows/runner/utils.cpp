@@ -42,47 +42,6 @@ std::vector<std::string> GetCommandLineArguments() {
   return command_line_arguments;
 }
 
-void PrepareWebView2UserDataFolder() {
-  // 已经显式指定过就尊重外部设置。
-  wchar_t existing[MAX_PATH] = {0};
-  const DWORD length = ::GetEnvironmentVariableW(L"WEBVIEW2_USER_DATA_FOLDER",
-                                                existing, MAX_PATH);
-  if (length > 0 && length < MAX_PATH) {
-    return;
-  }
-
-  wchar_t exe_path[MAX_PATH] = {0};
-  const DWORD exe_length = ::GetModuleFileNameW(nullptr, exe_path, MAX_PATH);
-  if (exe_length == 0 || exe_length >= MAX_PATH) {
-    return;
-  }
-
-  // 去掉文件名，得到 exe 所在目录。
-  std::wstring dir(exe_path, exe_length);
-  const size_t separator = dir.find_last_of(L"\\/");
-  if (separator == std::wstring::npos) {
-    return;
-  }
-  dir = dir.substr(0, separator);
-
-  const std::wstring udf = dir + L"\\AppData\\temp\\webview2";
-
-  // 逐级创建目录（CreateDirectoryW 只会创建最后一级）。
-  const size_t first = udf.find(L"\\");
-  if (first == std::wstring::npos) {
-    return;
-  }
-  size_t position = first;
-  while (position != std::wstring::npos) {
-    position = udf.find(L'\\', position + 1);
-    const std::wstring part =
-        position == std::wstring::npos ? udf : udf.substr(0, position);
-    ::CreateDirectoryW(part.c_str(), nullptr);
-  }
-
-  ::SetEnvironmentVariableW(L"WEBVIEW2_USER_DATA_FOLDER", udf.c_str());
-}
-
 std::string Utf8FromUtf16(const wchar_t* utf16_string) {
   if (utf16_string == nullptr) {
     return std::string();

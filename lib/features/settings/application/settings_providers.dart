@@ -95,7 +95,9 @@ Future<void> persistUserQuality(
   String? sourceId,
 }) async {
   ref.read(globalQualityProvider.notifier).state = quality;
-  final sourceQuality = Map<String, String>.from(ref.read(sourceQualityProvider));
+  final sourceQuality = Map<String, String>.from(
+    ref.read(sourceQualityProvider),
+  );
   // 同名插件的变体 id（'wy@插件id'）按平台部分匹配。
   final name = sourceId == null
       ? null
@@ -219,7 +221,6 @@ final lyricShowRomanProvider = StateProvider<bool>((ref) => false);
 final lyricEnableBlurProvider = StateProvider<bool>((ref) => false);
 final lyricEnableScaleProvider = StateProvider<bool>((ref) => false);
 final lyricCenterAlignProvider = StateProvider<bool>((ref) => true);
-final amllCenterAlignProvider = StateProvider<bool>((ref) => false);
 final lyricImmersiveColorProvider = StateProvider<bool>((ref) => true);
 
 /// 固定的歌词显示行为（不再由用户设置）。
@@ -231,7 +232,6 @@ class LyricDisplayDefaults {
   static const bool enableBlur = false;
   static const bool enableScale = false;
   static const bool centerAlign = true;
-  static const bool amllStyle = false;
 }
 
 // -- lyric font --
@@ -279,7 +279,9 @@ Future<void> setPreferredSource(
 }) async {
   final base = baseSourceId.trim();
   if (base.isEmpty) return;
-  final current = Map<String, String>.from(ref.read(preferredSourceMapProvider));
+  final current = Map<String, String>.from(
+    ref.read(preferredSourceMapProvider),
+  );
   if (sourceId.trim().isEmpty) {
     current.remove(base);
   } else {
@@ -305,40 +307,44 @@ final webDavConfigProvider = StateProvider<WebDavConfig>((ref) {
 });
 
 // -- appearance --
-// 「歌词跟随播放」默认开启：歌词会平滑地滚到中间，而不是直接跳过去。
-final appearanceJumpLyricProvider = StateProvider<bool>((ref) => true);
 final appearanceBgAnimationProvider = StateProvider<bool>((ref) => false);
 
 /// 「主题色 / 字体颜色 / 第二字体颜色 / 背景颜色」里用户新增的自定义颜色列表。
 ///
 /// 颜色以 `#RRGGBB` 形式保存；选择面板里长按可以编辑或删除。
 /// 主题色深浅色共用，其余颜色各保存一套。
-final customThemeColorsProvider = StateProvider<List<String>>((ref) => const []);
-final customFontColorsLightProvider =
-    StateProvider<List<String>>((ref) => const []);
-final customFontColorsDarkProvider =
-    StateProvider<List<String>>((ref) => const []);
-final customSecondaryFontColorsLightProvider =
-    StateProvider<List<String>>((ref) => const []);
-final customSecondaryFontColorsDarkProvider =
-    StateProvider<List<String>>((ref) => const []);
-final customBackgroundColorsLightProvider =
-    StateProvider<List<String>>((ref) => const []);
-final customBackgroundColorsDarkProvider =
-    StateProvider<List<String>>((ref) => const []);
+final customThemeColorsProvider = StateProvider<List<String>>(
+  (ref) => const [],
+);
+final customFontColorsLightProvider = StateProvider<List<String>>(
+  (ref) => const [],
+);
+final customFontColorsDarkProvider = StateProvider<List<String>>(
+  (ref) => const [],
+);
+final customSecondaryFontColorsLightProvider = StateProvider<List<String>>(
+  (ref) => const [],
+);
+final customSecondaryFontColorsDarkProvider = StateProvider<List<String>>(
+  (ref) => const [],
+);
+final customBackgroundColorsLightProvider = StateProvider<List<String>>(
+  (ref) => const [],
+);
+final customBackgroundColorsDarkProvider = StateProvider<List<String>>(
+  (ref) => const [],
+);
 
 /// 桌面歌词(悬浮歌词窗)的完整配置。
 ///
 /// 整体作为一个对象持久化(见 [SettingsService.setDesktopLyricSettings]),
 /// 避免为每个子项各建一个 provider 与 prefs key。
-final desktopLyricSettingsProvider =
-    StateProvider<DesktopLyricSettings>((ref) => DesktopLyricSettings.defaults);
+final desktopLyricSettingsProvider = StateProvider<DesktopLyricSettings>(
+  (ref) => DesktopLyricSettings.defaults,
+);
 
 // -- auto cache music --
 final autoCacheMusicProvider = StateProvider<bool>((ref) => true);
-
-// -- route preload --
-final routePreloadEnabledProvider = StateProvider<bool>((ref) => true);
 
 // -- auto update（默认关闭） --
 final autoUpdateProvider = StateProvider<bool>((ref) => false);
@@ -440,32 +446,32 @@ final settingsInitProvider = FutureProvider<void>((ref) async {
   );
   ref.read(themePrimaryColorProvider.notifier).state = svc
       .getThemePrimaryColor();
-  ref.read(lightThemeFontColorProvider.notifier).state =
-      svc.getThemeFontColorLight();
-  ref.read(darkThemeFontColorProvider.notifier).state =
-      svc.getThemeFontColorDark();
-  ref.read(lightThemeSecondaryFontColorProvider.notifier).state =
-      svc.getThemeSecondaryFontColorLight();
-  ref.read(darkThemeSecondaryFontColorProvider.notifier).state =
-      svc.getThemeSecondaryFontColorDark();
-  ref.read(lightThemeBackgroundColorProvider.notifier).state =
-      svc.getThemeBackgroundColorLight();
-  ref.read(darkThemeBackgroundColorProvider.notifier).state =
-      svc.getThemeBackgroundColorDark();
-  ref.read(customThemeColorsProvider.notifier).state =
-      svc.getCustomThemeColors();
-  ref.read(customFontColorsLightProvider.notifier).state =
-      svc.getCustomFontColorsLight();
-  ref.read(customFontColorsDarkProvider.notifier).state =
-      svc.getCustomFontColorsDark();
-  ref.read(customSecondaryFontColorsLightProvider.notifier).state =
-      svc.getCustomSecondaryFontColorsLight();
-  ref.read(customSecondaryFontColorsDarkProvider.notifier).state =
-      svc.getCustomSecondaryFontColorsDark();
-  ref.read(customBackgroundColorsLightProvider.notifier).state =
-      svc.getCustomBackgroundColorsLight();
-  ref.read(customBackgroundColorsDarkProvider.notifier).state =
-      svc.getCustomBackgroundColorsDark();
+  ref.read(lightThemeFontColorProvider.notifier).state = svc
+      .getThemeFontColorLight();
+  ref.read(darkThemeFontColorProvider.notifier).state = svc
+      .getThemeFontColorDark();
+  ref.read(lightThemeSecondaryFontColorProvider.notifier).state = svc
+      .getThemeSecondaryFontColorLight();
+  ref.read(darkThemeSecondaryFontColorProvider.notifier).state = svc
+      .getThemeSecondaryFontColorDark();
+  ref.read(lightThemeBackgroundColorProvider.notifier).state = svc
+      .getThemeBackgroundColorLight();
+  ref.read(darkThemeBackgroundColorProvider.notifier).state = svc
+      .getThemeBackgroundColorDark();
+  ref.read(customThemeColorsProvider.notifier).state = svc
+      .getCustomThemeColors();
+  ref.read(customFontColorsLightProvider.notifier).state = svc
+      .getCustomFontColorsLight();
+  ref.read(customFontColorsDarkProvider.notifier).state = svc
+      .getCustomFontColorsDark();
+  ref.read(customSecondaryFontColorsLightProvider.notifier).state = svc
+      .getCustomSecondaryFontColorsLight();
+  ref.read(customSecondaryFontColorsDarkProvider.notifier).state = svc
+      .getCustomSecondaryFontColorsDark();
+  ref.read(customBackgroundColorsLightProvider.notifier).state = svc
+      .getCustomBackgroundColorsLight();
+  ref.read(customBackgroundColorsDarkProvider.notifier).state = svc
+      .getCustomBackgroundColorsDark();
 
   ref.read(audioQualityProvider.notifier).state = svc.getAudioQuality();
   ref.read(autoQualityDowngradeProvider.notifier).state = svc
@@ -496,8 +502,8 @@ final settingsInitProvider = FutureProvider<void>((ref) async {
   ref.read(autoSwitchSourceProvider.notifier).state = svc.getAutoSwitchSource();
   ref.read(notificationEnabledProvider.notifier).state = svc
       .getNotificationEnabled();
-  ref.read(defaultSourceIdSettingProvider.notifier).state =
-      svc.getDefaultSourceId();
+  ref.read(defaultSourceIdSettingProvider.notifier).state = svc
+      .getDefaultSourceId();
   ref.read(sourceQualityProvider.notifier).state = svc.getSourceQuality();
   ref.read(globalQualityProvider.notifier).state = svc.getGlobalQuality();
   ref.read(cacheSizeProvider.notifier).state = svc.getCacheSize();
@@ -533,24 +539,21 @@ final settingsInitProvider = FutureProvider<void>((ref) async {
       LyricDisplayDefaults.enableScale;
   ref.read(lyricCenterAlignProvider.notifier).state =
       LyricDisplayDefaults.centerAlign;
-  ref.read(amllCenterAlignProvider.notifier).state =
-      LyricDisplayDefaults.amllStyle;
   ref.read(lyricImmersiveColorProvider.notifier).state = svc
       .getLyricImmersiveColor();
   ref.read(lyricFontFamilyProvider.notifier).state =
       await _migrateLyricFontFamily(svc);
-  ref.read(lyricFontRateProvider.notifier).state =
-      await _migrateLyricFontRate(svc);
+  ref.read(lyricFontRateProvider.notifier).state = await _migrateLyricFontRate(
+    svc,
+  );
   ref.read(lyricFontWeightProvider.notifier).state =
       await _migrateLyricFontWeight(svc);
 
   ref.read(lyricFontColorProvider.notifier).state = svc.getLyricFontColor();
   // 内置音源 → 优先音源（每个内置源可单独指定）
-  ref.read(preferredSourceMapProvider.notifier).state =
-      _decodePreferredSources(svc.getPreferredSourceMap());
-  // 「歌词跟随播放」以前默认关闭（歌词直接跳到中间），现在默认开启。
-  // 这个开关没有界面入口，旧值一律迁移成开启。
-  ref.read(appearanceJumpLyricProvider.notifier).state = true;
+  ref.read(preferredSourceMapProvider.notifier).state = _decodePreferredSources(
+    svc.getPreferredSourceMap(),
+  );
   ref.read(appearanceBgAnimationProvider.notifier).state = svc
       .getAppearanceBgAnimation();
   // WebDAV / 备份配置
@@ -570,12 +573,10 @@ final settingsInitProvider = FutureProvider<void>((ref) async {
   ref.read(desktopLyricSettingsProvider.notifier).state =
       DesktopLyricSettings.decode(svc.getDesktopLyricSettings());
   ref.read(autoCacheMusicProvider.notifier).state = true;
-  ref.read(routePreloadEnabledProvider.notifier).state = svc
-      .getRoutePreloadEnabled();
   ref.read(autoUpdateProvider.notifier).state = svc.getAutoUpdate();
   ref.read(closeToTrayProvider.notifier).state = svc.getCloseToTray();
-  ref.read(pluginAutoCheckUpdateProvider.notifier).state =
-      svc.getPluginAutoCheckUpdate();
+  ref.read(pluginAutoCheckUpdateProvider.notifier).state = svc
+      .getPluginAutoCheckUpdate();
   ref.read(cacheDirProvider.notifier).state = await svc.getCacheDir();
   final bgMode = svc.getFullScreenBgMode();
   ref

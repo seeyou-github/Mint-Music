@@ -27,7 +27,6 @@ import '../data/settings_service.dart';
 import '../../player/application/desktop_lyric_controller.dart';
 import '../../player/application/desktop_lyric_sync.dart';
 import '../../player/domain/models/desktop_lyric_settings.dart';
-import '../../player/presentation/widgets/amll_lyric_player.dart';
 
 const _settingsSheetAnimationStyle = AnimationStyle(
   duration: Duration(milliseconds: 220),
@@ -816,9 +815,7 @@ class _AppearanceContent extends ConsumerWidget {
           persistCustom: (s, list) => isLight
               ? s.setCustomBackgroundColorsLight(list)
               : s.setCustomBackgroundColorsDark(list),
-          presets: isLight
-              ? _lightBackgroundPresets
-              : _darkBackgroundPresets,
+          presets: isLight ? _lightBackgroundPresets : _darkBackgroundPresets,
         ),
         SettingDivider(colors: colors),
         buildColorRow(

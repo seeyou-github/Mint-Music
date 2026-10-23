@@ -32,7 +32,7 @@ final desktopLyricActiveIndexProvider = Provider<int>((ref) {
 /// 桌面歌词使用的歌词行。
 ///
 /// 关键：**不能直接透传 `LyricController.state.lines`**。切歌时
-/// [LyricController] 会刻意保留上一首的歌词行（避免 AMLL 视图卸载导致整屏
+/// [LyricController] 会刻意保留上一首的歌词行（避免切歌瞬间歌词区域整屏
 /// 闪烁），所以"lines 非空"并不代表这些歌词属于当前播放的歌曲。这里按
 /// 「已加载完成 + 属于当前歌曲」过滤，未就绪时返回空，由调用方先清空悬浮窗。
 ///

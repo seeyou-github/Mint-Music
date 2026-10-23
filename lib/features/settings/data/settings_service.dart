@@ -22,10 +22,8 @@ class SettingsService {
   // -- theme font colors（浅色 / 深色各一套） --
   static const _fontColorLightKey = 'theme_font_color_light';
   static const _fontColorDarkKey = 'theme_font_color_dark';
-  static const _secondaryFontColorLightKey =
-      'theme_secondary_font_color_light';
-  static const _secondaryFontColorDarkKey =
-      'theme_secondary_font_color_dark';
+  static const _secondaryFontColorLightKey = 'theme_secondary_font_color_light';
+  static const _secondaryFontColorDarkKey = 'theme_secondary_font_color_dark';
 
   /// 旧版本深浅色共用的键，只用于迁移读取。
   static const _legacyFontColorKey = 'theme_font_color';
@@ -95,8 +93,7 @@ class SettingsService {
   // -- 自定义颜色列表（外观设置里「新增颜色」保存的颜色） --
   static const _themeCustomColorsKey = 'theme_custom_colors';
   static const _fontCustomColorsKey = 'font_custom_colors';
-  static const _secondaryFontCustomColorsKey =
-      'secondary_font_custom_colors';
+  static const _secondaryFontCustomColorsKey = 'secondary_font_custom_colors';
   static const _fontCustomColorsLightKey = 'font_custom_colors_light';
   static const _fontCustomColorsDarkKey = 'font_custom_colors_dark';
   static const _secondaryFontCustomColorsLightKey =
@@ -105,8 +102,7 @@ class SettingsService {
       'secondary_font_custom_colors_dark';
   static const _backgroundCustomColorsLightKey =
       'background_custom_colors_light';
-  static const _backgroundCustomColorsDarkKey =
-      'background_custom_colors_dark';
+  static const _backgroundCustomColorsDarkKey = 'background_custom_colors_dark';
 
   List<String> _getColorList(String key) {
     final list = _prefs.getStringList(key);
@@ -140,20 +136,18 @@ class SettingsService {
       _prefs.setStringList(_fontCustomColorsDarkKey, values);
 
   /// 浅色模式「第二字体颜色」的自定义颜色列表。
-  List<String> getCustomSecondaryFontColorsLight() =>
-      _getColorListWithLegacy(
-        _secondaryFontCustomColorsLightKey,
-        _secondaryFontCustomColorsKey,
-      );
+  List<String> getCustomSecondaryFontColorsLight() => _getColorListWithLegacy(
+    _secondaryFontCustomColorsLightKey,
+    _secondaryFontCustomColorsKey,
+  );
   Future<void> setCustomSecondaryFontColorsLight(List<String> values) =>
       _prefs.setStringList(_secondaryFontCustomColorsLightKey, values);
 
   /// 深色模式「第二字体颜色」的自定义颜色列表。
-  List<String> getCustomSecondaryFontColorsDark() =>
-      _getColorListWithLegacy(
-        _secondaryFontCustomColorsDarkKey,
-        _secondaryFontCustomColorsKey,
-      );
+  List<String> getCustomSecondaryFontColorsDark() => _getColorListWithLegacy(
+    _secondaryFontCustomColorsDarkKey,
+    _secondaryFontCustomColorsKey,
+  );
   Future<void> setCustomSecondaryFontColorsDark(List<String> values) =>
       _prefs.setStringList(_secondaryFontCustomColorsDarkKey, values);
 
@@ -346,10 +340,6 @@ class SettingsService {
       _prefs.setBool('audio_visualizer_enabled', v);
 
   // -- appearance performance --
-  bool getAppearanceJumpLyric() =>
-      _prefs.getBool('appearance_jump_lyric') ?? false;
-  Future<void> setAppearanceJumpLyric(bool v) =>
-      _prefs.setBool('appearance_jump_lyric', v);
   bool getAppearanceBgAnimation() =>
       _prefs.getBool('appearance_bg_animation') ?? false;
   Future<void> setAppearanceBgAnimation(bool v) =>
@@ -375,9 +365,6 @@ class SettingsService {
   bool getLyricCenterAlign() => _prefs.getBool('lyric_center_align') ?? true;
   Future<void> setLyricCenterAlign(bool v) =>
       _prefs.setBool('lyric_center_align', v);
-  bool getAmllCenterAlign() => _prefs.getBool('amll_center_align') ?? false;
-  Future<void> setAmllCenterAlign(bool v) =>
-      _prefs.setBool('amll_center_align', v);
   bool getLyricImmersiveColor() =>
       _prefs.getBool('lyric_immersive_color') ?? true;
   Future<void> setLyricImmersiveColor(bool v) =>
@@ -402,8 +389,7 @@ class SettingsService {
       _prefs.setString('lyric_font_color', v);
 
   // -- 内置音源的优先音源（JSON 对象：平台 id → 音源 id） --
-  String getPreferredSourceMap() =>
-      _prefs.getString('preferred_sources') ?? '';
+  String getPreferredSourceMap() => _prefs.getString('preferred_sources') ?? '';
   Future<void> setPreferredSourceMap(String v) =>
       _prefs.setString('preferred_sources', v);
 
@@ -427,12 +413,6 @@ class SettingsService {
   bool getAutoCacheMusic() => _prefs.getBool('auto_cache_music') ?? true;
   Future<void> setAutoCacheMusic(bool v) =>
       _prefs.setBool('auto_cache_music', v);
-
-  // -- route preload --
-  bool getRoutePreloadEnabled() =>
-      _prefs.getBool('route_preload_enabled') ?? true;
-  Future<void> setRoutePreloadEnabled(bool v) =>
-      _prefs.setBool('route_preload_enabled', v);
 
   // -- auto update --（默认关闭，用户可在「关于」里手动开启）
   bool getAutoUpdate() => _prefs.getBool('auto_update') ?? false;
@@ -458,7 +438,8 @@ class SettingsService {
   Future<void> setAppLocale(String v) => _prefs.setString('app_locale', v);
 
   // -- lyric language mode ('follow' 跟随界面 | 'zh-CN' | 'zh-TW') --
-  String getLyricLocaleMode() => _prefs.getString('lyric_locale_mode') ?? 'follow';
+  String getLyricLocaleMode() =>
+      _prefs.getString('lyric_locale_mode') ?? 'follow';
   Future<void> setLyricLocaleMode(String v) =>
       _prefs.setString('lyric_locale_mode', v);
 

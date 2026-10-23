@@ -70,7 +70,6 @@ dependencies:
   uuid: ^4.5.1
   record: ^5.2.1
   webview_flutter: ^4.10.0
-  flutter_inappwebview: ^6.0.0
   url_launcher: ^6.3.1
   share_plus: ^10.1.4
   qr_flutter: ^4.1.0
@@ -99,10 +98,6 @@ flutter:
     - assets/images/
     - assets/afp/
     - assets/plugin_modules/
-    - assets/amll/amll-bundle.js
-    - assets/amll/amll-core.css
-    - assets/amll/lyric_player.html
-    - assets/fonts/PingFangSC-Semibold.woff2
 
   fonts:
     - family: lyricfont

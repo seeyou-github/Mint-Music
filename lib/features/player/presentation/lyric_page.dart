@@ -19,9 +19,7 @@ import '../domain/models/song.dart';
 import '../../settings/application/settings_providers.dart';
 import '../../library/application/playlist_providers.dart';
 import 'widgets/lyric_scroll_view.dart';
-import 'widgets/amll_lyric_player.dart';
 import 'widgets/player_controls.dart';
-import '../../../shared/services/amll_toggle_service.dart';
 import '../../../shared/widgets/sleep_timer_picker.dart';
 
 class LyricPage extends ConsumerStatefulWidget {
@@ -37,9 +35,6 @@ class _LyricPageState extends ConsumerState<LyricPage> {
   bool _isLeaving = false;
   bool _exiting = false;
   Animation<double>? _routeAnimation;
-
-  /// AMLL WebView 的句柄，用于退出时冻结其 JS 动画。
-  final GlobalKey<AmllLyricPlayerState> _amllKey = GlobalKey();
 
   @override
   void initState() {
@@ -81,13 +76,9 @@ class _LyricPageState extends ConsumerState<LyricPage> {
   ///    仍覆盖屏幕时就出现、窗口布局先稳定。若等到路由完全销毁才恢复，
   ///    下层页面（如全屏播放页）会突然重排，表现为退出末尾的一次闪烁
   ///    （且因 immersiveSticky 当前是否已呼出系统栏而时有时无）。
-  /// 2. 把 _isLeaving 置位（isActive 立即变 false）：位置流驱动的重建会
-  ///    因 didUpdateWidget 提前 return 而不再重启 ticker / 发送
-  ///    setCurrentTime，避免冻结窗口内 PIXI 异步重绘。
-  /// 3. AMLL 开启时确定性冻结 WebView 的 JS 动画（PIXI WebGL 的
-  ///    requestAnimationFrame 循环被取消后画布保持最后一帧），滑动期间
-  ///    平台视图是静态帧，与合成器同步、不闪烁。
-  Future<void> _beginExit() async {
+  /// 2. 把 _isLeaving 置位：外层 TickerMode 随之停掉歌词动画，退出滑动
+  ///    期间不再重绘。
+  void _beginExit() {
     if (_exiting || _isLeaving) return;
     _exiting = true;
     FocusManager.instance.primaryFocus?.unfocus();
@@ -97,15 +88,6 @@ class _LyricPageState extends ConsumerState<LyricPage> {
       overlays: SystemUiOverlay.values,
     );
 
-    final amllState = _amllKey.currentState;
-    final amllEnabled = AmllToggleService().isActive;
-    if (amllEnabled && amllState != null) {
-      // 等待 JS rAF 循环真正停止（画布稳定为静态帧）。
-      // 先冻结再置位 _isLeaving：WebView 在冻结期间仍可见（页面静止），
-      // 不会出现「歌词先消失再开始滑动」的间隙。
-      await amllState.freeze();
-    }
-    if (!mounted) return;
     setState(() => _isLeaving = true);
     context.pop();
   }
@@ -173,7 +155,6 @@ class _LyricPageState extends ConsumerState<LyricPage> {
     final showRoman = ref.watch(lyricShowRomanProvider);
     final enableBlur = ref.watch(lyricEnableBlurProvider);
     final enableScale = ref.watch(lyricEnableScaleProvider);
-    final enableJumpLyric = ref.watch(appearanceJumpLyricProvider);
     final fontSizeScale = ref.watch(lyricFontSizeProvider);
     final themeColors = ref.watch(themeColorsProvider);
     if (song != null && !identical(song, _lastSong)) {
@@ -195,11 +176,9 @@ class _LyricPageState extends ConsumerState<LyricPage> {
     final watchFontRate = ref.watch(lyricFontRateProvider);
     final watchFontWeight = ref.watch(lyricFontWeightProvider);
     final lyricCenterAlign = ref.watch(lyricCenterAlignProvider);
-    final amllCenterAlign = ref.watch(amllCenterAlignProvider);
 
     return PopScope<void>(
-      // canPop:false 拦截系统返回键，统一走 _beginExit（先恢复系统 UI、
-      // 冻结 AMLL 动画再 pop，保证退出动画不闪烁）。
+      // canPop:false 拦截系统返回键，统一走 _beginExit（先恢复系统 UI 再 pop）。
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) _beginExit();
@@ -234,247 +213,118 @@ class _LyricPageState extends ConsumerState<LyricPage> {
                       Expanded(
                         child: Builder(
                           builder: (context) {
-                            return ListenableBuilder(
-                              listenable: AmllToggleService(),
-                              builder: (context, _) {
-                                final amllEnabled = AmllToggleService().isActive;
-                                final centerAlign = amllEnabled
-                                    ? amllCenterAlign
-                                    : lyricCenterAlign;
-                                return Stack(
-                                  children: [
-                                    if (lyricState.isLoading &&
-                                        lyricState.lines.isEmpty)
-                                      Center(
-                                        child: Text(
-                                          context.tr('加载歌词中...'),
-                                          style: TextStyle(
-                                            fontSize: 18,
-                                            color: activeColor.withValues(
-                                              alpha: 0.5,
-                                            ),
-                                            letterSpacing: 2,
-                                          ),
+                            return Stack(
+                              children: [
+                                if (lyricState.isLoading &&
+                                    lyricState.lines.isEmpty)
+                                  Center(
+                                    child: Text(
+                                      context.tr('加载歌词中...'),
+                                      style: TextStyle(
+                                        fontSize: 18,
+                                        color: activeColor.withValues(
+                                          alpha: 0.5,
                                         ),
-                                      )
-                                    else if (lyricState.error != null &&
-                                        lyricState.lines.isEmpty)
-                                      Center(
-                                        child: Text(
-                                          lyricState.error!,
-                                          style: TextStyle(
-                                            fontSize: 18,
-                                            color: activeColor.withValues(
-                                              alpha: 0.5,
-                                            ),
-                                            letterSpacing: 2,
-                                          ),
-                                        ),
-                                      )
-                                    else if (lyricState.lines.isEmpty)
-                                      Center(
-                                        child: Text(
-                                          context.tr('暂无歌词'),
-                                          style: TextStyle(
-                                            fontSize: 18,
-                                            color: activeColor.withValues(
-                                              alpha: 0.5,
-                                            ),
-                                            letterSpacing: 2,
-                                          ),
-                                        ),
-                                      )
-                                    else
-                                      Stack(
-                                        fit: StackFit.expand,
-                                        children: [
-                                          // Keep the native WebView in one stable
-                                          // platform-view slot. Only the Flutter
-                                          // lyric layer changes visibility when
-                                          // the engine switch is toggled.
-                                          //
-                                          // Windows 端 AMLL 的 WebView 合成异常，
-                                          // 整块都不构建，直接使用原生歌词层。
-                                          if (AmllToggleService.isPlatformSupported)
-                                            RepaintBoundary(
-                                              child: TickerMode(
-                                                enabled: !_isLeaving,
-                                                child: Visibility(
-                                                  // 退出动画期间隐藏 WebView
-                                                  // （Offstage 不参与绘制/合成），
-                                                  // 滑动阶段平台视图不在变换
-                                                  // 子树中，中低端手机也不会
-                                                  // 掉帧闪回。
-                                                  visible: !_isLeaving,
-                                                  maintainState: true,
-                                                  maintainAnimation: true,
-                                                  child: Consumer(
-                                                    builder: (context, ref, _) {
-                                                      final playback = ref.watch(
-                                                        playbackControllerProvider
-                                                            .select(
-                                                              (state) => (
-                                                                position: state
-                                                                    .position,
-                                                                isPlaying: state
-                                                                    .isPlaying,
-                                                              ),
-                                                            ),
-                                                      );
-                                                      final seekPreview = ref.watch(
-                                                        seekPreviewPositionProvider,
-                                                      );
-                                                      final lyricPosition =
-                                                          seekPreview ??
-                                                          playback.position;
-                                                      return AmllLyricPlayer(
-                                                        key: _amllKey,
-                                                        lines: lyricState.lines,
-                                                        currentTimeMs:
-                                                            lyricPosition
-                                                                .inMilliseconds,
-                                                        isPlaying:
-                                                            playback.isPlaying,
-                                                        isSeekPreview:
-                                                            seekPreview != null,
-                                                        fontFamily:
-                                                            watchFontFamily,
-                                                        fontSizeRate:
-                                                            watchFontRate,
-                                                        fontWeight:
-                                                            watchFontWeight,
-                                                        showTranslation:
-                                                            showTranslation,
-                                                        showRoman: showRoman,
-                                                        enableBlur: enableBlur,
-                                                        enableScale: enableScale,
-                                                        enableJumpLyric:
-                                                            enableJumpLyric,
-                                                        centerAlign:
-                                                            amllCenterAlign,
-                                                        isVisible: amllEnabled,
-                                                        // 退出动画期间冻结
-                                                        // WebView 的 JS 歌词动画
-                                                        isActive: !_isLeaving,
-                                                        onLineClick:
-                                                            (startTimeMs) {
-                                                              controller.seek(
-                                                                Duration(
-                                                                  milliseconds:
-                                                                      startTimeMs,
-                                                                ),
-                                                              );
-                                                            },
-                                                      );
-                                                    },
-                                                  ),
-                                                ),
-                                              ),
-                                            ),
-                                          IgnorePointer(
-                                            ignoring: amllEnabled || _isLeaving,
-                                            child: Visibility(
-                                              visible: !amllEnabled,
-                                              maintainState: true,
-                                              maintainAnimation: true,
-                                              maintainSize: true,
-                                              maintainInteractivity: false,
-                                              child: TickerMode(
-                                                enabled:
-                                                    !amllEnabled && !_isLeaving,
-                                                child: Consumer(
-                                                  builder: (context, ref, _) {
-                                                    final playback = ref.watch(
-                                                      playbackControllerProvider
-                                                          .select(
-                                                            (state) => (
-                                                              position: state
-                                                                  .position,
-                                                              isPlaying: state
-                                                                  .isPlaying,
-                                                            ),
-                                                          ),
-                                                    );
-                                                    final seekPreview = ref.watch(
-                                                      seekPreviewPositionProvider,
-                                                    );
-                                                    final lyricPosition =
-                                                        seekPreview ??
-                                                        playback.position;
-                                                    return LyricScrollView(
-                                                      lines: lyricState.lines,
-                                                      currentTimeMs:
-                                                          lyricPosition
-                                                              .inMilliseconds,
-                                                      isPlaying:
-                                                          playback.isPlaying,
-                                                      isSeekPreview:
-                                                          seekPreview != null,
-                                                      hasYrc: hasYrc,
-                                                      activeColor: activeColor,
-                                                      inactiveColor:
-                                                          inactiveColor,
-                                                      mainFontSize:
-                                                          baseFontSize,
-                                                      transFontSize:
-                                                          transFontSize,
-                                                      romanFontSize:
-                                                          romanFontSize,
-                                                      fontSizeRate:
-                                                          watchFontRate,
-                                                      enableBlur: enableBlur,
-                                                      enableScale: enableScale,
-                                                      showTranslation:
-                                                          showTranslation,
-                                                      showRoman: showRoman,
-                                                      centerAlign: centerAlign,
-                                                      fontFamily:
-                                                          watchFontFamily,
-                                                      fontWeight:
-                                                          watchFontWeight,
-                                                      onSeek: (startTimeMs) {
-                                                        controller.seek(
-                                                          Duration(
-                                                            milliseconds:
-                                                                startTimeMs,
-                                                          ),
-                                                        );
-                                                      },
-                                                    );
-                                                  },
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    // Close button
-                                    Positioned(
-                                      top: 8,
-                                      left: 16,
-                                      child: GestureDetector(
-                                        onTap: _beginExit,
-                                        behavior: HitTestBehavior.opaque,
-                                        child: Container(
-                                          width: 36,
-                                          height: 36,
-                                          decoration: BoxDecoration(
-                                            shape: BoxShape.circle,
-                                            color: Colors.white.withValues(
-                                              alpha: 0.1,
-                                            ),
-                                          ),
-                                          child: const Icon(
-                                            Icons.keyboard_arrow_down,
-                                            size: 20,
-                                            color: Colors.white70,
-                                          ),
-                                        ),
+                                        letterSpacing: 2,
                                       ),
                                     ),
-                                  ],
-                                );
-                              },
+                                  )
+                                else if (lyricState.error != null &&
+                                    lyricState.lines.isEmpty)
+                                  Center(
+                                    child: Text(
+                                      lyricState.error!,
+                                      style: TextStyle(
+                                        fontSize: 18,
+                                        color: activeColor.withValues(
+                                          alpha: 0.5,
+                                        ),
+                                        letterSpacing: 2,
+                                      ),
+                                    ),
+                                  )
+                                else if (lyricState.lines.isEmpty)
+                                  Center(
+                                    child: Text(
+                                      context.tr('暂无歌词'),
+                                      style: TextStyle(
+                                        fontSize: 18,
+                                        color: activeColor.withValues(
+                                          alpha: 0.5,
+                                        ),
+                                        letterSpacing: 2,
+                                      ),
+                                    ),
+                                  )
+                                else
+                                  Consumer(
+                                    builder: (context, ref, _) {
+                                      final playback = ref.watch(
+                                        playbackControllerProvider.select(
+                                          (state) => (
+                                            position: state.position,
+                                            isPlaying: state.isPlaying,
+                                          ),
+                                        ),
+                                      );
+                                      final seekPreview = ref.watch(
+                                        seekPreviewPositionProvider,
+                                      );
+                                      final lyricPosition =
+                                          seekPreview ?? playback.position;
+                                      return LyricScrollView(
+                                        lines: lyricState.lines,
+                                        currentTimeMs:
+                                            lyricPosition.inMilliseconds,
+                                        isPlaying: playback.isPlaying,
+                                        isSeekPreview: seekPreview != null,
+                                        hasYrc: hasYrc,
+                                        activeColor: activeColor,
+                                        inactiveColor: inactiveColor,
+                                        mainFontSize: baseFontSize,
+                                        transFontSize: transFontSize,
+                                        romanFontSize: romanFontSize,
+                                        fontSizeRate: watchFontRate,
+                                        enableBlur: enableBlur,
+                                        enableScale: enableScale,
+                                        showTranslation: showTranslation,
+                                        showRoman: showRoman,
+                                        centerAlign: lyricCenterAlign,
+                                        fontFamily: watchFontFamily,
+                                        fontWeight: watchFontWeight,
+                                        onSeek: (startTimeMs) {
+                                          controller.seek(
+                                            Duration(milliseconds: startTimeMs),
+                                          );
+                                        },
+                                      );
+                                    },
+                                  ),
+                                // Close button
+                                Positioned(
+                                  top: 8,
+                                  left: 16,
+                                  child: GestureDetector(
+                                    onTap: _beginExit,
+                                    behavior: HitTestBehavior.opaque,
+                                    child: Container(
+                                      width: 36,
+                                      height: 36,
+                                      decoration: BoxDecoration(
+                                        shape: BoxShape.circle,
+                                        color: Colors.white.withValues(
+                                          alpha: 0.1,
+                                        ),
+                                      ),
+                                      child: const Icon(
+                                        Icons.keyboard_arrow_down,
+                                        size: 20,
+                                        color: Colors.white70,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
                             );
                           },
                         ),
@@ -858,8 +708,9 @@ class _LyricProgressBar extends ConsumerWidget {
       availableQualities: playback.availableQualities,
       onQualityTap: controller.setQuality,
       onSeekPreview: (value) {
-        ref.read(seekPreviewPositionProvider.notifier).state =
-            value == null || durationMs <= 0
+        ref
+            .read(seekPreviewPositionProvider.notifier)
+            .state = value == null || durationMs <= 0
             ? null
             : Duration(milliseconds: (value * durationMs).round());
       },

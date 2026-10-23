@@ -208,8 +208,8 @@ class _AppState extends ConsumerState<App> {
   /// 鼠标侧键「后退」：与系统返回键等效（关闭弹窗 / 返回上一页）。
   ///
   /// 复用 [GoRouterDelegate.popRoute]，与 Android 系统返回键同一套逻辑，
-  /// 因此页面里的 `PopScope` 仍然生效（多选模式先退出多选、播放页先冻结
-  /// AMLL WebView 再退出）；一级页面没有可返回内容时不做任何事。
+  /// 因此页面里的 `PopScope` 仍然生效（多选模式先退出多选、播放页先播放
+  /// 退场动画再退出）；一级页面没有可返回内容时不做任何事。
   void _handleMouseBack(PointerDownEvent event) {
     if (event.kind != PointerDeviceKind.mouse) return;
     if ((event.buttons & kBackMouseButton) == 0) return;
