@@ -29,6 +29,10 @@ class MusicCoverImage extends StatefulWidget {
   /// 下次启动时优先从磁盘读取，不再重新下载。
   final bool useDiscoveryCache;
 
+  /// 图片最终加载失败（含响应过小 / 本地读取失败）时回调。
+  /// 播放器封面用它触发 getPic 兜底换地址重试，与歌曲列表项行为一致。
+  final void Function()? onLoadFailed;
+
   const MusicCoverImage({
     super.key,
     this.url,
@@ -44,6 +48,7 @@ class MusicCoverImage extends StatefulWidget {
     this.cacheHeight,
     this.filterQuality = FilterQuality.medium,
     this.useDiscoveryCache = false,
+    this.onLoadFailed,
   });
 
   /// 封面被改动（编辑标签页上传 / 删除封面）后调用。
@@ -397,6 +402,7 @@ class _MusicCoverImageState extends State<MusicCoverImage> {
       setState(() {
         _loading = false;
       });
+      widget.onLoadFailed?.call();
     }
   }
 

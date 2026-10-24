@@ -11,6 +11,8 @@ import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../../../shared/widgets/music_cover_image.dart';
+import '../../../shared/widgets/fallback_cover_image.dart';
+import '../../plugin/application/music_source_manager.dart';
 import '../../../shared/widgets/source_icon.dart';
 import '../../../shared/widgets/source_name_tag.dart';
 import '../../plugin/domain/plugin_types.dart';
@@ -946,14 +948,22 @@ class _PlayerCoverPage extends ConsumerWidget {
               ],
             ),
             clipBehavior: Clip.antiAlias,
-            child: _buildCoverImage(song, coverSize),
+            child: _buildCoverImage(
+              song,
+              coverSize,
+              ref.read(musicSourceManagerProvider),
+            ),
           ),
         ),
       ),
     );
   }
 
-  static Widget _buildCoverImage(Song? song, double artSize) {
+  static Widget _buildCoverImage(
+    Song? song,
+    double artSize,
+    MusicSourceManager sourceManager,
+  ) {
     if (song == null) {
       return Container(
         decoration: const BoxDecoration(
@@ -966,10 +976,14 @@ class _PlayerCoverPage extends ConsumerWidget {
         child: const Icon(Icons.music_note, size: 60, color: Colors.white24),
       );
     }
-    // 优先使用 coverUrl（精准匹配后的在线封面），再回退到设备本地封面
+    // 优先使用 coverUrl（精准匹配后的在线封面），再回退到设备本地封面。
+    // 插件歌曲的 coverUrl 可能是失效地址：列表有逐行 getPic 兜底能自愈，
+    // 播放器这里用 FallbackCoverImage 补上同样的兜底。
     if (song.coverUrl != null && song.coverUrl!.isNotEmpty) {
-      return MusicCoverImage(
+      return FallbackCoverImage(
+        song: song,
         url: song.coverUrl,
+        sourceManager: sourceManager,
         fit: BoxFit.cover,
         cacheWidth: 1536,
         cacheHeight: 1536,

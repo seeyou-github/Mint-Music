@@ -9,6 +9,8 @@ import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../shared/widgets/marquee_text.dart';
 import '../../../shared/widgets/music_cover_image.dart';
+import '../../../shared/widgets/fallback_cover_image.dart';
+import '../../plugin/application/plugin_providers.dart';
 import '../../../shared/widgets/source_badge.dart';
 import '../../discover/domain/models/search_collection.dart';
 import '../../library/application/playlist_providers.dart';
@@ -131,7 +133,7 @@ class SidebarPlayer extends ConsumerWidget {
                 Positioned.fill(
                   child: Container(
                     color: colors.surfaceVariant,
-                    child: _buildCoverImage(colors, song),
+                    child: _buildCoverImage(colors, song, ref),
                   ),
                 ),
                 Positioned(
@@ -454,12 +456,16 @@ class SidebarPlayer extends ConsumerWidget {
     );
   }
 
-  Widget _buildCoverImage(ThemeColors colors, Song song) {
-    // 优先使用 coverUrl（精准匹配后的在线封面），再回退到设备本地封面
+  Widget _buildCoverImage(ThemeColors colors, Song song, WidgetRef ref) {
+    // 优先使用 coverUrl（精准匹配后的在线封面），再回退到设备本地封面。
+    // 插件歌曲的 coverUrl 可能是失效地址，FallbackCoverImage 会在加载
+    // 失败时自动 getPic 换地址重试（与歌曲列表项一致的自愈策略）。
     if (song.coverUrl != null && song.coverUrl!.isNotEmpty) {
-      return MusicCoverImage(
+      return FallbackCoverImage(
         key: ValueKey('sidebar_cover_img_${song.id}'),
+        song: song,
         url: song.coverUrl,
+        sourceManager: ref.read(musicSourceManagerProvider),
         fit: BoxFit.cover,
         errorWidget: Icon(Icons.music_note, size: 32, color: colors.primary),
       );
