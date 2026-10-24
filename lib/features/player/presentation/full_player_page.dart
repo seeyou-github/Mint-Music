@@ -162,7 +162,31 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
                     // layout as tablet, but with compact controls.
                     return _buildPhoneLandscapeLayout(isPlaying: isPlaying);
                   }
-                  // Phone / tablet portrait: vertical layout with PageView
+                  // Phone / tablet portrait: vertical layout with PageView.
+                  final windowSize = MediaQuery.sizeOf(context);
+                  final safePadding = MediaQuery.paddingOf(context);
+                  final viewportWidth =
+                      windowSize.width -
+                      safePadding.left -
+                      safePadding.right;
+                  // 封面与歌曲信息共用同一条左右边界：封面宽度按可用宽度夹紧，
+                  // 两侧留白由它反推，歌名 / 歌手才能和封面左边缘严格对齐。
+                  final coverSize = math.min(
+                    ResponsiveLayout.albumArtSize(context),
+                    viewportWidth,
+                  );
+                  final coverLeft = math.max(
+                    0.0,
+                    (viewportWidth - coverSize) / 2,
+                  );
+                  // 封面顶边落在窗口高度的 15%：扣掉状态栏和顶部工具栏后，
+                  // 换算成 PageView 内部需要补的间距。
+                  final coverTopGap = math.max(
+                    0.0,
+                    windowSize.height * 0.15 -
+                        safePadding.top -
+                        _PlayerHeader.height,
+                  );
                   return Column(
                     children: [
                       _PlayerHeader(
@@ -188,32 +212,36 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
                           itemBuilder: (context, index) {
                             if (index == 0) {
                               return _KeepAlivePage(
-                                // 封面按可用区域夹紧：小屏 + 封面放大 5% 之后
-                                // 也不会顶出 Expanded 触发溢出。
-                                child: LayoutBuilder(
-                                  builder: (context, constraints) {
-                                    final available = math.min(
-                                      constraints.maxWidth,
-                                      constraints.maxHeight,
-                                    );
-                                    final coverSize = math.min(
-                                      ResponsiveLayout.albumArtSize(context),
-                                      available,
-                                    );
-                                    return _PlayerCoverPage(
-                                      isPlaying: isPlaying,
-                                      coverSize: coverSize,
-                                      // 竖屏：封面贴底，歌名/歌手才能紧挨着封面下方，
-                                      // 而不是被推到底部操作栏附近。
-                                      alignment: Alignment.bottomCenter,
-                                      onTapCover: () {
-                                        if (_currentPage == 0) {
-                                          _activateLyricsPage();
-                                          _pageController.jumpToPage(1);
-                                        }
-                                      },
-                                    );
-                                  },
+                                child: Padding(
+                                  padding: EdgeInsets.only(
+                                    left: coverLeft,
+                                    right: coverLeft,
+                                    top: coverTopGap,
+                                  ),
+                                  // 高度不够时封面按剩余空间收缩；左上对齐，
+                                  // 收缩后左边缘仍与歌曲信息对齐。
+                                  child: LayoutBuilder(
+                                    builder: (context, constraints) {
+                                      final available = math.min(
+                                        constraints.maxWidth,
+                                        math.max(0.0, constraints.maxHeight),
+                                      );
+                                      return _PlayerCoverPage(
+                                        isPlaying: isPlaying,
+                                        coverSize: math.min(
+                                          coverSize,
+                                          available,
+                                        ),
+                                        alignment: Alignment.topLeft,
+                                        onTapCover: () {
+                                          if (_currentPage == 0) {
+                                            _activateLyricsPage();
+                                            _pageController.jumpToPage(1);
+                                          }
+                                        },
+                                      );
+                                    },
+                                  ),
                                 ),
                               );
                             }
@@ -238,7 +266,18 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
                           },
                         ),
                       ),
-                      _PlayerSongInfo(showInlineLyric: Platform.isAndroid),
+                      // 与封面共用左右留白，歌名 / 歌手左对齐封面左边缘。
+                      Padding(
+                        padding: EdgeInsets.only(
+                          left: coverLeft,
+                          right: coverLeft,
+                          top: 8,
+                        ),
+                        child: _PlayerSongInfo(
+                          padded: false,
+                          showInlineLyric: Platform.isAndroid,
+                        ),
+                      ),
                       _PlayerProgressBar(),
                       const SizedBox(height: 12),
                       _PlayerControls(onQueue: _openPlayQueue),
@@ -500,6 +539,9 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
 }
 
 class _PlayerHeader extends ConsumerWidget {
+  /// 竖屏布局用该高度反推封面顶边位置（顶部留白 8 + 48 的 IconButton）。
+  static const double height = 56;
+
   final int currentPage;
   final VoidCallback onTogglePage;
   final VoidCallback onBack;
@@ -767,8 +809,8 @@ class _PlayerCoverPage extends ConsumerWidget {
   /// 手机横屏用剩余高度动态计算，避免溢出。
   final double? coverSize;
 
-  /// 封面在可用区域内的对齐方式。竖屏用 [Alignment.bottomCenter]，
-  /// 让下方的歌曲信息紧贴封面；其它布局保持居中。
+  /// 封面在可用区域内的对齐方式。竖屏用 [Alignment.topLeft]，让封面顶边落在
+  /// 指定高度、左边缘与歌曲信息对齐；其它布局保持居中。
   final Alignment alignment;
 
   const _PlayerCoverPage({
@@ -1113,10 +1155,11 @@ class _PlayerActions extends ConsumerWidget {
     final themeColors = ref.watch(themeColorsProvider);
     final isAndroid = Platform.isAndroid;
 
-    // Material 图标自带留白，24/20 号图标与 18/16 号汉字视觉高度接近，
-    // 「词」不再比收藏等图标显眼。
+    // Material 图标都画在 24dp 网格里、自带约 2dp 留白，实际墨迹约 17~20dp；
+    // 汉字「词」的墨迹几乎占满 em 框，再加上加粗会明显比图标「重」，所以
+    // 用更小的字号 + w500 让两者视觉尺寸、笔画粗细都对齐。
     final iconSize = compact ? 20.0 : 24.0;
-    final wordFontSize = compact ? 16.0 : 18.0;
+    final wordFontSize = compact ? 15.0 : 17.0;
     final buttonConstraints = BoxConstraints.tightFor(
       width: compact ? 30 : 40,
       height: compact ? 30 : 40,
@@ -1182,7 +1225,7 @@ class _PlayerActions extends ConsumerWidget {
         style: TextStyle(
           fontSize: wordFontSize,
           height: 1.2,
-          fontWeight: FontWeight.w600,
+          fontWeight: FontWeight.w500,
           // Windows 端固定使用系统默认字体，不跟随应用自定义字体。
           fontFamily: Platform.isWindows ? 'Segoe UI' : null,
           color: desktopLyricEnabled ? themeColors.primary : idleColor,
