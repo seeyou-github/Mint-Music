@@ -133,6 +133,21 @@ function __mfText(value, fallback) {
   return text.length ? text : fallback;
 }
 
+/**
+ * 歌词专用文本处理：只去掉首尾空白，保留换行。
+ * 复用 __mfText 会把整段 LRC 的换行压成空格，解析后只剩一行。
+ */
+function __mfLyricText(value, fallback) {
+  if (typeof value === 'string') {
+    var text = value.trim();
+    return text.length ? text : fallback;
+  }
+  if (Array.isArray(value)) {
+    return __mfLyricText(value.join('\n'), fallback);
+  }
+  return fallback;
+}
+
 function __mfLimitText(text, max) {
   if (!text || text.length <= max) return text;
   return text.substring(0, max - 1) + '…';
@@ -754,10 +769,15 @@ function __mfGetLyric(source, musicInfo) {
           return text ? { lrc: text } : null;
         }
         if (typeof response !== 'object') return null;
-        var lrc = __mfText(response.rawLrc || response.lrc || response.lyric || response.raw || '', '');
-        var translation = __mfText(response.translation || response.tlyric || response.trans || '', '');
-        if (!lrc && !translation) return null;
-        return { lrc: lrc, tlyric: translation };
+        // 歌词不能用 __mfText：它会压缩换行，导致整段 LRC 变成一行。
+        var lrc = __mfLyricText(response.rawLrc || response.lrc || response.lyric || response.raw, '');
+        var wordLyric = __mfLyricText(
+          response.crlyric || response.yrc || response.lyricx || response.wordLyric,
+          ''
+        );
+        var translation = __mfLyricText(response.translation || response.tlyric || response.trans, '');
+        if (!lrc && !wordLyric && !translation) return null;
+        return { lrc: lrc, crlyric: wordLyric, tlyric: translation };
       });
     })
     .then(null, function (error) {
