@@ -2,6 +2,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../data/plugin_repository.dart';
 import '../domain/models/plugin_info.dart';
 import '../../plugin/application/plugin_providers.dart';
+import '../../plugin/data/plugin_service.dart'
+    show PluginTypeUnknownException;
 
 export '../../plugin/application/plugin_providers.dart'
     show
@@ -36,20 +38,44 @@ class PluginsNotifier extends AsyncNotifier<List<PluginInfo>> {
     return repo.loadPlugins();
   }
 
-  Future<PluginInfo> selectAndAddPlugin(String type) async {
+  /// 通过文件选择器添加插件；[type] 为 null 时自动识别类型。
+  ///
+  /// 识别失败抛出 [PluginTypeUnknownException]；用户在界面选好类型后调
+  /// `resume` 续装，这里把 resume 包了一层，续装成功同样会刷新插件列表。
+  Future<PluginInfo> selectAndAddPlugin({String? type}) async {
     final pluginService = ref.read(pluginServiceProvider);
-    final plugin = await pluginService.selectAndAddPlugin(type);
-    ref.invalidate(pluginInitializedProvider);
-    ref.invalidateSelf();
-    return plugin;
+    try {
+      final plugin = await pluginService.selectAndAddPlugin(type: type);
+      _afterPluginInstalled();
+      return plugin;
+    } on PluginTypeUnknownException catch (e) {
+      throw PluginTypeUnknownException((chosen) async {
+        final plugin = await e.resume(chosen);
+        _afterPluginInstalled();
+        return plugin;
+      });
+    }
   }
 
-  Future<PluginInfo> downloadAndAddPlugin(String url, String type) async {
+  /// 从 URL 下载并安装插件；[type] 为 null 时自动识别类型。
+  Future<PluginInfo> downloadAndAddPlugin(String url, {String? type}) async {
     final pluginService = ref.read(pluginServiceProvider);
-    final plugin = await pluginService.downloadAndAddPlugin(url, type);
+    try {
+      final plugin = await pluginService.downloadAndAddPlugin(url, type: type);
+      _afterPluginInstalled();
+      return plugin;
+    } on PluginTypeUnknownException catch (e) {
+      throw PluginTypeUnknownException((chosen) async {
+        final plugin = await e.resume(chosen);
+        _afterPluginInstalled();
+        return plugin;
+      });
+    }
+  }
+
+  void _afterPluginInstalled() {
     ref.invalidate(pluginInitializedProvider);
     ref.invalidateSelf();
-    return plugin;
   }
 
   Future<void> uninstallPlugin(String id) async {

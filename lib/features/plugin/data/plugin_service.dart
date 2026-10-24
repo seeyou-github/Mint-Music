@@ -15,6 +15,21 @@ import '../data/lx_plugin_converter.dart';
 import '../domain/source_id_mapping.dart';
 import '../../settings/domain/models/plugin_info.dart';
 
+/// 无法自动识别插件类型。
+///
+/// 由 [PluginService] 在添加插件（未显式指定类型）且静态特征全部落空时抛出，
+/// 界面捕获后弹框让用户选择；[resume] 传入用户选择的类型后继续安装，
+/// 不需要重新选文件 / 重新下载。
+class PluginTypeUnknownException implements Exception {
+  PluginTypeUnknownException(this.resume);
+
+  /// 传入用户选择的类型（cr / lx / mf），返回继续安装的 Future。
+  final Future<PluginInfo> Function(String type) resume;
+
+  @override
+  String toString() => '无法自动识别插件类型，请手动选择';
+}
+
 class PluginService {
   static const String _prefsKey = 'installed_plugins';
 
@@ -37,6 +52,48 @@ class PluginService {
         return '澜音';
     }
   }
+
+  /// 自动识别插件代码的类型：澜音(cr) / 洛雪(lx) / MusicFree(mf)。
+  ///
+  /// 按「特征从最明确到次明确」依次匹配，全部落空返回 null（界面弹框
+  /// 让用户手选）。只认各格式**独有**的特征，通用的 `module.exports`
+  /// 之类不能当依据——三种格式的插件都可能被打包混淆成模块。
+  ///
+  /// * cr：澜音插件实现 `cerumusic` 接口，代码必含该关键字；
+  /// * mf：MusicFree 插件对象有 `getMediaSource` / `supportedSearchType` /
+  ///   `getTopLists` 等独有字段，或直接引用 `musicfree`；
+  /// * lx：洛雪音源脚本带 `/* @name ... @version/@author ... */` 规范头
+  ///   注释，或使用 `EVENT_NAMES` / `sendResponse` / `on('request')` 等运行时接口。
+  static String? detectPluginType(String code) {
+    final lower = code.toLowerCase();
+
+    // 澜音：接口名最明确，放在最前。
+    if (lower.contains('cerumusic')) return 'cr';
+
+    // MusicFree：插件对象的独有字段（与 _validatePluginCode 的特征保持一致）。
+    if (lower.contains('musicfree') ||
+        lower.contains('getmediasource') ||
+        lower.contains('supportedsearchtype') ||
+        lower.contains('gettoplists')) {
+      return 'mf';
+    }
+
+    // 洛雪：规范头注释（@name + @version/@author）或运行时接口。
+    final header = RegExp(r'^\s*/\*[\s\S]{0,2000}?\*/').firstMatch(code);
+    final headerText = header?.group(0) ?? '';
+    final hasLxHeader = RegExp(r'@\s*name\b').hasMatch(headerText) &&
+        (RegExp(r'@\s*version\b').hasMatch(headerText) ||
+            RegExp(r'@\s*author\b').hasMatch(headerText));
+    final hasLxApi = lower.contains('event_names') ||
+        lower.contains('sendresponse') ||
+        lower.contains("on('request'") ||
+        lower.contains('on("request"') ||
+        lower.contains('globalthis.lx');
+    if (hasLxHeader || hasLxApi) return 'lx';
+
+    return null;
+  }
+
   final Map<String, PluginHost> _loadedPlugins = {};
   final Map<String, JsEngineService> _engines = {};
 
@@ -132,9 +189,15 @@ class PluginService {
     }
   }
 
-  Future<PluginInfo> selectAndAddPlugin(String type) async {
+  /// 通过文件选择器添加插件。
+  ///
+  /// [type] 为 null 时自动识别插件类型（见 [detectPluginType]）；识别失败
+  /// 抛 [PluginTypeUnknownException]，由界面让用户选择后续装。
+  Future<PluginInfo> selectAndAddPlugin({String? type}) async {
     final result = await FilePicker.platform.pickFiles(
-      dialogTitle: '请选择你的 ${pluginTypeLabel(type)} js插件',
+      dialogTitle: type == null
+          ? '请选择 js 插件文件（自动识别格式）'
+          : '请选择你的 ${pluginTypeLabel(type)} js插件',
       type: FileType.custom,
       allowedExtensions: ['js'],
     );
@@ -150,29 +213,13 @@ class PluginService {
 
     final file = File(filePath);
     final fileName = file.uri.pathSegments.last;
-    String pluginCode = await file.readAsString();
-    String? originalPluginCode;
+    final pluginCode = await file.readAsString();
 
-    _validatePluginCode(pluginCode, type);
-
-    if (type == 'lx') {
-      originalPluginCode = pluginCode;
-      final converter = LxPluginConverter();
-      pluginCode = converter.convert(pluginCode);
-    } else if (type == 'mf') {
-      originalPluginCode = pluginCode;
-      pluginCode = await _loadMusicFreeAdapter();
-    }
-
-    return await addPlugin(
-      pluginCode,
-      fileName,
-      type,
-      originalPluginCode: originalPluginCode,
-    );
+    return _installFromCode(pluginCode, fileName, type: type);
   }
 
-  Future<PluginInfo> downloadAndAddPlugin(String url, String type) async {
+  /// 从 URL 下载并安装插件；[type] 为 null 时自动识别。
+  Future<PluginInfo> downloadAndAddPlugin(String url, {String? type}) async {
     // Normalize URL (e.g., convert GitHub blob URLs to raw URLs)
     url = _normalizePluginUrl(url);
 
@@ -224,25 +271,51 @@ class PluginService {
       throw Exception('下载的文件内容为空');
     }
 
-    _validatePluginCode(pluginCode, type);
+    final fileName = 'downloaded_${DateTime.now().millisecondsSinceEpoch}.js';
+    return _installFromCode(pluginCode, fileName, type: type, sourceUrl: url);
+  }
 
-    String? originalPluginCode;
-    if (type == 'lx') {
-      originalPluginCode = pluginCode;
-      final converter = LxPluginConverter();
-      pluginCode = converter.convert(pluginCode);
-    } else if (type == 'mf') {
-      originalPluginCode = pluginCode;
-      pluginCode = await _loadMusicFreeAdapter();
+  /// 校验 + 转换 + 安装一段插件代码。
+  ///
+  /// [type] 为 null 时先自动识别；识别不出来抛 [PluginTypeUnknownException]，
+  /// 用户选好类型后通过异常里的 [PluginTypeUnknownException.resume] 回到这里。
+  Future<PluginInfo> _installFromCode(
+    String pluginCode,
+    String fileName, {
+    String? type,
+    String? sourceUrl,
+  }) async {
+    final resolved = type ?? detectPluginType(pluginCode);
+    if (resolved == null) {
+      throw PluginTypeUnknownException(
+        (chosen) => _installFromCode(
+          pluginCode,
+          fileName,
+          type: chosen,
+          sourceUrl: sourceUrl,
+        ),
+      );
     }
 
-    final fileName = 'downloaded_${DateTime.now().millisecondsSinceEpoch}.js';
-    return await addPlugin(
-      pluginCode,
+    _validatePluginCode(pluginCode, resolved);
+
+    String? originalPluginCode;
+    var code = pluginCode;
+    if (resolved == 'lx') {
+      originalPluginCode = code;
+      final converter = LxPluginConverter();
+      code = converter.convert(code);
+    } else if (resolved == 'mf') {
+      originalPluginCode = code;
+      code = await _loadMusicFreeAdapter();
+    }
+
+    return addPlugin(
+      code,
       fileName,
-      type,
+      resolved,
       originalPluginCode: originalPluginCode,
-      sourceUrl: url,
+      sourceUrl: sourceUrl,
     );
   }
 

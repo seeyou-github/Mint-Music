@@ -1368,7 +1368,7 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
       final pluginService = ref.read(pluginServiceProvider);
       final newPlugin = await pluginService.downloadAndAddPlugin(
         downloadUrl,
-        type,
+        type: type,
       );
 
       ref.invalidate(pluginInitializedProvider);
@@ -1428,7 +1428,6 @@ class _AddPluginSheet extends StatefulWidget {
 
 class _AddPluginSheetState extends State<_AddPluginSheet> {
   int _selectedTab = 0;
-  String _pluginType = 'cr';
   final _urlController = TextEditingController();
   bool _isLoading = false;
 
@@ -1543,55 +1542,12 @@ class _AddPluginSheetState extends State<_AddPluginSheet> {
               ),
             ),
             const SizedBox(height: AppSpacing.md),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
-              child: Wrap(
-                spacing: AppSpacing.sm,
-                runSpacing: AppSpacing.sm,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  Text(
-                    context.tr('插件类型：'),
-                    style: TextStyle(fontSize: 13, color: colors.textSecondary),
-                  ),
-                  const SizedBox(width: AppSpacing.md),
-                  _buildTypeChip(context.tr('澜音 (cr)'), 'cr', colors),
-                  const SizedBox(width: AppSpacing.sm),
-                  _buildTypeChip(context.tr('洛雪 (lx)'), 'lx', colors),
-                  const SizedBox(width: AppSpacing.sm),
-                  _buildTypeChip(context.tr('MusicFree (mf)'), 'mf', colors),
-                ],
-              ),
-            ),
-            const SizedBox(height: AppSpacing.md),
             if (_selectedTab == 0)
               _buildFileImportTab(colors)
             else
               _buildUrlDownloadTab(colors),
             const SizedBox(height: AppSpacing.lg),
           ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTypeChip(String label, String type, ThemeColors colors) {
-    final isSelected = _pluginType == type;
-    return GestureDetector(
-      onTap: () => setState(() => _pluginType = type),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        decoration: BoxDecoration(
-          color: isSelected ? colors.primary : colors.surfaceVariant,
-          borderRadius: BorderRadius.circular(AppRadius.full),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w500,
-            color: isSelected ? colors.textOnPrimary : colors.textSecondary,
-          ),
         ),
       ),
     );
@@ -1622,21 +1578,13 @@ class _AddPluginSheetState extends State<_AddPluginSheet> {
                 ),
                 const SizedBox(height: AppSpacing.md),
                 Text(
-                  context.tr(
-                    '选择 ${PluginService.pluginTypeLabel(_pluginType)} 格式的 .js 插件文件',
-                  ),
+                  context.tr('选择 .js 插件文件，格式将自动识别'),
                   textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 13, color: colors.textSecondary),
                 ),
                 const SizedBox(height: AppSpacing.xs),
                 Text(
-                  context.tr(
-                    switch (_pluginType) {
-                      'lx' => '脚本需注册 request 事件（支持混淆插件）',
-                      'mf' => '脚本需导出插件对象（支持混淆插件）',
-                      _ => '脚本需包含 cerumusic 接口（支持混淆插件）',
-                    },
-                  ),
+                  context.tr('支持澜音 / 洛雪 / MusicFree，识别失败时会让你选择类型'),
                   style: TextStyle(fontSize: 11, color: colors.textHint),
                 ),
               ],
@@ -1754,23 +1702,23 @@ class _AddPluginSheetState extends State<_AddPluginSheet> {
   Future<void> _handleFileImport() async {
     setState(() => _isLoading = true);
     try {
-      await widget.ref
-          .read(pluginsProvider.notifier)
-          .selectAndAddPlugin(_pluginType);
+      await widget.ref.read(pluginsProvider.notifier).selectAndAddPlugin();
       if (mounted) {
         // 安装成功不再弹提示（插件卡片上就能看到）。
         Navigator.pop(context);
       }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(PluginManagementPage.pluginErrorMessage(e)),
-            backgroundColor: widget.colors.error,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
+    } on PluginTypeUnknownException catch (e) {
+      // 自动识别失败：弹框让用户选类型，选完续装（不用重选文件）。
+      final type = mounted ? await _promptPluginType() : null;
+      if (type == null) return;
+      try {
+        await e.resume(type);
+        if (mounted) Navigator.pop(context);
+      } catch (err) {
+        _showInstallError(err);
       }
+    } catch (e) {
+      _showInstallError(e);
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -1817,23 +1765,84 @@ class _AddPluginSheetState extends State<_AddPluginSheet> {
     try {
       await widget.ref
           .read(pluginsProvider.notifier)
-          .downloadAndAddPlugin(url, _pluginType);
+          .downloadAndAddPlugin(url);
       if (mounted) {
         // 安装成功不再弹提示（插件卡片上就能看到）。
         Navigator.pop(context);
       }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(PluginManagementPage.pluginErrorMessage(e)),
-            backgroundColor: widget.colors.error,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
+    } on PluginTypeUnknownException catch (e) {
+      // 自动识别失败：弹框让用户选类型，选完续装（不用重新下载）。
+      final type = mounted ? await _promptPluginType() : null;
+      if (type == null) return;
+      try {
+        await e.resume(type);
+        if (mounted) Navigator.pop(context);
+      } catch (err) {
+        _showInstallError(err);
       }
+    } catch (e) {
+      _showInstallError(e);
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  /// 自动识别插件类型失败时，让用户手动选择；取消返回 null。
+  Future<String?> _promptPluginType() {
+    final colors = widget.colors;
+    Widget option(String label, String type, IconData icon) {
+      return SimpleDialogOption(
+        onPressed: () => Navigator.of(context).pop(type),
+        child: Row(
+          children: [
+            Icon(icon, size: 20, color: colors.primary),
+            const SizedBox(width: AppSpacing.md),
+            Text(
+              context.tr(label),
+              style: TextStyle(fontSize: 14, color: colors.textPrimary),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        backgroundColor: colors.surface,
+        title: Text(
+          ctx.tr('无法识别插件类型'),
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+            color: colors.textPrimary,
+          ),
+        ),
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+            child: Text(
+              ctx.tr('请手动选择该插件的格式：'),
+              style: TextStyle(fontSize: 12, color: colors.textHint),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          option('澜音 (cr)', 'cr', Icons.graphic_eq),
+          option('洛雪 (lx)', 'lx', Icons.music_note),
+          option('MusicFree (mf)', 'mf', Icons.extension),
+        ],
+      ),
+    );
+  }
+
+  void _showInstallError(Object error) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(PluginManagementPage.pluginErrorMessage(error)),
+        backgroundColor: widget.colors.error,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 }
