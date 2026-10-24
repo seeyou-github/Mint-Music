@@ -23,7 +23,8 @@ class AudioCacheService {
   /// 缓存子目录名。
   static const String subDirectoryName = 'audio_cache';
 
-  /// 缓存文件名：`歌手 - 歌名 [音质-音源名-内置/插件].扩展名`。
+  /// 缓存文件名：`歌手 - 歌名 [音质-音源标签].扩展名`，
+  /// 音源标签见 [sourceLabelFor]（内置 `平台-内置`，插件 `平台-插件-插件id`）。
   ///
   /// 缓存目录里的音频文件用「歌手 - 歌名」命名，方便直接识别；
   /// 歌手 / 歌名缺失时回退为 `歌曲id [音质-音源].扩展名`。
@@ -55,11 +56,17 @@ class AudioCacheService {
     return '$safeId [$tag].$extension';
   }
 
-  /// 音源 id → 文件名里的音源标签（如「网易云音乐-内置」「酷狗音乐-插件」）。
+  /// 音源 id → 文件名里的音源标签。
   ///
-  /// * 内置音源是裸平台 id（wy / kg / …）；
-  /// * 插件音源带 `@插件id` 后缀（如 `wy@xxx`），标成「插件」；
-  /// * 播放 / 缓存两侧都用当时的 [Song.source] 推导标签，保证能对上。
+  /// * 内置音源是裸平台 id（wy / kg / …）→「网易云音乐-内置」；
+  /// * 插件音源带 `@插件id` 后缀（如 `wy@1a16f66000f`）→
+  ///   「网易云音乐-插件-1a16f66000f」。
+  ///
+  /// 插件音源**必须带上插件 id**：同一平台可以装多个插件（比如两个网易插件），
+  /// 它们的展示名可能完全相同（单音源插件在界面上连插件名都不显示，都叫
+  /// 「网易云音乐-插件」），只按平台名区分会让两个插件的缓存互相命中——
+  /// 表现为 A 插件解析的歌播出来是 B 插件缓存下来的音频（音质 / 文件都可能不同）。
+  /// 插件 id 是安装时生成并持久化的（`PluginService`），能稳定区分。
   static String sourceLabelFor(String? source) {
     final raw = (source ?? '').trim();
     if (raw.isEmpty) return '未知音源';
@@ -68,7 +75,10 @@ class AudioCacheService {
     final base = (at == -1 ? raw : raw.substring(0, at)).trim();
     if (base.isEmpty) return '未知音源';
     final name = SourceIdMapping.idToName[base] ?? base;
-    return '$name-${at == -1 ? '内置' : '插件'}';
+    if (at == -1) return '$name-内置';
+    final pluginId = raw.substring(at + 1).trim();
+    if (pluginId.isEmpty) return '$name-插件';
+    return '$name-插件-$pluginId';
   }
 
   /// 去掉文件名里的非法字符（与下载文件名规则保持一致）。
