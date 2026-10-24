@@ -3219,6 +3219,7 @@ class MusicSourceManager {
           query,
           effectiveSourceId,
           page: page,
+          limit: limit,
         )) {
           addUnique(p);
         }
@@ -3232,29 +3233,94 @@ class MusicSourceManager {
   ///
   /// 参考 [searchCollections] 的插件链路：按音源找到宿主、调用适配器的
   /// `searchPlaylists`、复用推荐歌单的解析（`{isEnd, playlists}` 结构）。
+  ///
+  /// 插件自己的页大小和 App 的每页条数（[limit]）不一定相同，直接把
+  /// 「插件第 N 页」当「App 第 N 页」会在插件页偏小时提前判成没有下一页
+  /// （表现为「歌单搜索只有第一页」）。这里按 (sourceId, query) 聚合插件的
+  /// 多页结果，保证取满 `page * limit` 条（或插件已到底）再切片，与内置源
+  /// 「每页固定条数」的行为一致。
   Future<List<Playlist>> _searchPlaylistsFromPlugins(
     String query,
     String sourceId, {
     int page = 1,
+    int limit = 30,
   }) async {
-    final playlists = <Playlist>[];
-    for (final host in _findPluginHostsForSource(sourceId)) {
-      if (!host.supportsPlaylistSearch) continue;
-      final pluginSourceId = _getSourceIdForHost(host, sourceId);
-      if (pluginSourceId == null) continue;
-      try {
-        final raw = await host
-            .searchPlaylists(query, page: page)
-            .timeout(const Duration(seconds: 20));
-        if (raw == null || raw.isEmpty) continue;
-        final appId = _pluginSourceAppId(host, pluginSourceId);
-        playlists.addAll(_pluginPlaylistsFromJson(appId, _decodePluginJson(raw)));
-      } catch (e) {
-        print(
-          '[MusicSourceManager] 插件歌单搜索失败: source=$sourceId error=$e',
-        );
+    final cache = _playlistSearchCache;
+    if (cache == null || cache.sourceId != sourceId || cache.query != query) {
+      _playlistSearchCache = _PluginPlaylistSearchCache(sourceId, query);
+    }
+    final c = _playlistSearchCache!;
+
+    while (!c.isEnd && c.items.length < page * limit) {
+      final pageResults = <Playlist>[];
+      var anyHostReportedMore = false;
+      for (final host in _findPluginHostsForSource(sourceId)) {
+        if (!host.supportsPlaylistSearch) continue;
+        final pluginSourceId = _getSourceIdForHost(host, sourceId);
+        if (pluginSourceId == null) continue;
+        try {
+          final raw = await host
+              .searchPlaylists(query, page: c.pluginPage + 1)
+              .timeout(const Duration(seconds: 20));
+          if (raw == null || raw.isEmpty) continue;
+          final decoded = _decodePluginJson(raw);
+          final appId = _pluginSourceAppId(host, pluginSourceId);
+          pageResults.addAll(
+            _pluginPlaylistsFromJson(appId, decoded),
+          );
+          // 适配器 / 插件明确说还有下一页（isEnd == false）才算没到底。
+          if (!(decoded is Map && decoded['isEnd'] == false)) {
+            continue;
+          }
+          anyHostReportedMore = true;
+        } catch (e) {
+          print(
+            '[MusicSourceManager] 插件歌单搜索失败: source=$sourceId error=$e',
+          );
+        }
+      }
+      c.pluginPage++;
+      final before = c.items.length;
+      for (final p in pageResults) {
+        c.add(p);
+      }
+      // 终止条件：所有宿主都没报告还有下一页，或这一轮没有新增（接口忽略
+      // offset 反复返回同一页 / 真的没数据了）。
+      if (!anyHostReportedMore || c.items.length == before) {
+        c.isEnd = true;
       }
     }
-    return playlists;
+
+    final start = (page - 1) * limit;
+    if (start >= c.items.length) return const <Playlist>[];
+    final end = c.items.length < page * limit
+        ? c.items.length
+        : page * limit;
+    return c.items.sublist(start, end);
+  }
+
+  /// 插件歌单搜索的分页聚合缓存（只保留最近一次搜索的）。
+  _PluginPlaylistSearchCache? _playlistSearchCache;
+}
+
+/// 按 (音源, 关键词) 聚合插件歌单搜索的多页结果。
+class _PluginPlaylistSearchCache {
+  _PluginPlaylistSearchCache(this.sourceId, this.query);
+
+  final String sourceId;
+  final String query;
+
+  /// 聚合后的歌单（按 id 去重，保持顺序）。
+  final List<Playlist> items = [];
+  final Set<String> _ids = <String>{};
+
+  /// 已经取到插件的第几页。
+  int pluginPage = 0;
+
+  /// 插件侧是否已经没有更多。
+  bool isEnd = false;
+
+  void add(Playlist playlist) {
+    if (_ids.add(playlist.id)) items.add(playlist);
   }
 }
