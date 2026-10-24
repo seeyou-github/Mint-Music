@@ -129,6 +129,10 @@ class SongActionSheet extends ConsumerStatefulWidget {
   final VoidCallback? onAccurateMatch;
   final bool showDelete;
   final VoidCallback? onDelete;
+
+  /// 是否显示「移除」（用于从当前歌单 / 收藏集合中移除歌曲）。
+  final bool showRemove;
+  final VoidCallback? onRemove;
   final bool compactMode;
 
   /// 首个主操作是否用「下一首播放」取代「播放」。
@@ -151,6 +155,8 @@ class SongActionSheet extends ConsumerStatefulWidget {
     this.onAccurateMatch,
     this.showDelete = false,
     this.onDelete,
+    this.showRemove = false,
+    this.onRemove,
     this.compactMode = false,
     this.showPlayNextInsteadOfPlay = false,
   });
@@ -165,6 +171,8 @@ class SongActionSheet extends ConsumerStatefulWidget {
     VoidCallback? onAccurateMatch,
     bool showDelete = false,
     VoidCallback? onDelete,
+    bool showRemove = false,
+    VoidCallback? onRemove,
     bool showPlayNextInsteadOfPlay = false,
   }) {
     return showModalBottomSheet(
@@ -182,6 +190,8 @@ class SongActionSheet extends ConsumerStatefulWidget {
         onAccurateMatch: onAccurateMatch,
         showDelete: showDelete,
         onDelete: onDelete,
+        showRemove: showRemove,
+        onRemove: onRemove,
         showPlayNextInsteadOfPlay: showPlayNextInsteadOfPlay,
       ),
     );
@@ -477,6 +487,15 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                     skipPop: true,
                   ),
                   _buildFavoriteItem(colors),
+                  if (widget.showRemove && widget.onRemove != null)
+                    _buildActionItem(
+                      colors: colors,
+                      icon: Icons.remove_circle_outline,
+                      label: context.tr('移除'),
+                      onTap: widget.onRemove!,
+                      iconColor: colors.error,
+                      labelColor: colors.error,
+                    ),
                   if (widget.showDelete && widget.onDelete != null)
                     _buildActionItem(
                       colors: colors,

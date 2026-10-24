@@ -190,6 +190,52 @@ class _LocalPlaylistDetailPageState
     );
   }
 
+  /// 歌曲「更多」菜单里的「移除」：从当前歌单 / 收藏集合中移除这一首。
+  Future<void> _removeSongFromCurrentPlaylist(
+    Playlist playlist,
+    Song song,
+  ) async {
+    final colors = ref.read(themeColorsProvider);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      useRootNavigator: true,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: colors.surface,
+        title: Text(
+          context.tr('移除歌曲'),
+          style: TextStyle(color: colors.textPrimary),
+        ),
+        content: Text(
+          context.tr('确定要从「${playlist.displayName}」中移除《${song.title}》吗？'),
+          style: TextStyle(color: colors.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(
+              context.tr('取消'),
+              style: TextStyle(color: colors.textHint),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(
+              context.tr('移除'),
+              style: TextStyle(color: colors.error),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    await ref
+        .read(playlistsProvider.notifier)
+        .removeSongFromPlaylist(playlist.id, song.id);
+    if (!mounted) return;
+    _showMessage('已从歌单移除《${song.title}》');
+  }
+
   List<Song> _applySort(List<Song> songs) {
     final list = List<Song>.from(songs);
     switch (_sortMode) {
@@ -1320,6 +1366,10 @@ class _LocalPlaylistDetailPageState
                     context,
                     song: song,
                     playlistSongs: _sortedSongs,
+                    // 「我的收藏」本身用上面的收藏开关取消收藏即可，不再重复显示移除。
+                    showRemove: playlist.id != '__favorites__',
+                    onRemove: () =>
+                        _removeSongFromCurrentPlaylist(playlist, song),
                   ),
                 );
               },
