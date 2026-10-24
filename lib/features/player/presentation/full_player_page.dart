@@ -254,10 +254,11 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
                                               isPlaying: isPlaying,
                                               coverSize: actualCoverSize,
                                               alignment: Alignment.topLeft,
-                                              // 缩放锚在底边：暂停时封面只在
-                                              // 上方收缩，与歌名的间距保持不变。
+                                              // 缩放锚在左下角：暂停时封面的
+                                              // 左边缘、底边都保持不动，
+                                              // 与歌名的左对齐和间距都不变。
                                               scaleAlignment:
-                                                  Alignment.bottomCenter,
+                                                  Alignment.bottomLeft,
                                               onTapCover: () {
                                                 if (_currentPage == 0) {
                                                   _activateLyricsPage();
@@ -453,6 +454,9 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
                   _PlayerCoverPage(
                     isPlaying: isPlaying,
                     coverSize: coverSize,
+                    // 缩放锚在左下角：暂停收缩时封面左边缘不移动，
+                    // 下方歌名 / 歌手始终与可见封面对齐。
+                    scaleAlignment: Alignment.bottomLeft,
                     onTapCover: null,
                   ),
                   const SizedBox(height: 10),
@@ -524,6 +528,9 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
                             _PlayerCoverPage(
                               isPlaying: isPlaying,
                               coverSize: coverSize,
+                              // 缩放锚在左下角：暂停收缩时封面左边缘
+                              // 不移动，歌名 / 歌手始终与封面对齐。
+                              scaleAlignment: Alignment.bottomLeft,
                               onTapCover: null,
                             ),
                             const SizedBox(height: 8),
@@ -879,7 +886,8 @@ class _PlayerCoverPage extends ConsumerWidget {
   /// 指定高度、左边缘与歌曲信息对齐；其它布局保持居中。
   final Alignment alignment;
 
-  /// 暂停时封面缩小动画的锚点。竖屏用底边，避免缩小后与歌名的间距变大。
+  /// 暂停时封面缩小动画的锚点。各布局统一用 [Alignment.bottomLeft]：
+  /// 收缩时左边缘、底边都不动，歌名 / 歌手与可见封面的左对齐和间距保持不变。
   final Alignment scaleAlignment;
 
   const _PlayerCoverPage({
