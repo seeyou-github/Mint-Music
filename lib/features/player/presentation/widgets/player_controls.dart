@@ -24,6 +24,11 @@ String _estimateSize(String qualityId, int durationSec) {
 }
 
 class PlayerProgressBar extends StatefulWidget {
+  /// 非紧凑模式下进度条（与时间标签）的水平留白。
+  ///
+  /// 竖屏播放页的操作按钮行要与进度条左右对齐，统一引用这个值。
+  static const double horizontalPadding = 32;
+
   final double progress;
   final Duration position;
   final Duration duration;
@@ -140,7 +145,9 @@ class _PlayerProgressBarState extends State<PlayerProgressBar> {
   Widget build(BuildContext context) {
     final compact = widget.compact;
     return Padding(
-      padding: EdgeInsets.symmetric(horizontal: compact ? 8 : 32),
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 8 : PlayerProgressBar.horizontalPadding,
+      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [

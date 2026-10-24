@@ -51,10 +51,12 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
 
   bool _exiting = false;
 
-  /// 竖屏封面页底部信息区（歌名 / 歌手 / 操作按钮）预留的高度。
-  /// 封面先扣掉这部分再决定边长，信息区才不会压到播放控制；
-  /// 信息区本身锚定在进度条正上方，间距不随窗口高度变化。
+  /// 竖屏封面页底部预留的高度（封面下方紧跟的歌名 / 歌手区 + 底部锚定的
+  /// 操作按钮行）。封面先扣掉这部分再决定边长，两块信息都不会被压到。
   static const double _portraitInfoReserve = 140;
+
+  /// 竖屏时歌名与封面底部的固定间距。
+  static const double _portraitInfoGap = 10;
 
   @override
   void initState() {
@@ -290,21 +292,32 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
                                     },
                                   ),
                                 ),
-                                // 竖屏封面页：歌名 / 歌手 / 操作按钮锚定在
-                                // 进度条正上方（bottom: 0），与进度条的间距
-                                // 恒等于进度条到时间标签的间距，不随窗口高度
-                                // 变化；封面扣掉 [_portraitInfoReserve] 后不会
-                                // 压到信息区。
-                                if (_currentPage == 0)
+                                // 竖屏封面页：歌名 / 歌手与操作按钮行解绑——
+                                // 歌名 / 歌手跟随封面（左对齐封面左边缘、
+                                // 紧贴封面底部）；操作按钮行跟随进度条
+                                // （bottom 锚定在进度条正上方，左右与进度条
+                                // 对齐，spaceBetween 均匀分布 5 个按钮）。
+                                // 窗口高度变化时两者各自移动、互不牵连。
+                                if (_currentPage == 0) ...[
                                   Positioned(
                                     left: coverLeft,
                                     right: coverLeft,
-                                    bottom: 0,
+                                    top: coverTopGap +
+                                        actualCoverSize +
+                                        _portraitInfoGap,
                                     child: _PlayerSongInfo(
                                       padded: false,
                                       showInlineLyric: Platform.isAndroid,
+                                      showActions: false,
                                     ),
                                   ),
+                                  Positioned(
+                                    left: PlayerProgressBar.horizontalPadding,
+                                    right: PlayerProgressBar.horizontalPadding,
+                                    bottom: 0,
+                                    child: const _PlayerActions(),
+                                  ),
+                                ],
                               ],
                             );
                           },
