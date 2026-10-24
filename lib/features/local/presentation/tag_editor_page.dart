@@ -17,6 +17,7 @@ import '../application/local_providers.dart';
 import '../../player/domain/models/song.dart';
 import '../../plugin/application/plugin_providers.dart';
 import '../../../shared/widgets/music_cover_image.dart';
+import '../../player/application/root_overlay_tracker.dart';
 import '../data/local_metadata_reader.dart';
 import 'song_compare_dialog.dart';
 
@@ -61,6 +62,8 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
   @override
   void initState() {
     super.initState();
+    // 登记根级覆盖页状态（左侧栏封面 / 来源标签的「再点关闭」要用）。
+    RootOverlayTracker.instance.retain(RootOverlayTracker.tagEditor);
     _tabController = TabController(length: 2, vsync: this);
     _titleController = TextEditingController();
     _artistController = TextEditingController();
@@ -145,6 +148,7 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
 
   @override
   void dispose() {
+    RootOverlayTracker.instance.release(RootOverlayTracker.tagEditor);
     _tabController.removeListener(_handleTabChanged);
     _tabController.dispose();
     _titleController.dispose();

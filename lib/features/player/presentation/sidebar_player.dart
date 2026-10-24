@@ -15,6 +15,7 @@ import '../../library/application/playlist_providers.dart';
 import '../../library/domain/models/recently_played.dart';
 import '../application/playback_context.dart';
 import '../application/playback_controller.dart';
+import '../application/root_overlay_tracker.dart';
 import '../domain/models/song.dart';
 import 'widgets/play_queue_sheet.dart';
 
@@ -106,10 +107,15 @@ class SidebarPlayer extends ConsumerWidget {
     return Center(
       child: GestureDetector(
         onTap: () {
-          // 播放详情页已经打开：再次点击封面直接关闭；否则打开。
-          // 只认路由栈里的位置：`visible` 在切换动画期间可能滞后。
-          final path = appRouter.routerDelegate.currentConfiguration.uri.path;
-          if (path == AppRoutes.fullPlayer) {
+          // 播放详情页已打开：再次点击封面直接关闭；否则打开。
+          //
+          // 根级路由的开关状态必须查登记表：StatefulShellRoute 下
+          // `currentConfiguration.uri` 对根级路由的压栈反映不可靠（可能仍
+          // 显示分支内的地址），按路由路径判断会导致重复推入播放详情页。
+          if (RootOverlayTracker.instance.isCovered) {
+            // 盖在最上面的是歌词 / 标签编辑页时，先关它（相当于点一次返回）；
+            // 是播放详情页本身则关闭详情页。
+            RootOverlayTracker.instance.willPopTop();
             appRouter.pop();
             return;
           }
@@ -225,6 +231,7 @@ class SidebarPlayer extends ConsumerWidget {
 
     // 播放详情页 / 歌词页这类根级页面盖在内容区上时，先把它关掉。否则在
     // 根级页面上推入分类页面 / 切换分类，右侧只会剩下一片背景色。
+    // （关没关掉以登记表为准：路由配置对根级路由的压栈反映不可靠。）
     if (_closeRootOverlays()) {
       // 关掉播放页后等这一帧走完，路由栈回到下面的页面再决定怎么打开。
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -237,8 +244,8 @@ class SidebarPlayer extends ConsumerWidget {
 
   /// 按当前页面决定：关闭同一个页面 / 切分类后推入 / 直接推入。
   ///
-  /// [retries] 用于等待播放页关闭动画走完——根级页面还在栈顶时推入分支页面
-  /// 会得到空白的右侧内容区，所以最多再等几帧。
+  /// [retries] 用于等待根级覆盖页关闭动画走完——覆盖页还在栈顶时推入分支
+  /// 页面会得到空白的右侧内容区，所以最多再等几帧。
   void _navigateToSource(
     WidgetRef ref,
     String target,
@@ -251,7 +258,10 @@ class SidebarPlayer extends ConsumerWidget {
     final currentUri = appRouter.routerDelegate.currentConfiguration.uri;
     final targetUri = Uri.parse(target);
 
-    if (_isRootOverlay(currentUri.path)) {
+    // 根级覆盖页还没退干净（出栈动画期间登记表已清空、路由栈可能滞后），
+    // 等几帧再试。
+    if (RootOverlayTracker.instance.isCovered ||
+        _isRootOverlay(currentUri.path)) {
       if (retries <= 0) return;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _navigateToSource(
@@ -304,22 +314,20 @@ class SidebarPlayer extends ConsumerWidget {
   ///
   /// 这些页面在根 Navigator 上，压着整个导航壳；不关掉就推入分支页面，
   /// go_router 会在根级页面上再叠一份壳，右侧内容区就空了。
+  ///
+  /// 覆盖状态以 [RootOverlayTracker] 登记表为准（路由配置对根级路由的
+  /// 压栈反映不可靠）；pop 前先把登记摘掉——页面 dispose 要等出栈动画
+  /// 结束才触发，不先摘的话循环会一直认为还有覆盖页，把下面的页面也弹掉。
   static bool _closeRootOverlays() {
     var closed = false;
-    for (var i = 0; i < 3; i++) {
-      final path = appRouter.routerDelegate.currentConfiguration.uri.path;
-      if (!_isRootOverlay(path)) break;
-      if (!appRouter.canPop()) break;
+    while (RootOverlayTracker.instance.isCovered && appRouter.canPop()) {
+      RootOverlayTracker.instance.willPopTop();
       try {
         appRouter.pop();
       } on GoError {
         break;
       }
       closed = true;
-      // 路由栈没同步更新时不能再 pop，否则会把下面的页面也关掉。
-      if (appRouter.routerDelegate.currentConfiguration.uri.path == path) {
-        break;
-      }
     }
     return closed;
   }
@@ -333,9 +341,18 @@ class SidebarPlayer extends ConsumerWidget {
   /// 是否就是同一个来源页。
   ///
   /// 歌单 / 榜单共用 `/playlist/:id`，id 在路径里；专辑 / 作者共用
-  /// `/collection`，id 与类型都在查询参数里，必须一起比对。
+  /// `/collection`，id 与类型都在查询参数里，必须一起比对。路径按解码后
+  /// 的形式比较（非 ASCII id 的百分号编码在不同入口可能写法不一）。
   static bool _isSamePage(Uri current, Uri target) {
-    if (current.path != target.path) return false;
+    String decode(String path) {
+      try {
+        return Uri.decodeComponent(path);
+      } catch (_) {
+        return path;
+      }
+    }
+
+    if (decode(current.path) != decode(target.path)) return false;
     final currentId = current.queryParameters['id'];
     final targetId = target.queryParameters['id'];
     if (currentId != targetId) return false;

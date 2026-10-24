@@ -19,7 +19,7 @@ import '../application/desktop_lyric_sync.dart';
 import '../application/playback_controller.dart';
 import '../application/sleep_timer_provider.dart';
 import '../application/playback_ui_providers.dart';
-import '../application/full_player_visibility.dart';
+import '../application/root_overlay_tracker.dart';
 import '../application/lyric_controller.dart';
 import '../domain/models/song.dart';
 import '../domain/services/cover_color_extractor.dart';
@@ -53,22 +53,22 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
   bool _exiting = false;
 
   /// 竖屏封面页底部信息区（歌名 / 歌手 / 操作按钮）预留的高度。
-  /// 封面先扣掉这部分再决定边长，歌名才能紧贴封面底部又不压到播放控制。
+  /// 封面先扣掉这部分再决定边长，信息区才不会压到播放控制；
+  /// 信息区本身锚定在进度条正上方，间距不随窗口高度变化。
   static const double _portraitInfoReserve = 140;
-
-  /// 竖屏时歌名与封面底部的固定间距。
-  static const double _portraitInfoGap = 10;
 
   @override
   void initState() {
     super.initState();
     // 登记「播放详情页已打开」，左侧栏封面按钮据此做打开 / 关闭切换。
-    FullPlayerVisibility.instance.setVisible(true);
+    // StatefulShellRoute 下路由配置对根级路由的压栈反映不可靠，
+    // 必须由页面自己登记（见 RootOverlayTracker 的说明）。
+    RootOverlayTracker.instance.retain(RootOverlayTracker.fullPlayer);
   }
 
   @override
   void dispose() {
-    FullPlayerVisibility.instance.setVisible(false);
+    RootOverlayTracker.instance.release(RootOverlayTracker.fullPlayer);
     _pageController.dispose();
     super.dispose();
   }
@@ -291,16 +291,16 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
                                     },
                                   ),
                                 ),
-                                // 竖屏封面页：歌名 / 歌手紧贴封面底部，间距固定
-                                // [_portraitInfoGap]；歌词页继续用下方的共享信息区。
+                                // 竖屏封面页：歌名 / 歌手 / 操作按钮锚定在
+                                // 进度条正上方（bottom: 0），与进度条的间距
+                                // 恒等于进度条到时间标签的间距，不随窗口高度
+                                // 变化；封面扣掉 [_portraitInfoReserve] 后不会
+                                // 压到信息区。
                                 if (_currentPage == 0)
                                   Positioned(
                                     left: coverLeft,
                                     right: coverLeft,
-                                    top:
-                                        coverTopGap +
-                                        actualCoverSize +
-                                        _portraitInfoGap,
+                                    bottom: 0,
                                     child: _PlayerSongInfo(
                                       padded: false,
                                       showInlineLyric: Platform.isAndroid,

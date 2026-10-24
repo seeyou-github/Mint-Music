@@ -7,6 +7,7 @@ import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../application/playback_controller.dart';
+import '../application/root_overlay_tracker.dart';
 import '../domain/models/song.dart';
 import 'widgets/play_queue_sheet.dart';
 
@@ -48,7 +49,16 @@ class MiniPlayer extends ConsumerWidget {
     return MediaQuery.withClampedTextScaling(
       maxScaleFactor: 1.2,
       child: GestureDetector(
-        onTap: () => context.push('/player/full'),
+        onTap: () {
+          // 播放详情页已打开：再点一次关闭（开关式）。状态查登记表：
+          // StatefulShellRoute 下路由配置对根级路由的压栈反映不可靠。
+          if (RootOverlayTracker.instance.isCovered) {
+            RootOverlayTracker.instance.willPopTop();
+            context.pop();
+            return;
+          }
+          context.push('/player/full');
+        },
         child: Container(
           height: height,
           margin: EdgeInsets.symmetric(horizontal: isTablet ? 12 : AppSpacing.sm),

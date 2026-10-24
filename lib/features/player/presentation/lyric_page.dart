@@ -18,6 +18,7 @@ import '../application/lyric_controller.dart';
 import '../domain/models/song.dart';
 import '../../settings/application/settings_providers.dart';
 import '../../library/application/playlist_providers.dart';
+import '../application/root_overlay_tracker.dart';
 import 'widgets/lyric_scroll_view.dart';
 import 'widgets/player_controls.dart';
 import '../../../shared/widgets/sleep_timer_picker.dart';
@@ -39,6 +40,8 @@ class _LyricPageState extends ConsumerState<LyricPage> {
   @override
   void initState() {
     super.initState();
+    // 登记根级覆盖页状态（左侧栏封面 / 来源标签的「再点关闭」要用）。
+    RootOverlayTracker.instance.retain(RootOverlayTracker.lyric);
     // 歌词页沉浸式全屏（隐藏系统栏）。
     // 退出时在 _beginExit 中先恢复 edgeToEdge 再 pop：若等到路由完全销毁
     // 才恢复，下层页面会因系统栏突然出现而重排闪烁。
@@ -94,6 +97,7 @@ class _LyricPageState extends ConsumerState<LyricPage> {
 
   @override
   void dispose() {
+    RootOverlayTracker.instance.release(RootOverlayTracker.lyric);
     _routeAnimation?.removeStatusListener(_onRouteAnimationStatus);
     super.dispose();
   }
