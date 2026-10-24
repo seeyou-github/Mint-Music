@@ -3200,9 +3200,50 @@ class MusicSourceManager {
             addUnique(p);
           }
         } catch (_) {}
+      } else {
+        // 插件音源：走 MusicFree 插件的 sheet 搜索（supportedSearchType
+        // 含 sheet）。结果 id 带 `mf:sheet:` 前缀，打开详情时会自动路由
+        // 回对应插件的 getMusicSheetInfo。
+        for (final p in await _searchPlaylistsFromPlugins(
+          query,
+          effectiveSourceId,
+          page: page,
+        )) {
+          addUnique(p);
+        }
       }
     }
 
     return results.take(limit).toList();
+  }
+
+  /// 插件音源的歌单搜索。
+  ///
+  /// 参考 [searchCollections] 的插件链路：按音源找到宿主、调用适配器的
+  /// `searchPlaylists`、复用推荐歌单的解析（`{isEnd, playlists}` 结构）。
+  Future<List<Playlist>> _searchPlaylistsFromPlugins(
+    String query,
+    String sourceId, {
+    int page = 1,
+  }) async {
+    final playlists = <Playlist>[];
+    for (final host in _findPluginHostsForSource(sourceId)) {
+      if (!host.supportsPlaylistSearch) continue;
+      final pluginSourceId = _getSourceIdForHost(host, sourceId);
+      if (pluginSourceId == null) continue;
+      try {
+        final raw = await host
+            .searchPlaylists(query, page: page)
+            .timeout(const Duration(seconds: 20));
+        if (raw == null || raw.isEmpty) continue;
+        final appId = _pluginSourceAppId(host, pluginSourceId);
+        playlists.addAll(_pluginPlaylistsFromJson(appId, _decodePluginJson(raw)));
+      } catch (e) {
+        print(
+          '[MusicSourceManager] 插件歌单搜索失败: source=$sourceId error=$e',
+        );
+      }
+    }
+    return playlists;
   }
 }

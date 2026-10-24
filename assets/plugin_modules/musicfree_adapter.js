@@ -1096,6 +1096,89 @@ function __mfTopListDetail(id, page) {
   });
 }
 
+/** 把 MusicFree 的 sheetItem 映射成宿主的歌单结构，并缓存原始对象
+ * （歌单详情翻页时 getMusicSheetInfo 需要用原始 sheetItem 续传）。 */
+function __mfSheetFromRaw(sheet) {
+  if (!sheet || typeof sheet !== 'object') return null;
+  var id = __mfIdOf(sheet);
+  if (!id) return null;
+  if (!__mfSheetRawCache) __mfSheetRawCache = {};
+  if (!__mfSheetRawCache[id]) __mfSheetRawCache[id] = sheet;
+  return {
+    id: id,
+    title: __mfText(sheet.title || sheet.name, id),
+    coverUrl: __mfCoverOf(sheet),
+    description: __mfText(sheet.description, ''),
+    playCount: __mfText(sheet.playCount, ''),
+    author: __mfText(
+      sheet.artist ||
+        sheet.author ||
+        sheet.creator ||
+        sheet.nickName ||
+        sheet.nickname,
+      ''
+    ),
+    songCount:
+      typeof sheet.musicList === 'object' && sheet.musicList
+        ? __mfFirstArray([sheet.musicList]).length
+        : 0,
+  };
+}
+
+/* ------------------------------------------------------------------ *
+ * 搜索歌单（MusicFree 的 sheet 类型搜索）
+ * ------------------------------------------------------------------ */
+
+function __mfSupportsSheetSearch(plugin) {
+  if (typeof plugin.search !== 'function') return false;
+  var supported = __mfArray(plugin.supportedSearchType);
+  for (var i = 0; i < supported.length; i++) {
+    if (String(supported[i]).toLowerCase() === 'sheet') return true;
+  }
+  return false;
+}
+
+function __mfSearchPlaylists(keyword, page) {
+  return Promise.resolve()
+    .then(function () {
+      var plugin = __mfPluginObject();
+      if (!__mfSupportsSheetSearch(plugin)) {
+        return { isEnd: true, playlists: [] };
+      }
+      var keywordText = __mfText(keyword, '');
+      var pageNumber = typeof page === 'number' && page > 0 ? page : 1;
+      return Promise.resolve(
+        plugin.search(keywordText, pageNumber, 'sheet')
+      ).then(function (response) {
+        var list = [];
+        if (Array.isArray(response)) list = response;
+        else if (response && typeof response === 'object') {
+          list = __mfFirstArray([response.data, response.list]);
+        }
+        var playlists = [];
+        for (var i = 0; i < list.length; i++) {
+          var mapped = __mfSheetFromRaw(list[i]);
+          if (mapped) playlists.push(mapped);
+        }
+        var isEnd = !(
+          response &&
+          typeof response === 'object' &&
+          response.isEnd === false
+        );
+        return { isEnd: isEnd, playlists: playlists };
+      });
+    })
+    .then(null, function (error) {
+      if (typeof console !== 'undefined' && console.log) {
+        console.log(
+          '[MusicFree] searchPlaylists 失败: ' +
+            (error && error.message ? error.message : error)
+        );
+      }
+      return { isEnd: true, playlists: [] };
+    });
+}
+
 function __mfRecommendSheetsByTag(tagId, page) {
   var key = tagId === null || tagId === undefined ? '' : String(tagId);
   var plugin = __mfPluginObject();
@@ -1119,31 +1202,8 @@ function __mfRecommendSheetsByTag(tagId, page) {
 
         var playlists = [];
         for (var i = 0; i < list.length; i++) {
-          var sheet = list[i];
-          if (!sheet || typeof sheet !== 'object') continue;
-          var id = __mfIdOf(sheet);
-          if (!id) continue;
-          if (!__mfSheetRawCache) __mfSheetRawCache = {};
-          if (!__mfSheetRawCache[id]) __mfSheetRawCache[id] = sheet;
-          playlists.push({
-            id: id,
-            title: __mfText(sheet.title || sheet.name, id),
-            coverUrl: __mfCoverOf(sheet),
-            description: __mfText(sheet.description, ''),
-            playCount: __mfText(sheet.playCount, ''),
-            author: __mfText(
-              sheet.artist ||
-                sheet.author ||
-                sheet.creator ||
-                sheet.nickName ||
-                sheet.nickname,
-              ''
-            ),
-            songCount:
-              typeof sheet.musicList === 'object' && sheet.musicList
-                ? __mfFirstArray([sheet.musicList]).length
-                : 0,
-          });
+          var mapped = __mfSheetFromRaw(list[i]);
+          if (mapped) playlists.push(mapped);
         }
 
         var isEnd = true;
@@ -1222,6 +1282,8 @@ function __mfCapabilities() {
       typeof plugin.getRecommendSheetTags === 'function' &&
       typeof plugin.getRecommendSheetsByTag === 'function',
     sheetDetail: typeof plugin.getMusicSheetInfo === 'function',
+    /** 搜索歌单：supportedSearchType 里带 sheet 才支持。 */
+    playlistSearch: __mfSupportsSheetSearch(plugin),
   };
 }
 
@@ -1276,6 +1338,8 @@ __mfContract.getRecommendSheetTags = function () {
 };
 __mfContract.getRecommendSheetsByTag = __mfRecommendSheetsByTag;
 __mfContract.getMusicSheetInfo = __mfMusicSheetInfo;
+/* 搜索歌单：搜索页选中插件音源搜「歌单」时走这里（sheet 类型搜索）。 */
+__mfContract.searchPlaylists = __mfSearchPlaylists;
 
 Object.defineProperty(__mfContract, 'capabilities', {
   enumerable: true,

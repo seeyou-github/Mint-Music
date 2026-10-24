@@ -34,6 +34,9 @@ class PluginHost {
   /// 插件是否提供歌单详情（getMusicSheetInfo）。
   bool get supportsSheetDetail => _capabilities['sheetDetail'] == true;
 
+  /// 插件是否支持搜索歌单（MusicFree 的 sheet 类型搜索）。
+  bool get supportsPlaylistSearch => _capabilities['playlistSearch'] == true;
+
   /// 插件支持的搜索类型（music / album / artist）。
   List<String> get supportedSearchTypes => _searchTypes;
 
@@ -984,6 +987,12 @@ JSON.stringify((function() {
   Future<String?> getMusicSheetInfo(String sheetId, {int page = 1}) {
     final escaped = _escapeForJs(sheetId);
     return _callBrowseMethod('getMusicSheetInfo', "'$escaped', $page");
+  }
+
+  /// 搜索歌单（MusicFree 插件的 sheet 搜索）；返回 `{isEnd, playlists}`。
+  Future<String?> searchPlaylists(String query, {int page = 1}) {
+    final escaped = _escapeForJs(query);
+    return _callBrowseMethod('searchPlaylists', "'$escaped', $page");
   }
 
   Future<String?> getPic(String source, MusicInfoForPlugin musicInfo) async {
