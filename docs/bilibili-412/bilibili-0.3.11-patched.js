@@ -150,7 +150,10 @@ function getCookieString() {
     if (auth) {
         parts.push(`bili_ticket=${auth.ticket}`, `bili_ticket_expires=${auth.expiresAt}`);
     }
-    return parts.join(";");
+    // 分隔符必须是 "; "（分号 + 空格）。真实浏览器一律带空格，实测
+    // playurl 接口对 "a=1;b=2" 这种紧凑写法会直接回 412（2/2 命中），
+    // 换成 "a=1; b=2" 后 0/2 —— 这是「所有歌曲播放失败」的真正根因。
+    return parts.join("; ");
 }
 async function getCid(bvid, aid) {
     const params = bvid ? { bvid } : { aid };
@@ -703,6 +706,11 @@ async function getMediaSourceOnce(musicItem, quality, tryLook) {
     // 0.3.4 试过的「wbi/playurl + WBI 签名 + gaia/dm_img 参数」实测持续
     // 412 已回退。try_look（免登录试看，PiliPlus 同款）仅在首请求拿不到
     // 音流时补发，见 getMediaSource。
+    //
+    // 0.3.11：本接口 412 的真正根因是 Cookie 头的格式 —— getCookieString()
+    // 之前用 "; " 之外的紧凑分隔符，playurl 的 WAF 规则会直接判为脚本
+    // （实测 6/6 → 412；改成 "; " 后 6/6 → 200）。referer 也补齐成
+    // 网页端形态（PiliPlus 每次播放都会带）。
     const params = musicItem.bvid
         ? { bvid: musicItem.bvid, cid: cid, fnval: 16 }
         : { aid: musicItem.aid, cid: cid, fnval: 16 };
@@ -710,7 +718,11 @@ async function getMediaSourceOnce(musicItem, quality, tryLook) {
         params.try_look = 1;
     }
     const res = (await axios_1.default.get("https://api.bilibili.com/x/player/playurl", {
-        headers: Object.assign(Object.assign({}, headers), { cookie: getCookieString() }),
+        headers: Object.assign(Object.assign({}, headers), {
+            referer: "https://www.bilibili.com/",
+            origin: "https://www.bilibili.com",
+            cookie: getCookieString(),
+        }),
         params: params,
     })).data;
     // 接口返回错误码时给出明确报错（大会员专享 / 充电专属 / 区域限制等），
@@ -983,7 +995,7 @@ async function getMusicComments(musicItem) {
 module.exports = {
     platform: "bilibili",
     appVersion: ">=0.0",
-    version: "0.3.10-patched",
+    version: "0.3.11-patched",
     author: "猫头猫",
     cacheControl: "no-cache",
     srcUrl: "https://gitee.com/maotoumao/MusicFreePlugins/raw/v0.1/dist/bilibili/index.js",
