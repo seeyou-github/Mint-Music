@@ -600,7 +600,36 @@ function __mfGetArtistWorks(source, artistItem, page, type) {
     );
 }
 
+/** 提取插件抛错的接口信息（HTTP 状态码 + 响应片段），
+ *  随 { error } 跨桥传给 Dart，播放失败的提示里能显示具体原因（如 412 风控）。 */
+function __mfErrorText(error) {
+  if (!error) return '';
+  if (error.response && error.response.status) {
+    var data = error.response.data;
+    var text = '';
+    if (typeof data === 'string') {
+      text = data;
+    } else if (data && typeof data === 'object') {
+      text = data.message || data.msg || '';
+      if (!text) {
+        try {
+          text = JSON.stringify(data);
+        } catch (e) {
+          text = '';
+        }
+      }
+    }
+    text = String(text || '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 160);
+    return 'HTTP ' + error.response.status + (text ? ' ' + text : '');
+  }
+  return error.message || String(error);
+}
+
 function __mfMusicUrl(source, musicInfo, quality) {
+  var lastError = '';
   return Promise.resolve()
     .then(function () {
       var plugin = __mfPluginObject();
@@ -630,6 +659,7 @@ function __mfMusicUrl(source, musicInfo, quality) {
             return attempt();
           },
           function (error) {
+            lastError = __mfErrorText(error) || lastError;
             if (typeof console !== 'undefined' && console.log) {
               console.log(
                 '[MusicFree] getMediaSource(' +
@@ -647,13 +677,18 @@ function __mfMusicUrl(source, musicInfo, quality) {
     })
     .then(
       function (value) {
-        return value;
+        if (value) return value;
+        // 所有音质与插件都失败：把最后一次的接口错误带回 Dart，
+        // 让播放失败提示能显示具体原因（如 HTTP 412）。
+        if (lastError) return { error: lastError };
+        return null;
       },
       function (error) {
+        lastError = __mfErrorText(error) || lastError;
         if (typeof console !== 'undefined' && console.log) {
           console.log('[MusicFree] getMediaSource 失败: ' + (error && error.message ? error.message : error));
         }
-        return null;
+        return { error: lastError || 'getMediaSource failed' };
       }
     );
 }

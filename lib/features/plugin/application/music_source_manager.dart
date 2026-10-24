@@ -308,6 +308,20 @@ class MusicSourceManager {
     return sources;
   }
 
+  /// 平台是否已有已启用（且未在插件管理页关闭）的插件音源。
+  ///
+  /// 用于区分两种播放失败：真的没装插件（提示去安装）和装了插件但接口
+  /// 解析失败（如 bilibili 风控 412，应显示接口返回的具体错误）。
+  bool hasPluginForPlatform(String baseId) {
+    if (baseId.isEmpty) return false;
+    for (final source in getPluginSupportedSources()) {
+      if (source.id == baseId || source.id.startsWith('$baseId@')) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /// 插件名（多音源插件用来区分各平台的来源）。
   String _pluginDisplayName(PluginHost host) {
     final name = host.pluginInfo?.name?.trim() ?? '';
@@ -1645,6 +1659,7 @@ class MusicSourceManager {
     Set<String> excludedUrls = const <String>{},
     bool includeQualityFallbacks = false,
     List<PluginHost>? pluginHosts,
+    void Function(String message)? onResolveError,
   }) async {
     final sourceId = song.source;
     if (sourceId == null) return const <PluginMusicUrlResult>[];
@@ -1705,6 +1720,10 @@ class MusicSourceManager {
             '[MusicSourceManager] LX URL failed: '
             'source=$sourceId quality=$candidateQuality error=$e',
           );
+          // 接口的具体错误（如 HTTP 412 风控）带回调用方，用于播放失败提示。
+          onResolveError?.call(
+            e.toString().replaceFirst(RegExp(r'^Exception:\s*'), ''),
+          );
         }
       }
     }
@@ -1741,11 +1760,13 @@ class MusicSourceManager {
     Song song, {
     String quality = '320k',
     Set<String> excludedUrls = const <String>{},
+    void Function(String message)? onResolveError,
   }) async {
     final candidates = await getMusicUrlResultCandidates(
       song,
       quality: quality,
       excludedUrls: excludedUrls,
+      onResolveError: onResolveError,
     );
     return candidates.isEmpty ? null : candidates.first;
   }

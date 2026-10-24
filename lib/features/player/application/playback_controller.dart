@@ -302,6 +302,10 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   int _currentPlayRequestId = 0;
   int? _qualitySwitchRequestId;
   bool _settingQueue = false;
+
+  /// 本次播放请求里，音源接口返回的最后一条具体错误（如「HTTP 412 …」）。
+  /// 播放失败的提示语带上它，让用户看到接口真实原因而不是笼统的失败。
+  String? _lastResolveError;
   Duration _lastEmittedPosition = Duration.zero;
   static const Duration _positionThrottle = Duration(milliseconds: 200);
 
@@ -567,6 +571,12 @@ class PlaybackController extends StateNotifier<PlaybackState> {
               song,
               quality: quality,
               excludedUrls: excludedUrls,
+              onResolveError: (message) {
+                // 只记录仍在生效的播放请求的接口错误，避免被已取消的旧请求覆盖。
+                if (_currentPlayRequestId == requestId) {
+                  _lastResolveError = message;
+                }
+              },
             )
             .timeout(_urlFetchTimeout);
       } catch (error) {
@@ -574,6 +584,11 @@ class PlaybackController extends StateNotifier<PlaybackState> {
           '[PlaybackController] current-source URL resolve failed: '
           'source=${song.source} error=$error',
         );
+        if (_currentPlayRequestId == requestId) {
+          _lastResolveError = error
+              .toString()
+              .replaceFirst(RegExp(r'^Exception:\s*'), '');
+        }
         return const <PluginMusicUrlResult>[];
       }
     }
@@ -931,6 +946,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     _settingQueue = true;
     // 清除 completed 标记：新歌开始播放，后续的 ready 事件应正常处理
     _justCompleted = false;
+    _lastResolveError = null;
     final requestId = ++_currentPlayRequestId;
     final song = state.queue[index];
 
@@ -1413,7 +1429,11 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     } catch (e) {
       debugPrint('[PlaybackController] playSongAt error: $e');
       if (_currentPlayRequestId != requestId) return;
-      await _stopPlaybackOnFailure(tr('播放歌曲失败'));
+      // 优先显示音源接口返回的具体错误（如 HTTP 412），没有才用笼统提示。
+      final detail = _lastResolveError?.trim() ?? '';
+      await _stopPlaybackOnFailure(
+        detail.isEmpty ? tr('播放歌曲失败') : detail,
+      );
     } finally {
       if (pendingCoverFuture != null && _currentPlayRequestId == requestId) {
         unawaited(
@@ -1929,21 +1949,36 @@ class PlaybackController extends StateNotifier<PlaybackState> {
 
   /// 播放失败时的提示语。
   ///
-  /// * **内置音源**：它自己没有播放地址接口，失败说明没有可用的第三方音源，
-  ///   提示用户去装对应平台的音源；
-  /// * **插件音源**：未开启自动换源时说明是用户主动关掉的；开启了但所有
-  ///   候选都失败则是所有音源都不可用。
+  /// * **内置/插件平台音源**：平台上一个已启用的插件都没有时，提示用户去
+  ///   安装对应平台的音源；装了插件但解析失败（如接口 412 风控、大会员
+  ///   专享），则显示「解析失败」并带上接口返回的具体错误；
+  /// * **插件绑定音源**（`平台@插件`）：未开启自动换源时说明是用户主动关掉的；
+  ///   开启了但所有候选都失败则是所有音源都不可用。两者都尽量附上具体错误。
   String _playbackFailureReason(
     String source, {
     required bool autoSwitchEnabled,
   }) {
+    String withDetail(String base) {
+      final detail = _lastResolveError?.trim() ?? '';
+      return detail.isEmpty ? base : '$base：$detail';
+    }
+
     if (source.isNotEmpty && !source.contains('@')) {
+      final (baseId, _) = MusicSourceManager.splitSourceId(source);
+      if (baseId.isNotEmpty && _musicSourceManager.hasPluginForPlatform(baseId)) {
+        // 装了插件（如 bilibili 插件）但接口失败 → 不是「没装插件」，
+        // 提示里带上接口返回的真实错误（HTTP 状态码 / 响应内容）。
+        final name =
+            _sourceIdToChineseName[baseId] ??
+            _getSourceName(source, _musicSourceManager);
+        return withDetail(tr('$name音源解析失败'));
+      }
       return _builtInSourceMissingMessage(source);
     }
     if (!autoSwitchEnabled) {
-      return tr('当前音源播放失败，自动切换音源已关闭');
+      return withDetail(tr('当前音源播放失败，自动切换音源已关闭'));
     }
-    return tr('所有音源均无法播放');
+    return withDetail(tr('所有音源均无法播放'));
   }
 
   /// 内置音源缺少第三方音源时的提示。
@@ -2056,7 +2091,15 @@ class PlaybackController extends StateNotifier<PlaybackState> {
         if (_currentPlayRequestId != requestId) return false;
         try {
           final result = await _musicSourceManager
-              .getMusicUrlResult(candidate, quality: quality)
+              .getMusicUrlResult(
+                candidate,
+                quality: quality,
+                onResolveError: (message) {
+                  if (_currentPlayRequestId == requestId) {
+                    _lastResolveError = message;
+                  }
+                },
+              )
               .timeout(_urlFetchTimeout);
           if (result == null || result.url.isEmpty) continue;
 
@@ -2148,7 +2191,15 @@ class PlaybackController extends StateNotifier<PlaybackState> {
       if (_currentPlayRequestId != requestId) return false;
       try {
         final result = await _musicSourceManager
-            .getMusicUrlResult(candidate, quality: state.currentQuality)
+            .getMusicUrlResult(
+              candidate,
+              quality: state.currentQuality,
+              onResolveError: (message) {
+                if (_currentPlayRequestId == requestId) {
+                  _lastResolveError = message;
+                }
+              },
+            )
             .timeout(_urlFetchTimeout);
         if (_currentPlayRequestId != requestId) return false;
         if (result == null || result.url.isEmpty) continue;
@@ -2253,6 +2304,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
               song,
               quality: fallbackQuality,
               excludedUrls: excludedUrls,
+              onResolveError: (message) => _lastResolveError = message,
             )
             .timeout(_urlFetchTimeout);
         for (final candidate in candidates) {
