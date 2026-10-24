@@ -954,6 +954,17 @@ class PlaybackController extends StateNotifier<PlaybackState> {
       '[PlaybackController] playSongAt: ${song.title}, index=$index, requestId=$requestId',
     );
 
+    // 用户点播了新歌：立刻停掉正在播放的旧歌，不让它在防抖等待与
+    // 新歌解析期间继续发声（表现为「点了 b 之后 a 还在唱」）。
+    // 自动连播（歌曲已播完）时播放器本来就不在播放，不会走到这里。
+    if (state.isPlaying || _audioHandler.playing) {
+      try {
+        await _audioHandler.pause();
+      } catch (_) {}
+      if (_currentPlayRequestId != requestId) return;
+      if (mounted) state = state.copyWith(isPlaying: false);
+    }
+
     // 照搬 CeruMusic：300ms 防抖，防止快速切歌导致并发请求混乱
     await Future.delayed(const Duration(milliseconds: 300));
     if (_currentPlayRequestId != requestId) return;
