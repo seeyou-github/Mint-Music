@@ -125,3 +125,48 @@ return await getMediaProxys(...);                           // 5 个公益 API�
 - 内置的那个 `MUSIC_U` 是别人的账号，随时可能失效（失效后会走到「酷我搜同名」兜底，反而能放完整版，但音质/版本可能不对）。
 - 公益 API（ikunshare 需要卡密、haitangw、onrender）都不保证可用，实测 `onrender` 返回 503。
 - 用第三方账号/代理解析 VIP 版权歌曲存在合规风险，长期方案还是填自己的会员 cookie。
+
+---
+
+## 六、补充（重要更正）：MintMusic 目前没有「插件用户变量」
+
+上一节说「在插件设置里填 music_u」——**在本 App 里做不到**，这里更正。
+
+宿主侧实测：
+
+- `assets/plugin_modules/musicfree_runtime.js:16` 写死 `var __mfUserVariables = {};`，
+  之后没有任何地方给它赋值；
+- Dart 侧全仓 grep 不到 `userVariables` / `__mfUserVariables` 的注入点；
+- `PluginInfo` 没有 `userVariables` 字段，插件管理页也没有填写入口。
+
+所以插件读到的永远是空：
+
+| 插件 | 读法 | 实际拿到的值 |
+| --- | --- | --- |
+| 星海 | `env.userVariables.music_u` | `undefined` → `hasCookie()` 恒 false |
+| vip仅30秒 | `env.getUserVariables()` | `{}` → 用内置非 VIP token |
+
+### 这对「为什么星海能放 VIP」的结论有影响
+
+星海在「没有 cookie」时走第三方代理，实测代理返回的是**完整曲目**：
+
+| 星海 music_u 填法 | 实际 Cookie | 返回音频 | 时长 |
+| --- | --- | --- | --- |
+| 不填（当前 App 的实际状态） | 无 → 走代理 | **2.33 MB** | **约 152 秒（完整）** |
+| 只填 token 值 | `MUSIC_U=TESTTOKEN123` | 0.46 MB | 30 秒（试听） |
+| 填 `MUSIC_U=token` | `MUSIC_U=MUSIC_U=…`（坏） | 0.46 MB | 30 秒 |
+| 整串粘贴 cookie | `MUSIC_U=os=pc; …`（坏） | 0.46 MB | 30 秒 |
+
+也就是说：
+
+1. **星海能放 VIP，靠的是它自建代理（`zrcdy.dpdns.org` + `music-api.gdstudio.xyz`）的账号，不是你的会员**；
+2. 星海拼接方式是 `` `${BASE_COOKIE}MUSIC_U=${MUSIC_U};` ``，**只能填 token 值**——带 `MUSIC_U=` 前缀或整串粘贴都会把 cookie 弄坏，反而退化成 30 秒；
+3. 在 MintMusic 里因为没有用户变量，星海永远走代理那条路（所以现在反而「能用」）；
+4. 上一节的 `-fixed.js` 只有在**支持用户变量**的宿主（如 MusicFree 本体）里才生效；在 MintMusic 里补丁没有实际作用。
+
+### 若要支持，需要补什么
+
+1. 解析插件的 `userVariables` 声明（`[{key,name,hint}]`），存进 `PluginInfo`；
+2. 插件管理页提供填写入口，按 `插件id + key` 持久化；
+3. 每次执行插件前把值注入 JS 运行时的 `__mfUserVariables`（`env.userVariables` / `env.getUserVariables()` 都读它）；
+4. 注意两种读法并存：星海读 `env.userVariables`（对象），vip仅30秒 读 `env.getUserVariables()`（函数），两个都要提供。
