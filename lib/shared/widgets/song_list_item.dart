@@ -283,15 +283,20 @@ class SongListItem extends ConsumerWidget {
     BuildContext context,
     WidgetRef ref,
   ) {
+    // 插件搜索出来的歌，song.source 只记平台 id（播放 / 歌词仍按平台处理），
+    // 真正用的是哪个插件记在 preferredSource 里。只读 source 会把「用元力KW
+    // 搜出来的歌」全部标成「酷我音乐-内置」，看起来像根本没走插件。
+    // 收藏时绑定的优先插件同理，这里统一优先显示它（见 [Song.displaySource]）。
+    final displaySource = song.displaySource ?? song.source!;
     // 名称最长 10 个字，超出省略（与详情页头部的音源标签一致）。
     final sourceName = SourceNameTag.shorten(
-      _getSourceName(song.source!, ref),
+      _getSourceName(displaySource, ref),
     );
     return Container(
       margin: const EdgeInsets.only(right: 4),
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
       decoration: BoxDecoration(
-        color: _getSourceColor(song.source!).withValues(alpha: 0.15),
+        color: _getSourceColor(displaySource).withValues(alpha: 0.15),
         borderRadius: BorderRadius.circular(2),
       ),
       child: Text(
@@ -299,7 +304,7 @@ class SongListItem extends ConsumerWidget {
         style: TextStyle(
           fontSize: 10,
           fontWeight: FontWeight.w600,
-          color: _getSourceColor(song.source!),
+          color: _getSourceColor(displaySource),
         ),
       ),
     );

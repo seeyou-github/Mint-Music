@@ -65,6 +65,17 @@ class Song {
 
   bool get isLocal => source == 'local';
 
+  /// 展示 / 徽标用的音源 id。
+  ///
+  /// 插件搜索出来的歌，[source] 只记平台 id（播放、歌词等仍按平台处理），
+  /// 真正是哪个插件在提供记在 [preferredSource] 里；收藏时绑定的优先插件
+  /// 同理。展示层要优先用它，否则「用元力KW 搜出来的歌」会被标成
+  /// 「酷我音乐-内置」，看起来像没走插件。
+  String? get displaySource {
+    final preferred = preferredSource?.trim() ?? '';
+    return preferred.isNotEmpty ? preferred : source;
+  }
+
   String get displayDuration {
     if (duration <= 0) return '';
     final m = duration ~/ 60;
