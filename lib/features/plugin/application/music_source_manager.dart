@@ -378,14 +378,17 @@ class MusicSourceManager {
   /// 内置源没有地址接口，播放地址一定是由插件解析的：歌曲的音源字段可能还是
   /// 内置源的平台 id（例如从搜索结果直接播放时），这里给出真正提供地址的
   /// 插件音源 id（`平台id@插件id`）。
-  String? resolvingSourceIdFor(String sourceId) {
+  String? resolvingSourceIdFor(String sourceId, {String? preferredPlugin}) {
     if (sourceId.isEmpty) return null;
     // 已经是插件音源就直接用它。
     final (_, pluginId) = splitSourceId(sourceId);
     if (pluginId != null) return sourceId;
     // 内置源：找提供该平台的插件。按「优先音源」排序后取第一个，
     // 这样播放详情页顶部显示的就是真正会被优先使用的那个音源。
-    for (final host in _orderedHostsForSource(sourceId)) {
+    for (final host in _orderedHostsForSource(
+      sourceId,
+      preferredPlugin: preferredPlugin,
+    )) {
       final pluginSourceId = _getSourceIdForHost(host, sourceId);
       if (pluginSourceId == null) continue;
       return _pluginSourceAppId(host, pluginSourceId);
@@ -691,23 +694,72 @@ class MusicSourceManager {
     _preferredSources = Map<String, String>.from(map);
   }
 
+  /// 把一个音源 id 落成「能真正解析播放地址」的具体插件音源。
+  ///
+  /// 收藏歌曲 / 歌单 / 专辑 / 作者时用它记下「以后优先用哪个插件播放」：
+  /// 搜索结果（尤其是聚合搜索）里的歌往往只带平台 id（`wy`），直接存进收藏
+  /// 的话，以后播放只能临时靠「优先音源」或回退去猜，容易失败。
+  ///
+  /// * 已经带插件（`平台id@插件id`）且插件仍可用 → 原样返回；
+  /// * 否则先看该平台的「优先音源」，再取第一个能解析地址的插件；
+  /// * 一个插件都没有 → 原样返回（仍按内置源 + 回退逻辑播放）。
+  String concretePlaybackSource(
+    String sourceId, {
+    Map<String, String>? preferredSources,
+  }) {
+    final trimmed = sourceId.trim();
+    if (trimmed.isEmpty || trimmed == 'local') return sourceId;
+    final (baseId, pluginId) = splitSourceId(trimmed);
+    if (baseId.isEmpty) return sourceId;
+    // 已经指定了插件：插件还支持解析地址就保持不变。
+    if (pluginId != null && _pluginSourceCanResolveUrls(trimmed)) {
+      return trimmed;
+    }
+
+    final preferred =
+        (preferredSources ?? _preferredSources)[baseId]?.trim() ?? '';
+    if (preferred.isNotEmpty && _pluginSourceCanResolveUrls(preferred)) {
+      return preferred;
+    }
+
+    for (final host in _findPluginHostsForSource(baseId)) {
+      final pluginSourceId = _getSourceIdForHost(host, baseId);
+      if (pluginSourceId == null) continue;
+      final appId = _pluginSourceAppId(host, pluginSourceId);
+      if (!_pluginSourceCanResolveUrls(appId)) continue;
+      return appId;
+    }
+    // 没有可用插件：内置平台退回平台 id，这样播放时仍能走「内置源 + 插件
+    // 兜底解析」这条老路。
+    return builtInPlatformIds.contains(baseId) ? baseId : sourceId;
+  }
+
   /// 解析播放地址时使用的 host 顺序：优先音源对应的插件排在最前面。
   ///
+  /// [preferredPlugin] 是「这首歌自己记住的插件」（收藏时记下的那个），
+  /// 比播放页手动选的「优先音源」更具体，所以排在它前面。
+  ///
   /// 只影响「取播放地址」，不影响搜索结果的顺序。
-  List<PluginHost> _orderedHostsForSource(String sourceId) {
+  List<PluginHost> _orderedHostsForSource(
+    String sourceId, {
+    String? preferredPlugin,
+  }) {
     final hosts = _findPluginHostsForSource(sourceId);
     if (hosts.length <= 1) return hosts;
     final (baseId, pluginId) = splitSourceId(sourceId);
     // 已经指定了具体插件（`平台id@插件id`）时不需要再排序。
     if (pluginId != null) return hosts;
 
-    final preferred = _preferredSources[baseId];
-    if (preferred == null || preferred.isEmpty) return hosts;
-    final (preferredBase, preferredPlugin) = splitSourceId(preferred);
+    final songPreferred = preferredPlugin?.trim() ?? '';
+    final preferred = songPreferred.isNotEmpty
+        ? songPreferred
+        : (_preferredSources[baseId] ?? '');
+    if (preferred.isEmpty) return hosts;
+    final (preferredBase, preferredPluginId) = splitSourceId(preferred);
 
     bool matches(PluginHost host) {
       final hostPluginId = _pluginService.getPluginIdForHost(host);
-      if (preferredPlugin != null) return hostPluginId == preferredPlugin;
+      if (preferredPluginId != null) return hostPluginId == preferredPluginId;
       return _getSourceIdForHost(host, preferredBase) != null;
     }
 
@@ -1554,7 +1606,9 @@ class MusicSourceManager {
     // the provider-specific song metadata and requested quality. In
     // particular, Kuwo's legacy endpoint can return HTTP 200 for its
     // free-listening permission prompt instead of the requested song.
-    final hosts = pluginHosts ?? _orderedHostsForSource(sourceId);
+    final hosts =
+        pluginHosts ??
+        _orderedHostsForSource(sourceId, preferredPlugin: song.preferredSource);
     for (final host in hosts) {
       final pluginSourceId = _getSourceIdForHost(host, sourceId);
       if (pluginSourceId == null) continue;

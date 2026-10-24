@@ -411,16 +411,19 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   /// 用户给当前内置源指定了新的优先音源后，用新音源重新解析并播放当前歌曲。
   ///
   /// 队列里这首歌的 `source` 可能已经被改写成上一个插件变体（`wy@luoxue`），
-  /// 那样只会用那个插件解析，所以先把它重置回内置平台 id，再重新播放。
+  /// 或者带着收藏时记下的「优先插件」，那样只会用那个插件解析；先把它重置回
+  /// 内置平台 id 并清掉歌曲级优先插件，用户这次手动选择才生效（只影响当前
+  /// 这一首，其它收藏歌曲仍然优先用各自记住的插件）。
   Future<void> replayWithPreferredSource(String baseSourceId) async {
     final index = state.currentIndex;
     if (index < 0 || index >= state.queue.length) return;
     final song = state.queue[index];
-    if (song.source != baseSourceId) {
+    if (song.source != baseSourceId || song.preferredSource != null) {
       _replaceSongInQueue(
         index,
         song.copyWith(
           source: baseSourceId,
+          clearPreferredSource: true,
           clearSourceUrl: true,
           clearSourceHeaders: true,
           clearSourceQuality: true,
@@ -1173,7 +1176,10 @@ class PlaybackController extends StateNotifier<PlaybackState> {
 
             final candidates = await _autoSwitchService.getCandidateSongs(
               song,
-              candidateSources: _fallbackSourceIds(song.source ?? ''),
+              candidateSources: _fallbackSourceIds(
+                song.source ?? '',
+                song: song,
+              ),
             );
             if (_currentPlayRequestId != requestId) return;
 
@@ -1281,7 +1287,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
 
           final candidates = await _autoSwitchService.getCandidateSongs(
             song,
-            candidateSources: _fallbackSourceIds(song.source ?? ''),
+            candidateSources: _fallbackSourceIds(song.source ?? '', song: song),
           );
           if (_currentPlayRequestId != requestId) return;
 
@@ -1896,13 +1902,17 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   }
 
   /// 换源时要尝试的音源（同平台优先，再其它平台，不区分插件格式）。
-  List<String> _fallbackSourceIds(String currentSource) {
+  List<String> _fallbackSourceIds(String currentSource, {Song? song}) {
     // 复制成可修改列表：管理器在「没有其它音源」时返回的是 const 空列表。
     final ids = List<String>.of(
       _musicSourceManager.playbackFallbackSourceIds(currentSource),
     );
-    // 用户给这个内置源指定了「优先音源」→ 把它提到最前面，
-    // 失败后再按原来的顺序（同平台插件 → 其它平台）继续兜底。
+    // 收藏时记下的插件排最前（它才是「当时那个音源」），
+    // 其次是用户给这个内置源指定的「优先音源」。
+    final songPreferred = song?.preferredSource?.trim() ?? '';
+    if (songPreferred.isNotEmpty && ids.remove(songPreferred)) {
+      ids.insert(0, songPreferred);
+    }
     final preferred = preferredSourceFor(currentSource);
     if (preferred != null && ids.remove(preferred)) {
       ids.insert(0, preferred);
@@ -2048,7 +2058,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     if (pluginIds.isEmpty) return false;
     // 同平台插件（酷狗1 → 酷狗2）重新搜索同一首歌，失败后再试其它平台；
     // MusicFree 插件必须用自己搜索结果里的 musicItem 才能解析地址。
-    final others = _fallbackSourceIds(source);
+    final others = _fallbackSourceIds(source, song: song);
     if (others.isEmpty) return false;
 
     List<Song> candidates;
@@ -2489,7 +2499,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
         }
         final candidates = await _autoSwitchService.getCandidateSongs(
           song,
-          candidateSources: _fallbackSourceIds(song.source ?? ''),
+          candidateSources: _fallbackSourceIds(song.source ?? '', song: song),
         );
         if (_currentPlayRequestId != requestId) return;
 

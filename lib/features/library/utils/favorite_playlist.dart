@@ -105,22 +105,58 @@ Playlist withCoverSourceMeta(Playlist playlist, {Playlist? stored}) {
   );
 }
 
-/// 把 [songs] 的音源统一成收藏时记录的音源。
+/// 把收藏专辑 / 作者时写进描述的标记音源换成具体插件。
 ///
-/// 音源变化后原来的播放地址不再适用，所以一并清掉缓存地址，让播放器
-/// 按新音源重新解析。
+/// 描述里的 `mintmusic:album:<source>:<id>` 是「从收藏播放时优先用哪个音源」的
+/// 依据；收藏时如果只拿到平台 id（内置源），这里补成具体插件。
+/// 不是收藏标记的描述原样返回。
+String upgradeFavoriteMarkerSource(String description, String? source) {
+  final target = source?.trim() ?? '';
+  if (target.isEmpty) return description;
+  final match = _collectionMarker.firstMatch(description.trim());
+  if (match == null) return description;
+  final current = match.group(2) ?? '';
+  if (current == target) return description;
+  return description.replaceRange(
+    match.start,
+    match.end,
+    'mintmusic:${match.group(1)}:$target:${match.group(3)}',
+  );
+}
+
+/// 把收藏时记录的插件音源写成「这首歌优先使用的插件」。
+///
+/// 收藏的专辑 / 作者 / 歌单 / 榜单记的是具体插件（`平台id@插件id`）。播放时
+/// 先用这个插件解析地址——比播放页顶部手动选的「优先音源」更具体；插件不
+/// 可用时仍按原规则回退，所以这里不改写歌曲的平台音源（[Song.source]）。
+///
+/// 原来是「直接把 song.source 改成插件变体」，但那样会让内置平台失去兜底
+/// 解析（自动换源关闭时直接算失败），所以改成歌曲级优先插件。
 List<Song> applyFavoriteSource(List<Song> songs, String? source) {
   final target = source?.trim();
   if (target == null || target.isEmpty || target == 'local') return songs;
-  final targetPlugin = target.contains('@');
+  final targetIsPlugin = target.contains('@');
 
   return [
     for (final song in songs)
-      if (_keepSongSource(song, target, targetPlugin))
+      if (_keepSongSource(song, target, targetIsPlugin))
         song
+      else if (targetIsPlugin)
+        // 记下优先插件；歌曲原本硬绑在别的插件上时退回平台 id，
+        // 否则优先插件根本轮不到（选插件前会按音源过滤 host）。
+        song.copyWith(
+          source: _shouldDropPluginSource(song, target)
+              ? _baseSource(song.source!.trim())
+              : null,
+          preferredSource: target,
+          clearSourceUrl: true,
+          clearSourceHeaders: true,
+          clearSourceQuality: true,
+        )
       else
         song.copyWith(
           source: target,
+          clearPreferredSource: true,
           clearSourceUrl: true,
           clearSourceHeaders: true,
           clearSourceQuality: true,
@@ -128,16 +164,25 @@ List<Song> applyFavoriteSource(List<Song> songs, String? source) {
   ];
 }
 
+/// 歌曲当前硬绑的插件和 [target] 不是同一个时，需要退回平台 id。
+bool _shouldDropPluginSource(Song song, String target) {
+  final current = song.source?.trim() ?? '';
+  return current.contains('@') && current != target;
+}
+
 /// 歌曲已经在用收藏音源（或同一平台的插件变体）时保持原样。
 ///
 /// 收藏音源只精确到平台（`wy`）时，保留原有的 `wy@插件` —— 变体信息更具体；
-/// 收藏音源本身就是插件变体时则强制使用它。
+/// 收藏音源本身就是插件变体时，已经绑定同一个插件就不必再改。
 bool _keepSongSource(Song song, String target, bool targetPlugin) {
   if (song.isLocal) return true;
   final current = song.source?.trim();
+  if (targetPlugin) {
+    // 已经硬绑到同一个插件，或者已经记着这个优先插件，都不用再改。
+    return song.preferredSource == target || current == target;
+  }
   if (current == null || current.isEmpty) return false;
   if (current == target) return true;
-  if (targetPlugin) return false;
   return _baseSource(current) == target;
 }
 

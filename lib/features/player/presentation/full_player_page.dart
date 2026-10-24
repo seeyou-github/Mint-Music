@@ -1725,16 +1725,21 @@ class _KeepAlivePageState extends State<_KeepAlivePage>
 /// 两首歌切换时 source 字符串没变化，组件不会重建，标签会停在上一次的
 /// 结果上（看起来就是「音源显示错了」）。
 String? currentSourceLabel(WidgetRef ref) {
-  final songSource = ref
-      .watch(
-        playbackControllerProvider.select(
-          (s) => (s.currentSong?.source ?? '', s.currentSong?.id ?? ''),
-        ),
-      )
-      .$1;
+  final songInfo = ref.watch(
+    playbackControllerProvider.select(
+      (s) => (
+        s.currentSong?.source ?? '',
+        s.currentSong?.id ?? '',
+        s.currentSong?.preferredSource ?? '',
+      ),
+    ),
+  );
+  final songSource = songInfo.$1;
   if (songSource.isEmpty) return null;
   final manager = ref.read(musicSourceManagerProvider);
-  final effective = manager.resolvingSourceIdFor(songSource) ?? songSource;
+  final effective =
+      manager.resolvingSourceIdFor(songSource, preferredPlugin: songInfo.$3) ??
+      songSource;
   final label = manager.sourceDisplayName(effective);
   return label.isEmpty ? null : label;
 }

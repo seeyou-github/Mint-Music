@@ -3,9 +3,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/backup/playlist_sync_service.dart';
 import '../../../core/backup/playlist_sync_status.dart';
 import '../../../core/backup/webdav_service.dart';
+import '../../plugin/application/plugin_providers.dart';
 import '../../settings/application/settings_providers.dart';
 import '../data/playlist_repository.dart';
 import '../domain/models/playlist.dart';
+import '../utils/favorite_playlist.dart';
 import '../../player/domain/models/song.dart';
 
 final playlistRepositoryProvider = Provider<PlaylistRepository>((ref) {
@@ -51,6 +53,44 @@ class PlaylistsNotifier extends AsyncNotifier<List<Playlist>> {
     return repo.loadPlaylists();
   }
 
+  /// 收藏时把「平台音源」落成具体插件音源。
+  ///
+  /// 搜索（尤其是聚合搜索）出来的结果常常只带平台 id（`wy`），收藏时如果不
+  /// 记下是哪个插件，之后从收藏播放就只能临时去猜，容易失败。这里把插件
+  /// 固化到收藏里，播放时优先用它（优先于播放页手动选的音源）。
+  String? _concreteSource(String? source) {
+    final value = source?.trim() ?? '';
+    if (value.isEmpty || value == 'local') return source;
+    final resolved = ref
+        .read(musicSourceManagerProvider)
+        .concretePlaybackSource(
+          value,
+          preferredSources: ref.read(preferredSourceMapProvider),
+        );
+    return resolved == value ? source : resolved;
+  }
+
+  /// 同上，作用于单首歌。
+  ///
+  /// 搜索出来的歌往往只带平台 id（`wy`），收藏时记下具体插件，之后播放先用
+  /// 它解析；平台 id 保持不变，插件不可用时照旧回退。
+  Song _concreteSongSource(Song song) {
+    if (song.isLocal) return song;
+    final source = song.source?.trim() ?? '';
+    if (source.isEmpty) return song;
+    // 已经带插件（插件搜索结果里的歌）保持原来的绑定。
+    if (source.contains('@')) return song;
+    final resolved = _concreteSource(source);
+    if (resolved == null || resolved == source) return song;
+    // 收藏起来的播放地址会过期，清掉让播放时按优先插件重新解析。
+    return song.copyWith(
+      preferredSource: resolved,
+      clearSourceUrl: true,
+      clearSourceHeaders: true,
+      clearSourceQuality: true,
+    );
+  }
+
   Future<void> createPlaylist(String name, {String description = ''}) async {
     final repo = ref.read(playlistRepositoryProvider);
     await repo.createPlaylist(name, description: description);
@@ -66,11 +106,14 @@ class PlaylistsNotifier extends AsyncNotifier<List<Playlist>> {
     String? coverImgUrl,
   }) async {
     final repo = ref.read(playlistRepositoryProvider);
+    // 收藏专辑 / 作者 / 歌单时记下具体插件，播放时优先用它。
+    // 专辑 / 作者的音源还写了一份在描述标记里，要一起换。
+    final concrete = _concreteSource(source);
     await repo.createPlaylistWithSongs(
       name,
       songsData,
-      description: description,
-      source: source,
+      description: upgradeFavoriteMarkerSource(description, concrete),
+      source: concrete,
       coverImgUrl: coverImgUrl,
     );
     ref.invalidateSelf();
@@ -79,7 +122,9 @@ class PlaylistsNotifier extends AsyncNotifier<List<Playlist>> {
 
   Future<void> createPlaylistFromModel(Playlist playlist) async {
     final repo = ref.read(playlistRepositoryProvider);
-    await repo.savePlaylist(playlist);
+    await repo.savePlaylist(
+      playlist.copyWith(source: _concreteSource(playlist.source) ?? 'local'),
+    );
     ref.invalidateSelf();
     _syncToRemote();
   }
@@ -122,7 +167,11 @@ class PlaylistsNotifier extends AsyncNotifier<List<Playlist>> {
   Future<bool> addSongToPlaylist(String playlistId, Song song) async {
     final repo = ref.read(playlistRepositoryProvider);
     try {
-      final added = await repo.addSongToPlaylist(playlistId, song);
+      // 收藏时把平台音源落成具体插件，之后从收藏播放优先用它。
+      final added = await repo.addSongToPlaylist(
+        playlistId,
+        _concreteSongSource(song),
+      );
       ref.invalidateSelf();
       if (added) _syncToRemote();
       return added;
@@ -169,7 +218,8 @@ class PlaylistsNotifier extends AsyncNotifier<List<Playlist>> {
   Future<void> addSongsToPlaylist(String playlistId, List<Song> songs) async {
     final repo = ref.read(playlistRepositoryProvider);
     for (final song in songs) {
-      await repo.addSongToPlaylist(playlistId, song);
+      // 收藏时把平台音源落成具体插件，之后从收藏播放优先用它。
+      await repo.addSongToPlaylist(playlistId, _concreteSongSource(song));
     }
     ref.invalidateSelf();
     _syncToRemote();

@@ -22,6 +22,13 @@ class Song {
   final Map<String, String>? sourceHeaders;
   final String? sourceQuality;
 
+  /// 从收藏 / 歌单播放时优先使用的插件音源（`平台id@插件id`）。
+  ///
+  /// 收藏搜索结果时把「当时是哪个插件」记下来：播放时先用它解析地址，
+  /// 优先级高于播放页顶部手动选的音源；它失败后仍按原规则回退，
+  /// 所以这里不做硬绑定（[source] 依旧是平台 id）。
+  final String? preferredSource;
+
   const Song({
     required this.id,
     required this.title,
@@ -45,6 +52,7 @@ class Song {
     this.lx,
     this.sourceHeaders,
     this.sourceQuality,
+    this.preferredSource,
   });
 
   bool get isLocal => source == 'local';
@@ -79,10 +87,12 @@ class Song {
     Map<String, dynamic>? lx,
     Map<String, String>? sourceHeaders,
     String? sourceQuality,
+    String? preferredSource,
     bool clearSourceUrl = false,
     bool clearSourceHeaders = false,
     bool clearSourceQuality = false,
     bool clearCover = false,
+    bool clearPreferredSource = false,
   }) {
     return Song(
       id: id ?? this.id,
@@ -111,6 +121,9 @@ class Song {
       sourceQuality: clearSourceQuality
           ? null
           : sourceQuality ?? this.sourceQuality,
+      preferredSource: clearPreferredSource
+          ? null
+          : preferredSource ?? this.preferredSource,
     );
   }
 
@@ -172,6 +185,7 @@ class Song {
       'lx': _sanitizeLx(lx),
       'sourceHeaders': sourceHeaders,
       'sourceQuality': sourceQuality,
+      'preferredSource': preferredSource,
     };
   }
 
@@ -205,6 +219,7 @@ class Song {
             )
           : null,
       sourceQuality: json['sourceQuality']?.toString(),
+      preferredSource: json['preferredSource']?.toString(),
     );
   }
 }
