@@ -1855,8 +1855,12 @@ class _PlaybackContent extends ConsumerWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _buildPlaybackGroup(context, ref, colors),
-        _buildEqualizerGroup(context, ref, colors),
-        _buildAudioEffectGroup(context, ref, colors),
+        // Windows 音频输出走 media_kit/libmpv，没有可插入的 AudioEffect 链路，
+        // 这两个分组只会保存设置而不会生效，直接隐藏。
+        if (!Platform.isWindows) ...[
+          _buildEqualizerGroup(context, ref, colors),
+          _buildAudioEffectGroup(context, ref, colors),
+        ],
       ],
     );
   }

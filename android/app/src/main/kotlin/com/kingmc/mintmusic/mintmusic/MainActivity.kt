@@ -169,14 +169,16 @@ class MainActivity : AudioServiceActivity() {
             // This mirrors the reference players (CeruMusic / Mio-Music), which
             // build their audio graph once and only change node parameter
             // values.
-            applyEqualizer(call, id, master)
+            applyEqualizer(call, id)
             applyBassBoost(call, id, master)
             applySurround(call, id, master)
             applyBalance(call, id, master)
         }
 
-        private fun applyEqualizer(call: MethodCall, id: Int, master: Boolean) {
-            val enabled = master && call.argument<Boolean>("equalizerEnabled") == true
+        // 均衡器在设置页是独立分组，不跟随「音效增强」总开关：
+        // 只由 equalizerEnabled 决定参数，其余音效仍受 master 控制。
+        private fun applyEqualizer(call: MethodCall, id: Int) {
+            val enabled = call.argument<Boolean>("equalizerEnabled") == true
             try {
                 val eq = equalizer ?: if (enabled) {
                     Equalizer(0, id).also { equalizer = it }
