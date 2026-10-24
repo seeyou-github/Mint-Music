@@ -60,6 +60,18 @@
   - 点击可删除远端备份文件，删除前二次确认，失败时显示具体原因
 
 ### 修复
+- 插件（如元力酷我）榜单 / 歌单歌曲在播放详情页没有封面
+  - 根因一：`_musicInfoToSong` 给酷我歌曲拼的封面地址
+    `artistpicserver.kuwo.cn/pic.web?...&rid=` 返回的**是一行文本图片地址**，
+    不是图片本身；图片层拿到 60~70 字节文本，按「响应过小」判为加载失败，
+    表现就是封面空白（搜索结果的歌曲自带 artwork，所以只有榜单 / 歌单中招）
+  - 根因二：插件来源（`kw@插件`）取不到封面时，内置源兜底被
+    `_builtInSourceFor` 拒绝（对 `平台@插件` 一律返回 null），插件本身又没
+    实现 `getPic`（只有 `getMusicInfo`，且对这类 id 取不到），于是永远补不上
+  - 修：不再拼那个文本接口地址，留空交给 `getPic` 解析；`getPic` 的最后兜底
+    允许按平台 id 用内置源再查一次（MusicFree 插件的 id 通常就是平台原生 id）
+  - `MusicCoverImage` 增加「响应体本身就是一行图片地址」的自愈：
+    只认短、单行、`http(s)://` 开头、不含 `<` 的响应，避免误判错误页 / JSON
 - 收藏的榜单（插件来源）打开报 `no routes for location`
   - 插件榜单 id 形如 `mf:board:bilibili@xxx:popular/series/one?number=396`，
     原始 id 自带 `/` 和 `?`；收藏后本地歌单 id 变成

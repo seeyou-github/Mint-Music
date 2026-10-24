@@ -1492,11 +1492,13 @@ class MusicSourceManager {
         coverUrl = 'http://d.musicapp.migu.cn$coverUrl';
       }
     }
-    if (coverUrl == null && info['songmid'] != null && sourceId == 'kw') {
-      final songmid = info['songmid'].toString();
-      coverUrl =
-          'http://artistpicserver.kuwo.cn/pic.web?corp=kuwo&type=rid_pic&pictype=500&size=500&rid=$songmid';
-    }
+    // 这里曾经拼过 `artistpicserver.kuwo.cn/pic.web?...&rid=<songmid>` 当封面。
+    // 那个接口**返回的是一段文本**（真正的图片地址），不是图片本身：
+    //   http://img1.kwcdn.kuwo.cn/star/albumcover/700/xxxx.jpg
+    // 直接当图片地址用只会拿到 60~70 字节的文本，被 MusicCoverImage 判为
+    // 「响应过小 → 加载失败」，表现就是播放详情页封面空白（榜单 / 歌单歌曲
+    // 没有 artwork 时尤其明显）。这里保持 coverUrl 为空，交给 getPic 去解析：
+    // 内置酷我源的 getCoverUrl 会用 getPlainText 读出这段文本再取图。
 
     String? title;
     if (info['name'] != null) {
@@ -2491,6 +2493,29 @@ class MusicSourceManager {
     if (!preferBuiltIn && sourceId != 'kw') {
       final cover = await resolveBuiltIn();
       if (cover != null) return cover;
+    }
+
+    // 插件来源的最后兜底：用同平台内置源按 id 再查一次。
+    //
+    // `_builtInSourceFor` 对 `平台@插件` 一律返回 null（内置源和插件源的 id
+    // 不一定可互换），所以插件歌曲上面那条 `resolveBuiltIn()` 永远是空。
+    // 但 MusicFree 插件的 id 绝大多数就是平台原生 id（酷我 rid / 网易 songid
+    // / QQ songmid），内置源能查到就能补上封面——比如元力KW 的榜单 / 歌单
+    // 歌曲只有 id、没有 artwork，插件本身又没有实现 getPic，封面就一直是空的。
+    // 查不到只是维持原来的空结果，不会影响播放主流程。
+    if (sourceId.contains('@')) {
+      final builtIn = _builtInSources[splitSourceId(sourceId).$1];
+      if (builtIn != null) {
+        try {
+          final cover = await builtIn.getCoverUrl(song.id);
+          if (cover != null &&
+              cover.isNotEmpty &&
+              !excludedUrls.contains(cover)) {
+            _coverCache[cacheKey] = _CacheEntry(cover, _searchResultsTTL);
+            return cover;
+          }
+        } catch (_) {}
+      }
     }
 
     _coverCache[cacheKey] = _CacheEntry(null, _searchResultsTTL);

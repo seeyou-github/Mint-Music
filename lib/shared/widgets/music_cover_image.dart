@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:collection';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:dio/dio.dart';
@@ -55,6 +56,27 @@ class MusicCoverImage extends StatefulWidget {
   ///
   /// 清掉这首歌的内存缓存，并让所有已构建的封面组件重新取图。
   static void refresh(String songId) => _MusicCoverImageState.refresh(songId);
+
+  /// 响应体本身就是一行图片地址时，取出那个地址。
+  ///
+  /// 只认「短 + 单行 + 以 http(s):// 开头 + 不含 `<`」的响应，避免把
+  /// 错误页 / JSON 误当成地址。
+  @visibleForTesting
+  static String? extractImageUrlFromBody(Uint8List bytes) {
+    if (bytes.isEmpty || bytes.length > 512) return null;
+    String text;
+    try {
+      text = utf8.decode(bytes).trim();
+    } catch (_) {
+      return null;
+    }
+    if (text.length < 12 || text.length > 512) return null;
+    if (!text.startsWith('http://') && !text.startsWith('https://')) {
+      return null;
+    }
+    if (text.contains('<') || text.contains(RegExp(r'\s'))) return null;
+    return text;
+  }
 
   @override
   State<MusicCoverImage> createState() => _MusicCoverImageState();
@@ -310,7 +332,11 @@ class _MusicCoverImageState extends State<MusicCoverImage> {
     }
   }
 
-  Future<void> _fetchImage(String imageUrl, String cacheKey) async {
+  Future<void> _fetchImage(
+    String imageUrl,
+    String cacheKey, {
+    bool allowRedirectFollow = true,
+  }) async {
     // 有些插件自己拼协议头，会得到 `https:////host/x.jpg`（多余斜杠）。
     // 这种 URL 在 Uri 里 host 会被解析成空，请求必然失败（表现为图片一直空白），
     // 这里统一压成 `https://host/x.jpg`。
@@ -349,6 +375,20 @@ class _MusicCoverImageState extends State<MusicCoverImage> {
       }
 
       final bytes = Uint8List.fromList(response.data!);
+
+      // 有些封面接口返回的不是图片，而是一行纯文本的图片地址
+      // （酷我 `artistpicserver.kuwo.cn/pic.web` 就是这种：响应体是
+      //  `http://img1.kwcdn.kuwo.cn/star/albumcover/700/xxx.jpg`）。
+      // 直接当图片用会得到 60~70 字节的「响应过小」失败，表现为封面空白；
+      // 这里识别出来，按里面的地址再取一次。
+      if (allowRedirectFollow) {
+        final innerUrl = MusicCoverImage.extractImageUrlFromBody(bytes);
+        if (innerUrl != null) {
+          debugPrint('[MusicCoverImage] 响应是文本地址，改用 $innerUrl');
+          await _fetchImage(innerUrl, cacheKey, allowRedirectFollow: false);
+          return;
+        }
+      }
 
       if (bytes.length < 100) {
         debugPrint(
