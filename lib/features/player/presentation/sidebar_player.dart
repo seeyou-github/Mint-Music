@@ -7,6 +7,11 @@ import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../shared/widgets/marquee_text.dart';
 import '../../../shared/widgets/music_cover_image.dart';
+import '../../../shared/widgets/source_badge.dart';
+import '../../discover/domain/models/search_collection.dart';
+import '../../library/application/playlist_providers.dart';
+import '../../library/domain/models/recently_played.dart';
+import '../application/playback_context.dart';
 import '../application/playback_controller.dart';
 import '../application/full_player_visibility.dart';
 import '../domain/models/song.dart';
@@ -70,14 +75,19 @@ class SidebarPlayer extends ConsumerWidget {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _buildCover(context, colors, song),
+              _buildCover(context, ref, colors, song),
               const SizedBox(height: AppSpacing.sm),
               _buildSongTitle(context, colors, song),
               const SizedBox(height: AppSpacing.xs),
               _buildProgress(context, ref, colors, controller),
               const SizedBox(height: 2),
-              _buildControls(ref, colors, controller,
-                  isPlaying: isPlaying, isLoading: isLoading),
+              _buildControls(
+                ref,
+                colors,
+                controller,
+                isPlaying: isPlaying,
+                isLoading: isLoading,
+              ),
             ],
           ),
         ),
@@ -85,9 +95,10 @@ class SidebarPlayer extends ConsumerWidget {
     );
   }
 
-  /// 封面：点击打开 / 关闭全屏播放页。
+  /// 封面：点击打开 / 关闭全屏播放页；右上角显示本次播放的来源标签。
   Widget _buildCover(
     BuildContext context,
+    WidgetRef ref,
     ThemeColors colors,
     Song song,
   ) {
@@ -95,10 +106,10 @@ class SidebarPlayer extends ConsumerWidget {
       child: GestureDetector(
         onTap: () {
           // 播放详情页已经打开：再次点击封面直接关闭；否则打开。
-          final path =
-              appRouter.routerDelegate.currentConfiguration.uri.path;
+          final path = appRouter.routerDelegate.currentConfiguration.uri.path;
           final isOpen =
-              FullPlayerVisibility.instance.visible || path == AppRoutes.fullPlayer;
+              FullPlayerVisibility.instance.visible ||
+              path == AppRoutes.fullPlayer;
           if (isOpen) {
             appRouter.pop();
             return;
@@ -107,14 +118,135 @@ class SidebarPlayer extends ConsumerWidget {
         },
         child: ClipRRect(
           borderRadius: BorderRadius.circular(12),
-          child: Container(
+          child: SizedBox(
             width: _coverSize,
             height: _coverSize,
-            color: colors.surfaceVariant,
-            child: _buildCoverImage(colors, song),
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: Container(
+                    color: colors.surfaceVariant,
+                    child: _buildCoverImage(colors, song),
+                  ),
+                ),
+                Positioned(
+                  top: 6,
+                  right: 6,
+                  // 来源变化时就地刷新标签（例如从另一个歌单重播同一首歌）。
+                  child: ListenableBuilder(
+                    listenable: PlaybackContext.instance,
+                    builder: (context, _) =>
+                        _buildSourceBadge(context, ref, colors, song),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
+    );
+  }
+
+  /// 当前播放来源标签；未知来源不显示。
+  Widget _buildSourceBadge(
+    BuildContext context,
+    WidgetRef ref,
+    ThemeColors colors,
+    Song song,
+  ) {
+    final ctx = PlaybackContext.instance;
+    if (ctx.type == PlaybackSourceType.unknown) {
+      return const SizedBox.shrink();
+    }
+    final clickable = switch (ctx.type) {
+      PlaybackSourceType.playlist ||
+      PlaybackSourceType.rank ||
+      PlaybackSourceType.album ||
+      PlaybackSourceType.artist => true,
+      _ => false,
+    };
+    return SourceBadge(
+      type: ctx.type,
+      colors: colors,
+      onTap: clickable ? () => _openSource(ref, song) : null,
+    );
+  }
+
+  /// 打开当前歌曲的来源页：歌单（含我的收藏）/ 榜单 / 专辑 / 作者。
+  Future<void> _openSource(WidgetRef ref, Song song) async {
+    // 点击后可能马上切歌，先把来源快照下来。
+    final ctx = PlaybackContext.instance;
+    final type = ctx.type;
+    final id = ctx.id;
+    final name = ctx.name;
+    final meta = ctx.sourceMeta;
+    if (id == null || id.isEmpty) return;
+    final encodedId = Uri.encodeComponent(id);
+    switch (type) {
+      case PlaybackSourceType.playlist:
+        // 本地歌单（含「我的收藏」）和远端歌单是不同的路由。
+        var local = false;
+        try {
+          final playlists = await ref.read(playlistsProvider.future);
+          local = playlists.any((p) => p.id == id);
+        } catch (_) {
+          // 本地歌单读取失败就按远端歌单打开。
+        }
+        appRouter.push(
+          local ? '/library/playlist/$encodedId' : '/playlist/$encodedId',
+        );
+      case PlaybackSourceType.rank:
+        appRouter.push('/playlist/$encodedId?type=rank');
+      case PlaybackSourceType.album:
+      case PlaybackSourceType.artist:
+        appRouter.push(
+          AppRoutes.collectionDetail,
+          extra: _collectionOf(
+            type == PlaybackSourceType.artist
+                ? CollectionType.artist
+                : CollectionType.album,
+            song: song,
+            id: id,
+            name: name,
+            meta: meta,
+          ),
+        );
+      case PlaybackSourceType.search:
+      case PlaybackSourceType.local:
+      case PlaybackSourceType.unknown:
+        break;
+    }
+  }
+
+  /// 打开专辑 / 作者主页用的信息。
+  ///
+  /// 播放时记录里有完整主页信息（[PlaybackContext.sourceMeta]）就直接用；
+  /// 没有时按歌曲字段拼一个。
+  SearchCollection _collectionOf(
+    CollectionType type, {
+    required Song song,
+    required String id,
+    required String? name,
+    required Map<String, dynamic>? meta,
+  }) {
+    if (meta != null) return SearchCollection.fromJson(meta, type: type);
+
+    final isArtist = type == CollectionType.artist;
+    final title = name ?? (isArtist ? song.artist : song.album);
+    return SearchCollection(
+      id: id,
+      title: title,
+      type: type,
+      source: song.source ?? '',
+      coverUrl: song.coverUrl,
+      artist: isArtist ? null : song.artist,
+      raw: {
+        'id': id,
+        'name': title,
+        if (isArtist) 'avatar': song.coverUrl ?? '',
+        if (!isArtist) 'artist': song.artist,
+        if (!isArtist) 'picUrl': song.coverUrl ?? '',
+      },
     );
   }
 
@@ -332,7 +464,8 @@ class _SidebarProgressBarState extends State<_SidebarProgressBar> {
   Widget build(BuildContext context) {
     final totalMs = widget.duration.inMilliseconds;
     final maxMs = totalMs > 0 ? totalMs.toDouble() : 1.0;
-    final currentMs = _dragValue ??
+    final currentMs =
+        _dragValue ??
         widget.position.inMilliseconds.clamp(0, totalMs).toDouble();
     final ratio = (currentMs / maxMs).clamp(0.0, 1.0);
     final colors = widget.colors;
@@ -342,12 +475,15 @@ class _SidebarProgressBarState extends State<_SidebarProgressBar> {
         final width = constraints.maxWidth.isFinite
             ? constraints.maxWidth
             : 0.0;
-        final thumbLeft =
-            (width * ratio - _thumbSize / 2).clamp(0.0, (width - _thumbSize).clamp(0.0, double.infinity));
+        final thumbLeft = (width * ratio - _thumbSize / 2).clamp(
+          0.0,
+          (width - _thumbSize).clamp(0.0, double.infinity),
+        );
 
         return GestureDetector(
           behavior: HitTestBehavior.opaque,
-          onTapDown: (details) => _preview(details.localPosition.dx, width, totalMs),
+          onTapDown: (details) =>
+              _preview(details.localPosition.dx, width, totalMs),
           onTapUp: (_) => _commit(),
           onHorizontalDragStart: (details) =>
               _preview(details.localPosition.dx, width, totalMs),

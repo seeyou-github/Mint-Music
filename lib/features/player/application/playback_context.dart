@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 import '../../library/domain/models/recently_played.dart';
 
 /// 「这次播放是从哪里点开的」——歌单 / 专辑 / 榜单 / 搜索结果。
@@ -7,7 +9,8 @@ import '../../library/domain/models/recently_played.dart';
 /// 播放控制器在真正开始播放时读取，写进「最近播放」。
 ///
 /// 只在内存里，切歌 / 播放失败都不会清掉：下一次播放会重新 set。
-class PlaybackContext {
+/// 侧边栏播放器的来源标签监听本对象，来源变化时立即刷新。
+class PlaybackContext extends ChangeNotifier {
   PlaybackContext._();
 
   static final PlaybackContext instance = PlaybackContext._();
@@ -30,6 +33,7 @@ class PlaybackContext {
     this.id = id;
     this.name = name;
     this.sourceMeta = sourceMeta;
+    notifyListeners();
   }
 
   /// 从本地列表等没有来源的场景播放时调用。
@@ -38,5 +42,6 @@ class PlaybackContext {
     id = null;
     name = null;
     sourceMeta = null;
+    notifyListeners();
   }
 }

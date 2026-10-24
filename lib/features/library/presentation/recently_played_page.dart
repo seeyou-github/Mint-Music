@@ -9,8 +9,8 @@ import '../../../core/constants/app_routes.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
-import '../../../shared/widgets/cover_badge.dart';
 import '../../../shared/widgets/music_cover_image.dart';
+import '../../../shared/widgets/source_badge.dart';
 import '../../discover/domain/models/search_collection.dart';
 import '../../player/application/playback_context.dart';
 import '../../player/application/playback_controller.dart';
@@ -584,34 +584,6 @@ class _EmptyState extends StatelessWidget {
   }
 }
 
-/// 封面右上角的来源标签（歌单 / 榜单 / 专辑 / 搜索 / 作者 / 本地）。
-class _SourceBadge extends StatelessWidget {
-  const _SourceBadge({required this.type, required this.colors, this.onTap});
-
-  final PlaybackSourceType type;
-  final ThemeColors colors;
-  final VoidCallback? onTap;
-
-  Color get _color => switch (type) {
-    PlaybackSourceType.playlist => const Color(0xFFE0913C),
-    PlaybackSourceType.rank => const Color(0xFFE05B5B),
-    PlaybackSourceType.album => const Color(0xFFD9B44A),
-    PlaybackSourceType.search => const Color(0xFF5B9BFF),
-    PlaybackSourceType.artist => const Color(0xFFB07CFF),
-    PlaybackSourceType.local => colors.primary,
-    PlaybackSourceType.unknown => colors.textHint,
-  };
-
-  @override
-  Widget build(BuildContext context) {
-    return CoverBadge(
-      label: context.tr(type.label),
-      color: _color,
-      onTap: onTap,
-    );
-  }
-}
-
 /// 歌曲网格卡片：正方形封面 + 右上角来源标签 + 封面下方的歌名 / 歌手。
 class _SongCard extends ConsumerWidget {
   const _SongCard({
@@ -759,7 +731,7 @@ class _SongCard extends ConsumerWidget {
                       Positioned(
                         top: 6,
                         right: 6,
-                        child: _SourceBadge(
+                        child: SourceBadge(
                           type: item.sourceType,
                           colors: colors,
                           onTap: _sourceClickable
@@ -881,10 +853,7 @@ class _PlaylistCard extends ConsumerWidget {
                           crossAxisAlignment: CrossAxisAlignment.end,
                           children: [
                             if (favoriteType != null)
-                              _SourceBadge(
-                                type: favoriteType,
-                                colors: colors,
-                              ),
+                              SourceBadge(type: favoriteType, colors: colors),
                             if (favoriteType != null && playlist.songCount > 0)
                               const SizedBox(height: 4),
                             if (playlist.songCount > 0)
