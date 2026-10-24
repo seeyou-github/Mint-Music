@@ -1404,56 +1404,57 @@ class MusicSourceManager {
     }
 
     String? coverUrl;
-    if (info['artwork'] != null) {
-      // MusicFree 插件的封面字段是 artwork。
-      coverUrl = info['artwork'].toString();
-    } else if (info['picUrl'] != null) {
-      coverUrl = info['picUrl'].toString();
-    } else if (info['pic'] != null) {
-      coverUrl = info['pic'].toString();
-    } else if (info['cover'] != null) {
-      coverUrl = info['cover'].toString();
-    } else if (info['img'] != null) {
-      coverUrl = info['img'].toString();
-    } else if (info['albumImg'] != null) {
-      coverUrl = info['albumImg'].toString();
-    } else if (info['album'] != null && info['album'] is Map) {
+    // MusicFree 适配器总会输出 artwork / picUrl / img 等字段（插件没给
+    // 封面时是**空字符串**而不是缺失），必须按「非空文本」取值，后面的
+    // 兜底分支（酷我 songmid 封面直链等）才有机会生效——否则酷我插件的
+    // 歌曲会封面为空，列表首次进入靠逐首 getPic 兜底（慢 / 易被风控），
+    // 播放页则完全不显示封面。
+    for (final key in const [
+      'artwork',
+      'picUrl',
+      'pic',
+      'cover',
+      'img',
+      'albumImg',
+    ]) {
+      coverUrl = _nonEmptyText(info[key]);
+      if (coverUrl != null) break;
+    }
+    if (coverUrl == null && info['album'] != null && info['album'] is Map) {
       final album = info['album'] as Map;
-      if (album['picUrl'] != null) {
-        coverUrl = album['picUrl'].toString();
-      } else if (album['pic'] != null) {
-        coverUrl = album['pic'].toString();
-      } else if (album['artwork'] != null) {
-        coverUrl = album['artwork'].toString();
-      }
-    } else if (info['al'] != null && info['al'] is Map) {
+      coverUrl = _nonEmptyText(album['picUrl']) ??
+          _nonEmptyText(album['pic']) ??
+          _nonEmptyText(album['artwork']);
+    }
+    if (coverUrl == null && info['al'] != null && info['al'] is Map) {
       final al = info['al'] as Map;
-      if (al['picUrl'] != null) {
-        coverUrl = al['picUrl'].toString();
-      } else if (al['artwork'] != null) {
-        coverUrl = al['artwork'].toString();
-      }
-    } else if (info['pic_id'] != null) {
+      coverUrl = _nonEmptyText(al['picUrl']) ?? _nonEmptyText(al['artwork']);
+    }
+    if (coverUrl == null && info['pic_id'] != null) {
       final picId = info['pic_id'].toString();
       if (sourceId == 'wy') {
         coverUrl = 'https://p3.music.126.net/$picId/${picId}_300x300.jpg';
       }
-    } else if (info['img3'] != null) {
+    }
+    if (coverUrl == null && info['img3'] != null) {
       coverUrl = info['img3'].toString();
       if (!coverUrl.startsWith('http')) {
         coverUrl = 'http://d.musicapp.migu.cn$coverUrl';
       }
-    } else if (info['img2'] != null) {
+    }
+    if (coverUrl == null && info['img2'] != null) {
       coverUrl = info['img2'].toString();
       if (!coverUrl.startsWith('http')) {
         coverUrl = 'http://d.musicapp.migu.cn$coverUrl';
       }
-    } else if (info['img1'] != null) {
+    }
+    if (coverUrl == null && info['img1'] != null) {
       coverUrl = info['img1'].toString();
       if (!coverUrl.startsWith('http')) {
         coverUrl = 'http://d.musicapp.migu.cn$coverUrl';
       }
-    } else if (info['songmid'] != null && sourceId == 'kw') {
+    }
+    if (coverUrl == null && info['songmid'] != null && sourceId == 'kw') {
       final songmid = info['songmid'].toString();
       coverUrl =
           'http://artistpicserver.kuwo.cn/pic.web?corp=kuwo&type=rid_pic&pictype=500&size=500&rid=$songmid';
