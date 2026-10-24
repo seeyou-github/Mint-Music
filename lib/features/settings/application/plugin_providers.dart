@@ -74,8 +74,19 @@ class PluginsNotifier extends AsyncNotifier<List<PluginInfo>> {
   }
 
   void _afterPluginInstalled() {
-    ref.invalidate(pluginInitializedProvider);
-    ref.invalidateSelf();
+    // 安装完成后刷新音源与插件列表：pluginInitializedProvider 重建会重新
+    // 初始化**全部**插件引擎（每个都要建 JS 引擎并评估适配器 + 插件代码），
+    // 全在 UI 主线程上。立即刷新会和添加插件弹框的关闭动画撞在一起导致
+    // 掉帧，等动画播完再刷新。
+    Future.delayed(const Duration(milliseconds: 350), () {
+      try {
+        ref.invalidate(pluginInitializedProvider);
+        ref.invalidateSelf();
+      } catch (_) {
+        // notifier 已被其它操作重建（如连续安装）：新实例会自行读取
+        // 最新的插件列表，这里无需再刷。
+      }
+    });
   }
 
   Future<void> uninstallPlugin(String id) async {
