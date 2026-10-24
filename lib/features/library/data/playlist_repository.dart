@@ -40,6 +40,8 @@ class PlaylistRepository {
           description: '收藏的歌曲',
           createTime: now,
           updateTime: now,
+          // 「我的收藏」没有自己的封面，始终显示第一首歌的封面。
+          meta: const {coverFromFirstSongKey: true},
         );
         playlists.insert(0, favorites);
         await savePlaylists(playlists);
@@ -106,9 +108,14 @@ class PlaylistRepository {
     final playlists = await loadPlaylists();
     final existingIndex = playlists.indexWhere((p) => p.id == playlist.id);
     if (existingIndex != -1) {
-      playlists[existingIndex] = playlist.copyWith(updateTime: DateTime.now());
+      // 早期歌单没有封面来源标记，按更新前的状态补上，避免删歌时改封面。
+      final merged = withCoverSourceMeta(
+        playlist,
+        stored: playlists[existingIndex],
+      );
+      playlists[existingIndex] = merged.copyWith(updateTime: DateTime.now());
     } else {
-      playlists.add(playlist);
+      playlists.add(withCoverSourceMeta(playlist));
     }
     await savePlaylists(playlists);
   }
@@ -125,6 +132,8 @@ class PlaylistRepository {
       description: description,
       createTime: now,
       updateTime: now,
+      // 新建的空歌单没有封面，显示第一首歌的封面，所以标记为自动封面。
+      meta: const {coverFromFirstSongKey: true},
     );
     playlists.add(playlist);
     await savePlaylists(playlists);
@@ -168,6 +177,9 @@ class PlaylistRepository {
       updateTime: now,
       songs: songs,
       coverImgUrl: explicitCover.isNotEmpty ? explicitCover : fallbackCover,
+      // 显式给了封面（专辑 / 作者 / 远端歌单）就固定下来；
+      // 只有兜底用第一首歌封面时才随歌曲变化。
+      meta: {coverFromFirstSongKey: explicitCover.isEmpty},
     );
     playlists.add(playlist);
     await savePlaylists(playlists);
@@ -178,7 +190,9 @@ class PlaylistRepository {
     final playlists = await loadPlaylists();
     final index = playlists.indexWhere((p) => p.id == playlist.id);
     if (index != -1) {
-      playlists[index] = playlist.copyWith(updateTime: DateTime.now());
+      // 早期歌单没有封面来源标记，按更新前的状态补上。
+      final merged = withCoverSourceMeta(playlist, stored: playlists[index]);
+      playlists[index] = merged.copyWith(updateTime: DateTime.now());
       await savePlaylists(playlists);
     }
   }
@@ -204,10 +218,8 @@ class PlaylistRepository {
           playlists[index] = playlist.copyWith(
             songs: updatedSongs,
             updateTime: DateTime.now(),
-            // 收藏的专辑 / 作者保留收藏时的封面或头像;普通歌单跟随第一首歌。
-            coverImgUrl: playlist.favoriteType != null
-                ? playlist.coverImgUrl
-                : (updatedSongs.first.coverUrl ?? ''),
+            // 收藏的专辑 / 作者保留封面；普通歌单只有封面跟随第一首歌时才更新。
+            coverImgUrl: playlistCoverAfterSongChange(playlist, updatedSongs),
           );
           await savePlaylists(playlists);
           return true;
@@ -229,10 +241,8 @@ class PlaylistRepository {
       playlists[index] = playlist.copyWith(
         songs: updatedSongs,
         updateTime: DateTime.now(),
-        // 收藏的专辑 / 作者保留收藏时的封面或头像;普通歌单跟随新的第一首歌。
-        coverImgUrl: playlist.favoriteType != null
-            ? playlist.coverImgUrl
-            : (updatedSongs.isEmpty ? '' : (updatedSongs.first.coverUrl ?? '')),
+        // 收藏的专辑 / 作者保留封面；普通歌单只有封面跟随第一首歌时才更新。
+        coverImgUrl: playlistCoverAfterSongChange(playlist, updatedSongs),
       );
       await savePlaylists(playlists);
     }
@@ -248,10 +258,13 @@ class PlaylistRepository {
     final playlists = await loadPlaylists();
     final existingIndex = playlists.indexWhere((p) => p.id == playlist.id);
     if (existingIndex != -1) {
-      playlists[existingIndex] = playlist.copyWith(updateTime: DateTime.now());
+      playlists[existingIndex] = withCoverSourceMeta(
+        playlist,
+        stored: playlists[existingIndex],
+      ).copyWith(updateTime: DateTime.now());
     } else {
       playlists.add(
-        playlist.copyWith(
+        withCoverSourceMeta(playlist).copyWith(
           id: DateTime.now().millisecondsSinceEpoch.toString(),
           createTime: DateTime.now(),
           updateTime: DateTime.now(),

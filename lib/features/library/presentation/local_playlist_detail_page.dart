@@ -166,10 +166,8 @@ class _LocalPlaylistDetailPageState
         .updatePlaylist(
           playlist.copyWith(
             songs: remaining,
-            // 收藏的专辑 / 作者保留收藏时的封面或头像;普通歌单跟随第一首歌。
-            coverImgUrl: playlist.favoriteType != null
-                ? playlist.coverImgUrl
-                : (remaining.isEmpty ? '' : (remaining.first.coverUrl ?? '')),
+            // 收藏的专辑 / 作者保留封面；普通歌单只有封面跟随第一首歌时才更新。
+            coverImgUrl: playlistCoverAfterSongChange(playlist, remaining),
           ),
         );
     if (!mounted) return;
@@ -629,22 +627,6 @@ class _LocalPlaylistDetailPageState
                             },
                           ),
                           const SizedBox(width: AppSpacing.sm),
-                          if (playlist.favoriteType ==
-                                  PlaybackSourceType.artist &&
-                              playlist.favoriteCollectionId != null) ...[
-                            _buildActionButton(
-                              colors,
-                              Icons.refresh,
-                              context.tr('更新'),
-                              () => context.push(
-                                AppRoutes.artistUpdate.replaceFirst(
-                                  ':id',
-                                  playlist.id,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: AppSpacing.sm),
-                          ],
                           _buildActionButton(
                             colors,
                             Icons.shuffle,
@@ -670,6 +652,22 @@ class _LocalPlaylistDetailPageState
                             },
                           ),
                           const SizedBox(width: AppSpacing.sm),
+                          if (playlist.favoriteType ==
+                                  PlaybackSourceType.artist &&
+                              playlist.favoriteCollectionId != null) ...[
+                            _buildActionButton(
+                              colors,
+                              Icons.refresh,
+                              context.tr('更新'),
+                              () => context.push(
+                                AppRoutes.artistUpdate.replaceFirst(
+                                  ':id',
+                                  playlist.id,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: AppSpacing.sm),
+                          ],
                           _buildSortButton(colors),
                         ],
                       ),

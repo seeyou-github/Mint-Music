@@ -10,6 +10,7 @@ import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
+import '../../../shared/widgets/cover_badge.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../../../shared/widgets/source_icon.dart';
 import '../application/discover_providers.dart';
@@ -829,33 +830,16 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
                     Positioned(
                       top: AppSpacing.xs,
                       right: AppSpacing.xs,
-                      child: Container(
+                      child: CoverCountBadge(
+                        label: playlist.playCount!,
+                        icon: Icons.play_arrow,
+                        fontSize: 11,
                         padding: const EdgeInsets.symmetric(
                           horizontal: AppSpacing.sm,
                           vertical: 2,
                         ),
-                        decoration: BoxDecoration(
-                          color: Colors.black54,
-                          borderRadius: BorderRadius.circular(AppRadius.xs),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.play_arrow,
-                              size: 10,
-                              color: colors.textOnPrimary,
-                            ),
-                            const SizedBox(width: 2),
-                            Text(
-                              playlist.playCount!,
-                              style: TextStyle(
-                                fontSize: 10,
-                                color: colors.textOnPrimary,
-                              ),
-                            ),
-                          ],
-                        ),
+                        radius: AppRadius.xs,
+                        background: Colors.black54,
                       ),
                     ),
                 ],
@@ -1006,33 +990,16 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
                     Positioned(
                       top: AppSpacing.xs,
                       right: AppSpacing.xs,
-                      child: Container(
+                      child: CoverCountBadge(
+                        label: board.playCount!,
+                        icon: Icons.play_arrow,
+                        fontSize: 11,
                         padding: const EdgeInsets.symmetric(
                           horizontal: AppSpacing.sm,
                           vertical: 2,
                         ),
-                        decoration: BoxDecoration(
-                          color: Colors.black54,
-                          borderRadius: BorderRadius.circular(AppRadius.xs),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.play_arrow,
-                              size: 10,
-                              color: colors.textOnPrimary,
-                            ),
-                            const SizedBox(width: 2),
-                            Text(
-                              board.playCount!,
-                              style: TextStyle(
-                                fontSize: 10,
-                                color: colors.textOnPrimary,
-                              ),
-                            ),
-                          ],
-                        ),
+                        radius: AppRadius.xs,
+                        background: Colors.black54,
                       ),
                     ),
                 ],

@@ -9,6 +9,7 @@ import '../../../core/constants/app_routes.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
+import '../../../shared/widgets/cover_badge.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../../../shared/widgets/source_badge.dart';
 import '../../discover/domain/models/search_collection.dart';
@@ -640,12 +641,12 @@ class _SongCard extends ConsumerWidget {
         context.push('/playlist/${Uri.encodeComponent(id)}?type=rank');
       case PlaybackSourceType.album:
         context.push(
-          AppRoutes.collectionDetail,
+          _collectionRoute(CollectionType.album),
           extra: _collectionOf(CollectionType.album),
         );
       case PlaybackSourceType.artist:
         context.push(
-          AppRoutes.collectionDetail,
+          _collectionRoute(CollectionType.artist),
           extra: _collectionOf(CollectionType.artist),
         );
       case PlaybackSourceType.search:
@@ -653,6 +654,13 @@ class _SongCard extends ConsumerWidget {
       case PlaybackSourceType.unknown:
         break;
     }
+  }
+
+  /// 专辑 / 作者主页路由：带上 id / 类型，便于左侧栏判断页面是否已打开。
+  String _collectionRoute(CollectionType type) {
+    final id = item.sourceId ?? '';
+    return '${AppRoutes.collectionDetail}?type=${type.id}'
+        '&id=${Uri.encodeComponent(id)}';
   }
 
   /// 打开专辑 / 作者主页用的信息。
@@ -857,23 +865,9 @@ class _PlaylistCard extends ConsumerWidget {
                             if (favoriteType != null && playlist.songCount > 0)
                               const SizedBox(height: 4),
                             if (playlist.songCount > 0)
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 7,
-                                  vertical: 3,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: Colors.black,
-                                  borderRadius: BorderRadius.circular(6),
-                                ),
-                                child: Text(
-                                  context.tr('${playlist.songCount}首'),
-                                  style: const TextStyle(
-                                    fontSize: 11,
-                                    height: 1.1,
-                                    color: Colors.white,
-                                  ),
-                                ),
+                              CoverCountBadge(
+                                label: context.tr('${playlist.songCount}首'),
+                                fontSize: 12,
                               ),
                           ],
                         ),

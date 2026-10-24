@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../core/constants/app_routes.dart';
 import '../../../core/router/app_router.dart';
+import '../../../core/router/navigation_shell_provider.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../shared/widgets/marquee_text.dart';
@@ -13,7 +15,6 @@ import '../../library/application/playlist_providers.dart';
 import '../../library/domain/models/recently_played.dart';
 import '../application/playback_context.dart';
 import '../application/playback_controller.dart';
-import '../application/full_player_visibility.dart';
 import '../domain/models/song.dart';
 import 'widgets/play_queue_sheet.dart';
 
@@ -106,11 +107,9 @@ class SidebarPlayer extends ConsumerWidget {
       child: GestureDetector(
         onTap: () {
           // 播放详情页已经打开：再次点击封面直接关闭；否则打开。
+          // 只认路由栈里的位置：`visible` 在切换动画期间可能滞后。
           final path = appRouter.routerDelegate.currentConfiguration.uri.path;
-          final isOpen =
-              FullPlayerVisibility.instance.visible ||
-              path == AppRoutes.fullPlayer;
-          if (isOpen) {
+          if (path == AppRoutes.fullPlayer) {
             appRouter.pop();
             return;
           }
@@ -173,6 +172,9 @@ class SidebarPlayer extends ConsumerWidget {
   }
 
   /// 打开当前歌曲的来源页：歌单（含我的收藏）/ 榜单 / 专辑 / 作者。
+  ///
+  /// * 同一个来源页已经打开时，再次点击关闭它（而不是重复推入一份）；
+  /// * 播放详情页 / 歌词页盖在内容区上时，先关掉它再跳转，避免右侧只剩背景色。
   Future<void> _openSource(WidgetRef ref, Song song) async {
     // 点击后可能马上切歌，先把来源快照下来。
     final ctx = PlaybackContext.instance;
@@ -182,6 +184,9 @@ class SidebarPlayer extends ConsumerWidget {
     final meta = ctx.sourceMeta;
     if (id == null || id.isEmpty) return;
     final encodedId = Uri.encodeComponent(id);
+
+    String target;
+    Object? extra;
     switch (type) {
       case PlaybackSourceType.playlist:
         // 本地歌单（含「我的收藏」）和远端歌单是不同的路由。
@@ -192,31 +197,182 @@ class SidebarPlayer extends ConsumerWidget {
         } catch (_) {
           // 本地歌单读取失败就按远端歌单打开。
         }
-        appRouter.push(
-          local ? '/library/playlist/$encodedId' : '/playlist/$encodedId',
-        );
+        target = local
+            ? '/library/playlist/$encodedId'
+            : '/playlist/$encodedId';
       case PlaybackSourceType.rank:
-        appRouter.push('/playlist/$encodedId?type=rank');
+        target = '/playlist/$encodedId?type=rank';
       case PlaybackSourceType.album:
       case PlaybackSourceType.artist:
-        appRouter.push(
-          AppRoutes.collectionDetail,
-          extra: _collectionOf(
-            type == PlaybackSourceType.artist
-                ? CollectionType.artist
-                : CollectionType.album,
-            song: song,
-            id: id,
-            name: name,
-            meta: meta,
-          ),
+        final collectionType = type == PlaybackSourceType.artist
+            ? CollectionType.artist
+            : CollectionType.album;
+        target =
+            '${AppRoutes.collectionDetail}?type=${collectionType.id}'
+            '&id=$encodedId';
+        extra = _collectionOf(
+          collectionType,
+          song: song,
+          id: id,
+          name: name,
+          meta: meta,
         );
       case PlaybackSourceType.search:
       case PlaybackSourceType.local:
       case PlaybackSourceType.unknown:
-        break;
+        return;
     }
+
+    // 播放详情页 / 歌词页这类根级页面盖在内容区上时，先把它关掉。否则在
+    // 根级页面上推入分类页面 / 切换分类，右侧只会剩下一片背景色。
+    if (_closeRootOverlays()) {
+      // 关掉播放页后等这一帧走完，路由栈回到下面的页面再决定怎么打开。
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _navigateToSource(ref, target, extra, toggle: false);
+      });
+      return;
+    }
+    _navigateToSource(ref, target, extra, toggle: true);
   }
+
+  /// 按当前页面决定：关闭同一个页面 / 切分类后推入 / 直接推入。
+  ///
+  /// [retries] 用于等待播放页关闭动画走完——根级页面还在栈顶时推入分支页面
+  /// 会得到空白的右侧内容区，所以最多再等几帧。
+  void _navigateToSource(
+    WidgetRef ref,
+    String target,
+    Object? extra, {
+    required bool toggle,
+    int retries = 3,
+  }) {
+    // 回调是延后执行的，窗口变窄时左侧栏可能已经被移除。
+    if (!ref.context.mounted) return;
+    final currentUri = appRouter.routerDelegate.currentConfiguration.uri;
+    final targetUri = Uri.parse(target);
+
+    if (_isRootOverlay(currentUri.path)) {
+      if (retries <= 0) return;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _navigateToSource(
+          ref,
+          target,
+          extra,
+          toggle: toggle,
+          retries: retries - 1,
+        );
+      });
+      return;
+    }
+
+    // 相关页面已经打开：再次点击关闭它，而不是重复推入一份。
+    if (_isSamePage(currentUri, targetUri)) {
+      // 刚关掉播放页时露出来的就是这个页面，什么都不用做。
+      if (!toggle) return;
+      if (appRouter.canPop()) {
+        appRouter.pop();
+      } else {
+        appRouter.go(_branchRoot(currentUri.path));
+      }
+      return;
+    }
+
+    // 目标页属于另一个一级分类：先切到那个分类再推入详情页，
+    // 这样页面会落在正确的分支栈里，返回键也能正常回到列表。
+    final targetBranch = _branchOf(targetUri.path);
+    if (targetBranch != _branchOf(currentUri.path)) {
+      final shell = ref.read(navigationShellProvider);
+      if (shell != null) {
+        // 分支切换是异步解析的，等它生效后再推入详情页；如果那个分类
+        // 停在这个页面上，就不用再推一份了。
+        shell.goBranch(targetBranch);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          final restored = appRouter.routerDelegate.currentConfiguration.uri;
+          if (_isSamePage(restored, targetUri)) return;
+          appRouter.push(target, extra: extra);
+        });
+        return;
+      }
+      appRouter.go(target, extra: extra);
+      return;
+    }
+
+    appRouter.push(target, extra: extra);
+  }
+
+  /// 关掉盖在内容区上的根级页面（播放详情 / 歌词 / 标签编辑），返回是否关过。
+  ///
+  /// 这些页面在根 Navigator 上，压着整个导航壳；不关掉就推入分支页面，
+  /// go_router 会在根级页面上再叠一份壳，右侧内容区就空了。
+  static bool _closeRootOverlays() {
+    var closed = false;
+    for (var i = 0; i < 3; i++) {
+      final path = appRouter.routerDelegate.currentConfiguration.uri.path;
+      if (!_isRootOverlay(path)) break;
+      if (!appRouter.canPop()) break;
+      try {
+        appRouter.pop();
+      } on GoError {
+        break;
+      }
+      closed = true;
+      // 路由栈没同步更新时不能再 pop，否则会把下面的页面也关掉。
+      if (appRouter.routerDelegate.currentConfiguration.uri.path == path) {
+        break;
+      }
+    }
+    return closed;
+  }
+
+  /// 覆盖整个内容区的根级页面。
+  static bool _isRootOverlay(String path) =>
+      path == AppRoutes.fullPlayer ||
+      path == AppRoutes.lyric ||
+      path == AppRoutes.tagEditor;
+
+  /// 是否就是同一个来源页。
+  ///
+  /// 歌单 / 榜单共用 `/playlist/:id`，id 在路径里；专辑 / 作者共用
+  /// `/collection`，id 与类型都在查询参数里，必须一起比对。
+  static bool _isSamePage(Uri current, Uri target) {
+    if (current.path != target.path) return false;
+    final currentId = current.queryParameters['id'];
+    final targetId = target.queryParameters['id'];
+    if (currentId != targetId) return false;
+    final currentType = current.queryParameters['type'];
+    final targetType = target.queryParameters['type'];
+    if (currentId != null && currentType != null && targetType != null) {
+      return currentType == targetType;
+    }
+    return true;
+  }
+
+  /// 页面所属的一级分类（与底部导航 / 左侧导航的分支顺序一致）：
+  /// 0 发现，1 收藏（歌单），2 本地，3 我的。
+  static int _branchOf(String path) {
+    if (path == AppRoutes.library || path.startsWith('${AppRoutes.library}/')) {
+      return 1;
+    }
+    if (path == AppRoutes.local) return 2;
+    if (path == AppRoutes.mine ||
+        path == AppRoutes.settings ||
+        path == AppRoutes.download ||
+        path == AppRoutes.pluginManagement ||
+        path == AppRoutes.recentlyPlayed ||
+        path == AppRoutes.recognize) {
+      return 3;
+    }
+    // /discover、/playlist/:id、/collection、/search 都在「发现」分类下。
+    return 0;
+  }
+
+  /// 分类的第一级页面：页面栈里没有上一层可返回时用它兜底。
+  static String _branchRoot(String path) => switch (_branchOf(path)) {
+    1 => AppRoutes.library,
+    2 => AppRoutes.local,
+    3 => AppRoutes.mine,
+    _ => AppRoutes.discover,
+  };
 
   /// 打开专辑 / 作者主页用的信息。
   ///

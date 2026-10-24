@@ -115,6 +115,15 @@ Color? _parseOptionalColor(String hex) {
   }
 }
 
+/// 封面来源 / 类型标签的文字颜色。
+///
+/// 统一跟随「外观设置 → 深色模式 → 字体颜色」；标签边框仍用各自来源色，
+/// 不受这里影响。字体颜色被清空时回落到深色主题的默认文字色。
+final coverBadgeTextColorProvider = Provider<Color>((ref) {
+  return _parseOptionalColor(ref.watch(darkThemeFontColorProvider)) ??
+      ThemeColors.dark.textPrimary;
+});
+
 final _cachedLightColors = <String, ThemeColors>{};
 final _cachedDarkColors = <String, ThemeColors>{};
 

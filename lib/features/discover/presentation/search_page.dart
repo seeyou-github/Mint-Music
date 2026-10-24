@@ -10,6 +10,7 @@ import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
+import '../../../shared/widgets/cover_badge.dart';
 import '../../../shared/widgets/load_more_footer.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../../../shared/widgets/song_list_item.dart';
@@ -1355,7 +1356,11 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       if (item.worksNum > 0) context.tr('${item.worksNum} 首'),
     ].join(' · ');
     return GestureDetector(
-      onTap: () => context.push(AppRoutes.collectionDetail, extra: item),
+      onTap: () => context.push(
+        '${AppRoutes.collectionDetail}?type=${item.type.id}'
+        '&id=${Uri.encodeComponent(item.id)}',
+        extra: item,
+      ),
       child: Container(
         decoration: BoxDecoration(
           color: colors.surface,
@@ -1385,22 +1390,15 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                   Positioned(
                     left: 6,
                     top: 6,
-                    child: Container(
+                    child: CoverCountBadge(
+                      label: context.tr(item.type.label),
+                      fontSize: 11,
                       padding: const EdgeInsets.symmetric(
                         horizontal: 6,
                         vertical: 2,
                       ),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.5),
-                        borderRadius: BorderRadius.circular(AppRadius.sm),
-                      ),
-                      child: Text(
-                        context.tr(item.type.label),
-                        style: const TextStyle(
-                          fontSize: 10,
-                          color: Colors.white,
-                        ),
-                      ),
+                      radius: AppRadius.sm,
+                      background: Colors.black.withValues(alpha: 0.5),
                     ),
                   ),
                 ],
@@ -1576,33 +1574,16 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                     Positioned(
                       top: AppSpacing.xs,
                       right: AppSpacing.xs,
-                      child: Container(
+                      child: CoverCountBadge(
+                        label: playlist.playCount!,
+                        icon: Icons.play_arrow,
+                        fontSize: 11,
                         padding: const EdgeInsets.symmetric(
                           horizontal: AppSpacing.sm,
                           vertical: 2,
                         ),
-                        decoration: BoxDecoration(
-                          color: Colors.black54,
-                          borderRadius: BorderRadius.circular(AppRadius.xs),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.play_arrow,
-                              size: 10,
-                              color: colors.textOnPrimary,
-                            ),
-                            const SizedBox(width: 2),
-                            Text(
-                              playlist.playCount!,
-                              style: TextStyle(
-                                fontSize: 10,
-                                color: colors.textOnPrimary,
-                              ),
-                            ),
-                          ],
-                        ),
+                        radius: AppRadius.xs,
+                        background: Colors.black54,
                       ),
                     ),
                 ],
