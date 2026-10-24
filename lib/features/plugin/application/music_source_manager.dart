@@ -1582,23 +1582,35 @@ class MusicSourceManager {
 
   Future<Song> resolveSingleSongUrl(
     Song song, {
+    String quality = '320k',
     Set<String> excludedUrls = const <String>{},
   }) async {
     if (song.source == null || song.source == 'local') return song;
-    final result = await getMusicUrlResult(song, excludedUrls: excludedUrls);
+    final result = await getMusicUrlResult(
+      song,
+      quality: quality,
+      excludedUrls: excludedUrls,
+    );
     if (result != null && result.url.isNotEmpty) {
-      return _applyMusicUrlResult(song, result);
+      return _applyMusicUrlResult(song, result, requestedQuality: quality);
     }
     return song;
   }
 
-  Song _applyMusicUrlResult(Song song, PluginMusicUrlResult result) {
+  Song _applyMusicUrlResult(
+    Song song,
+    PluginMusicUrlResult result, {
+    String? requestedQuality,
+  }) {
+    // 优先记录插件回报的真实音质（插件可能内部降级）；回报为空时退回
+    // 本次请求的档位——缓存键不能为空，否则无法命中 / 会按默认值误标。
+    final quality = result.quality.isEmpty ? requestedQuality : result.quality;
     return song.copyWith(
       sourceUrl: result.url,
       sourceHeaders: result.headers.isEmpty ? null : result.headers,
-      sourceQuality: result.quality.isEmpty ? null : result.quality,
+      sourceQuality: quality,
       clearSourceHeaders: result.headers.isEmpty,
-      clearSourceQuality: result.quality.isEmpty,
+      clearSourceQuality: quality == null || quality.isEmpty,
     );
   }
 

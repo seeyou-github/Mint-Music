@@ -1016,33 +1016,42 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     final availableQualities = isLocal
         ? <String>[quality]
         : _musicSourceManager.getSupportedQualitiesForSourceId(sourceId);
-    if (!availableQualities.contains(quality)) {
-      final fallback = availableQualities.isNotEmpty
-          ? availableQualities.last
-          : '320k';
-      state = state.copyWith(
-        currentIndex: index,
-        currentSong: initialSong,
-        position: Duration.zero,
-        isLoading: true,
-        currentQuality: fallback,
-        availableQualities: availableQualities,
-      );
-    } else {
-      state = state.copyWith(
-        currentIndex: index,
-        currentSong: initialSong,
-        position: Duration.zero,
-        isLoading: true,
-        currentQuality: quality,
-        availableQualities: availableQualities,
-      );
-    }
+    final qualitySlot = availableQualities.contains(quality)
+        ? quality
+        : (availableQualities.isNotEmpty ? availableQualities.last : '320k');
+    state = state.copyWith(
+      currentIndex: index,
+      currentSong: initialSong,
+      position: Duration.zero,
+      isLoading: true,
+      currentQuality: qualitySlot,
+      availableQualities: availableQualities,
+    );
 
     try {
       Song currentSongToPlay = initialSong;
       String? urlToPlay = song.sourceUrl;
       var resolvedUrlCandidates = <PluginMusicUrlResult>[];
+
+      // 队列里的地址是按「解析时的音质」保存的。用户之后切换过音质（全局
+      // 默认音质 / 播放页手动切换），这个地址（以及它命中的缓存文件）就是
+      // 旧音质的；必须清掉重新解析，否则会出现「界面显示 320k、实际播的还是
+      // 128k 缓存」。音质没变则继续复用地址，避免每次都联网解析。
+      if (!isLocal &&
+          _hasPlayableUrl(urlToPlay) &&
+          urlToPlay!.startsWith('http') &&
+          song.sourceQuality != qualitySlot) {
+        debugPrint(
+          '[PlaybackController] 音质已变化，重新解析: ${song.title} '
+          'song=${song.sourceQuality} current=$qualitySlot',
+        );
+        currentSongToPlay = currentSongToPlay.copyWith(
+          clearSourceUrl: true,
+          clearSourceHeaders: true,
+          clearSourceQuality: true,
+        );
+        urlToPlay = null;
+      }
 
       if (isLocal && urlToPlay != null && urlToPlay.isNotEmpty) {
         try {
@@ -1091,9 +1100,14 @@ class PlaybackController extends StateNotifier<PlaybackState> {
           currentSongToPlay = currentSongToPlay.copyWith(
             sourceUrl: urlToPlay,
             sourceHeaders: result.headers.isEmpty ? null : result.headers,
-            sourceQuality: result.quality.isEmpty ? null : result.quality,
+            // 缓存键记录这次地址的真实音质：插件可能内部降级（请求 320k
+            // 实际返回 128k），此时按回报音质记录，重播时才能命中正确的
+            // 缓存；回报为空时退回本次请求的音质档位。
+            sourceQuality: result.quality.isEmpty
+                ? qualitySlot
+                : result.quality,
             clearSourceHeaders: result.headers.isEmpty,
-            clearSourceQuality: result.quality.isEmpty,
+            clearSourceQuality: false,
             // 内置源的歌曲由插件解析地址，这里把音源标记成实际提供地址的插件，
             // 播放详情页显示的就是真正正在使用的音源。
             source: result.source ?? currentSongToPlay.source,
@@ -1177,12 +1191,12 @@ class PlaybackController extends StateNotifier<PlaybackState> {
                     ? null
                     : candidate.headers,
                 sourceQuality: candidate.quality.isEmpty
-                    ? null
+                    ? qualitySlot
                     : candidate.quality,
                 // 标记实际提供地址的音源，界面上显示真正正在使用的音源。
                 source: candidate.source ?? currentSongToPlay.source,
                 clearSourceHeaders: candidate.headers.isEmpty,
-                clearSourceQuality: candidate.quality.isEmpty,
+                clearSourceQuality: false,
               );
               await _audioHandler
                   .setAudioSource(candidateUrl, song: fallbackSong)
@@ -1280,9 +1294,11 @@ class PlaybackController extends StateNotifier<PlaybackState> {
                   id: song.id,
                   sourceUrl: url,
                   sourceHeaders: result.headers.isEmpty ? null : result.headers,
-                  sourceQuality: result.quality.isEmpty ? null : result.quality,
+                  sourceQuality: result.quality.isEmpty
+                      ? state.currentQuality
+                      : result.quality,
                   clearSourceHeaders: result.headers.isEmpty,
-                  clearSourceQuality: result.quality.isEmpty,
+                  clearSourceQuality: false,
                 );
                 _replaceSongInQueue(index, switchedSong);
 
@@ -1389,9 +1405,11 @@ class PlaybackController extends StateNotifier<PlaybackState> {
                 artist: song.artist,
                 album: song.album,
                 sourceHeaders: result.headers.isEmpty ? null : result.headers,
-                sourceQuality: result.quality.isEmpty ? null : result.quality,
+                sourceQuality: result.quality.isEmpty
+                    ? state.currentQuality
+                    : result.quality,
                 clearSourceHeaders: result.headers.isEmpty,
-                clearSourceQuality: result.quality.isEmpty,
+                clearSourceQuality: false,
               );
               _replaceSongInQueue(index, switchedSong);
 
@@ -1825,15 +1843,26 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     state = state.copyWith(isLoading: true);
     final currentPosition = state.position;
     final originalUrl = currentSong.sourceUrl;
+    final index = _currentIndex;
+    final wasPlaying = state.isPlaying || _audioHandler.playing;
+
+    // 正在播放时替换音源，部分平台（ExoPlayer / media_kit）会偶发 prepare
+    // 失败，换完音源再按原状态恢复播放。
+    if (wasPlaying) {
+      try {
+        await _audioHandler.pause();
+      } catch (_) {}
+      if (_currentPlayRequestId != requestId) return;
+    }
 
     try {
-      final result = await _musicSourceManager.getMusicUrlResult(
-        currentSong,
-        quality: quality,
-      );
+      final result = await _musicSourceManager
+          .getMusicUrlResult(currentSong, quality: quality)
+          .timeout(_urlFetchTimeout);
       if (_currentPlayRequestId != requestId) return;
 
       if (result == null || result.url.isEmpty) {
+        await _resumeAfterQualitySwitch(requestId, wasPlaying);
         state = state.copyWith(isLoading: false);
         _finishQualitySwitch(requestId);
         onMessage?.call(
@@ -1843,25 +1872,35 @@ class PlaybackController extends StateNotifier<PlaybackState> {
         return;
       }
 
+      // 插件可能内部降级（请求 320k 实际返回 128k）：以回报音质为准，
+      // 缓存键 / 界面显示才和真正播放的音频一致；回报为空时用请求档位。
+      final resolvedQuality = result.quality.isEmpty ? quality : result.quality;
       final updatedSong = currentSong.copyWith(
         sourceUrl: result.url,
         sourceHeaders: result.headers.isEmpty ? null : result.headers,
-        sourceQuality: result.quality.isEmpty ? quality : result.quality,
+        sourceQuality: resolvedQuality,
         clearSourceHeaders: result.headers.isEmpty,
+        clearSourceQuality: false,
         // 标记实际提供地址的音源，界面上显示真正正在使用的音源。
         source: result.source ?? currentSong.source,
       );
-      await _audioHandler.setAudioSource(result.url, song: updatedSong);
+      if (index >= 0 && index < state.queue.length) {
+        _replaceSongInQueue(index, updatedSong);
+      }
+      await _audioHandler
+          .setAudioSource(result.url, song: updatedSong)
+          .timeout(_audioSetTimeout);
+      if (_currentPlayRequestId != requestId) return;
       await _seekWithoutCounting(currentPosition);
-      await _audioHandler.play();
       state = state.copyWith(
         isLoading: false,
-        isPlaying: true,
-        currentQuality: quality,
+        isPlaying: wasPlaying,
+        currentQuality: resolvedQuality,
         currentSong: updatedSong,
       );
+      await _resumeAfterQualitySwitch(requestId, wasPlaying);
       _finishQualitySwitch(requestId);
-      onMessage?.call(tr('已切换到 ${_getQualityDisplayName(quality)}'));
+      onMessage?.call(tr('已切换到 ${_getQualityDisplayName(resolvedQuality)}'));
       // 用户手动切换音质：同步「默认音质 / 全局音质」。
       onQualityChanged?.call(quality, currentSong.source);
     } catch (e) {
@@ -1871,13 +1910,25 @@ class PlaybackController extends StateNotifier<PlaybackState> {
         if (originalUrl != null && originalUrl.isNotEmpty) {
           await _audioHandler.setAudioSource(originalUrl, song: currentSong);
           await _seekWithoutCounting(currentPosition);
-          await _audioHandler.play();
+          await _resumeAfterQualitySwitch(requestId, wasPlaying);
+        } else {
+          await _resumeAfterQualitySwitch(requestId, wasPlaying);
         }
-      } catch (_) {}
-      state = state.copyWith(isLoading: false);
+      } catch (_) {
+        await _resumeAfterQualitySwitch(requestId, wasPlaying);
+      }
+      state = state.copyWith(isLoading: false, isPlaying: wasPlaying);
       _finishQualitySwitch(requestId);
       onMessage?.call(tr('切换音质失败，当前音质保持不变: $e'), backgroundColor: Colors.red);
     }
+  }
+
+  /// 切换音质时若原本在播放，替换完音源后恢复播放。
+  Future<void> _resumeAfterQualitySwitch(int requestId, bool wasPlaying) async {
+    if (!wasPlaying || _currentPlayRequestId != requestId) return;
+    try {
+      await _audioHandler.play();
+    } catch (_) {}
   }
 
   // ==================== 内部辅助方法 ====================
@@ -2222,9 +2273,11 @@ class PlaybackController extends StateNotifier<PlaybackState> {
           id: song.id,
           sourceUrl: url,
           sourceHeaders: result.headers.isEmpty ? null : result.headers,
-          sourceQuality: result.quality.isEmpty ? null : result.quality,
+          sourceQuality: result.quality.isEmpty
+              ? state.currentQuality
+              : result.quality,
           clearSourceHeaders: result.headers.isEmpty,
-          clearSourceQuality: result.quality.isEmpty,
+          clearSourceQuality: false,
           // 标记实际提供地址的音源，界面上显示真正正在使用的音源。
           source: result.source ?? candidate.source,
         );
@@ -2571,7 +2624,11 @@ class PlaybackController extends StateNotifier<PlaybackState> {
             ? const <String>{}
             : <String>{song.sourceUrl!};
         final resolved = await _musicSourceManager
-            .resolveSingleSongUrl(song, excludedUrls: excludedUrls)
+            .resolveSingleSongUrl(
+              song,
+              quality: state.currentQuality,
+              excludedUrls: excludedUrls,
+            )
             .timeout(_urlFetchTimeout, onTimeout: () => song);
         if (_currentPlayRequestId != requestId) return;
 
@@ -2653,9 +2710,11 @@ class PlaybackController extends StateNotifier<PlaybackState> {
               id: song.id,
               sourceUrl: url,
               sourceHeaders: result.headers.isEmpty ? null : result.headers,
-              sourceQuality: result.quality.isEmpty ? null : result.quality,
+              sourceQuality: result.quality.isEmpty
+                  ? state.currentQuality
+                  : result.quality,
               clearSourceHeaders: result.headers.isEmpty,
-              clearSourceQuality: result.quality.isEmpty,
+              clearSourceQuality: false,
             );
             _replaceSongInQueue(index, switchedSong);
 

@@ -475,16 +475,21 @@ class MusicAudioHandler extends BaseAudioHandler
         );
 
         // 命中音频缓存：直接播放本地文件（秒开、不消耗流量）。
-        final cachedFile = song == null
-            ? null
-            : await AudioCacheService.findCachedFile(
+        //
+        // 缓存键必须用「解析这个地址时请求的音质」，不能用兜底值：兜底成
+        // 320k 会把 128k 的音频存成 320k，之后切换音质或重播就会拿错文件
+        // （界面显示 320k、实际播的是 128k 缓存）。音质未知时干脆不走缓存。
+        final cacheQuality = song?.sourceQuality ?? '';
+        final cachedFile = song != null && cacheQuality.isNotEmpty
+            ? await AudioCacheService.findCachedFile(
                 songId: song.id,
-                quality: song.sourceQuality ?? '320k',
+                quality: cacheQuality,
                 source: song.source,
                 artist: song.artist,
                 title: song.title,
                 url: url,
-              );
+              )
+            : null;
 
         if (cachedFile != null) {
           debugPrint(
@@ -505,17 +510,19 @@ class MusicAudioHandler extends BaseAudioHandler
             ConcatenatingAudioSource(children: [audioSource]),
           );
           // 后台把音频缓存一份到「缓存目录」，下次播放即可直接走本地文件。
-          unawaited(
-            AudioCacheService.cacheInBackground(
-              url: url,
-              headers: requestHeaders,
-              songId: song?.id ?? url,
-              quality: song?.sourceQuality ?? '320k',
-              source: song?.source,
-              artist: song?.artist,
-              title: song?.title,
-            ),
-          );
+          if (song != null && cacheQuality.isNotEmpty) {
+            unawaited(
+              AudioCacheService.cacheInBackground(
+                url: url,
+                headers: requestHeaders,
+                songId: song.id,
+                quality: cacheQuality,
+                source: song.source,
+                artist: song.artist,
+                title: song.title,
+              ),
+            );
+          }
         }
         await _validateRemoteSongDuration(preparedSong, url);
       } else {
