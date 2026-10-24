@@ -943,11 +943,18 @@ class PlaybackController extends StateNotifier<PlaybackState> {
 
     final sourceId = song.source ?? 'wy';
     final isLocal = sourceId == 'local';
+    // 「内置酷我」歌曲（source 是裸平台 id 且没有插件绑定）才有酷我专属的
+    // 高清封面提升 / 强制刷新：插件酷我歌曲（preferredSource 带插件）的
+    // 封面在解析时已经可用，走这条通道反而会被 getPic 的结果（内置接口按
+    // 不可互换的歌曲 id 查询 / 插件 getPic 失败）替换成坏地址，表现为
+    // 列表封面正常、播放时左侧栏与播放详情页无封面。
+    final isKwBuiltInSong =
+        sourceId == 'kw' && (song.preferredSource?.trim().isEmpty ?? true);
     if (!isLocal) {
       await _ensureMusicSourcesReady();
       if (_currentPlayRequestId != requestId) return;
     }
-    final initialDisplayCover = sourceId == 'kw'
+    final initialDisplayCover = isKwBuiltInSong
         ? _musicSourceManager.getHighResolutionCoverUrl(song)
         : null;
     final initialSong =
@@ -960,11 +967,11 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     final pendingCoverFuture =
         !isLocal &&
             ((song.coverUrl == null || song.coverUrl!.isEmpty) ||
-                sourceId == 'kw')
+                isKwBuiltInSong)
         ? _musicSourceManager.getPic(
             song,
-            preferBuiltIn: sourceId == 'kw',
-            bypassCache: sourceId == 'kw',
+            preferBuiltIn: isKwBuiltInSong,
+            bypassCache: isKwBuiltInSong,
           )
         : null;
     final quality = isLocal
@@ -1887,7 +1894,11 @@ class PlaybackController extends StateNotifier<PlaybackState> {
         return;
       }
 
-      final shouldRefreshKuwoCover = currentSong.source == 'kw';
+      // 强制刷新只针对「内置酷我」歌曲（缩略图提升高清）；插件酷我歌曲
+      // 的封面已经可用，有封面就不动，避免被坏结果替换。
+      final shouldRefreshKuwoCover =
+          currentSong.source == 'kw' &&
+          (currentSong.preferredSource?.trim().isEmpty ?? true);
       if (!shouldRefreshKuwoCover &&
           (currentSong.coverUrl?.isNotEmpty ?? false)) {
         return;
