@@ -659,7 +659,9 @@ class _LocalPlaylistDetailPageState
                               () => context.push(
                                 AppRoutes.artistUpdate.replaceFirst(
                                   ':id',
-                                  playlist.id,
+                                  // 歌单 id 可能含 `/`、`?`（插件来源的 id），
+                                  // 不编码会切碎路由。
+                                  Uri.encodeComponent(playlist.id),
                                 ),
                               ),
                             ),

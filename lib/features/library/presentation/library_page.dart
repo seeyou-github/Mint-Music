@@ -232,7 +232,12 @@ class LibraryPage extends ConsumerWidget {
   ) {
     final favoriteType = playlist.favoriteType;
     return GestureDetector(
-      onTap: () => context.push('/library/playlist/${playlist.id}'),
+      // 歌单 id 可能带 `/`、`?`（插件来源的榜单是 `mf:board:<源>:<原始 id>`，
+      // 例如 bilibili 的 `popular/series/one?number=396`），不编码会让
+      // go_router 把 id 切成多段，报 no routes for location。
+      onTap: () => context.push(
+        '/library/playlist/${Uri.encodeComponent(playlist.id)}',
+      ),
       child: Container(
         decoration: BoxDecoration(
           color: colors.surface,

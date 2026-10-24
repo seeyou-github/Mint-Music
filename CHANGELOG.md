@@ -60,6 +60,14 @@
   - 点击可删除远端备份文件，删除前二次确认，失败时显示具体原因
 
 ### 修复
+- 收藏的榜单（插件来源）打开报 `no routes for location`
+  - 插件榜单 id 形如 `mf:board:bilibili@xxx:popular/series/one?number=396`，
+    原始 id 自带 `/` 和 `?`；收藏后本地歌单 id 变成
+    `discover_mf:board:…:popular/series/one?number=396`
+  - 「收藏」页打开歌单时没做 URL 编码，go_router 把 id 切成多段，匹配不到
+    `/library/playlist/:id` 路由
+  - 打开歌单、作者「更新」跳转统一走 `Uri.encodeComponent`；收藏落盘时也
+    编码一次，新旧收藏都能正常打开（已收藏的不用重新收藏）
 - 收藏 / 歌单里的 b 站（以及其它 MusicFree 插件）歌曲播放报「bilibili 视频信息 -400」
   - 根因：`createPlaylistWithSongs` 按字段手工重建 `Song`，把 `lx` 丢了；
     而 MusicFree 插件解析播放地址依赖 `lx.extra.musicItem`（含 bvid / aid / cid），

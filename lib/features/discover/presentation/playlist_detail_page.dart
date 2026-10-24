@@ -933,8 +933,12 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
   }
 
   void _addToFavorites(playlist) async {
+    // 插件来源的榜单 id 形如 `mf:board:bilibili@xxx:popular/series/one?number=396`，
+    // 原始 id 里带 `/` 和 `?`。落成本地歌单 id 时先编码，保证能安全地放进
+    // `/library/playlist/:id` 路由（否则 go_router 匹配不到）。
+    // 收藏状态判断走 meta['discoverId']，不依赖这个 id，所以编码不影响已收藏判定。
     final localPlaylist = local.Playlist(
-      id: 'discover_${widget.playlistId}',
+      id: 'discover_${Uri.encodeComponent(widget.playlistId)}',
       name: playlist.title,
       description: playlist.description,
       coverImgUrl: playlist.coverUrl ?? '',
