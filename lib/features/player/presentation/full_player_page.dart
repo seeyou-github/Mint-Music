@@ -166,9 +166,7 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
                   final windowSize = MediaQuery.sizeOf(context);
                   final safePadding = MediaQuery.paddingOf(context);
                   final viewportWidth =
-                      windowSize.width -
-                      safePadding.left -
-                      safePadding.right;
+                      windowSize.width - safePadding.left - safePadding.right;
                   // 封面与歌曲信息共用同一条左右边界：封面宽度按可用宽度夹紧，
                   // 两侧留白由它反推，歌名 / 歌手才能和封面左边缘严格对齐。
                   final coverSize = math.min(

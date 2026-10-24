@@ -136,14 +136,28 @@ class _SearchPageState extends ConsumerState<SearchPage> {
 
   void _performSearch(String query) {
     if (query.trim().isEmpty) return;
-    _focusNode.unfocus();
-    ref.read(searchSuggestInputProvider.notifier).state = '';
     ref.read(searchQueryProvider.notifier).state = query;
     ref.read(searchHistoryProvider.notifier).addQuery(query);
+    _runSearch(ref.read(searchSourceIdProvider));
+  }
+
+  /// 按当前关键词 + 当前标签页发起搜索。
+  ///
+  /// [sourceId] 由调用方决定：普通搜索用当前音源，切换音源时用新选中的音源。
+  /// 切换音源时用户已经看到上一批结果，需要立刻按新音源重查；旧实现只覆盖
+  /// 歌曲 / 歌单，切到专辑、作者标签页后再换音源仍停留在旧结果。
+  void _runSearch(String sourceId) {
+    final query = ref.read(searchQueryProvider).trim();
+    if (query.isEmpty) return;
+
+    // 桌面上点击搜索框以外的地方不会自动失焦；预测面板还开着时结果会被它
+    // 挡住，看起来像「没有重新搜索」，所以这里主动收起。
+    _focusNode.unfocus();
+    ref.read(searchSuggestInputProvider.notifier).state = '';
     ref.read(searchPageProvider.notifier).state = 1;
-    final currentTab = ref.read(searchTabProvider);
-    final sourceId = ref.read(searchSourceIdProvider);
-    switch (currentTab) {
+
+    final tab = ref.read(searchTabProvider);
+    switch (tab) {
       case SearchTab.songs:
         unawaited(
           ref
@@ -164,7 +178,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
               .search(
                 query,
                 sourceId,
-                currentTab == SearchTab.albums
+                tab == SearchTab.albums
                     ? CollectionType.album
                     : CollectionType.artist,
               ),
@@ -213,46 +227,18 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           if (mounted) _selection.exit();
         });
       }
+      // 清空关键词时把歌曲 / 歌单结果清掉；非空关键词的搜索由 [_performSearch]
+      // 自己发起（那里能同时处理四个标签页），这里不再重复触发。
       if (next.isEmpty) {
         ref.read(searchResultsControllerProvider.notifier).reset();
         ref.read(playlistSearchControllerProvider.notifier).reset();
-      } else if (previous != next) {
-        final currentTab = ref.read(searchTabProvider);
-        if (currentTab == SearchTab.songs) {
-          unawaited(
-            ref
-                .read(searchResultsControllerProvider.notifier)
-                .start(next, ref.read(searchSourceIdProvider)),
-          );
-        } else {
-          unawaited(
-            ref
-                .read(playlistSearchControllerProvider.notifier)
-                .search(next, ref.read(searchSourceIdProvider)),
-          );
-        }
       }
     });
 
     ref.listen<String>(searchSourceIdProvider, (previous, next) {
+      // 切换音源：按当前关键词 + 当前标签页重新搜索（歌曲 / 歌单 / 专辑 / 作者）。
       if (previous != null && previous != next) {
-        final query = ref.read(searchQueryProvider);
-        if (query.isNotEmpty) {
-          final currentTab = ref.read(searchTabProvider);
-          if (currentTab == SearchTab.songs) {
-            unawaited(
-              ref
-                  .read(searchResultsControllerProvider.notifier)
-                  .start(query, next, force: true),
-            );
-          } else {
-            unawaited(
-              ref
-                  .read(playlistSearchControllerProvider.notifier)
-                  .search(query, next),
-            );
-          }
-        }
+        _runSearch(next);
       }
     });
 
@@ -784,30 +770,12 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         );
       }).toList(),
     ).then((selectedId) {
-      if (selectedId != null) {
-        // 只改搜索页自己的音源，不写「默认音源」设置：
-        // 否则主页 / 歌单的音源会被搜索页带着一起变。
-        ref.read(searchSourceIdProvider.notifier).state = selectedId;
-        ref.read(searchPageProvider.notifier).state = 1;
-        final query = ref.read(searchQueryProvider);
-        if (query.isNotEmpty) {
-          final currentTab = ref.read(searchTabProvider);
-          if (currentTab == SearchTab.songs) {
-            unawaited(
-              ref
-                  .read(searchResultsControllerProvider.notifier)
-                  .start(query, selectedId, force: true),
-            );
-          } else {
-            unawaited(
-              ref
-                  .read(playlistSearchControllerProvider.notifier)
-                  .search(query, selectedId),
-            );
-          }
-          ref.invalidate(searchSuggestResultsProvider);
-        }
-      }
+      if (selectedId == null) return;
+      if (selectedId == ref.read(searchSourceIdProvider)) return;
+      // 只改搜索页自己的音源，不写「默认音源」设置：
+      // 否则主页 / 歌单的音源会被搜索页带着一起变。
+      // 选中后由上面对 searchSourceIdProvider 的监听统一重新搜索（覆盖全部标签页）。
+      ref.read(searchSourceIdProvider.notifier).state = selectedId;
     });
   }
 
