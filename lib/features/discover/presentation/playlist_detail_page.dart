@@ -10,9 +10,11 @@ import '../../../core/utils/responsive_layout.dart';
 import '../../../core/utils/scroll_locate.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../../../shared/widgets/load_more_footer.dart';
+import '../../../shared/widgets/source_name_tag.dart';
 import '../../../shared/widgets/song_action_sheet.dart';
 import '../../../shared/widgets/song_list_item.dart';
 import '../../../shared/widgets/song_selection.dart';
+import '../../plugin/application/plugin_providers.dart';
 import '../application/discover_providers.dart';
 import '../../../features/player/application/playback_context.dart';
 import '../../library/application/recently_played_providers.dart';
@@ -496,7 +498,8 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
               ),
             ),
             const SizedBox(width: AppSpacing.md),
-            // 名称 + 歌曲数量 + 操作按钮
+            // 第一行 名称 / 第二行 音源标签 / 第三行 操作按钮。
+            // 三行总高与封面同高（headerHeight），字号收紧保证 72px 也放得下。
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -509,7 +512,7 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
                         child: Text(
                           playlist.title,
                           style: TextStyle(
-                            fontSize: 20,
+                            fontSize: 16,
                             fontWeight: FontWeight.bold,
                             color: colors.textPrimary,
                           ),
@@ -520,11 +523,13 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
                       const SizedBox(width: AppSpacing.sm),
                       Text(
                         context.tr('${playlist.songCount}首歌曲'),
-                        style: TextStyle(fontSize: 12, color: colors.textHint),
+                        style: TextStyle(fontSize: 11, color: colors.textHint),
                       ),
                     ],
                   ),
-                  const SizedBox(height: AppSpacing.xs),
+                  const SizedBox(height: 2),
+                  _buildSourceNameTag(ref, colors, playlist),
+                  const SizedBox(height: 2),
                   Row(
                     children: [
                       _buildActionButton(
@@ -558,6 +563,21 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
         ),
       ),
     );
+  }
+
+  /// 头部音源标签：显示歌单 / 榜单所属的音源（本地来源不显示）。
+  Widget _buildSourceNameTag(
+    WidgetRef ref,
+    ThemeColors colors,
+    dynamic playlist,
+  ) {
+    final source = (playlist.source as String?)?.trim() ?? '';
+    if (source.isEmpty || source == 'local') return const SizedBox.shrink();
+    final label = ref
+        .read(musicSourceManagerProvider)
+        .sourceDisplayName(source);
+    if (label.isEmpty) return const SizedBox.shrink();
+    return SourceNameTag(label: label, colors: colors, fontSize: 10);
   }
 
   Widget _buildActionButton(

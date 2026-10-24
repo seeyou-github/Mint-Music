@@ -11,6 +11,7 @@ import '../../shared/services/app_image_cache.dart';
 import '../../features/plugin/application/music_source_manager.dart';
 import '../../features/plugin/domain/plugin_types.dart';
 import '../../features/plugin/application/plugin_providers.dart';
+import 'source_name_tag.dart';
 import 'song_action_sheet.dart';
 
 class SongListItem extends ConsumerWidget {
@@ -282,7 +283,10 @@ class SongListItem extends ConsumerWidget {
     BuildContext context,
     WidgetRef ref,
   ) {
-    final sourceName = _getSourceName(song.source!, ref);
+    // 名称最长 10 个字，超出省略（与详情页头部的音源标签一致）。
+    final sourceName = SourceNameTag.shorten(
+      _getSourceName(song.source!, ref),
+    );
     return Container(
       margin: const EdgeInsets.only(right: 4),
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),

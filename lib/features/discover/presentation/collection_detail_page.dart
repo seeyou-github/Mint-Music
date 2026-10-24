@@ -9,6 +9,7 @@ import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../shared/widgets/load_more_footer.dart';
 import '../../../shared/widgets/music_cover_image.dart';
+import '../../../shared/widgets/source_name_tag.dart';
 import '../../../shared/widgets/song_action_sheet.dart';
 import '../../../shared/widgets/song_list_item.dart';
 import '../../library/application/playlist_providers.dart';
@@ -356,10 +357,11 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Text(
                       item.title,
-                      maxLines: 2,
+                      maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontSize: 16,
@@ -368,11 +370,23 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
                       ),
                     ),
                     const SizedBox(height: 4),
-                    Text(
-                      _subtitle(item, songs.length),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 12, color: colors.textHint),
+                    // 音源标签 + 副标题（歌手 / 发行时间 / 歌曲数）同一行。
+                    Row(
+                      children: [
+                        _buildSourceNameTag(colors, item),
+                        const SizedBox(width: AppSpacing.sm),
+                        Expanded(
+                          child: Text(
+                            _subtitle(item, songs.length),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: colors.textHint,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: AppSpacing.sm),
                     Row(
@@ -407,6 +421,17 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
         ],
       ),
     );
+  }
+
+  /// 头部音源标签：显示专辑 / 作者所属的音源（本地来源不显示）。
+  Widget _buildSourceNameTag(ThemeColors colors, SearchCollection item) {
+    final source = item.source.trim();
+    if (source.isEmpty || source == 'local') return const SizedBox.shrink();
+    final label = ref
+        .read(musicSourceManagerProvider)
+        .sourceDisplayName(source);
+    if (label.isEmpty) return const SizedBox.shrink();
+    return SourceNameTag(label: label, colors: colors, fontSize: 10);
   }
 
   String _subtitle(SearchCollection item, int songCount) {

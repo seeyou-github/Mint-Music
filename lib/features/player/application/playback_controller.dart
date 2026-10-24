@@ -433,6 +433,35 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     await playSongAt(index);
   }
 
+  /// 用户在播放详情页顶部手动选择音源：仅本次会话有效（不持久化）。
+  ///
+  /// 立即用所选音源重新解析当前歌曲（进度 / 播放状态由界面在调用后恢复）。
+  /// 之后的歌曲：绑定内置平台的优先用该音源解析；绑定插件的仍按各自绑定
+  /// 播放，失败自动换源时该音源也排在候选最前（见 [_fallbackSourceIds]）。
+  Future<void> setManualSource(String sourceId) async {
+    _musicSourceManager.setSessionPreferredSource(sourceId);
+    final index = state.currentIndex;
+    if (index < 0 || index >= state.queue.length) return;
+    final song = state.queue[index];
+    // 把当前歌重置回平台 id 并清掉歌曲级绑定，手动选择才能立即生效；
+    // 队列里其它歌的绑定不动（切歌后仍按各自记录 / 手动音源规则走）。
+    final (baseId, _) = MusicSourceManager.splitSourceId(song.source ?? '');
+    if (baseId.isEmpty || baseId == 'local') return;
+    if (song.source != baseId || song.preferredSource != null) {
+      _replaceSongInQueue(
+        index,
+        song.copyWith(
+          source: baseId,
+          clearPreferredSource: true,
+          clearSourceUrl: true,
+          clearSourceHeaders: true,
+          clearSourceQuality: true,
+        ),
+      );
+    }
+    await playSongAt(index);
+  }
+
   void setAudioEffects(AudioEffectsConfig config) {
     unawaited(_audioEffectService.apply(config));
   }
@@ -1901,21 +1930,32 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     return tr('没有第三方对应$name音源，请先安装$name音源');
   }
 
-  /// 换源时要尝试的音源（同平台优先，再其它平台，不区分插件格式）。
+  /// 换源时要尝试的音源（同平台插件优先，再其它平台插件；只含用户安装的
+  /// 插件音源，全部失败即停止）。
   List<String> _fallbackSourceIds(String currentSource, {Song? song}) {
     // 复制成可修改列表：管理器在「没有其它音源」时返回的是 const 空列表。
     final ids = List<String>.of(
       _musicSourceManager.playbackFallbackSourceIds(currentSource),
     );
-    // 收藏时记下的插件排最前（它才是「当时那个音源」），
-    // 其次是用户给这个内置源指定的「优先音源」。
+    // 优先级（从高到低）：
+    // 1. 本次会话用户手动选择的音源（播放详情页顶部选的，不持久化）；
+    // 2. 收藏时记下的插件（它才是「当时那个音源」）；
+    // 3. 设置里给这个内置源指定的「优先音源」（排最后兜底）。
+    final manual = _musicSourceManager.sessionPreferredSource;
+    if (manual != null && manual.isNotEmpty && ids.remove(manual)) {
+      ids.insert(0, manual);
+    }
     final songPreferred = song?.preferredSource?.trim() ?? '';
-    if (songPreferred.isNotEmpty && ids.remove(songPreferred)) {
-      ids.insert(0, songPreferred);
+    if (songPreferred.isNotEmpty && ids.contains(songPreferred)) {
+      // 手动选择是用户最新意图，排在收藏绑定之前；两者相同则不用动。
+      if (manual == null || manual != songPreferred) {
+        ids.remove(songPreferred);
+        ids.insert(manual == null ? 0 : 1, songPreferred);
+      }
     }
     final preferred = preferredSourceFor(currentSource);
     if (preferred != null && ids.remove(preferred)) {
-      ids.insert(0, preferred);
+      ids.add(preferred);
     }
     return ids;
   }

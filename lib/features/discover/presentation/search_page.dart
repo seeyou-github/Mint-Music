@@ -943,6 +943,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
               showIndex: true,
               showCover: true,
               showQuality: true,
+              // 歌手名左侧显示音源标签（聚合搜索能看出每首歌来自哪个源）。
+              showSource: true,
               showDuration: true,
               showMenuButton: true,
               // 正在播放的歌曲高亮显示。
@@ -1000,6 +1002,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         return SongListItem(
           song: song,
           index: index,
+          // 歌手名左侧显示音源标签。
+          showSource: true,
           // 正在播放的歌曲高亮显示。
           isPlaying: currentSongId != null && currentSongId == song.id,
           onPlayTap: () async {
@@ -1091,6 +1095,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           showIndex: true,
           showCover: true,
           showQuality: true,
+          // 歌手名左侧显示音源标签。
+          showSource: true,
           showDuration: true,
           showMenuButton: true,
           showPlayedTag: true,

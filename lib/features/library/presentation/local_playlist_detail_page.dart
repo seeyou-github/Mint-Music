@@ -17,8 +17,10 @@ import '../../../core/utils/scroll_locate.dart';
 import '../../../shared/services/playlist_cmpl_codec.dart';
 import '../../../shared/widgets/song_action_sheet.dart';
 import '../../../shared/widgets/music_cover_image.dart';
+import '../../../shared/widgets/source_name_tag.dart';
 import '../../../shared/widgets/song_list_item.dart';
 import '../../../shared/widgets/song_selection.dart';
+import '../../plugin/application/plugin_providers.dart';
 import '../application/playlist_providers.dart';
 import '../application/recently_played_providers.dart';
 import '../domain/models/playlist.dart';
@@ -557,7 +559,8 @@ class _LocalPlaylistDetailPageState
               ),
             ),
             const SizedBox(width: AppSpacing.md),
-            // 名称 + 歌曲数量 + 操作按钮
+            // 第一行 名称 / 第二行 音源标签 / 第三行 操作按钮。
+            // 三行总高与封面同高（headerHeight），字号收紧保证 72px 也放得下。
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -570,7 +573,7 @@ class _LocalPlaylistDetailPageState
                         child: Text(
                           playlist.name,
                           style: TextStyle(
-                            fontSize: 18,
+                            fontSize: 16,
                             fontWeight: FontWeight.bold,
                             color: colors.textPrimary,
                           ),
@@ -581,11 +584,15 @@ class _LocalPlaylistDetailPageState
                       const SizedBox(width: AppSpacing.sm),
                       Text(
                         context.tr('${playlist.songCount}首歌曲'),
-                        style: TextStyle(fontSize: 12, color: colors.textHint),
+                        style: TextStyle(fontSize: 11, color: colors.textHint),
                       ),
                     ],
                   ),
-                  const SizedBox(height: AppSpacing.xs),
+                  const SizedBox(height: 2),
+                  // 音源标签：收藏的专辑 / 作者 / 歌单 / 榜单显示绑定的音源，
+                  // 点击可切换绑定（我的收藏等没有统一音源的不显示）。
+                  _buildSourceNameTag(ref, colors, playlist),
+                  const SizedBox(height: 2),
                   ScrollConfiguration(
                     behavior: const _HeaderScrollBehavior(),
                     child: SingleChildScrollView(
@@ -962,6 +969,71 @@ class _LocalPlaylistDetailPageState
     }
 
     return Icon(Icons.music_note, size: 20, color: colors.primary);
+  }
+
+  /// 头部音源标签：显示收藏时绑定的音源，点击弹出已安装的音源插件列表
+  /// 切换绑定（我的收藏 / 纯本地歌单没有统一音源，不显示标签）。
+  Widget _buildSourceNameTag(
+    WidgetRef ref,
+    ThemeColors colors,
+    Playlist playlist,
+  ) {
+    final binding = playlist.favoriteSource;
+    if (binding == null || binding.isEmpty) return const SizedBox.shrink();
+    final manager = ref.read(musicSourceManagerProvider);
+    final label = manager.sourceDisplayName(binding);
+    if (label.isEmpty) return const SizedBox.shrink();
+    return SourceNameTag(
+      label: label,
+      colors: colors,
+      fontSize: 10,
+      onTap: () => _rebindSource(colors, playlist),
+    );
+  }
+
+  /// 切换当前歌单绑定的音源插件：歌单内所有歌曲改为优先用所选音源播放。
+  Future<void> _rebindSource(ThemeColors colors, Playlist playlist) async {
+    final chosen = await showPluginSourcePicker(
+      context,
+      ref,
+      currentSourceId: playlist.favoriteSource,
+    );
+    if (chosen == null || chosen == playlist.favoriteSource) return;
+    if (!mounted) return;
+    try {
+      await ref
+          .read(playlistsProvider.notifier)
+          .updatePlaylist(
+            playlist.copyWith(
+              // 歌曲级：把「优先插件」改成新音源（收藏绑定的生效机制）。
+              songs: applyFavoriteSource(playlist.songs, chosen),
+              // 歌单级：专辑 / 作者标记里的音源、普通歌单的 source 字段。
+              description: upgradeFavoriteMarkerSource(
+                playlist.description,
+                chosen,
+              ),
+              source: playlist.favoriteType != null ? playlist.source : chosen,
+            ),
+          );
+      if (!mounted) return;
+      final name = ref
+          .read(musicSourceManagerProvider)
+          .sourceDisplayName(chosen);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(context.tr('已切换音源：$name')),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(context.tr('切换音源失败：$e')),
+          backgroundColor: colors.error,
+        ),
+      );
+    }
   }
 
   Widget _buildActionButton(

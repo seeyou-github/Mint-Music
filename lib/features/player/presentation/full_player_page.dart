@@ -12,8 +12,7 @@ import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../../../shared/widgets/source_icon.dart';
-import '../../discover/application/search_providers.dart';
-import '../../plugin/application/music_source_manager.dart';
+import '../../../shared/widgets/source_name_tag.dart';
 import '../../plugin/domain/plugin_types.dart';
 import '../application/desktop_lyric_sync.dart';
 import '../application/playback_controller.dart';
@@ -667,9 +666,10 @@ class _PlayerHeader extends ConsumerWidget {
 
 /// 顶部「当前音源」标签。
 ///
-/// 内置音源（wy / tx / kg / kw / mg）自己没有地址接口，播放地址要由插件解析。
-/// 点这个标签可以给该内置源指定「优先音源」：播放时先试它，失败再自动回退到
-/// 其它音源。每个内置源各自独立保存（见 [preferredSourceMapProvider]）。
+/// 本地歌曲显示「本地歌曲」且不可点击；其它歌曲都可点击，弹出**用户已安装
+/// 的音源插件**列表（内置音源不列出）。选择后仅本次运行内有效（不持久化）：
+/// 立即用所选音源重新解析当前歌曲并跳回原进度，之后绑定内置音源的歌曲也
+/// 优先用它播放。
 class _SourceSelector extends ConsumerStatefulWidget {
   const _SourceSelector({required this.label, required this.compact});
 
@@ -683,24 +683,21 @@ class _SourceSelector extends ConsumerStatefulWidget {
 class _SourceSelectorState extends ConsumerState<_SourceSelector> {
   final _anchorKey = GlobalKey();
 
-  /// 当前歌曲所属的内置平台 id（本地歌曲 / 纯插件音源返回 null）。
+  /// 当前歌曲的音源 id；本地歌曲 / 未知返回 null（标签不可点）。
   ///
   /// 播放成功后歌曲的 `source` 会被改写成实际解析地址的插件变体
-  /// （`wy@luoxue`），这里仍按平台 id 判断，保证顶部标签一直可点。
-  String? get _baseSourceId {
+  /// （`wy@luoxue`），这里返回原始字符串用于判断，保证顶部标签一直可点。
+  String? get _currentSource {
     final source = ref.watch(
       playbackControllerProvider.select((s) => s.currentSong?.source ?? ''),
     );
     if (source.isEmpty || source == 'local') return null;
-    final (baseId, _) = MusicSourceManager.splitSourceId(source);
-    return MusicSourceManager.builtInPlatformIds.contains(baseId)
-        ? baseId
-        : null;
+    return source;
   }
 
   @override
   Widget build(BuildContext context) {
-    final baseId = _baseSourceId;
+    final clickable = _currentSource != null;
     final label = Text(
       widget.label,
       textAlign: TextAlign.center,
@@ -711,14 +708,14 @@ class _SourceSelectorState extends ConsumerState<_SourceSelector> {
         color: Colors.white.withValues(alpha: 0.6),
       ),
     );
-    if (baseId == null) return label;
-    // 内置源：标签可点，右边带一个小箭头提示可以选音源。
+    if (!clickable) return label;
+    // 非本地歌曲：标签可点，右边带一个小箭头提示可以选择音源插件。
     return GestureDetector(
       key: _anchorKey,
       behavior: HitTestBehavior.opaque,
-      onTap: () => _showSourceMenu(baseId),
+      onTap: () => _showSourceMenu(),
       child: Tooltip(
-        message: context.tr('选择优先音源'),
+        message: context.tr('选择音源插件'),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -734,7 +731,7 @@ class _SourceSelectorState extends ConsumerState<_SourceSelector> {
     );
   }
 
-  Future<void> _showSourceMenu(String baseId) async {
+  Future<void> _showSourceMenu() async {
     final box = _anchorKey.currentContext?.findRenderObject() as RenderBox?;
     if (box == null) return;
     final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
@@ -746,15 +743,13 @@ class _SourceSelectorState extends ConsumerState<_SourceSelector> {
       Offset.zero & overlay.size,
     );
 
-    // 与主界面的音源切换列表一致：所有已开启的音源（不含「聚合搜索」）。
-    final sources = ref
-        .read(allAvailableSourcesProvider)
-        .where((s) => s.id != 'all')
-        .toList(growable: false);
+    // 只列用户已安装、能解析播放地址的插件音源（内置音源不参与手动切换）。
+    final manager = ref.read(musicSourceManagerProvider);
+    final sources = manager.playbackPluginSources();
     if (sources.isEmpty) return;
 
     final colors = ref.read(themeColorsProvider);
-    final preferred = ref.read(preferredSourceMapProvider)[baseId];
+    final current = manager.sessionPreferredSource;
 
     final selected = await showMenu<String>(
       context: context,
@@ -779,21 +774,21 @@ class _SourceSelectorState extends ConsumerState<_SourceSelector> {
                 const SizedBox(width: AppSpacing.sm),
                 Expanded(
                   child: Text(
-                    source.name,
+                    SourceNameTag.shorten(source.name),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       fontSize: 13,
-                      color: source.id == preferred
+                      color: source.id == current
                           ? colors.primary
                           : colors.textPrimary,
-                      fontWeight: source.id == preferred
+                      fontWeight: source.id == current
                           ? FontWeight.w500
                           : FontWeight.normal,
                     ),
                   ),
                 ),
-                if (source.id == preferred)
+                if (source.id == current)
                   Icon(Icons.check, size: 16, color: colors.primary),
               ],
             ),
@@ -805,16 +800,11 @@ class _SourceSelectorState extends ConsumerState<_SourceSelector> {
         .where((s) => s.id == selected)
         .map((s) => s.name)
         .firstOrNull;
-    await _applySource(baseId, selected, name ?? selected);
+    await _applySource(selected, name ?? selected);
   }
 
-  /// 保存优先音源，并立刻用新音源重播当前歌曲。
-  Future<void> _applySource(
-    String baseId,
-    String sourceId,
-    String sourceName,
-  ) async {
-    await setPreferredSource(ref, baseSourceId: baseId, sourceId: sourceId);
+  /// 用所选音源立刻重新解析当前歌曲（本次运行内有效，不持久化）。
+  Future<void> _applySource(String sourceId, String sourceName) async {
     if (!mounted) return;
 
     final playback = ref.read(playbackControllerProvider);
@@ -824,17 +814,17 @@ class _SourceSelectorState extends ConsumerState<_SourceSelector> {
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(context.tr('已设置优先音源：$sourceName')),
+        content: Text(context.tr('已切换音源：$sourceName（本次运行内有效）')),
         duration: const Duration(seconds: 2),
       ),
     );
     if (index < 0) return;
 
-    // 重新解析播放地址：优先音源失败时控制器会自动回退到其它音源。
+    // 重新解析播放地址：所选音源失败时控制器会按换源顺序自动回退。
     try {
       await ref
           .read(playbackControllerProvider.notifier)
-          .replayWithPreferredSource(baseId);
+          .setManualSource(sourceId);
       if (position > Duration.zero) {
         await ref.read(playbackControllerProvider.notifier).seek(position);
       }
@@ -842,7 +832,7 @@ class _SourceSelectorState extends ConsumerState<_SourceSelector> {
         await ref.read(playbackControllerProvider.notifier).pause();
       }
     } catch (e) {
-      debugPrint('[FullPlayer] 切换优先音源后重播失败: $e');
+      debugPrint('[FullPlayer] 手动切换音源后重播失败: $e');
     }
   }
 }
@@ -1736,10 +1726,12 @@ String? currentSourceLabel(WidgetRef ref) {
   );
   final songSource = songInfo.$1;
   if (songSource.isEmpty) return null;
+  // 本地歌曲固定显示「本地歌曲」（标签不可点击，见 _SourceSelector）。
+  if (songSource == 'local') return '本地歌曲';
   final manager = ref.read(musicSourceManagerProvider);
   final effective =
       manager.resolvingSourceIdFor(songSource, preferredPlugin: songInfo.$3) ??
       songSource;
   final label = manager.sourceDisplayName(effective);
-  return label.isEmpty ? null : label;
+  return label.isEmpty ? null : SourceNameTag.shorten(label);
 }

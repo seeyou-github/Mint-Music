@@ -690,8 +690,34 @@ class MusicSourceManager {
   /// 优先使用用户指定的音源，失败后再按原顺序尝试其它音源。
   Map<String, String> _preferredSources = const {};
 
+  /// 本次会话里用户在播放详情页手动选择的音源（`平台id@插件id`）。
+  ///
+  /// 不持久化：退出应用即失效。播放绑定内置音源的歌曲时优先用它解析；
+  /// 失败自动换源时也把它排在候选最前（见 [_orderedHostsForSource]）。
+  /// 歌曲自己记的「优先插件」（收藏绑定）比它更具体，仍排最前。
+  String? _sessionPreferredSource;
+
   void setPreferredSources(Map<String, String> map) {
     _preferredSources = Map<String, String>.from(map);
+  }
+
+  /// 当前会话的手动音源（null 表示本会话没有手动选过）。
+  String? get sessionPreferredSource => _sessionPreferredSource;
+
+  /// 设置 / 清除本次会话的手动音源。
+  void setSessionPreferredSource(String? sourceId) {
+    _sessionPreferredSource = (sourceId == null || sourceId.trim().isEmpty)
+        ? null
+        : sourceId.trim();
+  }
+
+  /// 用户已安装、且能解析播放地址的插件音源（绑定切换 / 播放详情页的
+  /// 手动音源列表都用它；内置音源不参与）。
+  List<SourceInfo> playbackPluginSources() {
+    return [
+      for (final source in getPluginSupportedSources())
+        if (_pluginSourceCanResolveUrls(source.id)) source,
+    ];
   }
 
   /// 把一个音源 id 落成「能真正解析播放地址」的具体插件音源。
@@ -734,10 +760,13 @@ class MusicSourceManager {
     return builtInPlatformIds.contains(baseId) ? baseId : sourceId;
   }
 
-  /// 解析播放地址时使用的 host 顺序：优先音源对应的插件排在最前面。
+  /// 解析播放地址时使用的 host 顺序：优先插件排在最前面。
   ///
-  /// [preferredPlugin] 是「这首歌自己记住的插件」（收藏时记下的那个），
-  /// 比播放页手动选的「优先音源」更具体，所以排在它前面。
+  /// 优先级（从高到低）：
+  /// 1. [preferredPlugin] ——「这首歌自己记住的插件」（收藏时记下的绑定）；
+  /// 2. 本次会话用户手动选择的音源（仅绑定内置平台时参与，插件绑定的歌
+  ///    曲按绑定走，见 [_sessionPreferredSource]）；
+  /// 3. 设置里每个内置源的「优先音源」。
   ///
   /// 只影响「取播放地址」，不影响搜索结果的顺序。
   List<PluginHost> _orderedHostsForSource(
@@ -750,11 +779,21 @@ class MusicSourceManager {
     // 已经指定了具体插件（`平台id@插件id`）时不需要再排序。
     if (pluginId != null) return hosts;
 
-    final songPreferred = preferredPlugin?.trim() ?? '';
-    final preferred = songPreferred.isNotEmpty
-        ? songPreferred
-        : (_preferredSources[baseId] ?? '');
-    if (preferred.isEmpty) return hosts;
+    String? preferred;
+    for (final candidate in [
+      preferredPlugin?.trim() ?? '',
+      // 手动音源只在歌曲绑定的还是内置平台时参与；歌曲没有自己的绑定
+      // （preferredPlugin 为空）才轮到它。
+      if (preferredPlugin?.trim().isNotEmpty != true)
+        _sessionPreferredSource ?? '',
+      _preferredSources[baseId] ?? '',
+    ]) {
+      if (candidate.isNotEmpty) {
+        preferred = candidate;
+        break;
+      }
+    }
+    if (preferred == null) return hosts;
     final (preferredBase, preferredPluginId) = splitSourceId(preferred);
 
     bool matches(PluginHost host) {
@@ -1950,13 +1989,13 @@ class MusicSourceManager {
   /// * 同平台优先：`酷狗1 → 酷狗2 → …`。内置源的歌曲没有插件原生元数据
   ///   （MusicFree 的 `musicItem` 必须由插件自己的搜索结果提供），所以同名
   ///   插件需要重新搜索同一首歌再解析地址，不能只依赖内置源的元数据；
-  /// * 其它平台：内置源在前（都有搜索接口），插件源在后；
-  /// * 不区分洛雪 / MusicFree 格式，也不看「自动切换音源」开关——内置源
-  ///   自己没有地址接口，必须把所有可能解析地址的音源都试一遍。
+  /// * 其它平台：按插件音源列表顺序；
+  /// * **只含用户安装的插件音源，不含内置平台**：内置源自己没有地址接口，
+  ///   也要靠插件解析，没有单独尝试的意义；所有插件都失败即停止换源。
   List<String> playbackFallbackSourceIds(String currentSource) {
     final current = currentSource.trim();
     if (current.isEmpty) return const <String>[];
-    final (baseId, pluginId) = splitSourceId(current);
+    final (baseId, _) = splitSourceId(current);
     final result = <String>[];
     final seen = <String>{current};
 
@@ -1969,17 +2008,7 @@ class MusicSourceManager {
     for (final id in pluginSourceIds) {
       if (splitSourceId(id).$1 == baseId) add(id);
     }
-    // 2. 当前是插件变体时，同平台内置源排在同平台插件之后。
-    if (pluginId != null &&
-        _builtInSources.containsKey(baseId) &&
-        isBuiltInSourceAvailable(baseId)) {
-      add(baseId);
-    }
-    // 3. 其它平台：内置源在前，插件源在后。
-    for (final id in builtInPlatformIds) {
-      if (id == baseId) continue;
-      add(id);
-    }
+    // 2. 其它平台的插件音源。
     for (final id in pluginSourceIds) {
       if (splitSourceId(id).$1 == baseId) continue;
       add(id);
