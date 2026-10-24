@@ -2932,7 +2932,8 @@ class _StorageContent extends ConsumerWidget {
           onChangeEnd: (v) {
             final mb = ((v / 100).round() * 100).clamp(100, 10240).toInt();
             CachePaths.maxBytes = mb * 1024 * 1024;
-            unawaited(CachePaths.enforceLimit());
+            // 用户主动改上限，绕过节流立即生效。
+            unawaited(CachePaths.enforceLimit(force: true));
             _persistInt(
               context,
               maxCacheSizeMbProvider,
@@ -3207,7 +3208,6 @@ class _StorageContent extends ConsumerWidget {
       final container = ProviderScope.containerOf(context);
       final svc = await container.read(settingsServiceProvider.future);
       await svc.clearCache();
-      container.read(cacheSizeProvider.notifier).state = '0 MB';
       container.invalidate(cacheDirSizeProvider);
       container.invalidate(downloadDirSizeProvider);
     } catch (_) {}

@@ -620,7 +620,7 @@ class LocalMusicRepository {
     final songs = _songsMap.values.toList();
     final now = DateTime.now().millisecondsSinceEpoch;
 
-    await db.transaction((txn) async {
+      await db.transaction((txn) async {
       await txn.delete('local_songs');
       final batch = txn.batch();
       for (final song in songs) {
@@ -632,7 +632,7 @@ class LocalMusicRepository {
           'file_path': song.filePath ?? '',
           'source': song.source ?? 'local',
           'updated_at': now,
-          'data': jsonEncode(song.toJson()),
+          'data': jsonEncode(song.toPersistJson()),
         });
       }
       await batch.commit(noResult: true);

@@ -63,6 +63,22 @@ class Playlist {
     };
   }
 
+  /// 落盘（playlists.json）用的瘦身版：歌曲不带整段歌词 / 请求头，
+  /// 见 [Song.toPersistJson]。导出 / 分享用 [toJson] 保持完整。
+  Map<String, dynamic> toPersistJson() {
+    return {
+      'id': id,
+      'name': name,
+      'description': description,
+      'coverImgUrl': coverImgUrl,
+      'source': source,
+      'createTime': createTime.toIso8601String(),
+      'updateTime': updateTime.toIso8601String(),
+      'songs': songs.map((s) => s.toPersistJson()).toList(),
+      'meta': meta,
+    };
+  }
+
   factory Playlist.fromJson(Map<String, dynamic> json) {
     return Playlist(
       id: json['id'] ?? '',

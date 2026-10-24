@@ -119,8 +119,8 @@ class PlaybackSessionStore {
 
       final queue = session.queue.map(_sanitize).toList(growable: false);
       final data = jsonEncode({
-        'song': _sanitize(session.song).toJson(),
-        'queue': queue.map((song) => song.toJson()).toList(growable: false),
+        'song': _sanitize(session.song).toPersistJson(),
+        'queue': queue.map((song) => song.toPersistJson()).toList(growable: false),
         'index': session.index,
         'quality': session.quality,
       });
@@ -140,6 +140,9 @@ class PlaybackSessionStore {
       clearSourceUrl: true,
       clearSourceHeaders: true,
       clearSourceQuality: true,
+      // 队列里可能带着已加载的整段歌词，落盘没有意义（恢复后重新取），
+      // 一整队歌词能把 playback_state 撑到几百 KB。
+      clearLrc: true,
     );
   }
 }

@@ -1,5 +1,8 @@
 import 'dart:io';
 
+import 'package:path/path.dart' as p;
+
+import '../../core/storage/app_database.dart';
 import '../../core/platform/app_paths.dart';
 
 /// 全局缓存目录配置。
@@ -56,11 +59,25 @@ class CachePaths {
   ];
 
   /// 按最大缓存大小清理应用自己的缓存子目录（合计，只删最旧的文件）。
-  static Future<void> enforceLimit() async {
+  ///
+  /// 全目录遍历 + 逐文件 stat 在缓存接近上限（万级文件）时开销不小，
+  /// 因此例行调用有 [_enforceThrottle] 节流；用户改「最大缓存大小」等
+  /// 需要立即生效的场合传 `force: true`。
+  static Future<void> enforceLimit({bool force = false}) async {
     final limit = maxBytes;
     if (limit <= 0) return;
+    if (_enforcing) return;
+    final last = _lastEnforceAt;
+    if (!force &&
+        last != null &&
+        DateTime.now().difference(last) < _enforceThrottle) {
+      return;
+    }
+    _enforcing = true;
+    _lastEnforceAt = DateTime.now();
     try {
       final entries = <({File file, int size, DateTime modified})>[];
+      final deletedImageCacheFiles = <String>[];
       var total = 0;
       for (final name in managedSubDirectories) {
         final dir = await subDirectory(name);
@@ -77,16 +94,44 @@ class CachePaths {
           } catch (_) {}
         }
       }
-      if (total <= limit) return;
-      entries.sort((a, b) => a.modified.compareTo(b.modified));
-      for (final entry in entries) {
-        if (total <= limit) break;
-        try {
-          await entry.file.delete();
-          total -= entry.size;
-        } catch (_) {}
+      if (total > limit) {
+        entries.sort((a, b) => a.modified.compareTo(b.modified));
+        for (final entry in entries) {
+          if (total <= limit) break;
+          try {
+            // 图片缓存索引（临时库 cache_index 表）跟着文件一起清，
+            // 否则会留下指向已删文件的孤儿行。
+            if (p.basename(entry.file.parent.path) == 'image_cache') {
+              deletedImageCacheFiles.add(p.basename(entry.file.path));
+            }
+            await entry.file.delete();
+            total -= entry.size;
+          } catch (_) {}
+        }
+      }
+      if (deletedImageCacheFiles.isNotEmpty) {
+        await _deleteImageIndexRows(deletedImageCacheFiles);
       }
     } catch (_) {}
+  }
+
+  static DateTime? _lastEnforceAt;
+  static bool _enforcing = false;
+  static const Duration _enforceThrottle = Duration(minutes: 1);
+
+  /// 删除图片缓存索引里指向已删文件的行。
+  static Future<void> _deleteImageIndexRows(List<String> fileNames) async {
+    try {
+      final db = await AppDatabase.cacheDatabase();
+      final placeholders = List.filled(fileNames.length, '?').join(', ');
+      await db.delete(
+        'cache_index',
+        where: 'relative_path IN ($placeholders)',
+        whereArgs: fileNames,
+      );
+    } catch (_) {
+      // 索引清不掉只会多留几行，flutter_cache_manager 取不到文件会自愈
+    }
   }
 
   /// 删除 [dir] 中最旧的文件，直到总大小不超过 [limit]。

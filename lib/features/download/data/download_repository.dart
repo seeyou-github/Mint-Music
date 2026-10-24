@@ -1089,7 +1089,7 @@ class DownloadRepository {
             'file_path': task.filePath,
             'created_at': task.createdAt,
             'updated_at': now,
-            'data': jsonEncode(task.toJson()),
+            'data': jsonEncode(task.toPersistJson()),
           });
         }
         await batch.commit(noResult: true);

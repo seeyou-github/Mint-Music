@@ -91,6 +91,7 @@ class Song {
     bool clearSourceUrl = false,
     bool clearSourceHeaders = false,
     bool clearSourceQuality = false,
+    bool clearLrc = false,
     bool clearCover = false,
     bool clearPreferredSource = false,
   }) {
@@ -107,7 +108,7 @@ class Song {
       filePath: filePath ?? this.filePath,
       hasCover: hasCover ?? this.hasCover,
       coverKey: coverKey ?? this.coverKey,
-      lrc: lrc ?? this.lrc,
+      lrc: clearLrc ? null : lrc ?? this.lrc,
       bitrate: bitrate ?? this.bitrate,
       sampleRate: sampleRate ?? this.sampleRate,
       channels: channels ?? this.channels,
@@ -187,6 +188,23 @@ class Song {
       'sourceQuality': sourceQuality,
       'preferredSource': preferredSource,
     };
+  }
+
+  /// 持久化专用的瘦身版 JSON。
+  ///
+  /// [toJson] 会带上整段歌词（`lrc`，逐字歌词一条几十 KB）和请求头
+  /// （`sourceHeaders`），落到 playlists.json / playback_state / 最近播放 /
+  /// 本地歌曲表里只会让文件与行无谓膨胀，而且：
+  ///
+  /// * 歌词有专门的临时库缓存（LyricCache），播放时会重新取；
+  /// * 请求头跟随播放地址，过期后没有意义。
+  ///
+  /// 导出 / 分享等需要完整数据的场景仍用 [toJson]。
+  Map<String, dynamic> toPersistJson() {
+    final json = toJson();
+    json.remove('lrc');
+    json.remove('sourceHeaders');
+    return json;
   }
 
   factory Song.fromJson(Map<String, dynamic> json) {

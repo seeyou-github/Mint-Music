@@ -310,10 +310,6 @@ class SettingsService {
   Future<void> setGlobalQuality(String v) =>
       _prefs.setString('global_quality', v);
 
-  // -- cache size (display string, actual calculation is real-time) --
-  String getCacheSize() => _prefs.getString('cache_size') ?? '128 MB';
-  Future<void> setCacheSize(String v) => _prefs.setString('cache_size', v);
-
   /// 缓存目录的最大占用（MB）。默认 2 GB，范围 100 MB ~ 10 GB。
   int getMaxCacheSizeMb() => _prefs.getInt('max_cache_size_mb') ?? 2048;
   Future<void> setMaxCacheSizeMb(int v) =>
@@ -526,7 +522,6 @@ class SettingsService {
       'image_cache',
       'image_discovery_cache',
       'audio_cache',
-      'lyric_cache',
     ];
     for (final root in roots) {
       for (final name in subDirectories) {

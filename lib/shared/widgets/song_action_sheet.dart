@@ -1069,15 +1069,19 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                             max: 2.0,
                             divisions: 15,
                             activeColor: AppColors.primary,
-                            onChanged: (v) async {
+                            onChanged: (v) {
+                              // 拖动过程中只改内存，不落盘：
+                              // onChanged 每帧触发，逐次重写整个设置文件太浪费。
                               c2.read(lyricFontRateProvider.notifier).state = v;
+                              setState(() {});
+                            },
+                            onChangeEnd: (v) async {
                               await _persistDoubleSetting(
                                 container,
                                 lyricFontRateProvider,
                                 v,
                                 (s) => s.setLyricFontRate(v),
                               );
-                              setState(() {});
                             },
                           ),
                         ),

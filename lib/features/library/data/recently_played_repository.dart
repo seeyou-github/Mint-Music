@@ -14,8 +14,11 @@ import '../../player/domain/models/song.dart';
 /// （Windows：`AppData\temp\db\mintmusic_cache.db`）。
 ///
 /// **写盘策略**：运行期只改内存，并把变化攒在待写队列里；攒够 [batchSize]
-/// 条（默认 10）才真正写一次数据库并 checkpoint。不足 10 条时由
-/// [DeferredWriter] 的定时器兜底，应用切后台 / 退出时统一 flush。
+/// 条（默认 10）才真正写一次数据库。不足 10 条时由 [DeferredWriter] 的
+/// 定时器兜底，应用切后台 / 退出时统一 flush。写库后**不做** checkpoint
+/// （TRUNCATE 要等所有读者并整段回写 WAL，播放期间每 15 秒一次太重）；
+/// 退出时 [AppDatabase.checkpoint] 会统一兜底，进程被杀也不影响
+/// 已提交的事务（WAL 仍在，下次打开自动恢复）。
 class RecentlyPlayedRepository {
   RecentlyPlayedRepository() {
     AppDatabase.registerWriter(_writer);
@@ -421,7 +424,7 @@ class RecentlyPlayedRepository {
             'song_id': item.song.id,
             'played_at': item.playedAt.millisecondsSinceEpoch,
             'play_count': item.playCount,
-            'data': jsonEncode(item.toJson()),
+            'data': jsonEncode(item.toPersistJson()),
           }, conflictAlgorithm: ConflictAlgorithm.replace);
         }
         for (final item in playlists) {
@@ -439,11 +442,6 @@ class RecentlyPlayedRepository {
           await txn.insert('play_events', event);
         }
       });
-      await AppDatabase.checkpoint();
-      debugPrint(
-        '[RecentlyPlayed] 已落盘：歌曲 ${songs.length} / 歌单 '
-        '${playlists.length} / 事件 ${events.length}',
-      );
     } catch (e) {
       debugPrint('[RecentlyPlayed] 写库失败: $e');
       // 写失败就把数据放回队列，下次再试（内存里仍是最新的）。

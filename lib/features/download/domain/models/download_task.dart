@@ -116,6 +116,26 @@ class DownloadTask {
     'createdAt': createdAt,
   };
 
+  /// 落库用的瘦身版（歌曲不带整段歌词 / 请求头，见 [Song.toPersistJson]）。
+  Map<String, dynamic> toPersistJson() => {
+    'id': id,
+    'song': song.toPersistJson(),
+    'url': url,
+    'quality': quality,
+    'filePath': filePath,
+    'status': status.name,
+    'progress': progress,
+    'totalSize': totalSize,
+    'downloadedSize': downloadedSize,
+    'speed': speed,
+    'remainingTime': remainingTime,
+    'retries': retries,
+    'error': error,
+    'coverMissing': coverMissing,
+    'priority': priority,
+    'createdAt': createdAt,
+  };
+
   factory DownloadTask.fromJson(Map<String, dynamic> json) {
     return DownloadTask(
       id: json['id'] ?? '',

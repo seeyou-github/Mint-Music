@@ -68,29 +68,63 @@ class AppPreferences {
 
     final dir = await AppPaths.configDirectory();
     final file = File(p.join(dir.path, _fileName));
-    final values = <String, Object>{};
 
-    if (await file.exists()) {
-      try {
-        final raw = await file.readAsString();
-        if (raw.trim().isNotEmpty) {
-          final decoded = jsonDecode(raw);
-          if (decoded is Map) {
-            decoded.forEach((key, value) {
-              values['$key'] = value;
-            });
-          }
-        }
-      } catch (e) {
-        // 设置文件损坏时退回空设置，避免整个应用启动失败。
-        print('[AppPreferences] 读取设置失败: $e');
-      }
-    } else {
+    final values = await _readFileValues(file);
+    if (!await file.exists() && values.isEmpty) {
       // 首次运行：从旧的 shared_preferences.json 迁移。
       await _migrateLegacy(values);
     }
 
     return AppPreferences._(values, file, null);
+  }
+
+  /// 从磁盘读取设置（主文件损坏 / 缺失时回退到 .bak 备份）。
+  static Future<Map<String, Object>> _readFileValues(File file) async {
+    File? target;
+    if (await file.exists()) {
+      target = file;
+    } else {
+      // 上次写入恰好中断在「旧文件已改名 .bak、新文件还没改名进来」之间：
+      // 备份就是最后一次完整的设置。
+      final bak = File('${file.path}.bak');
+      if (await bak.exists()) {
+        target = bak;
+        print('[AppPreferences] 设置文件缺失，从 .bak 备份恢复');
+      }
+    }
+    if (target == null) return <String, Object>{};
+
+    try {
+      final raw = await target.readAsString();
+      if (raw.trim().isNotEmpty) {
+        final decoded = jsonDecode(raw);
+        if (decoded is Map) {
+          return decoded.map((key, value) => MapEntry('$key', value));
+        }
+      }
+    } catch (e) {
+      // 设置文件损坏时退回空设置，避免整个应用启动失败。
+      print('[AppPreferences] 读取设置失败: $e');
+    }
+    return <String, Object>{};
+  }
+
+  /// 重新从磁盘读取设置到当前实例（还原备份后调用）。
+  ///
+  /// 不重载的话，还原完成后任何一次设置写入都会用**还原前**的内存值把
+  /// 整个 settings.json 覆盖回去，等于还原白做。
+  Future<void> reload() async {
+    final delegate = _delegate;
+    if (delegate != null) {
+      await delegate.reload();
+      return;
+    }
+    final file = _file;
+    if (file == null) return;
+    final fresh = await _readFileValues(file);
+    _values
+      ..clear()
+      ..addAll(fresh);
   }
 
   /// 把旧版 shared_preferences.json 的内容迁移过来（只迁移一次）。
@@ -208,15 +242,23 @@ class AppPreferences {
     return _flush();
   }
 
-  /// 把内存中的设置写回磁盘（先写临时文件再替换，避免写坏文件）。
+  /// 把内存中的设置写回磁盘。
+  ///
+  /// 顺序：写 `.tmp` → 旧文件改名 `.bak` → `.tmp` 改名进来。任何时刻磁盘上
+  /// 都保留一份完整可读的文件（旧版是「delete 旧文件再 rename」，两步之间
+  /// 崩溃 / 掉电会连一份完整的设置都不剩）；`.bak` 同时留作损坏时回退。
   Future<bool> _flush() async {
     final file = _file;
     if (file == null) return true;
     try {
       final temp = File('${file.path}.tmp');
       await temp.writeAsString(jsonEncode(_values), flush: true);
+      final bak = File('${file.path}.bak');
       if (await file.exists()) {
-        await file.delete();
+        if (await bak.exists()) {
+          await bak.delete();
+        }
+        await file.rename(bak.path);
       }
       await temp.rename(file.path);
       return true;

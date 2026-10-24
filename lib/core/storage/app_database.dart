@@ -75,6 +75,36 @@ class AppDatabase {
     }
   }
 
+  /// 清空临时库里的**全部**数据（还原备份时调用）。
+  ///
+  /// 还原会清空 temp 目录，但 Windows 上数据库文件正被 SQLite 打开，
+  /// 目录删除会静默失败；这里把表也清一遍，保证「清空临时数据」的语义。
+  static Future<void> clearAllCacheData() async {
+    try {
+      final db = await cacheDatabase();
+      const tables = [
+        'local_songs',
+        'local_dirs',
+        'recently_played',
+        'recently_played_playlists',
+        'play_events',
+        'download_tasks',
+        'search_history',
+        'lyrics',
+        'song_play_progress',
+        'playback_state',
+        'cache_index',
+      ];
+      await db.transaction((txn) async {
+        for (final table in tables) {
+          await txn.delete(table);
+        }
+      });
+    } catch (e) {
+      debugPrint('[AppDatabase] 清空缓存库失败: $e');
+    }
+  }
+
   static AppDatabase? _instance;
   static Future<AppDatabase>? _pending;
 

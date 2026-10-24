@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
+import '../../plugin/domain/source_id_mapping.dart';
 import '../../../shared/services/cache_paths.dart';
 
 /// 音频缓存服务。
@@ -22,31 +23,52 @@ class AudioCacheService {
   /// 缓存子目录名。
   static const String subDirectoryName = 'audio_cache';
 
-  /// 缓存文件名：`歌手 - 歌名 [音质].扩展名`。
+  /// 缓存文件名：`歌手 - 歌名 [音质-音源名-内置/插件].扩展名`。
   ///
   /// 缓存目录里的音频文件用「歌手 - 歌名」命名，方便直接识别；
-  /// 歌手 / 歌名缺失时回退为 `歌曲id-音质.扩展名`。
+  /// 歌手 / 歌名缺失时回退为 `歌曲id [音质-音源].扩展名`。
+  ///
+  /// 方括号里必须带**音源标签**：同名同歌手的不同歌曲（翻唱 / Live /
+  /// 不同平台的版本）在旧命名下会互相命中对方的缓存，播错音频。
+  /// 音质也保留在键里，避免同一首歌 128k / 320k 互相错命中。
   static String fileNameFor({
     required String songId,
     required String quality,
     required String extension,
+    String? source,
     String? artist,
     String? title,
   }) {
     final safeArtist = _sanitizeFileName(artist);
     final safeTitle = _sanitizeFileName(title);
+    final tag = _sanitizeFileName('$quality-${sourceLabelFor(source)}');
     if (safeArtist.isNotEmpty && safeTitle.isNotEmpty) {
-      return '$safeArtist - $safeTitle [$quality].$extension';
+      return '$safeArtist - $safeTitle [$tag].$extension';
     }
     if (safeTitle.isNotEmpty) {
-      return '$safeTitle [$quality].$extension';
+      return '$safeTitle [$tag].$extension';
     }
     if (safeArtist.isNotEmpty) {
-      return '$safeArtist [$quality].$extension';
+      return '$safeArtist [$tag].$extension';
     }
     final safeId = _sanitizeFileName(songId);
-    final safeQuality = _sanitizeFileName(quality);
-    return '$safeId-$safeQuality.$extension';
+    return '$safeId [$tag].$extension';
+  }
+
+  /// 音源 id → 文件名里的音源标签（如「网易云音乐-内置」「酷狗音乐-插件」）。
+  ///
+  /// * 内置音源是裸平台 id（wy / kg / …）；
+  /// * 插件音源带 `@插件id` 后缀（如 `wy@xxx`），标成「插件」；
+  /// * 播放 / 缓存两侧都用当时的 [Song.source] 推导标签，保证能对上。
+  static String sourceLabelFor(String? source) {
+    final raw = (source ?? '').trim();
+    if (raw.isEmpty) return '未知音源';
+    if (raw == 'local') return '本地';
+    final at = raw.indexOf('@');
+    final base = (at == -1 ? raw : raw.substring(0, at)).trim();
+    if (base.isEmpty) return '未知音源';
+    final name = SourceIdMapping.idToName[base] ?? base;
+    return '$name-${at == -1 ? '内置' : '插件'}';
   }
 
   /// 去掉文件名里的非法字符（与下载文件名规则保持一致）。
@@ -80,6 +102,9 @@ class AudioCacheService {
   }
 
   /// 查找已缓存的完整音频文件。
+  ///
+  /// 文件名按「当前歌曲的音源」推导：同一首歌换了音源（内置 ↔ 插件 /
+  /// 不同平台）后不会命中别的源缓存的文件。
   static Future<File?> findCachedFile({
     required String songId,
     required String quality,
@@ -92,7 +117,7 @@ class AudioCacheService {
       final dir = await CachePaths.subDirectory(subDirectoryName);
       final file = File(
         '${dir.path}${Platform.pathSeparator}'
-        '${fileNameFor(songId: songId, quality: quality, extension: extensionFor(url, quality), artist: artist, title: title)}',
+        '${fileNameFor(songId: songId, quality: quality, extension: extensionFor(url, quality), source: source, artist: artist, title: title)}',
       );
       if (await file.exists() && await file.length() > 0) {
         return file;
@@ -103,8 +128,37 @@ class AudioCacheService {
     return null;
   }
 
+  /// 正在进行的后台缓存任务（同一首歌快速重播时直接复用，避免两个下载
+  /// 同时写同一个 `.part` 临时文件）。
+  static final Map<String, Future<void>> _inFlight = {};
+
   /// 后台把音频下载到缓存目录（失败静默忽略，不影响播放）。
   static Future<void> cacheInBackground({
+    required String url,
+    required Map<String, String> headers,
+    required String songId,
+    required String quality,
+    String? source,
+    String? artist,
+    String? title,
+  }) {
+    final dedupeKey = '$songId|$quality|$source|$url';
+    final running = _inFlight[dedupeKey];
+    if (running != null) return running;
+    final future = _doCacheInBackground(
+      url: url,
+      headers: headers,
+      songId: songId,
+      quality: quality,
+      source: source,
+      artist: artist,
+      title: title,
+    );
+    _inFlight[dedupeKey] = future;
+    return future.whenComplete(() => _inFlight.remove(dedupeKey));
+  }
+
+  static Future<void> _doCacheInBackground({
     required String url,
     required Map<String, String> headers,
     required String songId,
@@ -118,7 +172,7 @@ class AudioCacheService {
       final dir = await CachePaths.subDirectory(subDirectoryName);
       final target = File(
         '${dir.path}${Platform.pathSeparator}'
-        '${fileNameFor(songId: songId, quality: quality, extension: extensionFor(url, quality), artist: artist, title: title)}',
+        '${fileNameFor(songId: songId, quality: quality, extension: extensionFor(url, quality), source: source, artist: artist, title: title)}',
       );
       // 已经有缓存文件就不再重复下载。
       if (await target.exists() && await target.length() > 0) return;

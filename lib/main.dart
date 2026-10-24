@@ -137,8 +137,10 @@ class _AppLifecycleFlushState extends State<_AppLifecycleFlush>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    // inactive（桌面窗口失焦）不算「要退出」，不触发全量 flush——
+    // 那会在日常使用中频繁把所有延迟写器落盘。最小化（hidden）、
+    // 切后台（paused）、引擎分离（detached）才需要。
     if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.inactive ||
         state == AppLifecycleState.detached ||
         state == AppLifecycleState.hidden) {
       unawaited(AppDatabase.flushAll());

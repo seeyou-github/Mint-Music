@@ -29,9 +29,8 @@ class PlaylistStore {
   static Future<List<Map<String, dynamic>>> read() async {
     try {
       final f = await file();
-      if (!await f.exists()) return const [];
-      final raw = await f.readAsString();
-      if (raw.trim().isEmpty) return const [];
+      final raw = await _readWithBackup(f);
+      if (raw == null || raw.trim().isEmpty) return const [];
       final decoded = jsonDecode(raw);
       if (decoded is! List) return const [];
       return decoded
@@ -44,20 +43,55 @@ class PlaylistStore {
     }
   }
 
-  /// 写入全部歌单（先写临时文件再替换，避免中途损坏）。
+  /// 写入全部歌单（见 [_writeWithBackup]）。
   static Future<void> write(List<Map<String, dynamic>> playlists) async {
     try {
       final f = await file();
       await f.parent.create(recursive: true);
-      final temp = File('${f.path}.tmp');
-      await temp.writeAsString(jsonEncode(playlists), flush: true);
-      if (await f.exists()) {
-        await f.delete();
-      }
-      await temp.rename(f.path);
+      await _writeWithBackup(f, jsonEncode(playlists));
     } catch (e) {
       debugPrint('[PlaylistStore] 写入收藏失败: $e');
     }
+  }
+
+  // ------------------------------------------------------------ 原子读写
+
+  /// 读取文件内容；主文件损坏 / 缺失时回退到 `.bak`（最后一次完整的写入）。
+  static Future<String?> _readWithBackup(File file) async {
+    File? target;
+    if (await file.exists()) {
+      target = file;
+    } else {
+      final bak = File('${file.path}.bak');
+      if (await bak.exists()) {
+        target = bak;
+        debugPrint('[PlaylistStore] ${p.basename(file.path)} 缺失，从 .bak 恢复');
+      }
+    }
+    if (target == null) return null;
+    try {
+      return await target.readAsString();
+    } catch (e) {
+      debugPrint('[PlaylistStore] 读取 ${p.basename(file.path)} 失败: $e');
+      return null;
+    }
+  }
+
+  /// 写入：写 `.tmp` → 旧文件改名 `.bak` → `.tmp` 改名进来。
+  ///
+  /// 旧版是「delete 旧文件再 rename」，两步之间崩溃会连一份完整收藏都不剩；
+  /// 现在任何时刻磁盘上都有一份完整的文件，`.bak` 还能用来回退。
+  static Future<void> _writeWithBackup(File file, String content) async {
+    final temp = File('${file.path}.tmp');
+    await temp.writeAsString(content, flush: true);
+    final bak = File('${file.path}.bak');
+    if (await file.exists()) {
+      if (await bak.exists()) {
+        await bak.delete();
+      }
+      await file.rename(bak.path);
+    }
+    await temp.rename(file.path);
   }
 
   // ------------------------------------------------------------ 删除墓碑
@@ -75,9 +109,8 @@ class PlaylistStore {
   static Future<Map<String, int>> readTombstones() async {
     try {
       final f = await tombstoneFile();
-      if (!await f.exists()) return {};
-      final raw = await f.readAsString();
-      if (raw.trim().isEmpty) return {};
+      final raw = await _readWithBackup(f);
+      if (raw == null || raw.trim().isEmpty) return {};
       final decoded = jsonDecode(raw);
       if (decoded is! Map) return {};
       final result = <String, int>{};
@@ -97,17 +130,12 @@ class PlaylistStore {
     }
   }
 
-  /// 写入删除墓碑。
+  /// 写入删除墓碑（见 [_writeWithBackup]）。
   static Future<void> writeTombstones(Map<String, int> tombstones) async {
     try {
       final f = await tombstoneFile();
       await f.parent.create(recursive: true);
-      final temp = File('${f.path}.tmp');
-      await temp.writeAsString(jsonEncode(tombstones), flush: true);
-      if (await f.exists()) {
-        await f.delete();
-      }
-      await temp.rename(f.path);
+      await _writeWithBackup(f, jsonEncode(tombstones));
     } catch (e) {
       debugPrint('[PlaylistStore] 写入删除墓碑失败: $e');
     }

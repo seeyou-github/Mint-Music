@@ -134,6 +134,20 @@ class RecentlyPlayedItem {
     };
   }
 
+  /// 落库用的瘦身版（歌曲不带整段歌词 / 请求头，见 [Song.toPersistJson]）。
+  Map<String, dynamic> toPersistJson() {
+    return {
+      'song': song.toPersistJson(),
+      'playedAt': playedAt.toIso8601String(),
+      'playCount': playCount,
+      'sourceType': sourceType.id,
+      'sourceId': sourceId,
+      'sourceName': sourceName,
+      'sourceMeta': sourceMeta,
+      'listenedMs': listenedMs,
+    };
+  }
+
   factory RecentlyPlayedItem.fromJson(Map<String, dynamic> json) {
     return RecentlyPlayedItem(
       song: Song.fromJson(json['song'] as Map<String, dynamic>),

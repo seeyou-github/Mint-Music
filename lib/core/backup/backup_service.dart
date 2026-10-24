@@ -7,6 +7,8 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
 import '../platform/app_paths.dart';
+import '../storage/app_database.dart';
+import '../storage/app_preferences.dart';
 
 /// 备份 / 还原服务。
 ///
@@ -71,6 +73,10 @@ class BackupService {
 
   /// 用备份包强制覆盖现有配置。
   static Future<void> restoreBackup(Uint8List bytes) async {
+    // 先把延迟写的数据落盘：还原会清空临时数据，不落盘的话这些数据
+    // 之后仍可能被内存态写回去。
+    await AppDatabase.flushAll();
+
     final archive = ZipDecoder().decodeBytes(bytes);
 
     // 1) config / plugin 目录：覆盖还原
@@ -78,8 +84,17 @@ class BackupService {
     await _restoreDirectory(archive, pluginDirEntry, await AppPaths.pluginDirectory());
 
     // 2) 清空 temp 目录：本地歌曲索引等在这里，下次进入「本地」分类会
-    //    按配置里的扫描目录重新扫描。
+    //    按配置里的扫描目录重新扫描。数据库文件被占用删不掉时，把表也清了。
+    await AppDatabase.clearAllCacheData();
     await _clearTempDirectory();
+
+    // 3) 还原出的 settings.json 要重新读进内存：不重载的话，此后任何一次
+    //    设置写入都会用还原前的内存值把整个文件覆盖回去（还原白做）。
+    try {
+      await (await AppPreferences.getInstance()).reload();
+    } catch (e) {
+      debugPrint('[BackupService] 重载设置失败: $e');
+    }
   }
 
   /// 把压缩包里的某个目录还原到目标目录（覆盖同名文件）。

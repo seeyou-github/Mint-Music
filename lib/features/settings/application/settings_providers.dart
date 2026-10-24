@@ -174,8 +174,6 @@ final sourceQualityProvider = StateProvider<Map<String, String>>(
 final globalQualityProvider = StateProvider<String>((ref) => '128k');
 
 // -- cache --
-final cacheSizeProvider = StateProvider<String>((ref) => '128 MB');
-
 /// 最大缓存大小（MB），范围 100 MB ~ 10 GB（10240 MB）。
 final maxCacheSizeMbProvider = StateProvider<int>((ref) => 2048);
 
@@ -513,7 +511,6 @@ final settingsInitProvider = FutureProvider<void>((ref) async {
       .getDefaultSourceId();
   ref.read(sourceQualityProvider.notifier).state = svc.getSourceQuality();
   ref.read(globalQualityProvider.notifier).state = svc.getGlobalQuality();
-  ref.read(cacheSizeProvider.notifier).state = svc.getCacheSize();
   ref.read(maxCacheSizeMbProvider.notifier).state = svc.getMaxCacheSizeMb();
   // 文件名格式固定为「歌手名 - 歌曲名」。
   ref.read(filenameTemplateProvider.notifier).state = svc.getFilenameTemplate();

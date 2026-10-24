@@ -24,10 +24,15 @@ class AppImageCache {
   static CacheManager? _manager;
   static String? _currentKey;
 
+  /// 当前缓存目录（用于目录变化时清理旧目录）。
+  static io.Directory? _currentDir;
+
   /// 在设置初始化完成 / 修改缓存目录后调用。
   static Future<void> configure() async {
     try {
       final dir = await CachePaths.subDirectory('image_cache');
+      final previousDir = _currentDir;
+      _currentDir = dir;
       final key = '${_key}_${dir.path.hashCode.toRadixString(16)}';
       if (key == _currentKey && _manager != null) return;
       _currentKey = key;
@@ -44,11 +49,25 @@ class AppImageCache {
           fileSystem: _CacheDirFileSystem(dir.path),
         ),
       );
+      // 缓存目录变了：旧目录里的图片已经没人引用（新管理器会重新下载），
+      // 直接删掉，否则会一直占着旧目录的空间。
+      if (previousDir != null && previousDir.path != dir.path) {
+        unawaited(_deleteDirectoryQuietly(previousDir));
+      }
       unawaited(_cleanupLegacyIndex());
     } catch (e) {
       // 初始化失败时退回默认缓存管理器，不影响页面功能。
       debugPrint('[AppImageCache] 配置缓存目录失败: $e');
     }
+  }
+
+  /// 删除目录（失败静默：文件被占用时留给「清除缓存」处理）。
+  static Future<void> _deleteDirectoryQuietly(io.Directory dir) async {
+    try {
+      if (!await dir.exists()) return;
+      await dir.delete(recursive: true);
+      debugPrint('[AppImageCache] 已清理旧缓存目录: ${dir.path}');
+    } catch (_) {}
   }
 
   /// 主题 / 列表 / 歌词页共用的缓存管理器。
