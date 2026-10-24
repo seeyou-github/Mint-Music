@@ -169,10 +169,10 @@ class _LocalPlaylistDetailPageState
         .updatePlaylist(
           playlist.copyWith(
             songs: remaining,
-            // 歌单封面跟随当前第一首歌
-            coverImgUrl: remaining.isEmpty
-                ? ''
-                : (remaining.first.coverUrl ?? ''),
+            // 收藏的专辑 / 作者保留收藏时的封面或头像;普通歌单跟随第一首歌。
+            coverImgUrl: playlist.favoriteType != null
+                ? playlist.coverImgUrl
+                : (remaining.isEmpty ? '' : (remaining.first.coverUrl ?? '')),
           ),
         );
     if (!mounted) return;
@@ -1309,7 +1309,10 @@ class _LocalPlaylistDetailPageState
                       playbackControllerProvider.notifier,
                     );
                     controller.setQueue(
-                      applyFavoriteSource(_sortedSongs, playlist.favoriteSource),
+                      applyFavoriteSource(
+                        _sortedSongs,
+                        playlist.favoriteSource,
+                      ),
                       startIndex: index,
                     );
                   },

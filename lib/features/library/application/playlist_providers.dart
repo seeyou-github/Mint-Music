@@ -39,9 +39,10 @@ Future<String?> syncPlaylistsNow(WidgetRef ref) async {
   }
 }
 
-final playlistsProvider = AsyncNotifierProvider<PlaylistsNotifier, List<Playlist>>(
-  PlaylistsNotifier.new,
-);
+final playlistsProvider =
+    AsyncNotifierProvider<PlaylistsNotifier, List<Playlist>>(
+      PlaylistsNotifier.new,
+    );
 
 class PlaylistsNotifier extends AsyncNotifier<List<Playlist>> {
   @override
@@ -62,6 +63,7 @@ class PlaylistsNotifier extends AsyncNotifier<List<Playlist>> {
     List<Map<String, dynamic>> songsData, {
     String description = '',
     String? source,
+    String? coverImgUrl,
   }) async {
     final repo = ref.read(playlistRepositoryProvider);
     await repo.createPlaylistWithSongs(
@@ -69,6 +71,7 @@ class PlaylistsNotifier extends AsyncNotifier<List<Playlist>> {
       songsData,
       description: description,
       source: source,
+      coverImgUrl: coverImgUrl,
     );
     ref.invalidateSelf();
     _syncToRemote();

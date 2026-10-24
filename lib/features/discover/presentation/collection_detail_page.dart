@@ -203,6 +203,8 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
           '${collection.source}:${collection.id}',
       // 记录收藏时所在的音源，之后从收藏里播放优先使用它。
       source: collection.source,
+      // 收藏页展示专辑封面 / 作者头像，而不是第一首歌的封面。
+      coverImgUrl: collection.coverUrl,
     );
     if (!mounted) return;
     _toast(context.tr('已收藏到「收藏」'));

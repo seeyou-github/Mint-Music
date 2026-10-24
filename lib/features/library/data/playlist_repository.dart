@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import '../../../core/storage/app_database.dart';
 import '../domain/models/playlist.dart';
+import '../utils/favorite_playlist.dart';
 import '../../player/domain/models/song.dart';
 import 'playlist_store.dart';
 
@@ -94,9 +95,7 @@ class PlaylistRepository {
   /// 覆盖写入全部歌单。
   Future<void> savePlaylists(List<Playlist> playlists) async {
     try {
-      await PlaylistStore.write(
-        playlists.map((p) => p.toJson()).toList(),
-      );
+      await PlaylistStore.write(playlists.map((p) => p.toJson()).toList());
     } catch (e) {
       debugPrint('PlaylistRepository.savePlaylists error: $e');
       rethrow;
@@ -114,7 +113,10 @@ class PlaylistRepository {
     await savePlaylists(playlists);
   }
 
-  Future<Playlist> createPlaylist(String name, {String description = ''}) async {
+  Future<Playlist> createPlaylist(
+    String name, {
+    String description = '',
+  }) async {
     final playlists = await loadPlaylists();
     final now = DateTime.now();
     final playlist = Playlist(
@@ -134,6 +136,7 @@ class PlaylistRepository {
     List<Map<String, dynamic>> songsData, {
     String description = '',
     String? source,
+    String? coverImgUrl,
   }) async {
     final playlists = await loadPlaylists();
     final now = DateTime.now();
@@ -152,6 +155,10 @@ class PlaylistRepository {
       );
     }).toList();
 
+    // 收藏专辑 / 作者时用详情页拿到的封面或头像;普通歌单仍跟随第一首歌。
+    final explicitCover = coverImgUrl?.trim() ?? '';
+    final fallbackCover = songs.isNotEmpty ? (songs.first.coverUrl ?? '') : '';
+
     final playlist = Playlist(
       id: now.millisecondsSinceEpoch.toString(),
       name: name,
@@ -160,7 +167,7 @@ class PlaylistRepository {
       createTime: now,
       updateTime: now,
       songs: songs,
-      coverImgUrl: songs.isNotEmpty ? (songs.first.coverUrl ?? '') : '',
+      coverImgUrl: explicitCover.isNotEmpty ? explicitCover : fallbackCover,
     );
     playlists.add(playlist);
     await savePlaylists(playlists);
@@ -197,8 +204,10 @@ class PlaylistRepository {
           playlists[index] = playlist.copyWith(
             songs: updatedSongs,
             updateTime: DateTime.now(),
-            // 歌单封面始终跟随当前第一首歌
-            coverImgUrl: updatedSongs.first.coverUrl ?? '',
+            // 收藏的专辑 / 作者保留收藏时的封面或头像;普通歌单跟随第一首歌。
+            coverImgUrl: playlist.favoriteType != null
+                ? playlist.coverImgUrl
+                : (updatedSongs.first.coverUrl ?? ''),
           );
           await savePlaylists(playlists);
           return true;
@@ -220,10 +229,10 @@ class PlaylistRepository {
       playlists[index] = playlist.copyWith(
         songs: updatedSongs,
         updateTime: DateTime.now(),
-        // 删除歌曲后封面跟随新的第一首歌（没有歌曲时清空）
-        coverImgUrl: updatedSongs.isEmpty
-            ? ''
-            : (updatedSongs.first.coverUrl ?? ''),
+        // 收藏的专辑 / 作者保留收藏时的封面或头像;普通歌单跟随新的第一首歌。
+        coverImgUrl: playlist.favoriteType != null
+            ? playlist.coverImgUrl
+            : (updatedSongs.isEmpty ? '' : (updatedSongs.first.coverUrl ?? '')),
       );
       await savePlaylists(playlists);
     }
@@ -241,11 +250,13 @@ class PlaylistRepository {
     if (existingIndex != -1) {
       playlists[existingIndex] = playlist.copyWith(updateTime: DateTime.now());
     } else {
-      playlists.add(playlist.copyWith(
-        id: DateTime.now().millisecondsSinceEpoch.toString(),
-        createTime: DateTime.now(),
-        updateTime: DateTime.now(),
-      ));
+      playlists.add(
+        playlist.copyWith(
+          id: DateTime.now().millisecondsSinceEpoch.toString(),
+          createTime: DateTime.now(),
+          updateTime: DateTime.now(),
+        ),
+      );
     }
     await savePlaylists(playlists);
     return playlist;
