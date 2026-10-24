@@ -22,7 +22,6 @@ import '../../library/application/playlist_providers.dart';
 import '../../library/domain/models/playlist.dart' as local;
 import '../../player/application/playback_controller.dart';
 import '../../player/domain/models/song.dart';
-import '../../player/presentation/mini_player.dart';
 
 class PlaylistDetailPage extends ConsumerStatefulWidget {
   const PlaylistDetailPage({
@@ -393,15 +392,6 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
                     ),
                   ),
                 ),
-                // 底部迷你播放器（与搜索页面一致：键盘弹出时隐藏）
-                MediaQuery.of(context).viewInsets.bottom > 0
-                    ? const SizedBox.shrink()
-                    : Positioned(
-                        left: 0,
-                        right: 0,
-                        bottom: 20,
-                        child: RepaintBoundary(child: const MiniPlayer()),
-                      ),
                 if (selecting)
                   Positioned(
                     left: 0,

@@ -16,7 +16,6 @@ import '../../discover/domain/models/search_collection.dart';
 import '../../player/application/playback_context.dart';
 import '../../player/application/playback_controller.dart';
 import '../../player/domain/models/song.dart';
-import '../../player/presentation/mini_player.dart';
 import '../../plugin/application/plugin_providers.dart';
 import '../application/playlist_providers.dart';
 import '../domain/models/playlist.dart';
@@ -372,14 +371,6 @@ class _ArtistUpdatePageState extends ConsumerState<ArtistUpdatePage> {
               ),
             ),
           ),
-          MediaQuery.of(context).viewInsets.bottom > 0
-              ? const SizedBox.shrink()
-              : Positioned(
-                  left: 0,
-                  right: 0,
-                  bottom: 20,
-                  child: RepaintBoundary(child: const MiniPlayer()),
-                ),
         ],
       ),
     );

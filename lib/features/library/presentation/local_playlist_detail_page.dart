@@ -27,7 +27,6 @@ import '../utils/favorite_playlist.dart';
 import '../../player/application/playback_context.dart';
 import '../../player/application/playback_controller.dart';
 import '../../player/domain/models/song.dart';
-import '../../player/presentation/mini_player.dart';
 
 enum SongSortMode { addedTime, title, artist, custom }
 
@@ -416,15 +415,6 @@ class _LocalPlaylistDetailPageState
                     ),
                   ),
                 ),
-                // 底部迷你播放器（与搜索页面一致：键盘弹出时隐藏）
-                MediaQuery.of(context).viewInsets.bottom > 0
-                    ? const SizedBox.shrink()
-                    : Positioned(
-                        left: 0,
-                        right: 0,
-                        bottom: 20,
-                        child: RepaintBoundary(child: const MiniPlayer()),
-                      ),
                 if (selecting)
                   Positioned(
                     left: 0,

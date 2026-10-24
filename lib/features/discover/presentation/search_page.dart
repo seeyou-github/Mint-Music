@@ -17,7 +17,6 @@ import '../../../shared/widgets/song_list_item.dart';
 import '../../../shared/widgets/source_icon.dart';
 import '../../../shared/widgets/song_action_sheet.dart';
 import '../../../shared/widgets/song_selection.dart';
-import '../../player/presentation/mini_player.dart';
 import '../application/search_providers.dart';
 import '../../player/application/playback_context.dart';
 import '../../library/domain/models/recently_played.dart';
@@ -338,15 +337,6 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                     ],
                   ),
                 ),
-                // 底部迷你播放器（键盘弹出时隐藏）
-                MediaQuery.of(context).viewInsets.bottom > 0
-                    ? const SizedBox.shrink()
-                    : Positioned(
-                        left: 0,
-                        right: 0,
-                        bottom: 20,
-                        child: RepaintBoundary(child: const MiniPlayer()),
-                      ),
                 if (selecting)
                   Positioned(
                     left: 0,
