@@ -442,6 +442,15 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     _musicSourceManager.setSessionPreferredSource(sourceId);
     final index = state.currentIndex;
     if (index < 0 || index >= state.queue.length) return;
+    // 播放中换源：先暂停再重解析。播放器在「正在播放」状态下替换音源时，
+    // prepare 偶发失败 / 超时，会被误判成「所选音源解析失败」，随后候选里
+    // 其它插件的 URL 反而能 set 成功（第一次失败已经把管线重置了），于是
+    // 每次切换都「自动回退」到别的源——而退出后重播同一首歌（空闲管线上的
+    // 全新 prepare）所选插件一切正常。先暂停消除这个唯一差异；原本在播的
+    // 话 playSongAt 结束时会自动恢复播放。
+    if (state.isPlaying) {
+      await pause();
+    }
     final song = state.queue[index];
     final (baseId, _) = MusicSourceManager.splitSourceId(song.source ?? '');
     if (baseId.isEmpty || baseId == 'local') return;
