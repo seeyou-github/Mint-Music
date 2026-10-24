@@ -29,6 +29,13 @@ class Song {
   /// 所以这里不做硬绑定（[source] 依旧是平台 id）。
   final String? preferredSource;
 
+  /// B 站「充电专属 / 大会员专享」等会员专属作品标记。
+  ///
+  /// 来自插件音源列表接口的原始标记（如 bilibili 的 `is_charging_arc`），
+  /// 用于歌曲列表显示「会员」标签；「隐藏B站会员专属歌曲」开启时，
+  /// 插件返回的这类歌曲会被过滤掉（已收藏的不受影响，仅显示标签）。
+  final bool isVipExclusive;
+
   const Song({
     required this.id,
     required this.title,
@@ -53,6 +60,7 @@ class Song {
     this.sourceHeaders,
     this.sourceQuality,
     this.preferredSource,
+    this.isVipExclusive = false,
   });
 
   bool get isLocal => source == 'local';
@@ -88,6 +96,7 @@ class Song {
     Map<String, String>? sourceHeaders,
     String? sourceQuality,
     String? preferredSource,
+    bool? isVipExclusive,
     bool clearSourceUrl = false,
     bool clearSourceHeaders = false,
     bool clearSourceQuality = false,
@@ -125,6 +134,7 @@ class Song {
       preferredSource: clearPreferredSource
           ? null
           : preferredSource ?? this.preferredSource,
+      isVipExclusive: isVipExclusive ?? this.isVipExclusive,
     );
   }
 
@@ -187,6 +197,7 @@ class Song {
       'sourceHeaders': sourceHeaders,
       'sourceQuality': sourceQuality,
       'preferredSource': preferredSource,
+      'isVipExclusive': isVipExclusive,
     };
   }
 
@@ -238,6 +249,7 @@ class Song {
           : null,
       sourceQuality: json['sourceQuality']?.toString(),
       preferredSource: json['preferredSource']?.toString(),
+      isVipExclusive: json['isVipExclusive'] == true,
     );
   }
 }

@@ -316,7 +316,7 @@ function __mfMapMusicItem(item, sourceId) {
 
   var id = item.id === null || item.id === undefined ? '' : String(item.id);
 
-  return {
+  var mapped = {
     id: item.id,
     songmid: id,
     songId: item.id,
@@ -337,6 +337,16 @@ function __mfMapMusicItem(item, sourceId) {
     // 原始 musicItem：解析播放地址 / 歌词时原样回传给插件，避免二次请求。
     extra: { musicItem: item },
   };
+  // 会员专属作品标记（bilibili 充电专属 / 大会员专享）：
+  // 插件在 musicItem 上标记后透传给 Dart，歌曲列表据此显示「会员」标签。
+  if (
+    item.vipExclusive === true ||
+    item.is_charging_arc === true ||
+    item.is_upower_exclusive === true
+  ) {
+    mapped.vipExclusive = true;
+  }
+  return mapped;
 }
 
 /* ------------------------------------------------------------------ *

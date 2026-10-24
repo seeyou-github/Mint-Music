@@ -317,6 +317,7 @@ class SongListItem extends ConsumerWidget {
     final playedTag = showPlayedTag && !selectionMode
         ? _buildPlayedTag(colors, context, ref, compact: !narrow)
         : null;
+    final vipTag = _buildVipTag(colors, compact: !narrow);
     final duration = showDuration && !selectionMode
         ? _buildDuration(colors, padded: !narrow)
         : null;
@@ -334,7 +335,10 @@ class SongListItem extends ConsumerWidget {
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               if (duration != null) ...[duration, const SizedBox(height: 2)],
-              playedTag,
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [playedTag, ?vipTag],
+              ),
             ],
           ),
           ?menu,
@@ -344,7 +348,7 @@ class SongListItem extends ConsumerWidget {
 
     return Row(
       mainAxisSize: MainAxisSize.min,
-      children: [?trailingBadge, ?playedTag, ?duration, ?menu],
+      children: [?trailingBadge, ?playedTag, ?vipTag, ?duration, ?menu],
     );
   }
 
@@ -378,6 +382,32 @@ class SongListItem extends ConsumerWidget {
             height: 1.2,
             fontWeight: done ? FontWeight.w600 : FontWeight.w500,
             color: colors.primary,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 「会员」标签：B 站充电专属 / 大会员专享作品，显示在「已听」标签右侧。
+  /// 琥珀金配色与「已听」的主题色标签区分开。
+  Widget? _buildVipTag(ThemeColors colors, {bool compact = true}) {
+    if (!song.isVipExclusive || selectionMode) return null;
+    const vipColor = Color(0xFFE6A23C);
+    return Padding(
+      padding: EdgeInsets.only(left: compact ? AppSpacing.sm : 0),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+        decoration: BoxDecoration(
+          color: vipColor.withValues(alpha: 0.16),
+          borderRadius: BorderRadius.circular(AppRadius.xs),
+        ),
+        child: Text(
+          '会员',
+          style: TextStyle(
+            fontSize: compact ? 10 : 12,
+            height: 1.2,
+            fontWeight: FontWeight.w600,
+            color: vipColor,
           ),
         ),
       ),

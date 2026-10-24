@@ -257,6 +257,12 @@ class SettingsService {
   Future<void> setMarkPlayedStatus(bool v) =>
       _prefs.setBool('mark_played_status', v);
 
+  // -- 隐藏B站会员专属歌曲（默认开启）--
+  bool getHideVipExclusiveSongs() =>
+      _prefs.getBool('hide_vip_exclusive_songs') ?? true;
+  Future<void> setHideVipExclusiveSongs(bool v) =>
+      _prefs.setBool('hide_vip_exclusive_songs', v);
+
   // -- 备份还原 / WebDAV --
   String getWebDavConfigJson() => _prefs.getString('webdav_config') ?? '';
   Future<void> setWebDavConfigJson(String v) =>

@@ -40,6 +40,14 @@ final autoSwitchSourceProvider = StateProvider<bool>((ref) => false);
 /// 歌曲列表在时长左侧显示已听进度；关闭后不再记录也不再显示。
 final markPlayedStatusProvider = StateProvider<bool>((ref) => true);
 
+/// 隐藏B站会员专属歌曲（默认开启）。
+///
+/// 开启时插件音源（如 bilibili）返回的会员专属歌曲（充电专属 / 大会员
+/// 专享）不出现在搜索、专辑、作者、榜单等歌曲列表里；已收藏的仅显示
+/// 「会员」标签不过滤。真实过滤发生在 MusicSourceManager（由加载 /
+/// 切换设置时同步）。
+final hideVipExclusiveSongsProvider = StateProvider<bool>((ref) => true);
+
 // -- download --
 final downloadDirProvider = StateProvider<String>(
   (ref) => defaultDownloadDirSync(),
@@ -505,6 +513,11 @@ final settingsInitProvider = FutureProvider<void>((ref) async {
   ref.read(rememberProgressProvider.notifier).state = svc.getRememberProgress();
   ref.read(autoSwitchSourceProvider.notifier).state = svc.getAutoSwitchSource();
   ref.read(markPlayedStatusProvider.notifier).state = svc.getMarkPlayedStatus();
+  final hideVipExclusive = svc.getHideVipExclusiveSongs();
+  ref.read(hideVipExclusiveSongsProvider.notifier).state = hideVipExclusive;
+  // 过滤行为在音源管理器里生效（解析插件歌曲列表时按开关隐藏会员专属）。
+  ref.read(musicSourceManagerProvider).hideVipExclusiveSongs =
+      hideVipExclusive;
   ref.read(notificationEnabledProvider.notifier).state = svc
       .getNotificationEnabled();
   ref.read(defaultSourceIdSettingProvider.notifier).state = svc

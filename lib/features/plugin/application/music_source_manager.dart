@@ -715,6 +715,14 @@ class MusicSourceManager {
     _preferredSources = Map<String, String>.from(map);
   }
 
+  /// 「隐藏B站会员专属歌曲」开关（默认开启）。
+  ///
+  /// 由设置页在启动加载 / 用户切换时同步进来：开启时插件音源返回的
+  /// 会员专属歌曲（`isVipExclusive`，如 bilibili 充电专属）在解析搜索 /
+  /// 详情 / 榜单结果时直接过滤掉；已收藏的歌曲不走这条解析路径，不受
+  /// 影响，仅显示「会员」标签。
+  bool hideVipExclusiveSongs = true;
+
   /// 当前会话的手动音源（null 表示本会话没有手动选过）。
   String? get sessionPreferredSource => _sessionPreferredSource;
 
@@ -1361,7 +1369,7 @@ class MusicSourceManager {
         // 音源）会把这些歌曲劫走，表现为「插件-酷我歌单的歌用插件-qq 播放」。
         // source 仍记平台 id，跨插件兜底 / 歌词等逻辑保持原样。
         final boundPlugin = sourceId.contains('@') ? sourceId : null;
-        return items
+        final songs = items
             .map((item) {
               final song = _musicInfoToSong(item, baseSourceId);
               return boundPlugin == null
@@ -1369,6 +1377,12 @@ class MusicSourceManager {
                   : song.copyWith(preferredSource: boundPlugin);
             })
             .toList();
+        // 「隐藏B站会员专属歌曲」开启时，插件列表里的会员专属歌曲直接过滤
+        // （搜索 / 专辑 / 作者 / 榜单详情都走这里；收藏不走，仅显示标签）。
+        if (hideVipExclusiveSongs) {
+          return songs.where((song) => !song.isVipExclusive).toList();
+        }
+        return songs;
       }
 
       print('[MusicSourceManager] 无法识别的搜索结果格式: ${decoded.runtimeType}');
@@ -1521,6 +1535,7 @@ class MusicSourceManager {
           : 0,
       hash: info['hash']?.toString(),
       lx: lxMeta,
+      isVipExclusive: info['vipExclusive'] == true,
     );
   }
 

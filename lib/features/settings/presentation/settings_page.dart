@@ -24,6 +24,7 @@ import '../../../shared/widgets/hsv_color_picker.dart';
 import '../application/font_providers.dart';
 import '../application/settings_providers.dart';
 import '../data/settings_service.dart';
+import '../../plugin/application/plugin_providers.dart';
 import '../../player/application/desktop_lyric_controller.dart';
 import '../../player/application/desktop_lyric_sync.dart';
 import '../../player/domain/models/desktop_lyric_settings.dart';
@@ -1886,6 +1887,7 @@ class _PlaybackContent extends ConsumerWidget {
     final autoQualityDowngrade = ref.watch(autoQualityDowngradeProvider);
     final autoSwitchSource = ref.watch(autoSwitchSourceProvider);
     final markPlayedStatus = ref.watch(markPlayedStatusProvider);
+    final hideVipExclusive = ref.watch(hideVipExclusiveSongsProvider);
     return SettingGroup(
       title: '播放设置',
       colors: colors,
@@ -1936,6 +1938,28 @@ class _PlaybackContent extends ConsumerWidget {
               v,
               (s) => s.setMarkPlayedStatus(v),
             ),
+            activeTrackColor: colors.primary.withValues(alpha: 0.3),
+            activeThumbColor: colors.primary,
+          ),
+          colors: colors,
+        ),
+        SettingDivider(colors: colors),
+        SettingRow(
+          icon: Icons.workspace_premium_outlined,
+          title: '隐藏B站会员专属歌曲',
+          subtitle: '充电专属 / 大会员专享作品不出现在歌曲列表，已收藏的仅显示「会员」标签',
+          trailing: Switch(
+            value: hideVipExclusive,
+            onChanged: (v) {
+              _persistBool(
+                context,
+                hideVipExclusiveSongsProvider,
+                v,
+                (s) => s.setHideVipExclusiveSongs(v),
+              );
+              // 过滤在音源管理器解析插件歌曲列表时生效，切换后立即同步。
+              ref.read(musicSourceManagerProvider).hideVipExclusiveSongs = v;
+            },
             activeTrackColor: colors.primary.withValues(alpha: 0.3),
             activeThumbColor: colors.primary,
           ),
