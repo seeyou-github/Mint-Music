@@ -2,11 +2,11 @@ import 'package:flutter/foundation.dart';
 
 /// 根级覆盖页（播放详情 / 歌词 / 标签编辑）的登记表。
 ///
-/// 这些页面压在根 Navigator 上、盖住整个内容区。StatefulShellRoute 下
-/// `routerDelegate.currentConfiguration.uri` 对根级路由的压栈 / 出栈反映
-/// 不可靠（根级路由压栈后配置里的 uri 可能仍是分支内的地址），左侧栏封面
-/// 与来源标签的「再点一次关闭」逻辑需要准确状态，因此由页面自己在
-/// initState / dispose 里登记。
+/// 这些页面压在根 Navigator 上、盖住整个内容区。go_router 的
+/// `routerDelegate.currentConfiguration.uri` **不含任何 push() 推入的页面**
+/// （ImperativeRouteMatch 不参与 uri，见 RouteMatchList.uri 的源码注释），
+/// 无法用来判断「覆盖页是否开着」，因此由页面自己在 initState / dispose
+/// 里登记。
 ///
 /// 同一个页面可能被连续推入两份（上层实例关闭时下层还开着），布尔值会把
 /// 状态记错，因此用「每个实例一条记录」。

@@ -255,7 +255,7 @@ class SidebarPlayer extends ConsumerWidget {
   }) {
     // 回调是延后执行的，窗口变窄时左侧栏可能已经被移除。
     if (!ref.context.mounted) return;
-    final currentUri = appRouter.routerDelegate.currentConfiguration.uri;
+    final currentUri = _currentPageUri();
     final targetUri = Uri.parse(target);
 
     // 根级覆盖页还没退干净（出栈动画期间登记表已清空、路由栈可能滞后），
@@ -297,7 +297,7 @@ class SidebarPlayer extends ConsumerWidget {
         // 停在这个页面上，就不用再推一份了。
         shell.goBranch(targetBranch);
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          final restored = appRouter.routerDelegate.currentConfiguration.uri;
+          final restored = _currentPageUri();
           if (_isSamePage(restored, targetUri)) return;
           appRouter.push(target, extra: extra);
         });
@@ -308,6 +308,37 @@ class SidebarPlayer extends ConsumerWidget {
     }
 
     appRouter.push(target, extra: extra);
+  }
+
+  /// 当前路由栈「真正显示的页面」位置（含 push 出来的页面）。
+  ///
+  /// 不能用 `routerDelegate.currentConfiguration.uri`：go_router 的
+  /// RouteMatchList.uri **只反映 go()/goBranch() 级别的位置，不含任何
+  /// push() 推入的页面**（它们是 ImperativeRouteMatch，见 go_router 源码
+  /// 注释 "only reflects RouteMatchs that are not ImperativeRouteMatch"）。
+  /// 用它判断「来源页是否已打开」永远比不出相等，表现为点标签每次都
+  /// 重复推入同一页。这里遍历匹配栈取栈顶：ImperativeRouteMatch.matches.uri
+  /// 才是 push 页面的真实位置（带查询参数）。
+  static Uri _currentPageUri() {
+    final stack = <Uri>[];
+    void walk(Iterable<RouteMatchBase> matches) {
+      for (final match in matches) {
+        if (match is ShellRouteMatch) {
+          walk(match.matches);
+        } else if (match is ImperativeRouteMatch) {
+          stack.add(match.matches.uri);
+          walk(match.matches.matches);
+        } else if (match is RouteMatch) {
+          stack.add(Uri.parse(match.matchedLocation));
+        }
+      }
+    }
+
+    walk(appRouter.routerDelegate.currentConfiguration.matches);
+    if (stack.isEmpty) {
+      return appRouter.routerDelegate.currentConfiguration.uri;
+    }
+    return stack.last;
   }
 
   /// 关掉盖在内容区上的根级页面（播放详情 / 歌词 / 标签编辑），返回是否关过。
