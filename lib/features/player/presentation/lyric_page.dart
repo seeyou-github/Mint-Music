@@ -16,6 +16,7 @@ import '../application/playback_controller.dart';
 import '../application/playback_ui_providers.dart';
 import '../application/lyric_controller.dart';
 import '../domain/models/song.dart';
+import '../domain/services/cover_color_extractor.dart';
 import '../../settings/application/settings_providers.dart';
 import '../../library/application/playlist_providers.dart';
 import '../application/root_overlay_tracker.dart';
@@ -842,19 +843,10 @@ class _LyricBackgroundLayerState extends State<_LyricBackgroundLayer>
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
                 colors: [
-                  HSLColor.fromColor(dominantColor!)
-                      .withLightness(
-                        (HSLColor.fromColor(
-                          dominantColor!,
-                        ).lightness).clamp(0.15, 0.45),
-                      )
-                      .toColor(),
-                  HSLColor.fromColor(dominantColor!)
-                      .withLightness(
-                        (HSLColor.fromColor(dominantColor!).lightness - 0.08)
-                            .clamp(0.05, 0.35),
-                      )
-                      .toColor(),
+                  // 与播放详情页一致：只取封面色相，亮度压进暗色区间、
+                  // 饱和度封顶，白色 / 鲜艳封面都不会生成浅色或刺眼背景。
+                  coverDarkBackgroundColor(dominantColor, lightness: 0.17),
+                  coverDarkBackgroundColor(dominantColor, lightness: 0.08),
                 ],
               ),
             ),

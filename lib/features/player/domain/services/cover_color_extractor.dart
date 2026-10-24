@@ -173,6 +173,19 @@ class CoverColorExtractor {
   }
 }
 
+/// 「跟随主题」播放背景用的封面暗色。
+///
+/// 只保留封面的色相：亮度固定压进暗色区间，白色 / 浅灰封面不会生成
+/// 浅色背景；饱和度封顶，亮黄 / 亮蓝 / 亮红 / 亮紫等鲜艳封面也不会留下
+/// 刺眼的高饱和色块。接近无彩色的封面按纯灰处理，避免出现奇怪的偏色。
+Color coverDarkBackgroundColor(Color color, {required double lightness}) {
+  final hsl = HSLColor.fromColor(color);
+  final saturation = hsl.saturation < 0.08
+      ? 0.0
+      : hsl.saturation.clamp(0.12, 0.32);
+  return hsl.withSaturation(saturation).withLightness(lightness).toColor();
+}
+
 /// CeruMusic-style eager pre-computation: watches current song and
 /// computes cover colors in background isolate as soon as the song changes.
 /// This runs BEFORE the user opens FullPlayerPage, so colors are cached/ready.

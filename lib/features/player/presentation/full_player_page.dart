@@ -933,14 +933,10 @@ class _PlayerCoverPage extends ConsumerWidget {
                   color:
                       bgMode == FullScreenBackgroundMode.theme &&
                           dominantColor != null
-                      ? HSLColor.fromColor(dominantColor)
-                            .withLightness(
-                              (HSLColor.fromColor(dominantColor).lightness -
-                                      0.2)
-                                  .clamp(0.0, 0.5),
-                            )
-                            .toColor()
-                            .withValues(alpha: 0.4)
+                      ? coverDarkBackgroundColor(
+                          dominantColor,
+                          lightness: 0.22,
+                        ).withValues(alpha: 0.45)
                       : Colors.black.withValues(alpha: 0.5),
                   blurRadius: math.min(50, coverSize * 0.16),
                   offset: Offset(0, math.min(25, coverSize * 0.08)),
@@ -1594,20 +1590,11 @@ class _BackgroundLayerState extends State<_BackgroundLayer>
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
                 colors: [
-                  // 跟随主题的背景整体调暗 30%，避免过亮影响歌词可读性
-                  HSLColor.fromColor(dominantColor!)
-                      .withLightness(
-                        (HSLColor.fromColor(dominantColor!).lightness * 0.7)
-                            .clamp(0.10, 0.32),
-                      )
-                      .toColor(),
-                  HSLColor.fromColor(dominantColor!)
-                      .withLightness(
-                        (HSLColor.fromColor(dominantColor!).lightness * 0.7 -
-                                0.06)
-                            .clamp(0.04, 0.25),
-                      )
-                      .toColor(),
+                  // 只取封面色相，亮度固定压到暗色区间、饱和度封顶：
+                  // 白色 / 浅色封面不会生成发白的背景，鲜艳封面也不会
+                  // 留下亮黄 / 亮蓝 / 亮红 / 亮紫等刺眼色块。
+                  coverDarkBackgroundColor(dominantColor, lightness: 0.17),
+                  coverDarkBackgroundColor(dominantColor, lightness: 0.08),
                 ],
               ),
             ),
