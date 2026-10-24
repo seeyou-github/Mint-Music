@@ -91,6 +91,13 @@ class DesktopLyricWindow {
   void CreateWindowIfNeeded();
   void DestroyWindowIfNeeded();
   void ApplySizeAndPosition();
+  /// 取目标显示器的工作区（去掉任务栏后的可用区域）。
+  ///
+  /// 窗口已摆放时跟随窗口当前所在的显示器；刚创建（坐标不可信）或重新显示时
+  /// 回到上次所在的显示器，这样隐藏再显示不会跳到另一块屏幕。
+  void GetTargetWorkArea(RECT* work_area);
+  /// 记录窗口当前所在的显示器，供下次重新显示时使用。
+  void RememberMonitor();
   void EnsureFont();
   /// 组装固定两个槽位的歌词元素（槽位内容按当前行奇偶交替）。
   std::vector<DesktopLyricElement> BuildElements() const;
@@ -131,9 +138,17 @@ class DesktopLyricWindow {
   unsigned int unplay_color_ = 0xFFB0B0B0;
   unsigned int shadow_color_ = 0xFF000000;
   double position_x_ = 50.0;
-  double position_y_ = 20.0;
+  // 与 Dart 侧默认值一致（水平居中、靠近工作区底部）：配置下发前首次显示
+  // 也不会先出现在顶部再跳到底部。
+  double position_y_ = 85.0;
   bool show_translation_ = false;
   bool show_roman_ = false;
+
+  // 窗口上次所在的显示器。隐藏会销毁窗口，重新显示时用它找回同一块屏幕。
+  RECT monitor_rect_ = {};
+  bool has_monitor_ = false;
+  // 窗口刚创建、还没按保存的位置摆放：此时窗口坐标（0,0）不可信。
+  bool placed_ = false;
 
   // 应用字体（导入的字体文件已在进程内注册）
   std::wstring font_family_;

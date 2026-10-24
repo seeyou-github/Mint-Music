@@ -48,6 +48,45 @@ void GetVirtualScreen(int* left, int* top, int* width, int* height) {
   if (*height <= 0) *height = ::GetSystemMetrics(SM_CYSCREEN);
 }
 
+struct MonitorSearch {
+  RECT monitor;
+  RECT work;
+  bool found;
+};
+
+BOOL CALLBACK FindMonitorProc(HMONITOR monitor,
+                              HDC,
+                              LPRECT,
+                              LPARAM param) {
+  auto* search = reinterpret_cast<MonitorSearch*>(param);
+  MONITORINFO info{};
+  info.cbSize = sizeof(MONITORINFO);
+  if (::GetMonitorInfoW(monitor, &info) == 0) {
+    return TRUE;
+  }
+  if (::EqualRect(&info.rcMonitor, &search->monitor) != 0) {
+    search->work = info.rcWork;
+    search->found = true;
+    return FALSE;
+  }
+  return TRUE;
+}
+
+/// 在仍连接的显示器里找回 [monitor_rect] 对应的那块屏，并返回它的工作区。
+///
+/// 显示器被拔掉或分辨率变化后返回 false，调用方退回主显示器。
+bool FindWorkAreaForMonitorRect(const RECT& monitor_rect, RECT* work_area) {
+  MonitorSearch search{};
+  search.monitor = monitor_rect;
+  ::EnumDisplayMonitors(nullptr, nullptr, &FindMonitorProc,
+                        reinterpret_cast<LPARAM>(&search));
+  if (!search.found) {
+    return false;
+  }
+  *work_area = search.work;
+  return true;
+}
+
 /// 枚举字体族时的回调（把族名收集到 set 里）。
 int CALLBACK EnumFontCollect(const LOGFONTW* font,
                              const TEXTMETRICW*,
@@ -203,6 +242,8 @@ void DesktopLyricWindow::CreateWindowIfNeeded() {
   if (window_ == nullptr) {
     return;
   }
+  // 新建的窗口坐标固定是 (0,0,400,100)，不能据此判断所在显示器。
+  placed_ = false;
   ::SetTimer(window_, kTimerId, kTimerIntervalMs, nullptr);
 }
 
@@ -407,23 +448,60 @@ std::vector<DesktopLyricElement> DesktopLyricWindow::BuildElements() const {
   return elements;
 }
 
+void DesktopLyricWindow::GetTargetWorkArea(RECT* work_area) {
+  // 窗口已经摆放好：跟随它当前所在的显示器（用户可能把它拖到了另一块屏）。
+  if (window_ != nullptr && placed_) {
+    MONITORINFO info{};
+    info.cbSize = sizeof(MONITORINFO);
+    HMONITOR monitor =
+        ::MonitorFromWindow(window_, MONITOR_DEFAULTTONEAREST);
+    if (monitor != nullptr && ::GetMonitorInfoW(monitor, &info) != 0) {
+      monitor_rect_ = info.rcMonitor;
+      has_monitor_ = true;
+      *work_area = info.rcWork;
+      return;
+    }
+  }
+  // 刚创建 / 重新显示：回到上次所在的显示器，隐藏再显示位置才不会变。
+  if (has_monitor_ && FindWorkAreaForMonitorRect(monitor_rect_, work_area)) {
+    return;
+  }
+  // 第一次显示，或原来的显示器已不存在：使用主显示器工作区。
+  if (::SystemParametersInfo(SPI_GETWORKAREA, 0, work_area, 0) != 0 &&
+      work_area->right > work_area->left &&
+      work_area->bottom > work_area->top) {
+    return;
+  }
+  // 取不到工作区时退回整个虚拟屏幕。
+  int virtual_left = 0;
+  int virtual_top = 0;
+  int virtual_width = 0;
+  int virtual_height = 0;
+  GetVirtualScreen(&virtual_left, &virtual_top, &virtual_width, &virtual_height);
+  *work_area = RECT{virtual_left, virtual_top, virtual_left + virtual_width,
+                    virtual_top + virtual_height};
+}
+
+void DesktopLyricWindow::RememberMonitor() {
+  if (window_ == nullptr) {
+    return;
+  }
+  MONITORINFO info{};
+  info.cbSize = sizeof(MONITORINFO);
+  HMONITOR monitor = ::MonitorFromWindow(window_, MONITOR_DEFAULTTONEAREST);
+  if (monitor != nullptr && ::GetMonitorInfoW(monitor, &info) != 0) {
+    monitor_rect_ = info.rcMonitor;
+    has_monitor_ = true;
+  }
+}
+
 void DesktopLyricWindow::ApplySizeAndPosition() {
   if (window_ == nullptr) {
     return;
   }
   // 使用「工作区」（去掉任务栏后的可用区域），而不是整个虚拟屏幕。
   RECT work_area{};
-  SystemParametersInfo(SPI_GETWORKAREA, 0, &work_area, 0);
-  if (work_area.right <= work_area.left || work_area.bottom <= work_area.top) {
-    // 取不到工作区时退回整个虚拟屏幕。
-    int virtual_left = 0;
-    int virtual_top = 0;
-    int virtual_width = 0;
-    int virtual_height = 0;
-    GetVirtualScreen(&virtual_left, &virtual_top, &virtual_width, &virtual_height);
-    work_area = RECT{virtual_left, virtual_top, virtual_left + virtual_width,
-                      virtual_top + virtual_height};
-  }
+  GetTargetWorkArea(&work_area);
   const int screen_left = work_area.left;
   const int screen_top = work_area.top;
   const int screen_width = work_area.right - work_area.left;
@@ -435,15 +513,21 @@ void DesktopLyricWindow::ApplySizeAndPosition() {
   // 高度固定为两个槽位（含为翻译 / 音译预留的行），不随歌词内容变化。
   const int height = std::max(GetLineHeight(), MeasureContentHeight());
 
-  int x = screen_left + static_cast<int>(position_x_ / 100.0 *
-                                        std::max(0, screen_width - width));
-  int y = screen_top + static_cast<int>(position_y_ / 100.0 *
-                                        std::max(0, screen_height - height));
-  if (x < screen_left) x = screen_left;
-  if (y < screen_top) y = screen_top;
+  const int max_x = std::max(0, screen_width - width);
+  const int max_y = std::max(0, screen_height - height);
+  // 四舍五入而不是截断：拖动结束后存的是百分比，回算时若截断会每次都
+  // 少 1 像素，多次显示 / 隐藏后位置逐渐漂移。
+  int x = screen_left +
+          static_cast<int>(std::lround(position_x_ / 100.0 * max_x));
+  int y = screen_top +
+          static_cast<int>(std::lround(position_y_ / 100.0 * max_y));
+  x = std::clamp(x, screen_left, screen_left + max_x);
+  y = std::clamp(y, screen_top, screen_top + max_y);
 
   // 桌面歌词始终置顶显示，并且始终可以拖动（锁定功能已固定为关闭）。
   ::SetWindowPos(window_, HWND_TOPMOST, x, y, width, height, SWP_NOACTIVATE);
+  placed_ = true;
+  RememberMonitor();
 }
 
 /// 测量歌词内容所需的高度：固定两个槽位。
@@ -760,11 +844,15 @@ void DesktopLyricWindow::ReportPosition() {
   }
   RECT rect{};
   ::GetWindowRect(window_, &rect);
-  int screen_left = 0;
-  int screen_top = 0;
-  int screen_width = 0;
-  int screen_height = 0;
-  GetVirtualScreen(&screen_left, &screen_top, &screen_width, &screen_height);
+  // 与 ApplySizeAndPosition 使用同一基准（窗口所在显示器的工作区）。之前这里
+  // 用整个虚拟屏幕，保存的百分比和回算时的工作区不一致：拖动结束后窗口会
+  // 跳一下，下次显示的位置也会偏移（多显示器时尤其明显）。
+  RECT work_area{};
+  GetTargetWorkArea(&work_area);
+  const int screen_left = work_area.left;
+  const int screen_top = work_area.top;
+  const int screen_width = work_area.right - work_area.left;
+  const int screen_height = work_area.bottom - work_area.top;
   // RECT 的字段是 LONG，这里先转成 int，避免 std::max 的模板类型推导失败。
   const int window_width = static_cast<int>(rect.right - rect.left);
   const int window_height = static_cast<int>(rect.bottom - rect.top);
@@ -772,10 +860,10 @@ void DesktopLyricWindow::ReportPosition() {
                    std::max(1, screen_width - window_width);
   const double y = (static_cast<int>(rect.top) - screen_top) * 100.0 /
                    std::max(1, screen_height - window_height);
-  // 同步内部位置，避免后续应用配置时窗口跳回旧位置。
-  position_x_ = x;
-  position_y_ = y;
-  position_callback_(x, y);
+  // 同步内部位置，避免后续应用配置时窗口跳回旧位置。拖出工作区时夹紧。
+  position_x_ = std::clamp(x, 0.0, 100.0);
+  position_y_ = std::clamp(y, 0.0, 100.0);
+  position_callback_(position_x_, position_y_);
 }
 
 LRESULT CALLBACK DesktopLyricWindow::WindowProc(HWND hwnd,

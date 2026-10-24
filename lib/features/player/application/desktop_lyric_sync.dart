@@ -324,6 +324,10 @@ class DesktopLyricSyncController extends StateNotifier<DesktopLyricStatus>
       return;
     }
 
+    // 先下发样式与位置再显示：原生侧第一次显示就能直接按保存的位置摆放，
+    // 不会先出现在默认位置再跳到保存的位置（Windows 上尤其明显）。
+    await _pushConfig(settings);
+
     final shown = await _overlay.show();
     if (!mounted || request != _visibilityRequest) return;
     state = state.copyWith(overlayShowing: shown);
@@ -332,7 +336,6 @@ class DesktopLyricSyncController extends StateNotifier<DesktopLyricStatus>
       return;
     }
 
-    await _pushConfig(settings);
     await pushLyric(force: true); // 交给原生侧自行推进,并定期校准。
     await pushPlayState(force: true);
     _startSyncTimer();
