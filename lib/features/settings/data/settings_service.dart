@@ -32,13 +32,15 @@ class SettingsService {
   /// 浅色模式「字体颜色」。
   ///
   /// 未设置过时沿用旧版的值；旧版默认的暖米色是给深色主题用的，浅色模式
-  /// 改用主题自带的深色文字。
+  /// 使用 [defaultLightFontColor]。
   String getThemeFontColorLight() {
     final value = _prefs.getString(_fontColorLightKey);
     if (value != null) return value;
     final legacy = _prefs.getString(_legacyFontColorKey);
-    if (legacy == null) return '';
-    if (legacy.toUpperCase() == defaultThemeFontColor.toUpperCase()) return '';
+    if (legacy == null) return defaultLightFontColor;
+    if (legacy.toUpperCase() == defaultThemeFontColor.toUpperCase()) {
+      return defaultLightFontColor;
+    }
     return legacy;
   }
 
@@ -54,11 +56,11 @@ class SettingsService {
   Future<void> setThemeFontColorDark(String v) =>
       _prefs.setString(_fontColorDarkKey, v);
 
-  /// 浅色模式「第二字体颜色」：为空表示使用主题默认色。
+  /// 浅色模式「第二字体颜色」：默认使用主题自带的次级文字色。
   String getThemeSecondaryFontColorLight() =>
       _prefs.getString(_secondaryFontColorLightKey) ??
       _prefs.getString(_legacySecondaryFontColorKey) ??
-      '';
+      defaultLightSecondaryFontColor;
 
   Future<void> setThemeSecondaryFontColorLight(String v) =>
       _prefs.setString(_secondaryFontColorLightKey, v);
@@ -76,16 +78,16 @@ class SettingsService {
   static const _backgroundColorLightKey = 'theme_background_color_light';
   static const _backgroundColorDarkKey = 'theme_background_color_dark';
 
-  /// 浅色模式「背景颜色」：为空表示使用主题默认背景。
+  /// 浅色模式「背景颜色」：默认使用 [defaultLightBackgroundColor]。
   String getThemeBackgroundColorLight() =>
-      _prefs.getString(_backgroundColorLightKey) ?? '';
+      _prefs.getString(_backgroundColorLightKey) ?? defaultLightBackgroundColor;
 
   Future<void> setThemeBackgroundColorLight(String v) =>
       _prefs.setString(_backgroundColorLightKey, v);
 
-  /// 深色模式「背景颜色」：为空表示使用主题默认背景。
+  /// 深色模式「背景颜色」：默认使用 [defaultDarkBackgroundColor]。
   String getThemeBackgroundColorDark() =>
-      _prefs.getString(_backgroundColorDarkKey) ?? '';
+      _prefs.getString(_backgroundColorDarkKey) ?? defaultDarkBackgroundColor;
 
   Future<void> setThemeBackgroundColorDark(String v) =>
       _prefs.setString(_backgroundColorDarkKey, v);
@@ -450,7 +452,7 @@ class SettingsService {
 
   // -- full screen background mode --
   String getFullScreenBgMode() =>
-      _prefs.getString('full_screen_bg_mode') ?? 'dark';
+      _prefs.getString('full_screen_bg_mode') ?? 'theme';
   Future<void> setFullScreenBgMode(String v) =>
       _prefs.setString('full_screen_bg_mode', v);
 

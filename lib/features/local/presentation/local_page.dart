@@ -499,6 +499,7 @@ class _LocalPageState extends ConsumerState<LocalPage> {
               decoration: InputDecoration(
                 hintText: context.tr('搜索本地歌曲/歌手/专辑'),
                 border: InputBorder.none,
+                filled: false,
                 isDense: true,
                 contentPadding: EdgeInsets.zero,
                 hintStyle: TextStyle(color: colors.textHint, fontSize: 14),

@@ -398,7 +398,7 @@ enum FullScreenBackgroundMode { theme, cover, dark }
 
 final fullScreenBackgroundModeProvider =
     StateProvider<FullScreenBackgroundMode>(
-      (ref) => FullScreenBackgroundMode.dark,
+      (ref) => FullScreenBackgroundMode.theme,
     );
 
 // -- app version (loaded once) --

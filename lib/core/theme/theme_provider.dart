@@ -12,34 +12,44 @@ final themeModeProvider = StateProvider<ThemeMode>((ref) => ThemeMode.system);
 
 final themePrimaryColorProvider = StateProvider<String>((ref) => '#1DB954');
 
-/// 深色模式「字体颜色」的默认值。
-///
-/// 浅色模式默认留空、跟随主题自带的深色文字，避免暖米色在浅色背景上
-/// 看不清。这里给了具体色值，所以深色模式默认是暖调的米黄色。
+/// 深色模式「字体颜色」的默认值（暖调米黄色）。
 const String defaultThemeFontColor = '#D9C8B1';
 
+/// 浅色模式「字体颜色」「第二字体颜色」的默认值。
+const String defaultLightFontColor = '#000000';
+const String defaultLightSecondaryFontColor = '#111111';
+
+/// 浅色 / 深色模式「背景颜色」的默认值（与 [ThemeColors] 的默认背景一致）。
+const String defaultLightBackgroundColor = '#DCD7C9';
+const String defaultDarkBackgroundColor = '#212128';
+
 /// 深色模式「字体颜色」：主文字颜色（十六进制），为空表示使用主题默认色。
-final darkThemeFontColorProvider =
-    StateProvider<String>((ref) => defaultThemeFontColor);
+final darkThemeFontColorProvider = StateProvider<String>(
+  (ref) => defaultThemeFontColor,
+);
 
 /// 浅色模式「字体颜色」：主文字颜色（十六进制），为空表示使用主题默认色。
-final lightThemeFontColorProvider = StateProvider<String>((ref) => '');
+final lightThemeFontColorProvider = StateProvider<String>(
+  (ref) => defaultLightFontColor,
+);
 
 /// 深色模式「第二字体颜色」：次级文字颜色（十六进制），为空表示使用主题默认色。
-final darkThemeSecondaryFontColorProvider = StateProvider<String>(
-  (ref) => '',
-);
+final darkThemeSecondaryFontColorProvider = StateProvider<String>((ref) => '');
 
 /// 浅色模式「第二字体颜色」：次级文字颜色（十六进制），为空表示使用主题默认色。
 final lightThemeSecondaryFontColorProvider = StateProvider<String>(
-  (ref) => '',
+  (ref) => defaultLightSecondaryFontColor,
 );
 
 /// 深色模式「背景颜色」：十六进制，为空表示使用主题默认背景。
-final darkThemeBackgroundColorProvider = StateProvider<String>((ref) => '');
+final darkThemeBackgroundColorProvider = StateProvider<String>(
+  (ref) => defaultDarkBackgroundColor,
+);
 
 /// 浅色模式「背景颜色」：十六进制，为空表示使用主题默认背景。
-final lightThemeBackgroundColorProvider = StateProvider<String>((ref) => '');
+final lightThemeBackgroundColorProvider = StateProvider<String>(
+  (ref) => defaultLightBackgroundColor,
+);
 
 /// 系统当前的亮/暗偏好。
 ///

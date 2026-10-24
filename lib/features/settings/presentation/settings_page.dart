@@ -530,6 +530,7 @@ const List<(String, String)> _presetColors = [
 
 /// 浅色模式「背景颜色」的内置颜色：整体偏浅，避免选中后看不清文字。
 const List<(String, String)> _lightBackgroundPresets = [
+  (defaultLightBackgroundColor, '默认暖米'),
   ('#FFFFFF', '纯白'),
   ('#F5F5F5', '浅灰'),
   ('#F0F4F8', '雾蓝'),
@@ -542,6 +543,7 @@ const List<(String, String)> _lightBackgroundPresets = [
 
 /// 深色模式「背景颜色」的内置颜色：整体偏深，保持深色外观。
 const List<(String, String)> _darkBackgroundPresets = [
+  (defaultDarkBackgroundColor, '默认深空灰'),
   ('#000000', '纯黑'),
   ('#121212', '深灰'),
   ('#1A1A1A', '炭黑'),
@@ -802,7 +804,9 @@ class _AppearanceContent extends ConsumerWidget {
           emptyColor: isLight
               ? ThemeColors.light.background
               : ThemeColors.dark.background,
-          resetValue: '',
+          resetValue: isLight
+              ? defaultLightBackgroundColor
+              : defaultDarkBackgroundColor,
           currentProvider: isLight
               ? lightThemeBackgroundColorProvider
               : darkThemeBackgroundColorProvider,
@@ -824,7 +828,7 @@ class _AppearanceContent extends ConsumerWidget {
           emptyColor: isLight
               ? ThemeColors.light.textPrimary
               : ThemeColors.dark.textPrimary,
-          resetValue: isLight ? '' : defaultThemeFontColor,
+          resetValue: isLight ? defaultLightFontColor : defaultThemeFontColor,
           currentProvider: isLight
               ? lightThemeFontColorProvider
               : darkThemeFontColorProvider,
@@ -845,7 +849,7 @@ class _AppearanceContent extends ConsumerWidget {
           emptyColor: isLight
               ? ThemeColors.light.textSecondary
               : ThemeColors.dark.textSecondary,
-          resetValue: '',
+          resetValue: isLight ? defaultLightSecondaryFontColor : '',
           currentProvider: isLight
               ? lightThemeSecondaryFontColorProvider
               : darkThemeSecondaryFontColorProvider,
@@ -918,6 +922,11 @@ class _AppearanceContent extends ConsumerWidget {
           final custom = ref.watch(customProvider);
           final customUpper = custom.map((e) => e.toUpperCase()).toSet();
           final allColors = _mergeColors(presets, custom);
+          // 「恢复默认」写入的是显式默认色，因此不能只看 empty。
+          final resetUpper = resetValue.toUpperCase();
+          final resetSelected = resetUpper.isEmpty
+              ? currentHex.isEmpty
+              : currentHex.toUpperCase() == resetUpper;
 
           void apply(String hex) {
             ref.read(currentProvider.notifier).state = hex;
@@ -984,7 +993,7 @@ class _AppearanceContent extends ConsumerWidget {
                               decoration: BoxDecoration(
                                 shape: BoxShape.circle,
                                 color: colors.surfaceVariant,
-                                border: currentHex.isEmpty
+                                border: resetSelected
                                     ? Border.all(
                                         color: colors.textPrimary,
                                         width: 3,
@@ -1004,9 +1013,13 @@ class _AppearanceContent extends ConsumerWidget {
                         for (final item in allColors)
                           _ColorDot(
                             hex: item.$1,
+                            // 默认色由「恢复默认」圆圈表示，色点不重复勾选。
                             selected:
                                 item.$1.toUpperCase() ==
-                                currentHex.toUpperCase(),
+                                    currentHex.toUpperCase() &&
+                                !(resetSelected &&
+                                    resetUpper.isNotEmpty &&
+                                    item.$1.toUpperCase() == resetUpper),
                             colors: colors,
                             onTap: () => apply(item.$1),
                             onLongPress:

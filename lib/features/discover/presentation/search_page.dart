@@ -483,6 +483,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                       decoration: InputDecoration(
                         hintText: context.tr('搜索音乐、歌手...'),
                         border: InputBorder.none,
+                        filled: false,
                         hintStyle: TextStyle(
                           color: colors.textHint,
                           fontSize: 14,

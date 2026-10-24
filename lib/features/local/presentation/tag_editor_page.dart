@@ -830,6 +830,7 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
               decoration: InputDecoration(
                 hintText: context.tr('输入关键词搜索 (歌曲名 歌手)'),
                 border: InputBorder.none,
+                filled: false,
                 isDense: true,
                 hintStyle: TextStyle(color: colors.textHint, fontSize: 14),
               ),
