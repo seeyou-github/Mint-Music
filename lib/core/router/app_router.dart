@@ -9,6 +9,7 @@ import '../../features/discover/presentation/collection_detail_page.dart';
 import '../../features/discover/domain/models/search_collection.dart';
 import '../../features/discover/presentation/playlist_detail_page.dart';
 import '../../features/library/presentation/library_page.dart';
+import '../../features/library/presentation/artist_update_page.dart';
 import '../../features/library/presentation/local_playlist_detail_page.dart';
 import '../../features/library/domain/models/recently_played.dart';
 import '../../features/library/presentation/recently_played_page.dart';
@@ -170,6 +171,17 @@ final appRouter = GoRouter(
                       },
                 );
               },
+              routes: [
+                GoRoute(
+                  path: 'artist-update',
+                  pageBuilder: (context, state) => _slidePage(
+                    key: state.pageKey,
+                    child: ArtistUpdatePage(
+                      playlistId: state.pathParameters['id'] ?? '',
+                    ),
+                  ),
+                ),
+              ],
             ),
           ],
         ),

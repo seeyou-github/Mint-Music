@@ -4,7 +4,7 @@ import '../domain/models/recently_played.dart';
 
 /// 收藏专辑 / 作者时写进歌单描述的标记：
 /// `mintmusic:album:<source>:<id>` / `mintmusic:artist:<source>:<id>`。
-final _collectionMarker = RegExp(r'^mintmusic:(album|artist):([^:]+):');
+final _collectionMarker = RegExp(r'^mintmusic:(album|artist):([^:]+):([^:]+)');
 
 /// 收藏页里的歌单：区分普通歌单与「收藏的专辑 / 作者」。
 extension FavoritePlaylistX on Playlist {
@@ -41,6 +41,11 @@ extension FavoritePlaylistX on Playlist {
     final value = source.trim();
     if (value.isEmpty || value == 'local') return null;
     return value;
+  }
+
+  /// 收藏时记录的专辑 / 作者 id，重新拉取详情时使用。
+  String? get favoriteCollectionId {
+    return _collectionMarker.firstMatch(description.trim())?.group(3);
   }
 
   /// 播放收藏内容时优先使用收藏时记录的音源。

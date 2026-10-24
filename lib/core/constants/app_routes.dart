@@ -11,6 +11,7 @@ abstract class AppRoutes {
   static const String search = '/search';
   static const String playlistDetail = '/playlist/:id';
   static const String localPlaylistDetail = '/library/playlist/:id';
+  static const String artistUpdate = '/library/playlist/:id/artist-update';
   static const String recentlyPlayed = '/recently-played';
   static const String collectionDetail = '/collection';
   static const String recognize = '/recognize';

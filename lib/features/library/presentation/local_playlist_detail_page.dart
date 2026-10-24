@@ -3,10 +3,12 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../core/constants/app_routes.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
@@ -25,8 +27,6 @@ import '../utils/favorite_playlist.dart';
 import '../../player/application/playback_context.dart';
 import '../../player/application/playback_controller.dart';
 import '../../player/domain/models/song.dart';
-import '../../discover/domain/models/search_collection.dart';
-import '../../plugin/application/plugin_providers.dart';
 import '../../player/presentation/mini_player.dart';
 
 enum SongSortMode { addedTime, title, artist, custom }
@@ -55,9 +55,6 @@ class _LocalPlaylistDetailPageState
 
   /// 已经记录过「最近打开」的歌单 id，避免每帧 rebuild 都写一次。
   String? _recordedOpenedId;
-
-  /// 正在拉取作者最新作品。
-  bool _updatingArtist = false;
 
   @override
   void dispose() {
@@ -601,66 +598,86 @@ class _LocalPlaylistDetailPageState
                     ],
                   ),
                   const SizedBox(height: AppSpacing.xs),
-                  Row(
-                    children: [
-                      _buildActionButton(
-                        colors,
-                        Icons.play_arrow,
-                        context.tr('播放全部'),
-                        () {
-                          if (_sortedSongs.isNotEmpty) {
-                            PlaybackContext.instance.set(
-                              PlaybackSourceType.playlist,
-                              id: playlist.id,
-                              name: playlist.name,
-                            );
-                            final controller = ref.read(
-                              playbackControllerProvider.notifier,
-                            );
-                            controller.setQueue(
-                              applyFavoriteSource(
-                                _sortedSongs,
-                                playlist.favoriteSource,
+                  ScrollConfiguration(
+                    behavior: const _HeaderScrollBehavior(),
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _buildActionButton(
+                            colors,
+                            Icons.play_arrow,
+                            context.tr('播放全部'),
+                            () {
+                              if (_sortedSongs.isNotEmpty) {
+                                PlaybackContext.instance.set(
+                                  PlaybackSourceType.playlist,
+                                  id: playlist.id,
+                                  name: playlist.name,
+                                );
+                                final controller = ref.read(
+                                  playbackControllerProvider.notifier,
+                                );
+                                controller.setQueue(
+                                  applyFavoriteSource(
+                                    _sortedSongs,
+                                    playlist.favoriteSource,
+                                  ),
+                                );
+                              }
+                            },
+                          ),
+                          const SizedBox(width: AppSpacing.sm),
+                          if (playlist.favoriteType ==
+                                  PlaybackSourceType.artist &&
+                              playlist.favoriteCollectionId != null) ...[
+                            _buildActionButton(
+                              colors,
+                              Icons.refresh,
+                              context.tr('更新'),
+                              () => context.push(
+                                AppRoutes.artistUpdate.replaceFirst(
+                                  ':id',
+                                  playlist.id,
+                                ),
                               ),
-                            );
-                          }
-                        },
+                            ),
+                            const SizedBox(width: AppSpacing.sm),
+                          ],
+                          _buildActionButton(
+                            colors,
+                            Icons.shuffle,
+                            context.tr('随机播放'),
+                            () {
+                              if (_sortedSongs.isNotEmpty) {
+                                PlaybackContext.instance.set(
+                                  PlaybackSourceType.playlist,
+                                  id: playlist.id,
+                                  name: playlist.name,
+                                );
+                                final songs = [
+                                  ...applyFavoriteSource(
+                                    _sortedSongs,
+                                    playlist.favoriteSource,
+                                  ),
+                                ]..shuffle();
+                                final controller = ref.read(
+                                  playbackControllerProvider.notifier,
+                                );
+                                controller.setQueue(songs);
+                              }
+                            },
+                          ),
+                          const SizedBox(width: AppSpacing.sm),
+                          _buildSortButton(colors),
+                        ],
                       ),
-                      const SizedBox(width: AppSpacing.sm),
-                      _buildActionButton(
-                        colors,
-                        Icons.shuffle,
-                        context.tr('随机播放'),
-                        () {
-                          if (_sortedSongs.isNotEmpty) {
-                            PlaybackContext.instance.set(
-                              PlaybackSourceType.playlist,
-                              id: playlist.id,
-                              name: playlist.name,
-                            );
-                            final songs = [
-                              ...applyFavoriteSource(
-                                _sortedSongs,
-                                playlist.favoriteSource,
-                              ),
-                            ]..shuffle();
-                            final controller = ref.read(
-                              playbackControllerProvider.notifier,
-                            );
-                            controller.setQueue(songs);
-                          }
-                        },
-                      ),
-                      const SizedBox(width: AppSpacing.sm),
-                      _buildSortButton(colors),
-                    ],
+                    ),
                   ),
                 ],
               ),
             ),
-            // 作者收藏歌单：拉取该作者最新作品并补进收藏
-            if (_artistCollectionOf(playlist) != null)
-              _buildUpdateButton(colors, playlist),
             // 更多操作
             PopupMenuButton<String>(
               icon: Icon(
@@ -716,210 +733,6 @@ class _LocalPlaylistDetailPageState
         ),
       ),
     );
-  }
-
-  // ---------------------------------------------------------------- 作者收藏
-
-  /// 解析「作者：xxx」收藏歌单里保存的来源信息。
-  ///
-  /// 收藏专辑 / 作者时会把 `mintmusic:artist:<source>:<id>` 写进歌单描述，
-  /// 只有带这个标记的歌单才显示「更新」按钮（搜索结果里打开的作者主页没有）。
-  ({String source, String id, String name})? _artistCollectionOf(
-    Playlist playlist,
-  ) {
-    const prefix = 'mintmusic:artist:';
-    final description = playlist.description.trim();
-    if (!description.startsWith(prefix)) return null;
-    final rest = description.substring(prefix.length);
-    final separator = rest.indexOf(':');
-    if (separator <= 0) return null;
-    final source = rest.substring(0, separator).trim();
-    final id = rest.substring(separator + 1).trim();
-    if (source.isEmpty || id.isEmpty) return null;
-    final name = playlist.name.startsWith('作者：')
-        ? playlist.name.substring(3)
-        : playlist.name;
-    return (source: source, id: id, name: name);
-  }
-
-  /// 作者收藏歌单右上角的「更新」按钮（图标样式，避免挤爆窄屏的操作行）。
-  Widget _buildUpdateButton(ThemeColors colors, Playlist playlist) {
-    return Tooltip(
-      message: context.tr('更新作者作品'),
-      child: GestureDetector(
-        onTap: _updatingArtist
-            ? null
-            : () => unawaited(_updateArtistCollection(playlist)),
-        child: Padding(
-          padding: const EdgeInsets.all(AppSpacing.xs),
-          child: _updatingArtist
-              ? SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: colors.primary,
-                  ),
-                )
-              : Icon(Icons.refresh, size: 22, color: colors.primary),
-        ),
-      ),
-    );
-  }
-
-  /// 拉取作者最新作品，把收藏里还没有的歌曲补进去。
-  ///
-  /// 流程：重新搜一次作者（插件查作品需要搜索返回的 artistItem）→ 逐页拉作品
-  /// → 和收藏里的歌曲比对 → 只把新增的加进去 → 弹框显示明细 / 异常信息。
-  Future<void> _updateArtistCollection(Playlist playlist) async {
-    final info = _artistCollectionOf(playlist);
-    if (info == null || _updatingArtist) return;
-    setState(() => _updatingArtist = true);
-    final manager = ref.read(musicSourceManagerProvider);
-    final details = <String>[];
-    try {
-      details.add('音源：${info.source}');
-      final search = await manager.searchCollections(
-        info.name,
-        sourceId: info.source,
-        type: CollectionType.artist,
-        page: 1,
-      );
-      details.add('搜索「${info.name}」：返回 ${search.items.length} 个作者');
-      if (search.items.isEmpty) {
-        await _showUpdateResult(
-          success: false,
-          title: context.tr('没有搜到该作者'),
-          details: details,
-          playlist: playlist,
-        );
-        return;
-      }
-      final artist = search.items.firstWhere(
-        (item) => item.id == info.id,
-        orElse: () => search.items.first,
-      );
-      details.add('使用作者：${artist.title}（id=${artist.id}）');
-
-      final works = <Song>[];
-      var page = 1;
-      var isEnd = false;
-      // 最多 10 页（作者作品一般每页 30 首），避免异常音源无限翻页。
-      while (!isEnd && page <= 10) {
-        final detail = await manager.getCollectionDetail(artist, page: page);
-        details.add('第 $page 页：${detail.songs.length} 首');
-        works.addAll(detail.songs);
-        isEnd = detail.isEnd;
-        if (detail.songs.isEmpty) break;
-        page++;
-      }
-      if (works.isEmpty) {
-        await _showUpdateResult(
-          success: false,
-          title: context.tr('没有获取到作品'),
-          details: details,
-          playlist: playlist,
-        );
-        return;
-      }
-
-      final existing = playlist.songs.map((song) => song.id).toSet();
-      final added = <Song>[];
-      for (final song in works) {
-        if (existing.add(song.id)) added.add(song);
-      }
-      details.add('最新作品 ${works.length} 首，收藏里已有 ${playlist.songs.length} 首');
-      if (added.isEmpty) {
-        await _showUpdateResult(
-          success: true,
-          title: context.tr('没有新增作品'),
-          details: details,
-          playlist: playlist,
-        );
-        return;
-      }
-      await ref
-          .read(playlistsProvider.notifier)
-          .addSongsToPlaylist(playlist.id, added);
-      final preview = added.take(10).map((song) => song.title).join('、');
-      details.add('新增作品：$preview${added.length > 10 ? ' 等' : ''}');
-      if (mounted) {
-        await _showUpdateResult(
-          success: true,
-          title: context.tr('已新增 ${added.length} 首作品'),
-          details: details,
-          playlist: playlist,
-        );
-      }
-    } catch (e) {
-      details.add('异常：$e');
-      if (mounted) {
-        await _showUpdateResult(
-          success: false,
-          title: context.tr('更新失败'),
-          details: details,
-          playlist: playlist,
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _updatingArtist = false);
-    }
-  }
-
-  /// 更新结果弹框：标题 + 详细过程 / 异常信息，失败时可直接重试。
-  Future<void> _showUpdateResult({
-    required bool success,
-    required String title,
-    required List<String> details,
-    required Playlist playlist,
-  }) async {
-    if (!mounted) return;
-    final colors = ref.read(themeColorsProvider);
-    final retry = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        backgroundColor: colors.surface,
-        title: Row(
-          children: [
-            Icon(
-              success ? Icons.check_circle_outline : Icons.error_outline,
-              size: 20,
-              color: success ? colors.primary : colors.error,
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                title,
-                style: TextStyle(fontSize: 16, color: colors.textPrimary),
-              ),
-            ),
-          ],
-        ),
-        content: ConstrainedBox(
-          constraints: const BoxConstraints(maxHeight: 320),
-          child: SingleChildScrollView(
-            child: SelectableText(
-              details.join('\n'),
-              style: TextStyle(fontSize: 12, color: colors.textSecondary),
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: Text(context.tr('关闭')),
-          ),
-          if (!success)
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(true),
-              child: Text(context.tr('重试')),
-            ),
-        ],
-      ),
-    );
-    if (retry == true && mounted) {
-      await _updateArtistCollection(playlist);
-    }
   }
 
   Widget _buildSortButton(ThemeColors colors) {
@@ -1663,4 +1476,19 @@ class _LocalPlaylistDetailPageState
       ),
     );
   }
+}
+
+/// 顶部操作按钮在窄屏放不下时允许触屏 / 鼠标 / 触控板横向拖动。
+class _HeaderScrollBehavior extends MaterialScrollBehavior {
+  const _HeaderScrollBehavior();
+
+  @override
+  Set<PointerDeviceKind> get dragDevices => const {
+    PointerDeviceKind.touch,
+    PointerDeviceKind.stylus,
+    PointerDeviceKind.invertedStylus,
+    PointerDeviceKind.mouse,
+    PointerDeviceKind.trackpad,
+    PointerDeviceKind.unknown,
+  };
 }

@@ -59,6 +59,9 @@ class SongListItem extends ConsumerWidget {
   /// 非空时替代「时长 / 更多按钮」，用于下载管理等需要自己放置操作按钮的列表。
   final Widget? trailing;
 
+  /// 右侧附加标记（例如作者更新页的「新增」），显示在「已听 / 时长 / 更多」之前。
+  final Widget? trailingBadge;
+
   /// 行下方的附加内容（进度条、状态提示等）。
   final Widget? footer;
 
@@ -83,6 +86,7 @@ class SongListItem extends ConsumerWidget {
     this.onSelectionToggle,
     this.onLongPress,
     this.trailing,
+    this.trailingBadge,
     this.footer,
   });
 
@@ -320,14 +324,12 @@ class SongListItem extends ConsumerWidget {
       return Row(
         mainAxisSize: MainAxisSize.min,
         children: [
+          ?trailingBadge,
           Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              if (duration != null) ...[
-                duration,
-                const SizedBox(height: 2),
-              ],
+              if (duration != null) ...[duration, const SizedBox(height: 2)],
               playedTag,
             ],
           ),
@@ -338,7 +340,7 @@ class SongListItem extends ConsumerWidget {
 
     return Row(
       mainAxisSize: MainAxisSize.min,
-      children: [?playedTag, ?duration, ?menu],
+      children: [?trailingBadge, ?playedTag, ?duration, ?menu],
     );
   }
 
