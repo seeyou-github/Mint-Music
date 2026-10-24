@@ -1944,20 +1944,24 @@ class PlaybackController extends StateNotifier<PlaybackState> {
       _musicSourceManager.playbackFallbackSourceIds(currentSource),
     );
     // 优先级（从高到低）：
-    // 1. 本次会话用户手动选择的音源（播放详情页顶部选的，不持久化）；
-    // 2. 收藏时记下的插件（它才是「当时那个音源」）；
+    // 1. 收藏 / 来源插件绑定（歌曲级 preferredSource 或音源自身带插件）——
+    //    插件源的歌曲始终优先用自己的绑定；
+    // 2. 本次会话用户手动选择的音源——**仅对绑定内置源的歌曲有效**（会话
+    //    手动选择不持久化，重启即失效，也不能越权接管插件源的歌曲）；
     // 3. 设置里给这个内置源指定的「优先音源」（排最后兜底）。
-    final manual = _musicSourceManager.sessionPreferredSource;
+    final current = currentSource.trim();
+    final songPreferred = song?.preferredSource?.trim() ?? '';
+    final isPluginBound =
+        current.contains('@') || songPreferred.isNotEmpty;
+    final manual = isPluginBound
+        ? null
+        : _musicSourceManager.sessionPreferredSource;
+    if (songPreferred.isNotEmpty && ids.contains(songPreferred)) {
+      ids.remove(songPreferred);
+      ids.insert(0, songPreferred);
+    }
     if (manual != null && manual.isNotEmpty && ids.remove(manual)) {
       ids.insert(0, manual);
-    }
-    final songPreferred = song?.preferredSource?.trim() ?? '';
-    if (songPreferred.isNotEmpty && ids.contains(songPreferred)) {
-      // 手动选择是用户最新意图，排在收藏绑定之前；两者相同则不用动。
-      if (manual == null || manual != songPreferred) {
-        ids.remove(songPreferred);
-        ids.insert(manual == null ? 0 : 1, songPreferred);
-      }
     }
     final preferred = preferredSourceFor(currentSource);
     if (preferred != null && ids.remove(preferred)) {

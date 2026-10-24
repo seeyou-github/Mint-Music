@@ -1342,8 +1342,18 @@ class MusicSourceManager {
           .map((item) => Map<String, dynamic>.from(item))
           .toList();
       if (items.isNotEmpty) {
+        // 变体 id（插件音源）记到 preferredSource：播放时优先用「歌曲来源的
+        // 那个插件」解析——没有这层绑定的话，多平台插件（或播放页手动选的
+        // 音源）会把这些歌曲劫走，表现为「插件-酷我歌单的歌用插件-qq 播放」。
+        // source 仍记平台 id，跨插件兜底 / 歌词等逻辑保持原样。
+        final boundPlugin = sourceId.contains('@') ? sourceId : null;
         return items
-            .map((item) => _musicInfoToSong(item, baseSourceId))
+            .map((item) {
+              final song = _musicInfoToSong(item, baseSourceId);
+              return boundPlugin == null
+                  ? song
+                  : song.copyWith(preferredSource: boundPlugin);
+            })
             .toList();
       }
 
