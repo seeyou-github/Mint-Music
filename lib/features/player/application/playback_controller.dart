@@ -443,11 +443,17 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     final index = state.currentIndex;
     if (index < 0 || index >= state.queue.length) return;
     final song = state.queue[index];
-    // 把当前歌重置回平台 id 并清掉歌曲级绑定，手动选择才能立即生效；
-    // 队列里其它歌的绑定不动（切歌后仍按各自记录 / 手动音源规则走）。
     final (baseId, _) = MusicSourceManager.splitSourceId(song.source ?? '');
     if (baseId.isEmpty || baseId == 'local') return;
-    if (song.source != baseId || song.preferredSource != null) {
+    // 重置回平台 id 并清掉歌曲级绑定，手动选择才能立即生效；队列里其它歌
+    // 的绑定不动（切歌后仍按各自记录 / 手动音源规则走）。
+    //
+    // 缓存的 sourceUrl 是旧音源解析出来的，必须一并清掉——playSongAt 会
+    // 直接复用它，不清的话「看起来切换成功」但实际还在用旧音源的地址播放，
+    // 歌曲的音源标记也不会更新（顶部标签一直显示旧音源）。
+    if (song.source != baseId ||
+        song.preferredSource != null ||
+        (song.sourceUrl ?? '').isNotEmpty) {
       _replaceSongInQueue(
         index,
         song.copyWith(

@@ -811,13 +811,6 @@ class _SourceSelectorState extends ConsumerState<_SourceSelector> {
     final index = playback.currentIndex;
     final position = playback.position;
     final wasPlaying = playback.isPlaying;
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(context.tr('已切换音源：$sourceName（本次运行内有效）')),
-        duration: const Duration(seconds: 2),
-      ),
-    );
     if (index < 0) return;
 
     // 重新解析播放地址：所选音源失败时控制器会按换源顺序自动回退。
@@ -825,6 +818,30 @@ class _SourceSelectorState extends ConsumerState<_SourceSelector> {
       await ref
           .read(playbackControllerProvider.notifier)
           .setManualSource(sourceId);
+      if (!mounted) return;
+
+      // setManualSource 返回时重解析已完成：成功的话歌曲的 source 已回写成
+      // 实际解析地址的音源。按**实际生效**的音源提示，避免「所选音源解析
+      // 失败悄悄回退到旧音源」时提示与实际不符。
+      final manager = ref.read(musicSourceManagerProvider);
+      final effective =
+          ref.read(playbackControllerProvider).currentSong?.source ?? '';
+      final effectiveName = effective.isEmpty
+          ? sourceName
+          : manager.sourceDisplayName(effective);
+      final message = effective == sourceId
+          ? context.tr('已切换音源：$sourceName（本次运行内有效）')
+          : context.tr(
+              '已切换音源：${SourceNameTag.shorten(effectiveName)}'
+              '（$sourceName 解析失败，已自动回退）',
+            );
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+
       if (position > Duration.zero) {
         await ref.read(playbackControllerProvider.notifier).seek(position);
       }
