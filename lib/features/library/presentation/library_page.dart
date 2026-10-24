@@ -11,6 +11,7 @@ import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
+import '../../../shared/widgets/cover_badge.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../../../shared/widgets/playlist_sync_button.dart';
 import '../application/playlist_providers.dart';
@@ -21,6 +22,7 @@ import '../domain/models/playlist.dart' as local_playlist;
 import '../domain/models/recently_played.dart';
 import '../../discover/domain/models/playlist.dart' as discover_playlist;
 import '../utils/cerumusic_playlist_importer.dart';
+import '../utils/favorite_playlist.dart';
 
 class LibraryPage extends ConsumerWidget {
   const LibraryPage({super.key});
@@ -228,6 +230,7 @@ class LibraryPage extends ConsumerWidget {
     int index,
     WidgetRef ref,
   ) {
+    final favoriteType = playlist.favoriteType;
     return GestureDetector(
       onTap: () => context.push('/library/playlist/${playlist.id}'),
       child: Container(
@@ -247,6 +250,21 @@ class LibraryPage extends ConsumerWidget {
                     color: colors.surfaceVariant,
                     child: _buildPlaylistCover(colors, playlist),
                   ),
+                  if (favoriteType != null)
+                    Positioned(
+                      top: 6,
+                      right: 6,
+                      child: CoverBadge(
+                        label: context.tr(
+                          favoriteType == PlaybackSourceType.artist
+                              ? '作者'
+                              : '专辑',
+                        ),
+                        color: favoriteType == PlaybackSourceType.artist
+                            ? const Color(0xFFB07CFF)
+                            : const Color(0xFFD9B44A),
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -256,7 +274,7 @@ class LibraryPage extends ConsumerWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    playlist.name,
+                    playlist.displayName,
                     style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w500,
@@ -287,7 +305,10 @@ class LibraryPage extends ConsumerWidget {
                             );
                             ref
                                 .read(playbackControllerProvider.notifier)
-                                .setQueue(playlist.songs, startIndex: 0);
+                                .setQueue(
+                                  playlist.playbackSongs,
+                                  startIndex: 0,
+                                );
                           }
                         },
                       ),

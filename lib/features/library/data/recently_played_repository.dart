@@ -262,6 +262,7 @@ class RecentlyPlayedRepository {
     PlaybackSourceType sourceType = PlaybackSourceType.unknown,
     String? sourceId,
     String? sourceName,
+    Map<String, dynamic>? sourceMeta,
   }) async {
     final history = await loadHistory();
     final index = history.indexWhere((item) => item.song.id == song.id);
@@ -277,6 +278,8 @@ class RecentlyPlayedRepository {
         sourceType: sourceType,
         sourceId: sourceId,
         sourceName: sourceName,
+        sourceMeta: sourceMeta,
+        clearSourceMeta: sourceMeta == null,
       );
     } else {
       item = RecentlyPlayedItem(
@@ -285,6 +288,7 @@ class RecentlyPlayedRepository {
         sourceType: sourceType,
         sourceId: sourceId,
         sourceName: sourceName,
+        sourceMeta: sourceMeta,
       );
     }
     history.insert(0, item);
@@ -323,6 +327,7 @@ class RecentlyPlayedRepository {
     String coverUrl = '',
     int songCount = 0,
     String source = '',
+    PlaybackSourceType? collectionType,
   }) async {
     if (id.isEmpty || name.isEmpty) return;
     final playlists = await loadPlaylists();
@@ -334,6 +339,7 @@ class RecentlyPlayedRepository {
       coverUrl: coverUrl,
       songCount: songCount,
       source: source,
+      collectionType: collectionType,
     );
     playlists.insert(0, item);
     if (playlists.length > 200) {

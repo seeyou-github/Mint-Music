@@ -58,6 +58,10 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
 
   bool get _isArtist => widget.collection.type == CollectionType.artist;
 
+  /// 作者主页信息：播放作者作品时写进「最近播放」，之后可以从记录里点回主页。
+  Map<String, dynamic>? get _artistMeta =>
+      _isArtist ? (_item ?? widget.collection).toJson() : null;
+
   @override
   void initState() {
     super.initState();
@@ -171,6 +175,7 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
       _isArtist ? PlaybackSourceType.artist : PlaybackSourceType.album,
       id: widget.collection.id,
       name: widget.collection.title,
+      sourceMeta: _artistMeta,
     );
     await ref
         .read(playbackControllerProvider.notifier)
@@ -189,12 +194,15 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
       return;
     }
     if (songs.isEmpty) return;
+    final collection = _item ?? widget.collection;
     await notifier.createPlaylistWithSongs(
       name,
       songs.map((s) => s.toJson()).toList(),
       description:
-          'mintmusic:${widget.collection.type.id}:'
-          '${widget.collection.source}:${widget.collection.id}',
+          'mintmusic:${collection.type.id}:'
+          '${collection.source}:${collection.id}',
+      // 记录收藏时所在的音源，之后从收藏里播放优先使用它。
+      source: collection.source,
     );
     if (!mounted) return;
     _toast(context.tr('已收藏到「收藏」'));
@@ -472,6 +480,7 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
               _isArtist ? PlaybackSourceType.artist : PlaybackSourceType.album,
               id: widget.collection.id,
               name: widget.collection.title,
+              sourceMeta: _artistMeta,
             );
             await ref
                 .read(playbackControllerProvider.notifier)

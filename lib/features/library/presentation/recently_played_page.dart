@@ -9,6 +9,7 @@ import '../../../core/constants/app_routes.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
+import '../../../shared/widgets/cover_badge.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../../discover/domain/models/search_collection.dart';
 import '../../player/application/playback_context.dart';
@@ -603,27 +604,10 @@ class _SourceBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final badge = Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.45),
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: _color.withValues(alpha: 0.85)),
-      ),
-      child: Text(
-        context.tr(type.label),
-        style: TextStyle(
-          fontSize: 11,
-          height: 1.1,
-          fontWeight: FontWeight.w500,
-          color: _color,
-        ),
-      ),
-    );
-    if (onTap == null) return badge;
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(onTap: onTap, child: badge),
+    return CoverBadge(
+      label: context.tr(type.label),
+      color: _color,
+      onTap: onTap,
     );
   }
 }
@@ -643,7 +627,8 @@ class _SongCard extends ConsumerWidget {
   bool get _sourceClickable => switch (item.sourceType) {
     PlaybackSourceType.playlist ||
     PlaybackSourceType.rank ||
-    PlaybackSourceType.album => true,
+    PlaybackSourceType.album ||
+    PlaybackSourceType.artist => true,
     _ => false,
   };
 
@@ -653,6 +638,7 @@ class _SongCard extends ConsumerWidget {
       item.sourceType,
       id: item.sourceId,
       name: item.sourceName,
+      sourceMeta: item.sourceMeta,
     );
     ref
         .read(playbackControllerProvider.notifier)
@@ -681,31 +667,49 @@ class _SongCard extends ConsumerWidget {
       case PlaybackSourceType.rank:
         context.push('/playlist/${Uri.encodeComponent(id)}?type=rank');
       case PlaybackSourceType.album:
-        final song = item.song;
-        final albumName = item.sourceName ?? song.album;
         context.push(
           AppRoutes.collectionDetail,
-          extra: SearchCollection(
-            id: id,
-            title: albumName,
-            type: CollectionType.album,
-            source: song.source ?? '',
-            coverUrl: song.coverUrl,
-            artist: song.artist,
-            raw: {
-              'id': id,
-              'name': albumName,
-              'artist': song.artist,
-              'picUrl': song.coverUrl ?? '',
-            },
-          ),
+          extra: _collectionOf(CollectionType.album),
+        );
+      case PlaybackSourceType.artist:
+        context.push(
+          AppRoutes.collectionDetail,
+          extra: _collectionOf(CollectionType.artist),
         );
       case PlaybackSourceType.search:
-      case PlaybackSourceType.artist:
       case PlaybackSourceType.local:
       case PlaybackSourceType.unknown:
         break;
     }
+  }
+
+  /// 打开专辑 / 作者主页用的信息。
+  ///
+  /// 新版记录里存了完整主页信息（[RecentlyPlayedItem.sourceMeta]）；
+  /// 老记录没有，只能根据歌曲字段拼一个。
+  SearchCollection _collectionOf(CollectionType type) {
+    final meta = item.sourceMeta;
+    if (meta != null) return SearchCollection.fromJson(meta, type: type);
+
+    final song = item.song;
+    final isArtist = type == CollectionType.artist;
+    final id = item.sourceId ?? '';
+    final title = item.sourceName ?? (isArtist ? song.artist : song.album);
+    return SearchCollection(
+      id: id,
+      title: title,
+      type: type,
+      source: song.source ?? '',
+      coverUrl: song.coverUrl,
+      artist: isArtist ? null : song.artist,
+      raw: {
+        'id': id,
+        'name': title,
+        if (isArtist) 'avatar': song.coverUrl ?? '',
+        if (!isArtist) 'artist': song.artist,
+        if (!isArtist) 'picUrl': song.coverUrl ?? '',
+      },
+    );
   }
 
   @override
@@ -813,6 +817,7 @@ class _PlaylistCard extends ConsumerWidget {
       }
     }
     final isLocal = localPlaylist != null || playlist.source == 'local';
+    final favoriteType = playlist.favoriteType;
 
     var coverUrl = playlist.coverUrl;
     Song? coverSong;
@@ -868,27 +873,40 @@ class _PlaylistCard extends ConsumerWidget {
                         ),
                       ),
                     ),
-                    if (playlist.songCount > 0)
+                    if (favoriteType != null || playlist.songCount > 0)
                       Positioned(
                         top: 6,
                         right: 6,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 7,
-                            vertical: 3,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.black.withValues(alpha: 0.55),
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Text(
-                            context.tr('${playlist.songCount}首'),
-                            style: const TextStyle(
-                              fontSize: 11,
-                              height: 1.1,
-                              color: Colors.white,
-                            ),
-                          ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            if (favoriteType != null)
+                              _SourceBadge(
+                                type: favoriteType,
+                                colors: colors,
+                              ),
+                            if (favoriteType != null && playlist.songCount > 0)
+                              const SizedBox(height: 4),
+                            if (playlist.songCount > 0)
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 7,
+                                  vertical: 3,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.black,
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Text(
+                                  context.tr('${playlist.songCount}首'),
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    height: 1.1,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ),
+                          ],
                         ),
                       ),
                   ],
@@ -896,7 +914,7 @@ class _PlaylistCard extends ConsumerWidget {
               ),
               const SizedBox(height: 6),
               Text(
-                playlist.name,
+                playlist.displayName,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
@@ -942,6 +960,7 @@ class _RankRowState extends ConsumerState<_RankRow> {
       widget.item.sourceType,
       id: widget.item.sourceId,
       name: widget.item.sourceName,
+      sourceMeta: widget.item.sourceMeta,
     );
     ref
         .read(playbackControllerProvider.notifier)

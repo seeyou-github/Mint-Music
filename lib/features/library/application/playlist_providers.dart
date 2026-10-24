@@ -59,11 +59,17 @@ class PlaylistsNotifier extends AsyncNotifier<List<Playlist>> {
 
   Future<void> createPlaylistWithSongs(
     String name,
-    List<Map<String, dynamic>> songsData,
-    {String description = ''}
-  ) async {
+    List<Map<String, dynamic>> songsData, {
+    String description = '',
+    String? source,
+  }) async {
     final repo = ref.read(playlistRepositoryProvider);
-    await repo.createPlaylistWithSongs(name, songsData, description: description);
+    await repo.createPlaylistWithSongs(
+      name,
+      songsData,
+      description: description,
+      source: source,
+    );
     ref.invalidateSelf();
     _syncToRemote();
   }

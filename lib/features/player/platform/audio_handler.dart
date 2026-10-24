@@ -26,6 +26,7 @@ class MusicAudioHandler extends BaseAudioHandler
   Stream<PlayerState> get playerStateStream => _player.playerStateStream;
   Stream<Duration?> get durationStream => _player.durationStream;
   Duration? get currentDuration => _player.duration;
+  Duration get currentPosition => _player.position;
   Stream<int?> get currentIndexStream => _player.currentIndexStream;
   Stream<int?> get audioSessionIdStream => _player.androidAudioSessionIdStream;
   int? get currentAudioSessionId => _player.androidAudioSessionId;

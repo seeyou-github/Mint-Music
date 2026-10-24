@@ -96,6 +96,10 @@ class SongListItem extends ConsumerWidget {
   }
 
   Widget _buildItem(ThemeColors colors, BuildContext context, WidgetRef ref) {
+    // 竖屏或窄窗口下右侧空间紧张，把「已听」标签挪到时长下方。
+    final narrow =
+        MediaQuery.orientationOf(context) == Orientation.portrait ||
+        MediaQuery.sizeOf(context).width < 520;
     final effectiveTap = selectionMode
         ? () => onSelectionToggle?.call(song)
         : (onTap ?? () => _defaultOnTap(context));
@@ -129,13 +133,8 @@ class SongListItem extends ConsumerWidget {
                   Expanded(child: _buildSongInfo(colors, context, ref)),
                   if (trailing != null)
                     trailing!
-                  else ...[
-                    if (showPlayedTag && !selectionMode)
-                      _buildPlayedTag(colors, context, ref),
-                    if (showDuration && !selectionMode) _buildDuration(colors),
-                    if (showMenuButton && !selectionMode)
-                      _buildMenuButton(colors, context),
-                  ],
+                  else
+                    _buildTrailing(colors, context, ref, narrow: narrow),
                 ],
               ),
               if (footer != null) ...[
@@ -155,7 +154,7 @@ class SongListItem extends ConsumerWidget {
   /// 处理，避免「点勾选框触发两次切换导致状态不变」。
   Widget _buildCheckbox(ThemeColors colors) {
     return SizedBox(
-      width: 28,
+      width: 36,
       child: IgnorePointer(
         child: Checkbox(
           value: selected,
@@ -170,7 +169,8 @@ class SongListItem extends ConsumerWidget {
 
   Widget _buildIndex(ThemeColors colors) {
     return SizedBox(
-      width: 28,
+      // 三位数序号不再折行；四位数仍会折行。
+      width: 36,
       child: isPlaying
           ? Icon(Icons.play_arrow, size: 18, color: colors.primary)
           : Text(
@@ -297,22 +297,68 @@ class SongListItem extends ConsumerWidget {
     );
   }
 
-  /// 「已听 / 已听 N%」标签：进度不足 1% 或开关关闭时不显示。
-  Widget _buildPlayedTag(
+  /// 右侧「已听标签 / 时长 / 更多」区域。
+  ///
+  /// 窄屏时标签换到时长下方并右对齐：时长与歌名同一行、标签与歌手同一行。
+  Widget _buildTrailing(
     ThemeColors colors,
     BuildContext context,
-    WidgetRef ref,
-  ) {
-    if (!ref.watch(markPlayedStatusProvider)) return const SizedBox.shrink();
+    WidgetRef ref, {
+    required bool narrow,
+  }) {
+    final playedTag = showPlayedTag && !selectionMode
+        ? _buildPlayedTag(colors, context, ref, compact: !narrow)
+        : null;
+    final duration = showDuration && !selectionMode
+        ? _buildDuration(colors, padded: !narrow)
+        : null;
+    final menu = showMenuButton && !selectionMode
+        ? _buildMenuButton(colors, context)
+        : null;
+
+    if (narrow && playedTag != null) {
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              if (duration != null) ...[
+                duration,
+                const SizedBox(height: 2),
+              ],
+              playedTag,
+            ],
+          ),
+          ?menu,
+        ],
+      );
+    }
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [?playedTag, ?duration, ?menu],
+    );
+  }
+
+  /// 「已听 / 已听 N%」标签：进度不足 1% 或开关关闭时不显示。
+  Widget? _buildPlayedTag(
+    ThemeColors colors,
+    BuildContext context,
+    WidgetRef ref, {
+    bool compact = true,
+  }) {
+    if (!ref.watch(markPlayedStatusProvider)) return null;
     // select 只在本行这首歌曲的进度变化时重建，列表其它行不受影响。
     final ratio = ref.watch(
       playedProgressProvider.select((map) => map[song.id]),
     );
     final label = playedProgressLabel(ratio);
-    if (label == null) return const SizedBox.shrink();
+    if (label == null) return null;
     final done = (ratio ?? 0) >= 0.999;
     return Padding(
-      padding: const EdgeInsets.only(left: AppSpacing.sm),
+      padding: EdgeInsets.only(left: compact ? AppSpacing.sm : 0),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
         decoration: BoxDecoration(
@@ -322,7 +368,7 @@ class SongListItem extends ConsumerWidget {
         child: Text(
           context.tr(label),
           style: TextStyle(
-            fontSize: 10,
+            fontSize: compact ? 10 : 12,
             height: 1.2,
             fontWeight: done ? FontWeight.w600 : FontWeight.w500,
             color: colors.primary,
@@ -332,10 +378,10 @@ class SongListItem extends ConsumerWidget {
     );
   }
 
-  Widget _buildDuration(ThemeColors colors) {
-    if (song.duration <= 0) return const SizedBox.shrink();
+  Widget? _buildDuration(ThemeColors colors, {bool padded = true}) {
+    if (song.duration <= 0) return null;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
+      padding: EdgeInsets.symmetric(horizontal: padded ? AppSpacing.sm : 0),
       child: Text(
         song.displayDuration,
         style: TextStyle(fontSize: 12, color: colors.textHint),

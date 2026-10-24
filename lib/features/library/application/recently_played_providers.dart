@@ -27,6 +27,7 @@ class RecentlyPlayedNotifier extends AsyncNotifier<List<RecentlyPlayedItem>> {
     PlaybackSourceType sourceType = PlaybackSourceType.unknown,
     String? sourceId,
     String? sourceName,
+    Map<String, dynamic>? sourceMeta,
   }) async {
     await ref
         .read(recentlyPlayedRepositoryProvider)
@@ -35,6 +36,7 @@ class RecentlyPlayedNotifier extends AsyncNotifier<List<RecentlyPlayedItem>> {
           sourceType: sourceType,
           sourceId: sourceId,
           sourceName: sourceName,
+          sourceMeta: sourceMeta,
         );
     ref.invalidateSelf();
   }
@@ -72,6 +74,7 @@ class RecentlyPlayedPlaylistsNotifier
     String coverUrl = '',
     int songCount = 0,
     String source = '',
+    PlaybackSourceType? collectionType,
   }) async {
     await ref
         .read(recentlyPlayedRepositoryProvider)
@@ -81,6 +84,7 @@ class RecentlyPlayedPlaylistsNotifier
           coverUrl: coverUrl,
           songCount: songCount,
           source: source,
+          collectionType: collectionType,
         );
     ref.invalidateSelf();
   }

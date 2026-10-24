@@ -131,9 +131,10 @@ class PlaylistRepository {
 
   Future<Playlist> createPlaylistWithSongs(
     String name,
-    List<Map<String, dynamic>> songsData,
-    {String description = ''}
-  ) async {
+    List<Map<String, dynamic>> songsData, {
+    String description = '',
+    String? source,
+  }) async {
     final playlists = await loadPlaylists();
     final now = DateTime.now();
 
@@ -155,6 +156,7 @@ class PlaylistRepository {
       id: now.millisecondsSinceEpoch.toString(),
       name: name,
       description: description,
+      source: source ?? 'local',
       createTime: now,
       updateTime: now,
       songs: songs,

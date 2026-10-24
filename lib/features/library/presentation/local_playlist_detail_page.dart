@@ -21,6 +21,7 @@ import '../application/playlist_providers.dart';
 import '../application/recently_played_providers.dart';
 import '../domain/models/playlist.dart';
 import '../domain/models/recently_played.dart';
+import '../utils/favorite_playlist.dart';
 import '../../player/application/playback_context.dart';
 import '../../player/application/playback_controller.dart';
 import '../../player/domain/models/song.dart';
@@ -325,6 +326,7 @@ class _LocalPlaylistDetailPageState
                                     coverUrl: playlist.coverImgUrl,
                                     songCount: playlist.songCount,
                                     source: 'local',
+                                    collectionType: playlist.favoriteType,
                                   ),
                             );
                           });
@@ -569,7 +571,12 @@ class _LocalPlaylistDetailPageState
                             final controller = ref.read(
                               playbackControllerProvider.notifier,
                             );
-                            controller.setQueue(_sortedSongs);
+                            controller.setQueue(
+                              applyFavoriteSource(
+                                _sortedSongs,
+                                playlist.favoriteSource,
+                              ),
+                            );
                           }
                         },
                       ),
@@ -585,7 +592,12 @@ class _LocalPlaylistDetailPageState
                               id: playlist.id,
                               name: playlist.name,
                             );
-                            final songs = [..._sortedSongs]..shuffle();
+                            final songs = [
+                              ...applyFavoriteSource(
+                                _sortedSongs,
+                                playlist.favoriteSource,
+                              ),
+                            ]..shuffle();
                             final controller = ref.read(
                               playbackControllerProvider.notifier,
                             );
@@ -1296,7 +1308,10 @@ class _LocalPlaylistDetailPageState
                     final controller = ref.read(
                       playbackControllerProvider.notifier,
                     );
-                    controller.setQueue(_sortedSongs, startIndex: index);
+                    controller.setQueue(
+                      applyFavoriteSource(_sortedSongs, playlist.favoriteSource),
+                      startIndex: index,
+                    );
                   },
                   onMenuTap: () => SongActionSheet.show(
                     context,

@@ -16,11 +16,20 @@ class PlaybackContext {
   String? id;
   String? name;
 
+  /// 来源的完整信息（专辑 / 作者主页），用于「最近播放」里再次打开。
+  Map<String, dynamic>? sourceMeta;
+
   /// 设置当前播放来源。[id] 为歌单 / 专辑 / 榜单的 id。
-  void set(PlaybackSourceType type, {String? id, String? name}) {
+  void set(
+    PlaybackSourceType type, {
+    String? id,
+    String? name,
+    Map<String, dynamic>? sourceMeta,
+  }) {
     this.type = type;
     this.id = id;
     this.name = name;
+    this.sourceMeta = sourceMeta;
   }
 
   /// 从本地列表等没有来源的场景播放时调用。
@@ -28,5 +37,6 @@ class PlaybackContext {
     type = PlaybackSourceType.unknown;
     id = null;
     name = null;
+    sourceMeta = null;
   }
 }

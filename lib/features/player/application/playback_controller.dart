@@ -73,6 +73,7 @@ final playbackControllerProvider =
             sourceType: ctx.type,
             sourceId: ctx.id,
             sourceName: ctx.name,
+            sourceMeta: ctx.sourceMeta,
           ),
         );
         ref.invalidate(recentlyPlayedProvider);
@@ -343,16 +344,18 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   /// 带一个微任务周期后由 _playerStateSub 或 next() 清除。
   bool _justCompleted = false;
 
-  /// 当前这首歌是否已经在「自然播完」时按整首时长结算过，
+  /// 当前这首歌是否已经在「自然播完」时结算过，
   /// 避免随后 playSongAt 里的 _finalizeListenSession 再记一次。
   bool _completedListenCounted = false;
 
-  /// 当前这首歌真实出声的累计时长（不含暂停 / 缓冲 / 加载）。
+  /// 当前这段「正在出声」的起始播放进度；暂停 / 缓冲 / 停止时为 null。
   ///
-  /// 之前用播放位置结算：整首播完按歌曲总时长记、中途切歌按 position 记，
-  /// 拖动进度条和暂停的时间都会被算进去，且重复播放只能整首累加。
-  /// 现在改为计时器，只有 [PlayerState.playing] 且处于 ready 时才走表。
-  final Stopwatch _listenWatch = Stopwatch();
+  /// 不用计时器：进入可听状态记下进度，暂停 / 切歌 / 退出等关键时机
+  /// 用「结束进度 - 起始进度」累加，只有播放器真正在走进度时才会计入。
+  Duration? _listenSegmentStart;
+
+  /// 当前这首歌已累计的收听时长（毫秒），跨多次暂停 / 继续累加。
+  int _listenAccumMs = 0;
 
   /// CeruMusic 风格的自动下一首防重入标志。
   /// completed 事件中设为 true，Future.microtask 排空后执行 next()
@@ -555,7 +558,21 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     if (resumePosition <= Duration.zero) return;
     final duration = _audioHandler.currentDuration;
     if (duration != null && resumePosition >= duration) return;
-    await _audioHandler.seek(resumePosition);
+    await _seekWithoutCounting(resumePosition);
+  }
+
+  /// 内部直接 seek（换源 / 换音质后恢复进度 / 单曲重播）。
+  ///
+  /// 跳过的进度不算收听：先结算当前段，再从目标位置重新起算。
+  /// 同时乐观更新 position 并加 seek 锁，避免旧的进度事件把起点算错。
+  Future<void> _seekWithoutCounting(Duration target) async {
+    _closeListenSegment();
+    _listenSegmentStart = target;
+    _clearSeekTarget();
+    _seekTarget = target;
+    if (mounted) state = state.copyWith(position: target);
+    _seekTargetTimer = Timer(const Duration(seconds: 2), _clearSeekTarget);
+    await _audioHandler.seek(target);
   }
 
   bool get hasQueue => state.queue.isNotEmpty;
@@ -581,6 +598,12 @@ class PlaybackController extends StateNotifier<PlaybackState> {
           _seekTargetTimer?.cancel();
           _seekTargetTimer = null;
         }
+        // 进度回退（换歌 / 单曲循环从 0 重播）时以新进度为起点，
+        // 避免把上一段的进度算到这一段里。
+        final listenStart = _listenSegmentStart;
+        if (listenStart != null && position < listenStart) {
+          _listenSegmentStart = position;
+        }
         final diff = (position - _lastEmittedPosition).abs();
         if (diff >= _positionThrottle) {
           _lastEmittedPosition = position;
@@ -603,8 +626,8 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     });
     _playerStateSub = _audioHandler.playerStateStream.listen((playerState) {
       if (!mounted) return;
-      // 真实收听时长：只有真正出声时走表，暂停 / 缓冲 / 加载 / 播完都停。
-      _syncListenWatch(playerState);
+      // 真实收听时长：只有真正出声时采样进度，暂停 / 缓冲 / 加载 / 播完都停。
+      _syncListenSession(playerState);
       // 暂停 / 停止时记录一次播放进度。
       _maybeReportProgressOnStateChange(playerState);
       // 注意：这里不再用 _settingQueue 门控整个监听器。
@@ -781,32 +804,45 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     }
   }
 
-  /// 播放器状态 → 计时开关。
+  /// 播放器状态 → 收听区间的开关。
   ///
   /// `playing` 在缓冲 / 加载时也可能为 true（playWhenReady），所以必须同时
   /// 要求 `processingState == ready`，否则把等待缓冲的时间也算进听歌时长。
-  void _syncListenWatch(PlayerState playerState) {
+  void _syncListenSession(PlayerState playerState) {
     final audible =
         playerState.playing &&
         playerState.processingState == ProcessingState.ready;
     if (audible) {
-      if (!_listenWatch.isRunning) _listenWatch.start();
-    } else if (_listenWatch.isRunning) {
-      _listenWatch.stop();
+      _listenSegmentStart ??= _audioHandler.currentPosition;
+    } else {
+      _closeListenSegment();
     }
+  }
+
+  /// 结束当前收听区间，把这段时间的播放进度累加进 [_listenAccumMs]。
+  ///
+  /// 进度回退（换歌 / 单曲循环）时 delta 不为正，直接忽略。
+  void _closeListenSegment([Duration? position]) {
+    final start = _listenSegmentStart;
+    if (start == null) return;
+    _listenSegmentStart = null;
+    // 直接读播放器的真实进度：state.position 有 200ms 节流，
+    // 后台挂起时也可能停在旧值。
+    final delta = (position ?? _audioHandler.currentPosition) - start;
+    if (delta > Duration.zero) _listenAccumMs += delta.inMilliseconds;
   }
 
   /// 结算上一首的收听时长。
   ///
-  /// 用计时器累计的真实出声时长：暂停、缓冲、拖动进度条跳过的部分都不计入；
+  /// 用各段播放进度差累计：暂停、缓冲、拖动进度条跳过的部分都不计入；
   /// 同一首歌重复播放时，每次结算都会单独累加。
   void _finalizeListenSession() {
     // 切上一首 / 下一首、清空队列、退出应用都会走到这里：先记一次播放进度。
     _reportProgressNow();
-    _listenWatch.stop();
-    final listened = _listenWatch.elapsedMilliseconds;
-    _listenWatch.reset();
-    // 自然播完已经结算过的话，这里计时器已被清零，不会重复上报。
+    _closeListenSegment();
+    final listened = _listenAccumMs;
+    _listenAccumMs = 0;
+    // 自然播完已经结算过的话，这里累计值已被清零，不会重复上报。
     _completedListenCounted = false;
     final song = state.currentSong;
     if (song == null || listened < 1000) return;
@@ -816,16 +852,16 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   /// 应用退出前主动调用：把当前这段真实收听时长结算掉。
   ///
   /// 退出时 provider 不一定会被 dispose，最后一小段统计会丢，所以由退出流程
-  /// 调一次；[_finalizeListenSession] 会清零计时器，重复调用没有副作用。
+  /// 调一次；[_finalizeListenSession] 会清零累计值，重复调用没有副作用。
   void settleListenSession() => _finalizeListenSession();
 
-  /// 自然播完时结算：用计时器累计的真实出声时长，而不是歌曲总时长。
+  /// 自然播完时结算：用进度差累计的真实收听时长，而不是歌曲总时长。
   void _recordCompletedListen() {
     if (_completedListenCounted) return;
     _completedListenCounted = true;
-    _listenWatch.stop();
-    final listened = _listenWatch.elapsedMilliseconds;
-    _listenWatch.reset();
+    _closeListenSegment();
+    final listened = _listenAccumMs;
+    _listenAccumMs = 0;
     final song = state.currentSong;
     if (song == null) return;
     // 整首播完 = 进度 100%，界面显示「已听」。
@@ -1364,7 +1400,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
       // 直接调用 pause() 在 STATE_ENDED 下可能被忽略。
       // 必须先 seek(0) 让播放器离开 ENDED(→READY)，
       // 再 pause() 才能真正停止播放。
-      await _audioHandler.seek(Duration.zero);
+      await _seekWithoutCounting(Duration.zero);
       await _audioHandler.pause();
       // 排空 seek/pause 触发的 playerStateStream 微任务事件
       await Future.microtask(() {});
@@ -1378,9 +1414,10 @@ class PlaybackController extends StateNotifier<PlaybackState> {
       // singleLoop 模式：重新播放当前歌曲
       if (state.playMode == PlayMode.singleLoop && state.currentSong != null) {
         debugPrint('[PlaybackController] singleLoop: 重新播放当前歌曲');
-        await _audioHandler.seek(Duration.zero);
+        // 单曲循环重新开始：从 0 重新起算这一段。
+        await _seekWithoutCounting(Duration.zero);
         await _audioHandler.play();
-        // 单曲循环重新开始，允许下一次播完继续结算。
+        // 允许下一次播完继续结算。
         _completedListenCounted = false;
         return;
       }
@@ -1493,6 +1530,11 @@ class PlaybackController extends StateNotifier<PlaybackState> {
 
     var target = position;
     if (target < Duration.zero) target = Duration.zero;
+
+    // 拖动进度条跳过的部分不算收听：先按当前位置结算这一段，
+    // 再从新位置重新起算。
+    _closeListenSegment();
+    if (state.isPlaying) _listenSegmentStart = target;
 
     // 乐观更新，让进度条和歌词在 seek 完成前就响应，而不是等待
     // 200ms 节流的位置流。
@@ -1722,7 +1764,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
         source: result.source ?? currentSong.source,
       );
       await _audioHandler.setAudioSource(result.url, song: updatedSong);
-      await _audioHandler.seek(currentPosition);
+      await _seekWithoutCounting(currentPosition);
       await _audioHandler.play();
       state = state.copyWith(
         isLoading: false,
@@ -1740,7 +1782,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
       try {
         if (originalUrl != null && originalUrl.isNotEmpty) {
           await _audioHandler.setAudioSource(originalUrl, song: currentSong);
-          await _audioHandler.seek(currentPosition);
+          await _seekWithoutCounting(currentPosition);
           await _audioHandler.play();
         }
       } catch (_) {}
@@ -2080,6 +2122,9 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   /// **不要自动播放下一首**。
   Future<void> _stopPlaybackOnFailure(String reason) async {
     debugPrint('[PlaybackController] 播放失败，停止播放：$reason');
+
+    // 播放异常停止：先把这一段收听时长结算掉。
+    _finalizeListenSession();
 
     _cancelPendingAutoNext();
     _loadingTimer?.cancel();

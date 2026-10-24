@@ -67,6 +67,7 @@ class RecentlyPlayedItem {
     this.sourceType = PlaybackSourceType.unknown,
     this.sourceId,
     this.sourceName,
+    this.sourceMeta,
     this.listenedMs = 0,
   });
 
@@ -87,6 +88,9 @@ class RecentlyPlayedItem {
   /// 来源名称（歌单名 / 专辑名），用于展示与打开。
   final String? sourceName;
 
+  /// 来源的完整信息（作者 / 专辑主页的 json），没有记录时为空。
+  final Map<String, dynamic>? sourceMeta;
+
   /// 累计收听时长（毫秒）。
   final int listenedMs;
 
@@ -101,6 +105,8 @@ class RecentlyPlayedItem {
     PlaybackSourceType? sourceType,
     String? sourceId,
     String? sourceName,
+    Map<String, dynamic>? sourceMeta,
+    bool clearSourceMeta = false,
     int? listenedMs,
   }) {
     return RecentlyPlayedItem(
@@ -110,6 +116,7 @@ class RecentlyPlayedItem {
       sourceType: sourceType ?? this.sourceType,
       sourceId: sourceId ?? this.sourceId,
       sourceName: sourceName ?? this.sourceName,
+      sourceMeta: clearSourceMeta ? null : sourceMeta ?? this.sourceMeta,
       listenedMs: listenedMs ?? this.listenedMs,
     );
   }
@@ -122,6 +129,7 @@ class RecentlyPlayedItem {
       'sourceType': sourceType.id,
       'sourceId': sourceId,
       'sourceName': sourceName,
+      'sourceMeta': sourceMeta,
       'listenedMs': listenedMs,
     };
   }
@@ -135,6 +143,11 @@ class RecentlyPlayedItem {
       sourceType: PlaybackSourceTypeX.fromId(json['sourceType'] as String?),
       sourceId: json['sourceId'] as String?,
       sourceName: json['sourceName'] as String?,
+      sourceMeta: json['sourceMeta'] is Map
+          ? (json['sourceMeta'] as Map).map(
+              (key, value) => MapEntry('$key', value),
+            )
+          : null,
       listenedMs: (json['listenedMs'] as num?)?.toInt() ?? 0,
     );
   }
@@ -149,6 +162,7 @@ class RecentlyPlayedPlaylist {
     this.coverUrl = '',
     this.songCount = 0,
     this.source = '',
+    this.collectionType,
   });
 
   final String id;
@@ -160,12 +174,38 @@ class RecentlyPlayedPlaylist {
   /// 所属平台 / 音源 id（用于重新拉取歌单详情）。
   final String source;
 
+  /// 收藏的专辑 / 作者歌单的类型；普通歌单为空。
+  final PlaybackSourceType? collectionType;
+
+  /// 去掉「专辑：」「作者：」前缀后的展示名称。
+  String get displayName {
+    for (final prefix in const ['专辑：', '作者：']) {
+      if (name.startsWith(prefix)) {
+        final rest = name.substring(prefix.length);
+        if (rest.isNotEmpty) return rest;
+      }
+    }
+    return name;
+  }
+
+  /// 专辑 / 作者标签类型（新记录直接读字段，旧记录按名称前缀识别）。
+  PlaybackSourceType? get favoriteType {
+    final type = collectionType;
+    if (type == PlaybackSourceType.album || type == PlaybackSourceType.artist) {
+      return type;
+    }
+    if (name.startsWith('专辑：')) return PlaybackSourceType.album;
+    if (name.startsWith('作者：')) return PlaybackSourceType.artist;
+    return null;
+  }
+
   RecentlyPlayedPlaylist copyWith({
     String? name,
     DateTime? openedAt,
     String? coverUrl,
     int? songCount,
     String? source,
+    PlaybackSourceType? collectionType,
   }) {
     return RecentlyPlayedPlaylist(
       id: id,
@@ -174,6 +214,7 @@ class RecentlyPlayedPlaylist {
       coverUrl: coverUrl ?? this.coverUrl,
       songCount: songCount ?? this.songCount,
       source: source ?? this.source,
+      collectionType: collectionType ?? this.collectionType,
     );
   }
 
@@ -183,9 +224,13 @@ class RecentlyPlayedPlaylist {
     'coverUrl': coverUrl,
     'songCount': songCount,
     'source': source,
+    'collectionType': collectionType?.id,
   };
 
   factory RecentlyPlayedPlaylist.fromJson(Map<String, dynamic> json) {
+    final type = PlaybackSourceTypeX.fromId(
+      json['collectionType'] as String?,
+    );
     return RecentlyPlayedPlaylist(
       id: '${json['id'] ?? ''}',
       name: '${json['name'] ?? ''}',
@@ -195,6 +240,8 @@ class RecentlyPlayedPlaylist {
       coverUrl: '${json['coverUrl'] ?? ''}',
       songCount: (json['songCount'] as num?)?.toInt() ?? 0,
       source: '${json['source'] ?? ''}',
+      collectionType:
+          type == PlaybackSourceType.unknown ? null : type,
     );
   }
 }
