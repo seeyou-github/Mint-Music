@@ -171,17 +171,20 @@ class PlaylistRepository {
       final playlists = await loadPlaylists();
       final now = DateTime.now();
 
+      // 这里必须走 Song.fromJson 全量还原，不能按字段手工 new Song：
+      // 手工重建会丢掉 lx（MusicFree 插件的 extra.musicItem）、hash、
+      // preferredSource 等字段。丢了 lx 之后，收藏里的 b 站歌曲播放时
+      // 插件只能拿到一个最小 musicItem，解析地址就会报
+      // 「bilibili 视频信息 -400」（拿不到 bvid/aid/cid）。
       final songs = songsData.map((data) {
-        return Song(
-          id: data['id']?.toString() ?? '',
-          title: data['title']?.toString() ?? '未知歌曲',
-          artist: data['artist']?.toString() ?? '未知歌手',
-          album: data['album']?.toString() ?? '未知专辑',
-          duration: (data['duration'] is int) ? data['duration'] as int : 0,
-          coverUrl: data['coverUrl']?.toString(),
-          sourceUrl: data['sourceUrl']?.toString(),
-          source: data['source']?.toString(),
-          lrc: data['lrc']?.toString(),
+        final song = Song.fromJson(data);
+        if (song.title.isNotEmpty && song.artist.isNotEmpty && song.album.isNotEmpty) {
+          return song;
+        }
+        return song.copyWith(
+          title: song.title.isEmpty ? '未知歌曲' : null,
+          artist: song.artist.isEmpty ? '未知歌手' : null,
+          album: song.album.isEmpty ? '未知专辑' : null,
         );
       }).toList();
 

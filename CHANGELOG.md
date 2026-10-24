@@ -60,6 +60,14 @@
   - 点击可删除远端备份文件，删除前二次确认，失败时显示具体原因
 
 ### 修复
+- 收藏 / 歌单里的 b 站（以及其它 MusicFree 插件）歌曲播放报「bilibili 视频信息 -400」
+  - 根因：`createPlaylistWithSongs` 按字段手工重建 `Song`，把 `lx` 丢了；
+    而 MusicFree 插件解析播放地址依赖 `lx.extra.musicItem`（含 bvid / aid / cid），
+    丢了之后插件只能拿到最小字段，请求 `/x/web-interface/view` 带空参数 → -400
+  - 改为 `Song.fromJson` 全量还原，只对空标题 / 歌手 / 专辑做兜底；
+    顺带保住 `hash` / `preferredSource` / `isVipExclusive`
+  - 已存在的旧收藏没有这些字段，bilibili 插件侧再从歌曲 `id`（就是 bvid）反推兜底，
+    功能正常、只多一次 `view` 请求；重新收藏即可恢复单请求
 - 竖屏下进歌单 / 专辑 / 作者详情页，底部出现两个迷你播放器叠在一起
   - 外层导航壳已经统一渲染迷你播放器，歌单详情、搜索、本地歌单详情、作者更新页
     里又各自放了一个，两者相差 15px 叠在一起；现在只保留导航壳里的那一个

@@ -18,7 +18,7 @@ const https = require('https');
 const zlib = require('zlib');
 
 const ROOT = path.resolve(__dirname, '../..');
-const PLUGIN = process.argv[3] || path.join(__dirname, 'bilibili-0.3.11-patched.js');
+const PLUGIN = process.argv[3] || path.join(__dirname, 'bilibili-0.3.12-patched.js');
 const MID = Number(process.argv[2] || 85754245);
 const CALLS = [];
 
@@ -149,6 +149,28 @@ let failed = 0;
       failed++;
       console.log('[播放] %s 失败: %s | 请求链: %s', song.title.slice(0, 14), String(e.message).slice(0, 80),
         CALLS.map((c) => `${c.url}→${c.status}`).join(','));
+    }
+  }
+
+  /* ---- 3) 收藏 / 歌单场景：只剩最小字段（没有 bvid/aid/cid） ---- */
+  for (const song of songs.slice(0, 2)) {
+    const stripped = {
+      id: song.id,
+      title: song.title,
+      artist: song.artist,
+      album: song.album,
+      duration: song.duration,
+    };
+    CALLS.length = 0;
+    const t0 = Date.now();
+    try {
+      const res = await plugin.getMediaSource(stripped, 'standard');
+      console.log('[收藏播放] %s | %s | %dms | HTTP=%s', song.title.slice(0, 14),
+        new URL(res.url).hostname, Date.now() - t0, CALLS.map((c) => c.status).join(','));
+    } catch (e) {
+      failed++;
+      console.log('[收藏播放] %s 失败: %s | 请求链: %s', song.title.slice(0, 14),
+        String(e.message).slice(0, 80), CALLS.map((c) => `${c.url}→${c.status}`).join(','));
     }
   }
 

@@ -684,12 +684,55 @@ async function fetchArtistWorksWithRetry(artistItem, page, type) {
         }
     }
 }
+/**
+ * 从 musicItem 里解析出 bvid / aid / cid。
+ *
+ * 收藏 / 歌单里存的歌曲可能只剩最小字段：MusicFree 适配层在拿不到
+ * `extra.musicItem` 时会回退成 `{ id, title, singer, ... }`，没有 bvid/aid。
+ * 此时若直接调 view/playurl，会带空参数过去，B 站返回 -400「请求错误」。
+ * 这里按 id / album / `_info` 依次兜底：
+ *   - 本插件的 id 就是 bvid（formatMedia/formatAppMedia 都按 bvid 优先），
+ *   - album 也是 bvid，
+ *   - 适配层回退对象会把原始 info 挂在 `_info` 上。
+ */
+function resolveVideoIds(musicItem) {
+    const item = musicItem || {};
+    const info = item._info && typeof item._info === "object" ? item._info : {};
+    const pick = function () {
+        for (let i = 0; i < arguments.length; i++) {
+            const v = arguments[i];
+            if (v !== undefined && v !== null && v !== "" && v !== 0) {
+                return v;
+            }
+        }
+        return undefined;
+    };
+    const BV_RE = /^BV[0-9A-Za-z]{10}$/;
+    const idStr = String(pick(item.id, item.songmid, info.id, "") || "");
+    let bvid = pick(item.bvid, info.bvid);
+    if (!bvid && BV_RE.test(idStr)) {
+        bvid = idStr;
+    }
+    if (!bvid && typeof item.album === "string" && BV_RE.test(item.album)) {
+        bvid = item.album;
+    }
+    let aid = pick(item.aid, info.aid, info.param);
+    if (!aid && /^\d+$/.test(idStr)) {
+        aid = idStr;
+    }
+    const cid = pick(item.cid, info.cid, info.first_cid);
+    return { bvid: bvid, aid: aid, cid: cid };
+}
 async function getMediaSourceOnce(musicItem, quality, tryLook) {
     var _a, _b, _c, _d, _e, _f;
     await getCookie();
-    let cid = musicItem.cid;
+    const ids = resolveVideoIds(musicItem);
+    if (!ids.bvid && !ids.aid) {
+        throw new Error("bilibili: 歌曲缺少 bvid/aid（收藏/歌单里的旧数据丢了插件字段，重新收藏该歌曲即可）");
+    }
+    let cid = ids.cid;
     if (!cid) {
-        const viewRes = await getCid(musicItem.bvid, musicItem.aid);
+        const viewRes = await getCid(ids.bvid, ids.aid);
         // view 接口错误（风控 / 稿件删除 / 需要登录）时 data 为空，
         // 直接读 .data.cid 会抛 "cannot read property 'cid' of undefined"，
         // 这里给出带错误码的明确提示。
@@ -699,9 +742,9 @@ async function getMediaSourceOnce(musicItem, quality, tryLook) {
         }
         cid = viewRes.data.cid;
     }
-    const vid = (_f = (musicItem.bvid !== null && musicItem.bvid !== undefined
-        ? musicItem.bvid
-        : musicItem.aid)) !== null && _f !== void 0 ? _f : "";
+    const vid = (_f = (ids.bvid !== null && ids.bvid !== undefined
+        ? ids.bvid
+        : ids.aid)) !== null && _f !== void 0 ? _f : "";
     // 0.3.2 已验证可用的请求形态：未签名的 playurl + cookie。
     // 0.3.4 试过的「wbi/playurl + WBI 签名 + gaia/dm_img 参数」实测持续
     // 412 已回退。try_look（免登录试看，PiliPlus 同款）仅在首请求拿不到
@@ -711,9 +754,9 @@ async function getMediaSourceOnce(musicItem, quality, tryLook) {
     // 之前用 "; " 之外的紧凑分隔符，playurl 的 WAF 规则会直接判为脚本
     // （实测 6/6 → 412；改成 "; " 后 6/6 → 200）。referer 也补齐成
     // 网页端形态（PiliPlus 每次播放都会带）。
-    const params = musicItem.bvid
-        ? { bvid: musicItem.bvid, cid: cid, fnval: 16 }
-        : { aid: musicItem.aid, cid: cid, fnval: 16 };
+    const params = ids.bvid
+        ? { bvid: ids.bvid, cid: cid, fnval: 16 }
+        : { aid: ids.aid, cid: cid, fnval: 16 };
     if (tryLook) {
         params.try_look = 1;
     }
@@ -966,10 +1009,15 @@ function formatComment(item) {
 }
 async function getMusicComments(musicItem) {
     var _a, _b;
+    const ids = resolveVideoIds(musicItem);
+    if (!ids.aid) {
+        // 收藏/歌单里的旧数据可能没有 aid，评论区直接按「没有评论」处理
+        return { isEnd: true, data: [] };
+    }
     const params = {
         type: 1,
         mode: 3,
-        oid: musicItem.aid,
+        oid: ids.aid,
         plat: 1,
         web_location: 1315875,
         wts: Math.floor(Date.now() / 1000)
@@ -995,7 +1043,7 @@ async function getMusicComments(musicItem) {
 module.exports = {
     platform: "bilibili",
     appVersion: ">=0.0",
-    version: "0.3.11-patched",
+    version: "0.3.12-patched",
     author: "猫头猫",
     cacheControl: "no-cache",
     srcUrl: "https://gitee.com/maotoumao/MusicFreePlugins/raw/v0.1/dist/bilibili/index.js",
@@ -1020,7 +1068,11 @@ module.exports = {
     getMediaSource,
     async getAlbumInfo(albumItem) {
         var _a;
-        const cidRes = await getCid(albumItem.bvid, albumItem.aid);
+        const ids = resolveVideoIds(albumItem);
+        if (!ids.bvid && !ids.aid) {
+            throw new Error("bilibili: 歌曲缺少 bvid/aid（收藏/歌单里的旧数据丢了插件字段，重新收藏该歌曲即可）");
+        }
+        const cidRes = await getCid(ids.bvid, ids.aid);
         // view 接口错误（稿件删除 / 区域限制 / 风控）时 data 为空，
         // 给出明确错误而不是让 pages.length 崩溃。
         if (!cidRes || cidRes.code !== 0 || !cidRes.data) {
