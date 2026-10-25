@@ -458,9 +458,10 @@ class SidebarPlayer extends ConsumerWidget {
 
   Widget _buildCoverImage(ThemeColors colors, Song song, WidgetRef ref) {
     // 优先使用 coverUrl（精准匹配后的在线封面），再回退到设备本地封面。
-    // 插件歌曲的 coverUrl 可能是失效地址，FallbackCoverImage 会在加载
-    // 失败时自动 getPic 换地址重试（与歌曲列表项一致的自愈策略）。
-    if (song.coverUrl != null && song.coverUrl!.isNotEmpty) {
+    // 插件歌曲的 coverUrl 可能是空地址（歌单 / 榜单歌曲只有 id）或失效地址，
+    // FallbackCoverImage 会在缺失 / 加载失败时自动 getPic 补地址
+    // （与歌曲列表项一致的自愈策略）。
+    if (!song.isLocal) {
       return FallbackCoverImage(
         key: ValueKey('sidebar_cover_img_${song.id}'),
         song: song,

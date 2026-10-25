@@ -973,9 +973,10 @@ class _PlayerCoverPage extends ConsumerWidget {
       );
     }
     // 优先使用 coverUrl（精准匹配后的在线封面），再回退到设备本地封面。
-    // 插件歌曲的 coverUrl 可能是失效地址：列表有逐行 getPic 兜底能自愈，
-    // 播放器这里用 FallbackCoverImage 补上同样的兜底。
-    if (song.coverUrl != null && song.coverUrl!.isNotEmpty) {
+    // 插件歌曲的 coverUrl 可能是空地址（歌单 / 榜单歌曲只有 id）或失效地址：
+    // 列表有逐行 getPic 兜底能自愈，播放器这里用 FallbackCoverImage 补上同样
+    // 的兜底。
+    if (!song.isLocal) {
       return FallbackCoverImage(
         song: song,
         url: song.coverUrl,

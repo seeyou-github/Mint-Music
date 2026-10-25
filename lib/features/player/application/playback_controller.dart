@@ -1979,11 +1979,19 @@ class PlaybackController extends StateNotifier<PlaybackState> {
       }
 
       final currentSong = state.currentSong;
-      if (currentSong == null ||
-          currentSong.id != song.id ||
-          currentSong.source != song.source) {
-        return;
-      }
+      if (currentSong == null || currentSong.id != song.id) return;
+
+      // 解析地址时会把队列歌曲的 source 从平台 id 改写成「平台id@插件id」
+      // （用来显示实际提供地址的插件），所以这里只能比较平台部分；直接比较
+      // source 会让插件音源解析的歌永远补不上封面（表现为详情页 / 左侧栏
+      // 空白，列表却有封面）。
+      final (currentBaseId, _) = MusicSourceManager.splitSourceId(
+        currentSong.source ?? '',
+      );
+      final (songBaseId, _) = MusicSourceManager.splitSourceId(
+        song.source ?? '',
+      );
+      if (currentBaseId != songBaseId) return;
 
       // 强制刷新只针对「内置酷我」歌曲（缩略图提升高清）；插件酷我歌曲
       // 的封面已经可用，有封面就不动，避免被坏结果替换。
