@@ -1538,6 +1538,7 @@ class MusicSourceManager {
       hash: info['hash']?.toString(),
       lx: lxMeta,
       isVipExclusive: info['vipExclusive'] == true,
+      partsCount: info['parts'] is num ? (info['parts'] as num).toInt() : 0,
     );
   }
 

@@ -346,6 +346,11 @@ function __mfMapMusicItem(item, sourceId) {
   ) {
     mapped.vipExclusive = true;
   }
+  // 视频选集（分 P）数量：插件在搜索结果 / 歌单里补查后透传，
+  // 歌曲列表据此显示「分P」标签、点击直接打开专辑页。
+  if (typeof item.parts === 'number' && item.parts > 1) {
+    mapped.parts = item.parts;
+  }
   return mapped;
 }
 

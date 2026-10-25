@@ -4,6 +4,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import '../../core/l10n/l10n.dart';
 import '../../core/theme/app_spacing.dart';
 import '../../core/theme/theme_provider.dart';
+import '../../features/discover/presentation/song_parts_navigation.dart';
 import '../../features/player/application/play_progress_providers.dart';
 import '../../features/player/domain/models/song.dart';
 import '../../features/settings/application/settings_providers.dart';
@@ -107,7 +108,15 @@ class SongListItem extends ConsumerWidget {
         MediaQuery.sizeOf(context).width < 520;
     final effectiveTap = selectionMode
         ? () => onSelectionToggle?.call(song)
-        : (onTap ?? () => _defaultOnTap(context));
+        : () {
+            // 分 P 歌曲：点击直接进专辑页列出全部分 P，不直接播放第一 P。
+            if (openSongPartsIfNeeded(context, song)) return;
+            if (onTap != null) {
+              onTap!();
+              return;
+            }
+            _defaultOnTap(context);
+          };
     return InkWell(
       onTap: effectiveTap,
       onLongPress: onLongPress,
@@ -323,6 +332,7 @@ class SongListItem extends ConsumerWidget {
         ? _buildPlayedTag(colors, context, ref, compact: !narrow)
         : null;
     final vipTag = _buildVipTag(colors, compact: !narrow);
+    final partsTag = _buildPartsTag(colors, compact: !narrow);
     final duration = showDuration && !selectionMode
         ? _buildDuration(colors, padded: !narrow)
         : null;
@@ -339,7 +349,13 @@ class SongListItem extends ConsumerWidget {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              if (duration != null) ...[duration, const SizedBox(height: 2)],
+              if (duration != null || partsTag != null) ...[
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [?partsTag, ?duration],
+                ),
+                const SizedBox(height: 2),
+              ],
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [playedTag, ?vipTag],
@@ -353,7 +369,14 @@ class SongListItem extends ConsumerWidget {
 
     return Row(
       mainAxisSize: MainAxisSize.min,
-      children: [?trailingBadge, ?playedTag, ?vipTag, ?duration, ?menu],
+      children: [
+        ?trailingBadge,
+        ?playedTag,
+        ?vipTag,
+        ?partsTag,
+        ?duration,
+        ?menu,
+      ],
     );
   }
 
@@ -413,6 +436,34 @@ class SongListItem extends ConsumerWidget {
             height: 1.2,
             fontWeight: FontWeight.w600,
             color: vipColor,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 「分P」标签：视频选集（多分 P）歌曲显示在时长左侧，
+  /// 点击整行由 [openSongPartsIfNeeded] 打开专辑页。
+  Widget? _buildPartsTag(ThemeColors colors, {bool compact = true}) {
+    if (song.partsCount <= 1 || selectionMode) return null;
+    return Padding(
+      padding: EdgeInsets.only(
+        left: compact ? AppSpacing.sm : 0,
+        right: compact ? 0 : AppSpacing.sm,
+      ),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+        decoration: BoxDecoration(
+          color: colors.surfaceVariant,
+          borderRadius: BorderRadius.circular(AppRadius.xs),
+        ),
+        child: Text(
+          '分P',
+          style: TextStyle(
+            fontSize: compact ? 10 : 12,
+            height: 1.2,
+            fontWeight: FontWeight.w600,
+            color: colors.textSecondary,
           ),
         ),
       ),

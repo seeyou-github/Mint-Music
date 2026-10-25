@@ -36,6 +36,13 @@ class Song {
   /// 插件返回的这类歌曲会被过滤掉（已收藏的不受影响，仅显示标签）。
   final bool isVipExclusive;
 
+  /// 视频选集（分 P）数量。大于 1 时列表显示「分P」标签，
+  /// 点击歌曲直接打开专辑页列出全部分 P。
+  ///
+  /// 只有插件在列表接口里显式给出时才有值（bilibili 搜索 / 歌单），
+  /// 本地歌曲、专辑页里的单个分 P 始终为 0。
+  final int partsCount;
+
   const Song({
     required this.id,
     required this.title,
@@ -61,6 +68,7 @@ class Song {
     this.sourceQuality,
     this.preferredSource,
     this.isVipExclusive = false,
+    this.partsCount = 0,
   });
 
   bool get isLocal => source == 'local';
@@ -108,6 +116,7 @@ class Song {
     String? sourceQuality,
     String? preferredSource,
     bool? isVipExclusive,
+    int? partsCount,
     bool clearSourceUrl = false,
     bool clearSourceHeaders = false,
     bool clearSourceQuality = false,
@@ -146,6 +155,7 @@ class Song {
           ? null
           : preferredSource ?? this.preferredSource,
       isVipExclusive: isVipExclusive ?? this.isVipExclusive,
+      partsCount: partsCount ?? this.partsCount,
     );
   }
 
@@ -209,6 +219,7 @@ class Song {
       'sourceQuality': sourceQuality,
       'preferredSource': preferredSource,
       'isVipExclusive': isVipExclusive,
+      'partsCount': partsCount,
     };
   }
 
@@ -261,6 +272,7 @@ class Song {
       sourceQuality: json['sourceQuality']?.toString(),
       preferredSource: json['preferredSource']?.toString(),
       isVipExclusive: json['isVipExclusive'] == true,
+      partsCount: (json['partsCount'] as num?)?.toInt() ?? 0,
     );
   }
 }
