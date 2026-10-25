@@ -2002,7 +2002,13 @@ class PlaybackController extends StateNotifier<PlaybackState> {
           state.queue[index].id == currentSong.id) {
         _replaceSongInQueue(index, enrichedSong);
       }
-      state = state.copyWith(currentSong: enrichedSong);
+      // Song 的相等性只看 id，copyWith 默认会把「同 id 的新歌」当成没变化
+      // 直接丢弃；这里必须强制替换，否则补出来的封面只进了队列、播放页
+      // 拿到的 currentSong 仍然没有封面（只有本来就没封面的歌会中招）。
+      state = state.copyWith(
+        currentSong: enrichedSong,
+        forceCurrentSong: true,
+      );
       _audioHandler.updateCurrentMediaItem(enrichedSong);
     } catch (error) {
       debugPrint('[PlaybackController] cover resolution failed: $error');
