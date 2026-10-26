@@ -15,6 +15,7 @@ import '../../../shared/widgets/source_badge.dart';
 import '../../discover/domain/models/search_collection.dart';
 import '../../library/application/playlist_providers.dart';
 import '../../library/domain/models/recently_played.dart';
+import '../../radio/application/radio_session.dart';
 import '../application/playback_context.dart';
 import '../application/playback_controller.dart';
 import '../application/root_overlay_tracker.dart';
@@ -54,6 +55,8 @@ class SidebarPlayer extends ConsumerWidget {
       playbackControllerProvider.select((s) => s.isLoading),
     );
     final controller = ref.read(playbackControllerProvider.notifier);
+    // 电台模式：队列由电台接管，「播放列表」「上一首」不可用。
+    final radioMode = ref.watch(radioModeProvider);
 
     // 侧边栏宽度固定，系统大字体时容易把布局撑破，这里限制文本缩放上限。
     return MediaQuery.withClampedTextScaling(
@@ -91,6 +94,7 @@ class SidebarPlayer extends ConsumerWidget {
                 controller,
                 isPlaying: isPlaying,
                 isLoading: isLoading,
+                radioMode: radioMode,
               ),
             ],
           ),
@@ -547,14 +551,18 @@ class SidebarPlayer extends ConsumerWidget {
     PlaybackController controller, {
     required bool isPlaying,
     required bool isLoading,
+    required bool radioMode,
   }) {
+    // 电台模式下不可用的按钮：置灰（图标颜色是显式传入的，IconButton 的
+    // disabledColor 不会生效，需要自己调淡）。
+    final disabledColor = colors.textSecondary.withValues(alpha: 0.3);
     return Row(
       children: [
         _buildIconButton(
           icon: Icons.skip_previous,
           size: 22,
-          color: colors.textSecondary,
-          onPressed: () => controller.previous(),
+          color: radioMode ? disabledColor : colors.textSecondary,
+          onPressed: radioMode ? null : () => controller.previous(),
         ),
         _buildIconButton(
           size: 26,
@@ -592,8 +600,8 @@ class SidebarPlayer extends ConsumerWidget {
         _buildIconButton(
           icon: Icons.queue_music,
           size: 22,
-          color: colors.textSecondary,
-          onPressed: () => _showQueue(ref, controller),
+          color: radioMode ? disabledColor : colors.textSecondary,
+          onPressed: radioMode ? null : () => _showQueue(ref, controller),
         ),
       ],
     );
