@@ -52,9 +52,9 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
   final GlobalKey _sourceButtonKey = GlobalKey();
   bool _hasInitialized = false;
 
-  /// 歌单列表分页：每页 10 个（接口多给的留在已加载列表里当缓冲）。
-  static const int _playlistPageSize = 10;
-  final PageSlicer _playlistPager = PageSlicer(pageSize: _playlistPageSize);
+  /// 歌单列表分页：每页 10 行（每行多少列 × 10 就是每页条数）。
+  static const int _playlistPageRows = 10;
+  final PageSlicer _playlistPager = PageSlicer(pageSize: _playlistPageRows);
 
   /// 正在为某一页补数据。
   bool _pagingLoading = false;
@@ -774,7 +774,8 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
     final crossAxisCount = ResponsiveLayout.gridCrossAxisCount(context);
     final isTablet = ResponsiveLayout.isTablet(context);
 
-    // 每页 10 个歌单；接口多给的留在已加载列表里，下一页接着用。
+    // 每页 10 行：每行 crossAxisCount 个，所以每页 10 × 列数 个。
+    _playlistPager.updatePageSize(_playlistPageRows * crossAxisCount);
     final visible = _playlistPager.slice(playlists);
     final pageCount = _playlistPager.pageCount(
       playlists.length,

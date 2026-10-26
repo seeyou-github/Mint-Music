@@ -565,8 +565,10 @@ class PlaylistSearchNotifier extends StateNotifier<PlaylistSearchState> {
         page: page,
         isLoading: false,
         isLoadingMore: false,
-        // 只有确实拿到新数据才认为还有下一页，避免同一页反复请求。
-        hasMore: playlists.length >= _pageSize && (replace || appended),
+        // 接口没有 isEnd：只要这一页拿到了新数据就还可能下一页（哪怕不足
+        // 请求条数，例如接口每页只给 20 条）；真到末页时下一页返回空 /
+        // 全是重复项，这里自然变 false。
+        hasMore: playlists.isNotEmpty && (replace || appended),
         clearError: true,
         clearLoadMoreError: true,
       );
