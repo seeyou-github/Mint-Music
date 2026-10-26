@@ -1,9 +1,9 @@
+import 'dart:io';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../data/plugin_repository.dart';
 import '../domain/models/plugin_info.dart';
 import '../../plugin/application/plugin_providers.dart';
-import '../../plugin/data/plugin_service.dart'
-    show PluginTypeUnknownException;
+import '../../plugin/data/plugin_service.dart' show PluginTypeUnknownException;
 
 export '../../plugin/application/plugin_providers.dart'
     show
@@ -22,9 +22,30 @@ final pluginsProvider =
       PluginsNotifier.new,
     );
 
+/// 插件图标的本地缓存路径（按插件 id 查）。
+///
+/// 图标在导入插件时下载并转成 PNG 缓存到插件目录的 `icons` 子目录
+/// （站点 favicon 多是 .ico，Flutter 解不了，缓存前先转成 PNG）。
+/// 文件不存在时返回 null，界面退回默认的平台圆标。
+final pluginIconPathProvider = Provider.family<String?, String>((
+  ref,
+  pluginId,
+) {
+  final plugins = ref.watch(pluginsProvider).valueOrNull;
+  if (plugins == null) return null;
+  for (final plugin in plugins) {
+    if (plugin.id != pluginId) continue;
+    final path = plugin.iconPath;
+    if (path == null || path.isEmpty) return null;
+    return File(path).existsSync() ? path : null;
+  }
+  return null;
+});
+
 /// Holds the results of the latest plugin update check.
-final pluginUpdateResultsProvider =
-    StateProvider<List<PluginUpdateResult>>((ref) => []);
+final pluginUpdateResultsProvider = StateProvider<List<PluginUpdateResult>>(
+  (ref) => [],
+);
 
 /// Holds plugin-initiated update notices (from `lx.send('updateAlert', ...)`).
 /// Each entry contains: pluginName, pluginVersion, pluginId, data (with log and updateUrl).

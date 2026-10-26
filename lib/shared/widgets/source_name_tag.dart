@@ -141,7 +141,7 @@ Future<String?> showPluginSourcePicker(
                   ListTile(
                     dense: true,
                     leading: SourceIcon(
-                      sourceId: SourceInfo.baseIdOf(source.id),
+                      sourceId: source.id,
                       size: 22,
                       label: source.name,
                     ),

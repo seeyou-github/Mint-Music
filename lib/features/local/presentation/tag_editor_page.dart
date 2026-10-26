@@ -777,7 +777,7 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
             child: Row(
               children: [
                 SourceIcon(
-                  sourceId: SourceInfo.baseIdOf(source.id),
+                  sourceId: source.id,
                   size: 18,
                   label: source.name,
                 ),

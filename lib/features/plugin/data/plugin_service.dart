@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
@@ -12,6 +13,7 @@ import '../../../core/storage/app_preferences.dart';
 import '../platform/js_engine_service.dart';
 import '../data/plugin_host.dart';
 import '../data/lx_plugin_converter.dart';
+import '../../../shared/utils/ico_converter.dart';
 import '../domain/source_id_mapping.dart';
 import '../../settings/domain/models/plugin_info.dart';
 
@@ -81,10 +83,12 @@ class PluginService {
     // 洛雪：规范头注释（@name + @version/@author）或运行时接口。
     final header = RegExp(r'^\s*/\*[\s\S]{0,2000}?\*/').firstMatch(code);
     final headerText = header?.group(0) ?? '';
-    final hasLxHeader = RegExp(r'@\s*name\b').hasMatch(headerText) &&
+    final hasLxHeader =
+        RegExp(r'@\s*name\b').hasMatch(headerText) &&
         (RegExp(r'@\s*version\b').hasMatch(headerText) ||
             RegExp(r'@\s*author\b').hasMatch(headerText));
-    final hasLxApi = lower.contains('event_names') ||
+    final hasLxApi =
+        lower.contains('event_names') ||
         lower.contains('sendresponse') ||
         lower.contains("on('request'") ||
         lower.contains('on("request"') ||
@@ -112,7 +116,8 @@ class PluginService {
   Stream<Map<String, dynamic>> get updateNoticeStream =>
       _updateNoticeController.stream;
 
-  final List<StreamSubscription<Map<String, dynamic>>> _noticeSubscriptions = [];
+  final List<StreamSubscription<Map<String, dynamic>>> _noticeSubscriptions =
+      [];
 
   /// Buffered update notices from plugin scripts (persists across stream
   /// subscribers being added/removed). The UI reads this when the plugin
@@ -384,8 +389,15 @@ class PluginService {
     }
     // Object — look for common keys first, then recurse
     if (json is Map) {
-      for (final key in ['data', 'code', 'content', 'script', 'body',
-          'result', 'response']) {
+      for (final key in [
+        'data',
+        'code',
+        'content',
+        'script',
+        'body',
+        'result',
+        'response',
+      ]) {
         if (json.containsKey(key)) {
           final value = json[key];
           if (value is String && value.length > 50) return value;
@@ -469,10 +481,11 @@ class PluginService {
       final hasLxKeyword = lower.contains('lx');
       final hasModuleExports = lower.contains('module.exports');
       final hasLxComment = RegExp(r'/\*[\s\S]*@name[\s\S]*\*/').hasMatch(code);
-      if (!hasLxKeyword && !hasModuleExports && !hasLxComment && !looksLikeJsModule) {
-        throw Exception(
-          '洛雪插件格式校验失败：代码中未找到lx关键字或module.exports',
-        );
+      if (!hasLxKeyword &&
+          !hasModuleExports &&
+          !hasLxComment &&
+          !looksLikeJsModule) {
+        throw Exception('洛雪插件格式校验失败：代码中未找到lx关键字或module.exports');
       }
     } else if (type == 'mf') {
       // MusicFree 插件是打包后的 CommonJS 模块。混淆后的插件不会把
@@ -543,11 +556,7 @@ class PluginService {
 
       final sources = host.sources
           .map(
-            (s) => PluginSource(
-              id: s.id,
-              name: s.name,
-              qualities: s.qualities,
-            ),
+            (s) => PluginSource(id: s.id, name: s.name, qualities: s.qualities),
           )
           .toList();
 
@@ -566,9 +575,17 @@ class PluginService {
         updateUrl: pluginInfo.homepage ?? sourceUrl,
         // 插件自己声明是「数据源」时记下来，插件管理页据此归类。
         isDataSource: host.isDataSource,
+        iconUrl: pluginInfo.iconUrl,
       );
 
-      plugins.add(plugin);
+      // 插件声明了图标：下载并缓存到插件目录（音源列表 / 切换按钮直接用）。
+      var created = plugin;
+      final iconPath = await _cachePluginIcon(created);
+      if (iconPath != null && iconPath != created.iconPath) {
+        created = created.copyWith(iconPath: iconPath);
+      }
+
+      plugins.add(created);
       await savePlugins(plugins);
 
       if (plugin.isEnabled) {
@@ -614,6 +631,77 @@ class PluginService {
     }
 
     print('[PluginService] 插件初始化完成，已加载 ${_loadedPlugins.length} 个插件');
+
+    // 后台补齐插件图标（老插件 / 之前下载失败的场景），不阻塞启动。
+    unawaited(_syncPluginIcons());
+  }
+
+  /// 补齐已安装插件的图标缓存。
+  Future<void> _syncPluginIcons() async {
+    try {
+      final plugins = await loadPlugins();
+      var changed = false;
+      for (var i = 0; i < plugins.length; i++) {
+        final plugin = plugins[i];
+        if ((plugin.iconUrl ?? '').trim().isEmpty) continue;
+        final current = plugin.iconPath;
+        if (current != null &&
+            current.isNotEmpty &&
+            File(current).existsSync()) {
+          continue;
+        }
+        final path = await _cachePluginIcon(plugin);
+        if (path != null && path != current) {
+          plugins[i] = plugin.copyWith(iconPath: path);
+          changed = true;
+        }
+      }
+      if (changed) await savePlugins(plugins);
+    } catch (e) {
+      print('[PluginService] 同步插件图标失败: $e');
+    }
+  }
+
+  /// 下载插件图标并转成 PNG 存到插件目录的 `icons` 子目录。
+  ///
+  /// 站点 favicon 通常是 .ico（Flutter 解不了），这里先转成 PNG 再落盘。
+  /// 失败返回 null（界面退回默认圆标）。
+  Future<String?> _cachePluginIcon(PluginInfo plugin) async {
+    final url = (plugin.iconUrl ?? '').trim();
+    if (url.isEmpty) return null;
+    try {
+      final pluginsDir = await _getPluginsDir();
+      final iconsDir = Directory(p.join(pluginsDir, 'icons'));
+      if (!await iconsDir.exists()) {
+        await iconsDir.create(recursive: true);
+      }
+      final target = File(p.join(iconsDir.path, '${plugin.id}.png'));
+      if (await target.exists() && await target.length() > 0) {
+        return target.path;
+      }
+      final response = await Dio().get<List<int>>(
+        url,
+        options: Options(
+          responseType: ResponseType.bytes,
+          followRedirects: true,
+          receiveTimeout: const Duration(seconds: 15),
+          headers: const {
+            'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+                '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          },
+        ),
+      );
+      final bytes = response.data;
+      if (bytes == null || bytes.isEmpty) return null;
+      final png = IcoConverter.toPng(Uint8List.fromList(bytes));
+      if (png == null) return null;
+      await target.writeAsBytes(png, flush: true);
+      return target.path;
+    } catch (e) {
+      print('[PluginService] 缓存插件图标失败（${plugin.name}）: $e');
+      return null;
+    }
   }
 
   PluginHost? getPluginById(String pluginId) {
@@ -750,9 +838,8 @@ class PluginService {
     // 多个插件可以同时启用，这里只更新目标插件的状态，不再影响其它插件。
     final updatedPlugins = plugins
         .map(
-          (plugin) => plugin.id == id
-              ? plugin.copyWith(isEnabled: true)
-              : plugin,
+          (plugin) =>
+              plugin.id == id ? plugin.copyWith(isEnabled: true) : plugin,
         )
         .toList();
     try {
@@ -925,10 +1012,7 @@ class PluginService {
         await file.writeAsString(adapterCode);
         print('[PluginService] refreshed MusicFree adapter: ${plugin.name}');
       }
-      return _PreparedPluginCode(
-        code: adapterCode,
-        originalCode: originalCode,
-      );
+      return _PreparedPluginCode(code: adapterCode, originalCode: originalCode);
     }
 
     if (plugin.type != 'lx') {

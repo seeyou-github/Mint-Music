@@ -730,8 +730,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
               child: currentSource == null
                   ? _buildSourceIcon('', size: _searchFieldHeight)
                   : _buildSourceIcon(
-                      // 同名插件的变体 id 需要还原成平台 id 才能取到对应图标。
-                      SourceInfo.baseIdOf(currentSource.id),
+                      // 变体 id 也一起传进去：插件自带图标时优先显示它。
+                      currentSource.id,
                       size: _searchFieldHeight,
                       label: currentSource.name,
                     ),
@@ -946,8 +946,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           child: Row(
             children: [
               _buildSourceIcon(
-                // 同名插件的变体 id 需要还原成平台 id 才能取到对应图标。
-                SourceInfo.baseIdOf(source.id),
+                // 变体 id 也一起传进去：插件自带图标时优先显示它。
+                source.id,
                 size: 18,
                 label: source.name,
               ),

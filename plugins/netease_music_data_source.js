@@ -134,6 +134,7 @@ function formatPlayCount(count) {
   if (isNaN(n)) n = 0;
   if (n >= 100000000) return (n / 100000000).toFixed(1) + '亿';
   if (n >= 10000) return (n / 10000).toFixed(1) + '万';
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
   return String(n);
 }
 
@@ -477,6 +478,8 @@ module.exports = {
       '只提供搜索、歌单分类、榜单、歌单 / 专辑 / 作者详情的网易云数据源；' +
       '播放需要在「插件管理 → 数据源」里指定一个已安装的播放源。',
     // ★ 数据源标记：导入时会归到「插件管理 → 数据源」分类
+    // 站点图标：导入插件时下载并缓存到插件目录（音源列表 / 切换按钮用它）
+    iconUrl: 'https://s1.music.126.net/style/favicon.ico',
     isDataSource: true
   },
 

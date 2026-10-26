@@ -11,10 +11,10 @@ class PluginSourceInfo {
   });
 
   Map<String, dynamic> toJson() => {
-        if (id != null) 'id': id,
-        'name': name,
-        'qualities': qualities,
-      };
+    if (id != null) 'id': id,
+    'name': name,
+    'qualities': qualities,
+  };
 
   factory PluginSourceInfo.fromJson(Map<String, dynamic> json) {
     return PluginSourceInfo(
@@ -48,6 +48,12 @@ class PluginMetadata {
   final String? description;
   final String? homepage;
 
+  /// 插件图标地址（站点 favicon / logo 的 http 地址，可空）。
+  ///
+  /// 导入插件时会下载并转成 PNG 缓存到插件目录，音源切换按钮与音源列表用它
+  /// 代替默认的「平台首字圆标」。
+  final String? iconUrl;
+
   /// 是否是「数据源」插件。
   ///
   /// 数据源只提供搜索 / 发现页 / 专辑 / 作者等元数据，**不提供播放地址**；
@@ -61,6 +67,7 @@ class PluginMetadata {
     required this.author,
     this.description,
     this.homepage,
+    this.iconUrl,
     this.isDataSource = false,
   });
 
@@ -71,6 +78,7 @@ class PluginMetadata {
       author: json['author'] as String,
       description: json['description'] as String?,
       homepage: json['homepage'] as String?,
+      iconUrl: (json['iconUrl'] ?? json['icon']) as String?,
       isDataSource: json['isDataSource'] == true,
     );
   }
@@ -280,7 +288,6 @@ class DataSourcePlaybackException implements Exception {
   @override
   String toString() => message;
 }
-
 
 class SourceInfo {
   final String id;

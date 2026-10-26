@@ -378,11 +378,7 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
             height: 40,
             child: Row(
               children: [
-                SourceIcon(
-                  sourceId: SourceInfo.baseIdOf(source.id),
-                  size: 16,
-                  label: source.name,
-                ),
+                SourceIcon(sourceId: source.id, size: 16, label: source.name),
                 const SizedBox(width: AppSpacing.sm),
                 Expanded(
                   child: Text(

@@ -99,6 +99,9 @@ function formatPlayCount(count) {
   if (isNaN(value)) return String(count);
   if (value > 100000000) return (value / 100000000).toFixed(1) + '亿';
   if (value > 10000) return (value / 10000).toFixed(1) + '万';
+  // 不足 1 万：用 K 为单位（1234 → 1.2K）
+  if (value >= 1000) return (value / 1000).toFixed(1) + 'K';
+
   return String(Math.floor(value));
 }
 
@@ -370,6 +373,8 @@ module.exports = {
       '只提供搜索、歌单分类、榜单、歌单详情的 QQ音乐数据源；' +
       '播放需要在「插件管理 → 数据源」里指定一个已安装的播放源。',
     // ★ 数据源标记
+    // 站点图标：导入插件时下载并缓存到插件目录（音源列表 / 切换按钮用它）
+    iconUrl: 'https://y.qq.com/favicon.ico',
     isDataSource: true
   },
 

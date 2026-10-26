@@ -1,7 +1,10 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/theme_provider.dart';
+import '../../features/settings/application/plugin_providers.dart';
 
 /// 音源图标。
 ///
@@ -33,7 +36,17 @@ class SourceIcon extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     // 圆标里的文字使用设置里的「第二字体颜色」。
     final textColor = ref.watch(themeColorsProvider).textSecondary;
-    switch (sourceId) {
+
+    // 插件音源（`平台id@插件id`）：插件自带图标时优先显示它。
+    final pluginId = _pluginIdOf(sourceId);
+    if (pluginId != null) {
+      final iconPath = ref.watch(pluginIconPathProvider(pluginId));
+      if (iconPath != null) {
+        return _buildIcon(iconPath);
+      }
+    }
+
+    switch (_baseIdOf(sourceId)) {
       case 'wy':
         return _buildCircle(
           color: const Color(0xFFE60026),
@@ -97,6 +110,45 @@ class SourceIcon extends ConsumerWidget {
     }
   }
 
+  /// 插件图标：裁成和圆标一样大小的圆形，加载失败退回下面的平台圆标。
+  Widget _buildIcon(String path) {
+    return ClipOval(
+      child: Image.file(
+        File(path),
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+        errorBuilder: (_, _, _) => _buildFallback(),
+      ),
+    );
+  }
+
+  Widget _buildFallback() {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: Colors.blueGrey.shade500,
+        shape: BoxShape.circle,
+      ),
+      child: Icon(Icons.music_note, size: size * 0.6, color: Colors.white),
+    );
+  }
+
+  /// `平台id@插件id` → 插件 id；普通音源返回 null。
+  static String? _pluginIdOf(String id) {
+    final index = id.indexOf('@');
+    if (index <= 0 || index >= id.length - 1) return null;
+    return id.substring(index + 1);
+  }
+
+  /// `平台id@插件id` → 平台 id。
+  static String _baseIdOf(String id) {
+    final index = id.indexOf('@');
+    if (index <= 0 || index >= id.length - 1) return id;
+    return id.substring(0, index);
+  }
+
   Widget _buildCircle({
     required Color color,
     required String glyph,
@@ -106,10 +158,7 @@ class SourceIcon extends ConsumerWidget {
     return Container(
       width: size,
       height: size,
-      decoration: BoxDecoration(
-        color: color,
-        shape: BoxShape.circle,
-      ),
+      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
       child: Center(
         child: Text(
           glyph,

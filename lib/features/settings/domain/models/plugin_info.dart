@@ -6,17 +6,13 @@ class PluginSource {
   final String name;
   final List<String> qualities;
 
-  const PluginSource({
-    this.id,
-    required this.name,
-    required this.qualities,
-  });
+  const PluginSource({this.id, required this.name, required this.qualities});
 
   Map<String, dynamic> toJson() => {
-        if (id != null) 'id': id,
-        'name': name,
-        'qualities': qualities,
-      };
+    if (id != null) 'id': id,
+    'name': name,
+    'qualities': qualities,
+  };
 
   factory PluginSource.fromJson(Map<String, dynamic> json) {
     return PluginSource(
@@ -40,6 +36,14 @@ class PluginInfo {
   final String? filePath;
   final String? updateUrl;
 
+  /// 插件声明的图标地址（`pluginInfo.iconUrl`，站点 favicon / logo）。
+  final String? iconUrl;
+
+  /// 图标缓存到插件目录后的本地路径（PNG）。
+  ///
+  /// 导入插件时下载并转换一次；音源切换按钮 / 音源列表优先显示它。
+  final String? iconPath;
+
   /// 是否是「数据源」插件（只提供元数据、不解析播放地址）。
   ///
   /// 由插件脚本自己声明（`pluginInfo.isDataSource = true`），导入时解析并
@@ -59,6 +63,8 @@ class PluginInfo {
     this.supportedSources = const [],
     this.filePath,
     this.updateUrl,
+    this.iconUrl,
+    this.iconPath,
     this.isDataSource = false,
   });
 
@@ -74,6 +80,8 @@ class PluginInfo {
     List<PluginSource>? supportedSources,
     String? filePath,
     String? updateUrl,
+    String? iconUrl,
+    String? iconPath,
     bool? isDataSource,
   }) {
     return PluginInfo(
@@ -88,6 +96,8 @@ class PluginInfo {
       supportedSources: supportedSources ?? this.supportedSources,
       filePath: filePath ?? this.filePath,
       updateUrl: updateUrl ?? this.updateUrl,
+      iconUrl: iconUrl ?? this.iconUrl,
+      iconPath: iconPath ?? this.iconPath,
       isDataSource: isDataSource ?? this.isDataSource,
     );
   }
@@ -105,6 +115,8 @@ class PluginInfo {
       'supportedSources': supportedSources.map((s) => s.toJson()).toList(),
       'filePath': filePath,
       if (updateUrl != null) 'updateUrl': updateUrl,
+      if (iconUrl != null) 'iconUrl': iconUrl,
+      if (iconPath != null) 'iconPath': iconPath,
       'isDataSource': isDataSource,
     };
   }
@@ -119,12 +131,15 @@ class PluginInfo {
       type: json['type'] as String? ?? 'cr',
       isEnabled: json['isEnabled'] as bool? ?? true,
       installTime: DateTime.parse(json['installTime'] as String),
-      supportedSources: (json['supportedSources'] as List<dynamic>?)
+      supportedSources:
+          (json['supportedSources'] as List<dynamic>?)
               ?.map((e) => PluginSource.fromJson(e as Map<String, dynamic>))
               .toList() ??
           [],
       filePath: json['filePath'] as String?,
       updateUrl: json['updateUrl'] as String?,
+      iconUrl: json['iconUrl'] as String?,
+      iconPath: json['iconPath'] as String?,
       isDataSource: json['isDataSource'] as bool? ?? false,
     );
   }

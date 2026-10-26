@@ -27,6 +27,7 @@ var CDNBJ = 'http://mobilecdnbj.kugou.com';
 var YUEKU = 'http://www2.kugou.kugou.com';
 var KRCS = 'https://krcs.kugou.com';
 var LYRICS = 'http://lyrics.kugou.com';
+var MKG = 'http://m.kugou.com';
 
 /* ---------------------------------------------------------------- 基础工具 */
 
@@ -86,6 +87,9 @@ function formatPlayCount(count) {
   }
   if (value >= 100000000) return (value / 100000000).toFixed(1) + '亿';
   if (value >= 10000) return (value / 10000).toFixed(1) + '万';
+  // 不足 1 万：用 K 为单位（1234 → 1.2K）
+  if (value >= 1000) return (value / 1000).toFixed(1) + 'K';
+
   return String(Math.floor(value));
 }
 
@@ -261,6 +265,13 @@ function fetchSpecialInfo(specialId) {
     });
 }
 
+/** 歌单详情（整张歌单）：members 里带 album_img，歌曲封面从这里来。 */
+function fetchPlistDetail(specialId) {
+  return getJson(MKG + '/plist/list/' + specialId + '?json=true', {
+    Referer: 'http://m.kugou.com/'
+  });
+}
+
 function fetchSpecialSongs(specialId, page) {
   // 实测 pagesize 可以给到 1000：一次取回整张歌单，详情页的「N 首歌曲」才对得上
   var url =
@@ -341,6 +352,8 @@ module.exports = {
       '只提供搜索、歌单分类、榜单、歌单详情的酷狗音乐数据源；' +
       '播放需要在「插件管理 → 数据源」里指定一个已安装的播放源。',
     // ★ 数据源标记
+    // 站点图标：导入插件时下载并缓存到插件目录（音源列表 / 切换按钮用它）
+    iconUrl: 'https://www.kugou.com/root/favicon.ico',
     isDataSource: true
   },
 
@@ -555,26 +568,48 @@ module.exports = {
   getMusicSheetInfo: function (sheetId, page) {
     var specialId = String(sheetId || '').replace(/^kg_/, '');
     var currentPage = page || 1;
-    return Promise.all([
-      fetchSpecialSongs(specialId, currentPage),
-      currentPage === 1 ? fetchSpecialInfo(specialId) : Promise.resolve(null)
-    ]).then(function (results) {
-      var body = results[0] || {};
-      var info = results[1] || {};
-      var data = body.data || {};
-      var songs = songsOf(data.info || data.list || []);
-      var total = Number(info.songcount || data.total || songs.length);
-      return JSON.stringify({
-        isEnd: songs.length >= total || songs.length < 100,
-        sheet: {
-          title: decodeName(info.specialname || data.specialname || ''),
-          coverUrl: normalizeImage(info.imgurl || data.imgurl || '', '400'),
-          description: decodeName(info.intro || ''),
-          author: String(info.nickname || '')
-        },
-        songs: songs
+    // 优先走 m.kugou.com 的整张歌单接口：members 里带 album_img（歌曲封面）。
+    return fetchPlistDetail(specialId)
+      .catch(function () { return null; })
+      .then(function (plistBody) {
+        var plistInfo = plistBody && plistBody.list ? plistBody.list.info : null;
+        var members = plistInfo ? plistInfo.members || [] : [];
+        if (!members.length) return null;
+        return JSON.stringify({
+          isEnd: true,
+          sheet: {
+            title: decodeName(plistInfo.specialname || ''),
+            coverUrl: normalizeImage(plistInfo.imgurl || '', '400'),
+            description: decodeName(plistInfo.intro || ''),
+            author: String(plistInfo.nickname || '')
+          },
+          songs: songsOf(members)
+        });
+      })
+      .then(function (detail) {
+        if (detail) return detail;
+        // 整张歌单接口拿不到时回退到原来的分页接口（歌曲封面可能为空）。
+        return Promise.all([
+          fetchSpecialSongs(specialId, currentPage),
+          currentPage === 1 ? fetchSpecialInfo(specialId) : Promise.resolve(null)
+        ]).then(function (results) {
+          var body = results[0] || {};
+          var info = results[1] || {};
+          var data = body.data || {};
+          var songs = songsOf(data.info || data.list || []);
+          var total = Number(info.songcount || data.total || songs.length);
+          return JSON.stringify({
+            isEnd: songs.length >= total || songs.length < 100,
+            sheet: {
+              title: decodeName(info.specialname || data.specialname || ''),
+              coverUrl: normalizeImage(info.imgurl || data.imgurl || '', '400'),
+              description: decodeName(info.intro || ''),
+              author: String(info.nickname || '')
+            },
+            songs: songs
+          });
+        });
       });
-    });
   },
 
   /* --------------------------------------------------------------- 歌词 */
