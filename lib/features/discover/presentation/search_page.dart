@@ -11,7 +11,9 @@ import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../../../shared/widgets/cover_badge.dart';
+import '../../../shared/pagination/page_slicer.dart';
 import '../../../shared/widgets/load_more_footer.dart';
+import '../../../shared/widgets/page_bar.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../../../shared/widgets/song_list_item.dart';
 import '../../../shared/widgets/source_icon.dart';
@@ -45,6 +47,23 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   String _inputText = '';
   Timer? _debounceTimer;
   final _resultsScrollController = ScrollController();
+
+  /// 歌单 / 专辑 / 作者网格的滚动控制器（翻页后回到顶部）。
+  final _gridScrollController = ScrollController();
+
+  // ---- 分页 ----
+  /// 搜索歌曲每页条数：按接口首页实际返回量（25~50）决定，首屏回来后再设置。
+  final PageSlicer _songPager = PageSlicer(pageSize: 30);
+  int? _songPageSize;
+
+  /// 歌单 / 专辑 / 作者搜索结果每页 10 条。
+  static const int _resultPageSize = 10;
+  final PageSlicer _playlistPager = PageSlicer(pageSize: _resultPageSize);
+  final PageSlicer _albumPager = PageSlicer(pageSize: _resultPageSize);
+  final PageSlicer _artistPager = PageSlicer(pageSize: _resultPageSize);
+
+  /// 正在为某一页补数据（防止重复触发）。
+  bool _pagingLoading = false;
 
   /// 批量选择控制器（长按搜索结果进入多选模式）。
   final SongSelectionController _selection = SongSelectionController();
@@ -81,7 +100,6 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         );
       }
     });
-    _resultsScrollController.addListener(_handleResultsScroll);
     _focusNode.addListener(() {
       setState(() => _isFocused = _focusNode.hasFocus);
     });
@@ -107,6 +125,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     _controller.dispose();
     _focusNode.dispose();
     _resultsScrollController.dispose();
+    _gridScrollController.dispose();
     _selection.dispose();
     _resetSearchState();
     super.dispose();
@@ -180,6 +199,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     _focusNode.unfocus();
     ref.read(searchSuggestInputProvider.notifier).state = '';
     ref.read(searchPageProvider.notifier).state = 1;
+    _resetPagers();
 
     final tab = ref.read(searchTabProvider);
     switch (tab) {
@@ -211,12 +231,181 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     }
   }
 
-  void _handleResultsScroll() {
-    if (!_resultsScrollController.hasClients) return;
-    final position = _resultsScrollController.position;
-    if (position.maxScrollExtent - position.pixels < 360) {
-      unawaited(ref.read(searchResultsControllerProvider.notifier).loadMore());
+  // ---------------------------------------------------------------- 分页
+
+  PageSlicer _collectionPager(CollectionType type) =>
+      type == CollectionType.album ? _albumPager : _artistPager;
+
+  /// 新一轮搜索：所有列表回到第 1 页。
+  void _resetPagers() {
+    _songPageSize = null;
+    _songPager.updatePageSize(30);
+    _songPager.reset();
+    _playlistPager.reset();
+    _albumPager.reset();
+    _artistPager.reset();
+  }
+
+  /// 歌曲每页条数按接口首页实际返回量来定（25~50）。
+  void _syncSongPageSize(int loaded) {
+    if (_songPageSize != null || loaded <= 0) return;
+    final size = loaded.clamp(25, 50);
+    _songPageSize = size;
+    _songPager.updatePageSize(size);
+  }
+
+  Future<void> _goToSongPage(int page) async {
+    if (page < 1) return;
+    setState(() => _songPager.jumpTo(page));
+    if (_resultsScrollController.hasClients) {
+      _resultsScrollController.jumpTo(0);
     }
+    await _ensureSongPage();
+  }
+
+  /// 当前页数据不够（接口每页比设定的少）时继续取；多出来的留在已加载列表里
+  /// 当缓冲，下一页接着用，不会重复请求。
+  Future<void> _ensureSongPage() async {
+    if (_pagingLoading) return;
+    _pagingLoading = true;
+    try {
+      var guard = 0;
+      while (mounted && guard++ < 20) {
+        final state = ref.read(searchResultsControllerProvider);
+        if (_songPager.missing(state.songs.length, hasMore: state.hasMore) ==
+            0) {
+          break;
+        }
+        if (state.isLoadingMore || state.loadMoreError != null) break;
+        final before = state.songs.length;
+        await ref.read(searchResultsControllerProvider.notifier).loadMore();
+        if (!mounted) return;
+        if (ref.read(searchResultsControllerProvider).songs.length == before) {
+          break;
+        }
+      }
+    } finally {
+      _pagingLoading = false;
+      if (mounted) {
+        final state = ref.read(searchResultsControllerProvider);
+        setState(
+          () => _songPager.clampTo(state.songs.length, hasMore: state.hasMore),
+        );
+      }
+    }
+  }
+
+  Future<void> _goToPlaylistPage(int page) async {
+    if (page < 1) return;
+    setState(() => _playlistPager.jumpTo(page));
+    if (_gridScrollController.hasClients) _gridScrollController.jumpTo(0);
+    await _ensurePlaylistPage();
+  }
+
+  Future<void> _ensurePlaylistPage() async {
+    if (_pagingLoading) return;
+    _pagingLoading = true;
+    try {
+      var guard = 0;
+      while (mounted && guard++ < 20) {
+        final state = ref.read(playlistSearchControllerProvider);
+        if (_playlistPager.missing(
+              state.playlists.length,
+              hasMore: state.hasMore,
+            ) ==
+            0) {
+          break;
+        }
+        if (state.isLoadingMore || state.loadMoreError != null) break;
+        final before = state.playlists.length;
+        await ref.read(playlistSearchControllerProvider.notifier).loadMore();
+        if (!mounted) return;
+        if (ref.read(playlistSearchControllerProvider).playlists.length ==
+            before) {
+          break;
+        }
+      }
+    } finally {
+      _pagingLoading = false;
+      if (mounted) {
+        final state = ref.read(playlistSearchControllerProvider);
+        setState(
+          () => _playlistPager.clampTo(
+            state.playlists.length,
+            hasMore: state.hasMore,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _goToCollectionPage(CollectionType type, int page) async {
+    if (page < 1) return;
+    final pager = _collectionPager(type);
+    setState(() => pager.jumpTo(page));
+    if (_gridScrollController.hasClients) _gridScrollController.jumpTo(0);
+    await _ensureCollectionPage(type);
+  }
+
+  Future<void> _ensureCollectionPage(CollectionType type) async {
+    if (_pagingLoading) return;
+    final pager = _collectionPager(type);
+    _pagingLoading = true;
+    try {
+      var guard = 0;
+      while (mounted && guard++ < 20) {
+        final state = ref.read(collectionSearchProvider);
+        if (pager.missing(state.results.length, hasMore: state.hasMore) == 0) {
+          break;
+        }
+        if (state.loadingMore || state.loadMoreError != null) break;
+        final before = state.results.length;
+        await ref.read(collectionSearchProvider.notifier).loadMore();
+        if (!mounted) return;
+        if (ref.read(collectionSearchProvider).results.length == before) break;
+      }
+    } finally {
+      _pagingLoading = false;
+      if (mounted) {
+        final state = ref.read(collectionSearchProvider);
+        setState(
+          () => pager.clampTo(state.results.length, hasMore: state.hasMore),
+        );
+      }
+    }
+  }
+
+  /// 列表底部的分页条（上面可带一行加载 / 失败提示）。
+  Widget _buildPagerFooter({
+    required ThemeColors colors,
+    required PageSlicer pager,
+    required int loaded,
+    required bool hasMore,
+    required bool loading,
+    required String? error,
+    required VoidCallback onRetry,
+    required ValueChanged<int> onPage,
+  }) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (loading)
+          LoadMoreFooter(status: LoadMoreStatus.loading, colors: colors)
+        else if (error != null)
+          LoadMoreFooter(
+            status: LoadMoreStatus.error,
+            colors: colors,
+            message: error,
+            onRetry: onRetry,
+          ),
+        PageBar(
+          currentPage: pager.page,
+          pageCount: pager.pageCount(loaded, hasMore: hasMore),
+          loading: loading || _pagingLoading,
+          onChanged: onPage,
+        ),
+      ],
+    );
   }
 
   @override
@@ -255,6 +444,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       if (next.isEmpty) {
         ref.read(searchResultsControllerProvider.notifier).reset();
         ref.read(playlistSearchControllerProvider.notifier).reset();
+        _resetPagers();
       }
     });
 
@@ -937,26 +1127,6 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   }
 
   /// 歌曲搜索列表底部的状态条；返回 null 表示不需要占位。
-  Widget? _searchFooter(ThemeColors colors, SearchResultsState state) {
-    if (state.isLoadingMore) {
-      return LoadMoreFooter(status: LoadMoreStatus.loading, colors: colors);
-    }
-    if (state.loadMoreError != null) {
-      return LoadMoreFooter(
-        status: LoadMoreStatus.error,
-        colors: colors,
-        message: state.loadMoreError,
-        onRetry: () => unawaited(
-          ref.read(searchResultsControllerProvider.notifier).retryLoadMore(),
-        ),
-      );
-    }
-    if (!state.hasMore && state.songs.isNotEmpty) {
-      return LoadMoreFooter(status: LoadMoreStatus.noMore, colors: colors);
-    }
-    return null;
-  }
-
   Widget _buildSearchResults(
     ThemeColors colors,
     SearchResultsState state, {
@@ -979,9 +1149,29 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     }
     if (state.songs.isEmpty) return _buildEmptyResult(colors);
 
+    _syncSongPageSize(state.songs.length);
     final songs = state.songs;
-    final footer = _searchFooter(colors, state);
-    final showLoadingRow = footer != null;
+    // 只渲染当前页（每页按接口首页返回量，25~50 首）。
+    final visible = _songPager.slice(songs);
+    if (_songPager.missing(songs.length, hasMore: state.hasMore) > 0 &&
+        !state.isLoadingMore &&
+        state.loadMoreError == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_ensureSongPage());
+      });
+    }
+    final footer = _buildPagerFooter(
+      colors: colors,
+      pager: _songPager,
+      loaded: songs.length,
+      hasMore: state.hasMore,
+      loading: state.isLoadingMore,
+      error: state.loadMoreError,
+      onRetry: () => unawaited(
+        ref.read(searchResultsControllerProvider.notifier).retryLoadMore(),
+      ),
+      onPage: (page) => unawaited(_goToSongPage(page)),
+    );
     final selecting = _selection.isActive;
     // 宽屏下内容区没有迷你播放器，列表底部只需避开批量操作栏。
     final bottomInset = ResponsiveLayout.hasBottomMiniPlayer(context)
@@ -993,16 +1183,19 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       padding: EdgeInsets.only(
         bottom: bottomInset + (selecting ? SongBatchActionBar.height : 0),
       ),
-      itemCount: songs.length + (showLoadingRow ? 1 : 0),
+      // 最后一格是分页条
+      itemCount: visible.length + 1,
       cacheExtent: 360,
       addAutomaticKeepAlives: false,
       addRepaintBoundaries: true,
       itemBuilder: (context, index) {
-        if (index >= songs.length) return footer!;
-        final song = songs[index];
+        if (index >= visible.length) return footer;
+        final song = visible[index];
+        // 序号接着上一页继续编号
+        final songIndex = _songPager.start + index;
         return SongListItem(
           song: song,
-          index: index,
+          index: songIndex,
           showIndex: true,
           showCover: true,
           showQuality: true,
@@ -1035,7 +1228,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
             _globalLastTapTime = now;
             final controller = ref.read(playbackControllerProvider.notifier);
             PlaybackContext.instance.set(PlaybackSourceType.search);
-            await controller.setQueue(songs, startIndex: index);
+            await controller.setQueue(songs, startIndex: songIndex);
           },
         );
       },
@@ -1214,9 +1407,17 @@ class _SearchPageState extends ConsumerState<SearchPage> {
 
     final width = MediaQuery.sizeOf(context).width;
     final columns = Platform.isAndroid ? 3 : math.max(2, (width / 260).ceil());
-    return _buildLoadMoreScrollView(
-      onReachEnd: () =>
-          unawaited(ref.read(collectionSearchProvider.notifier).loadMore()),
+    final pager = _collectionPager(type);
+    // 每页 10 个。
+    final visible = pager.slice(state.results);
+    if (pager.missing(state.results.length, hasMore: state.hasMore) > 0 &&
+        !state.loadingMore &&
+        state.loadMoreError == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_ensureCollectionPage(type));
+      });
+    }
+    return _buildPagedGrid(
       sliver: SliverPadding(
         padding: const EdgeInsets.fromLTRB(
           AppSpacing.lg,
@@ -1232,26 +1433,23 @@ class _SearchPageState extends ConsumerState<SearchPage> {
             mainAxisExtent: 210,
           ),
           delegate: SliverChildBuilderDelegate(
-            (context, index) =>
-                _buildCollectionCard(colors, state.results[index]),
-            childCount: state.results.length,
+            (context, index) => _buildCollectionCard(colors, visible[index]),
+            childCount: visible.length,
           ),
         ),
       ),
-      footer: state.loadingMore
-          ? LoadMoreFooter(status: LoadMoreStatus.loading, colors: colors)
-          : state.loadMoreError != null
-          ? LoadMoreFooter(
-              status: LoadMoreStatus.error,
-              colors: colors,
-              message: state.loadMoreError,
-              onRetry: () => unawaited(
-                ref.read(collectionSearchProvider.notifier).retryLoadMore(),
-              ),
-            )
-          : state.hasMore
-          ? null
-          : LoadMoreFooter(status: LoadMoreStatus.noMore, colors: colors),
+      footer: _buildPagerFooter(
+        colors: colors,
+        pager: pager,
+        loaded: state.results.length,
+        hasMore: state.hasMore,
+        loading: state.loadingMore,
+        error: state.loadMoreError,
+        onRetry: () => unawaited(
+          ref.read(collectionSearchProvider.notifier).retryLoadMore(),
+        ),
+        onPage: (page) => unawaited(_goToCollectionPage(type, page)),
+      ),
     );
   }
 
@@ -1367,10 +1565,18 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     final crossAxisCount = ResponsiveLayout.gridCrossAxisCount(context);
     final isTablet = ResponsiveLayout.isTablet(context);
 
-    return _buildLoadMoreScrollView(
-      onReachEnd: () => unawaited(
-        ref.read(playlistSearchControllerProvider.notifier).loadMore(),
-      ),
+    // 每页 10 个；接口多给的下次翻页接着用。
+    final visible = _playlistPager.slice(state.playlists);
+    if (_playlistPager.missing(state.playlists.length, hasMore: state.hasMore) >
+            0 &&
+        !state.isLoadingMore &&
+        state.loadMoreError == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_ensurePlaylistPage());
+      });
+    }
+
+    return _buildPagedGrid(
       sliver: SliverPadding(
         padding: EdgeInsets.symmetric(
           horizontal: ResponsiveLayout.horizontalPadding(context),
@@ -1384,51 +1590,35 @@ class _SearchPageState extends ConsumerState<SearchPage> {
             childAspectRatio: isTablet ? 0.88 : 0.82,
           ),
           delegate: SliverChildBuilderDelegate((context, index) {
-            final playlist = state.playlists[index];
+            final playlist = visible[index];
             return _buildPlaylistSearchCard(colors, playlist, index);
-          }, childCount: state.playlists.length),
+          }, childCount: visible.length),
         ),
       ),
-      footer: state.isLoadingMore
-          ? LoadMoreFooter(status: LoadMoreStatus.loading, colors: colors)
-          : state.loadMoreError != null
-          ? LoadMoreFooter(
-              status: LoadMoreStatus.error,
-              colors: colors,
-              message: state.loadMoreError,
-              onRetry: () => unawaited(
-                ref
-                    .read(playlistSearchControllerProvider.notifier)
-                    .retryLoadMore(),
-              ),
-            )
-          : state.hasMore
-          ? null
-          : LoadMoreFooter(status: LoadMoreStatus.noMore, colors: colors),
+      footer: _buildPagerFooter(
+        colors: colors,
+        pager: _playlistPager,
+        loaded: state.playlists.length,
+        hasMore: state.hasMore,
+        loading: state.isLoadingMore,
+        error: state.loadMoreError,
+        onRetry: () => unawaited(
+          ref.read(playlistSearchControllerProvider.notifier).retryLoadMore(),
+        ),
+        onPage: (page) => unawaited(_goToPlaylistPage(page)),
+      ),
     );
   }
 
-  /// 网格 + 底部状态条的通用滚动容器（滚动到底自动加载下一页）。
-  Widget _buildLoadMoreScrollView({
-    required VoidCallback onReachEnd,
-    required Widget sliver,
-    Widget? footer,
-  }) {
-    return NotificationListener<ScrollNotification>(
-      onNotification: (notification) {
-        final metrics = notification.metrics;
-        if (metrics.maxScrollExtent - metrics.pixels < 400) {
-          onReachEnd();
-        }
-        return false;
-      },
-      child: CustomScrollView(
-        slivers: [
-          sliver,
-          if (footer != null) SliverToBoxAdapter(child: Center(child: footer)),
-          const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.xxxl)),
-        ],
-      ),
+  /// 网格 + 底部分页条的通用容器。
+  Widget _buildPagedGrid({required Widget sliver, required Widget footer}) {
+    return CustomScrollView(
+      controller: _gridScrollController,
+      slivers: [
+        sliver,
+        SliverToBoxAdapter(child: footer),
+        const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.xxxl)),
+      ],
     );
   }
 

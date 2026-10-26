@@ -9,7 +9,9 @@ import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../../../core/utils/scroll_locate.dart';
 import '../../../shared/widgets/music_cover_image.dart';
+import '../../../shared/pagination/page_slicer.dart';
 import '../../../shared/widgets/load_more_footer.dart';
+import '../../../shared/widgets/page_bar.dart';
 import '../../../shared/widgets/source_name_tag.dart';
 import '../../../shared/widgets/song_action_sheet.dart';
 import '../../../shared/widgets/song_list_item.dart';
@@ -70,6 +72,12 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
   /// 连续多少页没有新歌后放弃翻页（兜底，防止插件异常时无限请求）。
   static const int _maxConsecutiveEmptyPages = 5;
 
+  /// 歌曲列表分页：每页 100 首，只显示当前页，接口多给的留在已加载列表里。
+  final PageSlicer _pager = PageSlicer(pageSize: 100);
+
+  /// 正在为某一页补齐数据（避免重复触发）。
+  bool _pagingLoading = false;
+
   /// 完整歌曲列表（首屏 + 已加载的后续页）。
   List<Song> get _songs => [..._baseSongs, ..._extraSongs];
 
@@ -79,7 +87,6 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
 
   @override
   void dispose() {
-    _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
     _selection.dispose();
     super.dispose();
@@ -88,7 +95,6 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
   @override
   void initState() {
     super.initState();
-    _scrollController.addListener(_onScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkIfFavorited();
     });
@@ -127,32 +133,50 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
     _extraSongs.clear();
     _page = 1;
     _isEnd = page.isEnd;
-    _scheduleAutoFill();
+    _pager.reset();
+    _scheduleEnsurePage();
   }
 
-  void _onScroll() {
-    if (!_scrollController.hasClients ||
-        _loadingMore ||
-        _isEnd ||
-        _loadMoreError != null) {
-      return;
-    }
-    final position = _scrollController.position;
-    if (position.maxScrollExtent - position.pixels <= 480) {
-      unawaited(_loadMore());
-    }
-  }
-
-  /// 内容不足一屏时继续补齐，保证短歌单 / 大窗口下也能翻页。
-  void _scheduleAutoFill() {
+  /// 当前页数据不够（接口每页条数比 100 少）时继续向接口取，直到铺满这一页。
+  void _scheduleEnsurePage() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || _isEnd || _loadingMore || _loadMoreError != null) return;
-      if (!_scrollController.hasClients) return;
-      if (_scrollController.position.maxScrollExtent <= 0 &&
-          _songs.length < 40) {
-        unawaited(_loadMore());
-      }
+      if (!mounted) return;
+      unawaited(_ensurePageLoaded());
     });
+  }
+
+  /// 切到第 [page] 页并补齐数据。
+  Future<void> _goToPage(int page) async {
+    if (page < 1) return;
+    setState(() => _pager.jumpTo(page));
+    if (_scrollController.hasClients) _scrollController.jumpTo(0);
+    await _ensurePageLoaded();
+  }
+
+  /// 把当前页需要的数据补齐。
+  ///
+  /// 接口一次可能给得比一页少：继续取下一页，直到够了 / 到末页 / 出错。
+  Future<void> _ensurePageLoaded() async {
+    if (_pagingLoading) return;
+    _pagingLoading = true;
+    try {
+      var guard = 0;
+      while (mounted && guard++ < 30) {
+        final missing = _pager.missing(_songs.length, hasMore: !_isEnd);
+        if (missing == 0) break;
+        if (_loadMoreError != null) break;
+        final before = _songs.length;
+        await _loadMore();
+        if (!mounted) return;
+        if (_songs.length == before) break;
+      }
+    } finally {
+      if (mounted) {
+        // 数据不够时把页码收回有效范围，避免停在空白页。
+        setState(() => _pager.clampTo(_songs.length, hasMore: !_isEnd));
+      }
+      _pagingLoading = false;
+    }
   }
 
   Future<void> _loadMore() async {
@@ -224,7 +248,6 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
     } finally {
       if (mounted) {
         setState(() => _loadingMore = false);
-        _scheduleAutoFill();
       }
     }
   }
@@ -666,6 +689,9 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
     final bottomInset = ResponsiveLayout.hasBottomMiniPlayer(context)
         ? AppSpacing.miniPlayerHeight + AppSpacing.lg
         : AppSpacing.lg;
+    // 只渲染当前页（每页 100 首）；播放 / 队列仍用完整列表。
+    final visible = _pager.slice(songs);
+    final pageCount = _pager.pageCount(songs.length, hasMore: !_isEnd);
     final list = ListView.builder(
       controller: _scrollController,
       // 预留迷你播放器高度（56px + 底部 20px 间距），保证最后一首歌曲
@@ -673,14 +699,16 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
       padding: EdgeInsets.only(
         bottom: bottomInset + (selecting ? SongBatchActionBar.height : 0),
       ),
-      itemCount: songs.length,
-      // 与定位用的行高常量一致：既避免估算误差累积，也让列表布局从
-      // "逐个测量子项"退化成 O(1) 的固定行高布局，长列表滚动更流畅。
-      itemExtent: SongListItem.itemExtent,
+      itemCount: visible.length + 1,
       addAutomaticKeepAlives: false,
       addRepaintBoundaries: true,
       itemBuilder: (context, index) {
-        final song = songs[index];
+        if (index >= visible.length) {
+          return _buildPageFooter(colors, pageCount);
+        }
+        final song = visible[index];
+        // 页面内的序号按整体列表算，翻页后接着上一页继续编号。
+        final songIndex = _pager.start + index;
 
         // 高亮当前正在播放的歌曲，与本地音乐页面保持一致
         final currentSongId = ref
@@ -691,7 +719,7 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
 
         return SongListItem(
           song: song,
-          index: index,
+          index: songIndex,
           isPlaying: isPlaying,
           showPlayedTag: true,
           selectionMode: selecting,
@@ -706,7 +734,7 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
               name: _playlistTitle,
             );
             final controller = ref.read(playbackControllerProvider.notifier);
-            await controller.setQueue(songs, startIndex: index);
+            await controller.setQueue(songs, startIndex: songIndex);
           },
           onMenuTap: () =>
               SongActionSheet.show(context, song: song, playlistSongs: songs),
@@ -714,26 +742,34 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
       },
     );
 
-    return Stack(
-      children: [
-        list,
-        if (_loadingMore)
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: AppSpacing.miniPlayerHeight + AppSpacing.lg,
-            child: Center(child: _buildLoadingMoreIndicator(colors)),
-          )
-        else if (_loadMoreError != null)
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: AppSpacing.miniPlayerHeight + AppSpacing.lg,
-            child: Center(
+    return list;
+  }
+
+  /// 列表底部：翻页状态提示 + 分页条。
+  Widget _buildPageFooter(ThemeColors colors, int pageCount) {
+    return Padding(
+      padding: const EdgeInsets.only(top: AppSpacing.xs),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (_loadingMore || _pagingLoading)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+              child: _buildLoadingMoreIndicator(colors),
+            )
+          else if (_loadMoreError != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
               child: _buildLoadMoreErrorIndicator(colors, _loadMoreError!),
             ),
+          PageBar(
+            currentPage: _pager.page,
+            pageCount: pageCount,
+            loading: _loadingMore || _pagingLoading,
+            onChanged: (page) => unawaited(_goToPage(page)),
           ),
-      ],
+        ],
+      ),
     );
   }
 

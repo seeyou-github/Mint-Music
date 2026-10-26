@@ -11,7 +11,9 @@ import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../../../shared/widgets/cover_badge.dart';
+import '../../../shared/pagination/page_slicer.dart';
 import '../../../shared/widgets/music_cover_image.dart';
+import '../../../shared/widgets/page_bar.dart';
 import '../../../shared/widgets/source_icon.dart';
 import '../application/discover_providers.dart';
 import '../domain/models/playlist.dart';
@@ -50,28 +52,66 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
   final GlobalKey _sourceButtonKey = GlobalKey();
   bool _hasInitialized = false;
 
+  /// 歌单列表分页：每页 10 个（接口多给的留在已加载列表里当缓冲）。
+  static const int _playlistPageSize = 10;
+  final PageSlicer _playlistPager = PageSlicer(pageSize: _playlistPageSize);
+
+  /// 正在为某一页补数据。
+  bool _pagingLoading = false;
+
   @override
   void initState() {
     super.initState();
     _requestNotificationPermission();
-    _scrollController.addListener(_onScroll);
   }
 
   @override
   void dispose() {
-    _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
     super.dispose();
   }
 
-  void _onScroll() {
-    if (_scrollController.position.pixels >=
-        _scrollController.position.maxScrollExtent - 200) {
-      final notifier = ref.read(categoryPlaylistsProvider.notifier);
-      if (!notifier.noMore && !notifier.loadingMore) {
-        final tagId = ref.read(activeTagIdProvider);
-        final srcId = ref.read(discoverSourceIdProvider);
-        notifier.fetchPlaylists(sortId: 'hot', tagId: tagId, sourceId: srcId);
+  /// 切到第 [page] 页；数据不够时继续向接口取。
+  Future<void> _goToPlaylistPage(int page) async {
+    if (page < 1) return;
+    setState(() => _playlistPager.jumpTo(page));
+    if (_scrollController.hasClients) _scrollController.jumpTo(0);
+    await _ensurePlaylistPage();
+  }
+
+  /// 补当前页数据：接口一次给的比一页少时继续取，多给的留着下次用。
+  Future<void> _ensurePlaylistPage() async {
+    if (_pagingLoading) return;
+    _pagingLoading = true;
+    final notifier = ref.read(categoryPlaylistsProvider.notifier);
+    try {
+      var guard = 0;
+      while (mounted && guard++ < 20) {
+        final loaded =
+            ref.read(categoryPlaylistsProvider).valueOrNull?.length ?? 0;
+        if (_playlistPager.missing(loaded, hasMore: !notifier.noMore) == 0) {
+          break;
+        }
+        if (notifier.loadingMore) break;
+        final before = loaded;
+        await notifier.fetchPlaylists(
+          sortId: 'hot',
+          tagId: ref.read(activeTagIdProvider),
+          sourceId: ref.read(discoverSourceIdProvider),
+        );
+        if (!mounted) return;
+        final after =
+            ref.read(categoryPlaylistsProvider).valueOrNull?.length ?? 0;
+        if (after == before) break;
+      }
+    } finally {
+      _pagingLoading = false;
+      if (mounted) {
+        final loaded =
+            ref.read(categoryPlaylistsProvider).valueOrNull?.length ?? 0;
+        setState(
+          () => _playlistPager.clampTo(loaded, hasMore: !notifier.noMore),
+        );
       }
     }
   }
@@ -145,6 +185,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
   /// 「暂无歌单数据」。这里先等插件系统就绪再请求，若仍为空再补一次重试，
   /// 避免用户必须手动点「重试」才能看到内容。
   Future<void> _loadPlaylists() async {
+    _playlistPager.reset();
     await _waitForPlugins();
     if (!mounted) return;
 
@@ -272,9 +313,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
       onTap: () => context.push('/search'),
       child: Container(
         height: _searchBarHeight,
-        padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.md,
-        ),
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
         decoration: BoxDecoration(
           color: colors.surface,
           borderRadius: BorderRadius.circular(AppRadius.full),
@@ -296,7 +335,6 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
       ),
     );
   }
-
 
   void _showSourceMenu(
     BuildContext context,
@@ -380,11 +418,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
     });
   }
 
-  Widget _buildSourceIcon(
-    String sourceId, {
-    double size = 20,
-    String? label,
-  }) {
+  Widget _buildSourceIcon(String sourceId, {double size = 20, String? label}) {
     return SourceIcon(sourceId: sourceId, size: size, label: label);
   }
 
@@ -480,7 +514,10 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
                 children: [
                   Icon(Icons.error_outline, size: 48, color: colors.textHint),
                   const SizedBox(height: AppSpacing.md),
-                  Text(context.tr('加载失败'), style: TextStyle(color: colors.textHint)),
+                  Text(
+                    context.tr('加载失败'),
+                    style: TextStyle(color: colors.textHint),
+                  ),
                   const SizedBox(height: AppSpacing.md),
                   TextButton(
                     onPressed: () => _loadPlaylists(),
@@ -504,10 +541,12 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
   ) {
     final hotTags = hotTagsAsync.valueOrNull ?? const <PlaylistTag>[];
     // 置顶分类（插件可用 `__pinned__` 前缀标记）排在「热门」之前。
-    final pinnedTags =
-        hotTags.where((tag) => tag.isPinned).toList(growable: false);
-    final normalTags =
-        hotTags.where((tag) => !tag.isPinned).toList(growable: false);
+    final pinnedTags = hotTags
+        .where((tag) => tag.isPinned)
+        .toList(growable: false);
+    final normalTags = hotTags
+        .where((tag) => !tag.isPinned)
+        .toList(growable: false);
     return SizedBox(
       height: 36,
       child: Row(
@@ -674,6 +713,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
   /// 切换音源后重新加载歌单。
   Future<void> _reloadAfterSourceChange(String sourceId) async {
     if (!mounted) return;
+    _playlistPager.reset();
     ref.read(activeTagIdProvider.notifier).state = '';
     ref.read(activeCategoryNameProvider.notifier).state = '热门';
     // 插件自带「置顶分类」时优先选中它，而不是「热门」。
@@ -715,6 +755,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
   }
 
   void _onSelectTag(String tagId, String name) {
+    _playlistPager.reset();
     ref.read(activeTagIdProvider.notifier).state = tagId;
     ref.read(activeCategoryNameProvider.notifier).state = name;
     final srcId = ref.read(discoverSourceIdProvider);
@@ -732,6 +773,20 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
     final notifier = ref.read(categoryPlaylistsProvider.notifier);
     final crossAxisCount = ResponsiveLayout.gridCrossAxisCount(context);
     final isTablet = ResponsiveLayout.isTablet(context);
+
+    // 每页 10 个歌单；接口多给的留在已加载列表里，下一页接着用。
+    final visible = _playlistPager.slice(playlists);
+    final pageCount = _playlistPager.pageCount(
+      playlists.length,
+      hasMore: !notifier.noMore,
+    );
+    if (_playlistPager.missing(playlists.length, hasMore: !notifier.noMore) >
+            0 &&
+        !notifier.loadingMore) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_ensurePlaylistPage());
+      });
+    }
 
     return CustomScrollView(
       controller: _scrollController,
@@ -752,32 +807,35 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
               childAspectRatio: isTablet ? 0.88 : 0.82,
             ),
             delegate: SliverChildBuilderDelegate((context, index) {
-              final playlist = playlists[index];
+              final playlist = visible[index];
               return RepaintBoundary(
                 child: _buildPlaylistCard(colors, playlist, index),
               );
-            }, childCount: playlists.length),
+            }, childCount: visible.length),
           ),
         ),
-        if (notifier.loadingMore)
-          const SliverToBoxAdapter(
-            child: Padding(
-              padding: EdgeInsets.symmetric(vertical: AppSpacing.md),
-              child: Center(child: CircularProgressIndicator()),
-            ),
-          ),
-        if (notifier.noMore && playlists.isNotEmpty)
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
-              child: Center(
-                child: Text(
-                  context.tr('没有更多内容'),
-                  style: TextStyle(fontSize: 12, color: colors.textHint),
+        SliverToBoxAdapter(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (notifier.loadingMore || _pagingLoading)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: AppSpacing.xs),
+                  child: SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
                 ),
+              PageBar(
+                currentPage: _playlistPager.page,
+                pageCount: pageCount,
+                loading: notifier.loadingMore || _pagingLoading,
+                onChanged: (page) => unawaited(_goToPlaylistPage(page)),
               ),
-            ),
+            ],
           ),
+        ),
       ],
     );
   }
@@ -886,7 +944,10 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
               children: [
                 Icon(Icons.show_chart, size: 48, color: colors.textHint),
                 const SizedBox(height: AppSpacing.md),
-                Text(context.tr('暂无榜单数据'), style: TextStyle(color: colors.textHint)),
+                Text(
+                  context.tr('暂无榜单数据'),
+                  style: TextStyle(color: colors.textHint),
+                ),
               ],
             ),
           );
@@ -1083,10 +1144,7 @@ class _CategorySheetContentState extends State<_CategorySheetContent> {
             _buildTagWrap(context, widget.groups[i]),
             if (i != widget.groups.length - 1) ...[
               const SizedBox(height: AppSpacing.md),
-              Divider(
-                height: 1,
-                color: colors.divider.withValues(alpha: 0.4),
-              ),
+              Divider(height: 1, color: colors.divider.withValues(alpha: 0.4)),
               const SizedBox(height: AppSpacing.md),
             ],
           ],

@@ -7,7 +7,9 @@ import 'package:go_router/go_router.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
+import '../../../shared/pagination/page_slicer.dart';
 import '../../../shared/widgets/load_more_footer.dart';
+import '../../../shared/widgets/page_bar.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../../../shared/widgets/source_name_tag.dart';
 import '../../../shared/widgets/song_action_sheet.dart';
@@ -57,6 +59,12 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
   /// 下一页失败原因。
   String? _loadMoreError;
 
+  /// 歌曲列表分页：每页 100 首（接口多给的留在已加载列表里当缓冲）。
+  final PageSlicer _pager = PageSlicer(pageSize: 100);
+
+  /// 正在为某一页补齐数据。
+  bool _pagingLoading = false;
+
   bool get _isArtist => widget.collection.type == CollectionType.artist;
 
   /// 作者主页信息：播放作者作品时写进「最近播放」，之后可以从记录里点回主页。
@@ -66,23 +74,50 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
   @override
   void initState() {
     super.initState();
-    _scrollController.addListener(_onScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) => _loadFirst());
   }
 
   @override
   void dispose() {
-    _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
     super.dispose();
   }
 
-  void _onScroll() {
-    if (!_scrollController.hasClients) return;
-    if (_loading || _loadingMore || _isEnd || _loadMoreError != null) return;
-    final position = _scrollController.position;
-    if (position.maxScrollExtent - position.pixels <= 480) {
-      unawaited(_loadMore());
+  /// 当前页数据不够时继续向接口取（接口每页条数可能比 100 少）。
+  void _scheduleEnsurePage() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(_ensurePageLoaded());
+    });
+  }
+
+  /// 切到第 [page] 页并补齐数据。
+  Future<void> _goToPage(int page) async {
+    if (page < 1) return;
+    setState(() => _pager.jumpTo(page));
+    if (_scrollController.hasClients) _scrollController.jumpTo(0);
+    await _ensurePageLoaded();
+  }
+
+  Future<void> _ensurePageLoaded() async {
+    if (_pagingLoading) return;
+    _pagingLoading = true;
+    try {
+      var guard = 0;
+      while (mounted && guard++ < 30) {
+        final missing = _pager.missing(_songs.length, hasMore: !_isEnd);
+        if (missing == 0) break;
+        if (_loadMoreError != null) break;
+        final before = _songs.length;
+        await _loadMore();
+        if (!mounted) return;
+        if (_songs.length == before) break;
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _pager.clampTo(_songs.length, hasMore: !_isEnd));
+      }
+      _pagingLoading = false;
     }
   }
 
@@ -104,7 +139,8 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
         _isEnd = detail.isEnd;
         _loading = false;
       });
-      _scheduleAutoFill();
+      _pager.reset();
+      _scheduleEnsurePage();
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -129,8 +165,7 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
         _loadingMore = false;
         _loadMoreError = null;
       });
-      // 一页全被去重（插件重复返回同一批）时继续往后翻，避免卡住。
-      if (appended.isEmpty && !detail.isEnd) _scheduleAutoFill();
+      // 一页全被去重（插件重复返回同一批）时由 _ensurePageLoaded 的循环继续往后翻。
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -144,18 +179,6 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
   Future<void> _retryLoadMore() async {
     setState(() => _loadMoreError = null);
     await _loadMore();
-  }
-
-  /// 内容不足一屏时继续补齐，保证短列表也能翻页。
-  void _scheduleAutoFill() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || _isEnd || _loadingMore) return;
-      if (!_scrollController.hasClients) return;
-      if (_scrollController.position.maxScrollExtent <= 0 &&
-          _songs.length < 40) {
-        unawaited(_loadMore());
-      }
-    });
   }
 
   Future<CollectionDetail> _fetch(int page) {
@@ -484,7 +507,9 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
     final currentSongId = ref.watch(
       playbackControllerProvider.select((s) => s.currentSong?.id),
     );
-    final footer = _footer(colors);
+    // 只渲染当前页（每页 100 首）；播放用的是完整列表。
+    final visible = _pager.slice(songs);
+    final pageCount = _pager.pageCount(songs.length, hasMore: !_isEnd);
     return ListView.builder(
       controller: _scrollController,
       padding: const EdgeInsets.fromLTRB(
@@ -493,13 +518,16 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
         AppSpacing.sm,
         AppSpacing.xxxl,
       ),
-      itemCount: songs.length + (footer != null ? 1 : 0),
+      itemCount: visible.length + 1,
       itemBuilder: (context, index) {
-        if (index >= songs.length) return footer!;
-        final song = songs[index];
+        if (index >= visible.length) {
+          return _pageFooter(colors, pageCount);
+        }
+        final song = visible[index];
+        final songIndex = _pager.start + index;
         return SongListItem(
           song: song,
-          index: index,
+          index: songIndex,
           isPlaying: currentSongId == song.id,
           showPlayedTag: true,
           onPlayTap: () async {
@@ -511,12 +539,29 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
             );
             await ref
                 .read(playbackControllerProvider.notifier)
-                .setQueue(songs, startIndex: index);
+                .setQueue(songs, startIndex: songIndex);
           },
           onMenuTap: () =>
               SongActionSheet.show(context, song: song, playlistSongs: songs),
         );
       },
+    );
+  }
+
+  /// 列表底部：翻页状态 + 分页条。
+  Widget _pageFooter(ThemeColors colors, int pageCount) {
+    final status = _footer(colors);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (status != null) status,
+        PageBar(
+          currentPage: _pager.page,
+          pageCount: pageCount,
+          loading: _loadingMore || _pagingLoading,
+          onChanged: (page) => unawaited(_goToPage(page)),
+        ),
+      ],
     );
   }
 
