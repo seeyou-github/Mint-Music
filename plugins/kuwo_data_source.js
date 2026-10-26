@@ -98,9 +98,6 @@ function formatPlayCount(count) {
   return String(Math.floor(value));
 }
 
-/** 分类 id（`id-digest`）→ 分类名：专区分类取不到歌单时用它搜歌单。 */
-var tagNames = {};
-
 function decodeName(name) {
   return String(name === undefined || name === null ? '' : name)
     .replace(/&amp;/g, '&')
@@ -413,7 +410,6 @@ module.exports = {
           if (tag.id === undefined) continue;
           // 分类歌单接口只认 id，digest 用来区分同名分类
           var tagKey = String(tag.id) + '-' + String(tag.digest || '');
-          tagNames[tagKey] = tag.name;
           tags.push({
             id: tagKey,
             name: decodeName(tag.name)
@@ -447,8 +443,7 @@ module.exports = {
   /* --------------------------------------------------- 分类歌单（歌单卡片） */
   getRecommendSheetsByTag: function (tagId, page) {
     var size = 30;
-    var currentPage = page || 1;
-    return fetchSheets(tagId || '', currentPage, size).then(function (body) {
+    return fetchSheets(tagId || '', page || 1, size).then(function (body) {
       var data = (body.data && body.data.data) || [];
       var playlists = [];
       for (var i = 0; i < data.length; i++) {
@@ -465,38 +460,9 @@ module.exports = {
           author: String(item.uname || '')
         });
       }
-      if (playlists.length) {
-        return JSON.stringify({
-          isEnd: playlists.length < size,
-          playlists: playlists
-        });
-      }
-      // 分类接口返回空（酷我的「专区」就是这样）：用分类名搜歌单兜底。
-      var keyword = String(tagNames[String(tagId)] || '')
-        .replace(/专区$/, '')
-        .trim();
-      if (!keyword) return JSON.stringify({ isEnd: true, playlists: [] });
-      return fetchPlaylistSearch(keyword, currentPage, size).then(function (body2) {
-        var list = body2.abslist || [];
-        var fallback = [];
-        for (var j = 0; j < list.length; j++) {
-          var item2 = list[j] || {};
-          var id2 = item2.playlistid || item2.DC_TARGETID;
-          if (!id2) continue;
-          fallback.push({
-            id: String(id2),
-            title: decodeName(item2.name),
-            description: decodeName(item2.intro),
-            coverUrl: normalizeCover(item2.pic || item2.img),
-            songCount: Number(item2.songnum || 0),
-            playCount: formatPlayCount(item2.playcnt),
-            author: decodeName(item2.nickname)
-          });
-        }
-        return JSON.stringify({
-          isEnd: fallback.length < size,
-          playlists: fallback
-        });
+      return JSON.stringify({
+        isEnd: playlists.length < size,
+        playlists: playlists
       });
     });
   },
