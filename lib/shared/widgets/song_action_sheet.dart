@@ -20,6 +20,7 @@ import '../../features/player/application/playback_context.dart';
 import '../../features/player/application/playback_controller.dart';
 import '../../features/player/domain/models/song.dart';
 import '../../features/player/presentation/playback_source_navigation.dart';
+import '../../features/radio/application/radio_session.dart';
 import '../../features/download/application/download_providers.dart';
 import '../../features/settings/application/font_providers.dart';
 import '../../features/settings/application/settings_providers.dart';
@@ -610,12 +611,14 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
     final ctx = PlaybackContext.instance;
     final type = ctx.type;
     if (type == PlaybackSourceType.unknown) return null;
-    // 电台的歌也是随机从歌单里取的，来源显示成「歌单」而不是「电台」。
-    // 随机电台一次可能跨多个歌单，确定不了当前这首具体属于哪个，所以不给跳转。
-    final clickable =
-        type != PlaybackSourceType.radio &&
-        canOpenPlaybackSource(type) &&
-        (ctx.id ?? '').isNotEmpty;
+    // 电台的歌也是随机从歌单里取的，来源显示成「歌单」；电台一次可能跨多个
+    // 歌单，所以按歌曲查它自己来自哪个歌单，查到才可跳转。
+    final radioPlaylist = type == PlaybackSourceType.radio
+        ? ref.watch(radioSessionProvider)?.songPlaylists[widget.song.id]
+        : null;
+    final clickable = type == PlaybackSourceType.radio
+        ? radioPlaylist != null
+        : canOpenPlaybackSource(type) && (ctx.id ?? '').isNotEmpty;
     return InkWell(
       onTap: clickable ? _openSource : null,
       child: Padding(
@@ -677,6 +680,26 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
     // 跳转过程中菜单 / 播放页都会被关闭，先把来源快照下来。
     final ctx = PlaybackContext.instance;
     final type = ctx.type;
+
+    // 电台：跳到当前歌曲绑定的那个歌单。
+    if (type == PlaybackSourceType.radio) {
+      final playlist = ref
+          .read(radioSessionProvider)
+          ?.songPlaylists[widget.song.id];
+      if (playlist == null) return;
+      Navigator.pop(context);
+      unawaited(
+        openPlaybackSource(
+          container,
+          type: PlaybackSourceType.playlist,
+          id: playlist.id,
+          name: playlist.title,
+          song: widget.song,
+        ),
+      );
+      return;
+    }
+
     final id = ctx.id;
     final name = ctx.name;
     final meta = ctx.sourceMeta;

@@ -26,6 +26,7 @@ class RadioSession {
     this.randomSourceId = '',
     this.playlistId,
     this.playlistSource,
+    this.songPlaylists = const {},
     this.songIds = const {},
   });
 
@@ -46,6 +47,9 @@ class RadioSession {
   final String? playlistId;
   final String? playlistSource;
 
+  /// 每首电台歌曲各自来自哪个歌单：播放页「更多」里按歌曲跳转来源。
+  final Map<String, RadioPlaylistRef> songPlaylists;
+
   /// 本次电台加进队列的歌曲 id：当前播放的歌不在里面说明用户已经切走，
   /// 电台模式自动结束。
   final Set<String> songIds;
@@ -55,6 +59,7 @@ class RadioSession {
     String? cover,
     String? playlistId,
     String? playlistSource,
+    Map<String, RadioPlaylistRef>? songPlaylists,
     Set<String>? songIds,
   }) {
     return RadioSession(
@@ -66,6 +71,7 @@ class RadioSession {
       randomSourceId: randomSourceId,
       playlistId: playlistId ?? this.playlistId,
       playlistSource: playlistSource ?? this.playlistSource,
+      songPlaylists: songPlaylists ?? this.songPlaylists,
       songIds: songIds ?? this.songIds,
     );
   }
@@ -137,6 +143,7 @@ class RadioSessionController extends Notifier<RadioSession?> {
       station: station,
       playlistId: batch.playlistId,
       playlistSource: batch.playlistSource,
+      songPlaylists: batch.songPlaylists,
       songIds: batch.songs.map((s) => s.id).toSet(),
     );
     await ref.read(playbackControllerProvider.notifier).setQueue(batch.songs);
@@ -174,6 +181,7 @@ class RadioSessionController extends Notifier<RadioSession?> {
       randomSourceId: source,
       playlistId: batch.playlistId,
       playlistSource: batch.playlistSource,
+      songPlaylists: batch.songPlaylists,
       songIds: batch.songs.map((s) => s.id).toSet(),
     );
     await ref.read(playbackControllerProvider.notifier).setQueue(batch.songs);
@@ -258,6 +266,7 @@ class RadioSessionController extends Notifier<RadioSession?> {
       state = current.copyWith(
         playlistId: batch.playlistId ?? session.playlistId,
         playlistSource: batch.playlistSource ?? session.playlistSource,
+        songPlaylists: {...current.songPlaylists, ...batch.songPlaylists},
         songIds: {...current.songIds, ...fresh.map((s) => s.id)},
       );
       await controller.appendToQueue(fresh);

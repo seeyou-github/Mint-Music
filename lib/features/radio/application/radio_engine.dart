@@ -20,6 +20,15 @@ class RadioException implements Exception {
   String toString() => message;
 }
 
+/// 电台歌曲所属的歌单：播放页「更多」里据此显示来源并跳转。
+class RadioPlaylistRef {
+  const RadioPlaylistRef({required this.id, this.source, this.title});
+
+  final String id;
+  final String? source;
+  final String? title;
+}
+
 /// 一次随机取到的歌，附带「这些歌来自哪个歌单」，便于随机电台继续从同一个
 /// 歌单补歌。
 class RadioBatch {
@@ -28,12 +37,17 @@ class RadioBatch {
     this.playlistId,
     this.playlistSource,
     this.playlistTitle,
+    this.songPlaylists = const {},
   });
 
   final List<Song> songs;
   final String? playlistId;
   final String? playlistSource;
   final String? playlistTitle;
+
+  /// 每首歌各自来自哪个歌单：随机电台一次可能跨多个歌单，不能只看
+  /// [playlistId]。
+  final Map<String, RadioPlaylistRef> songPlaylists;
 
   bool get isEmpty => songs.isEmpty;
 }
@@ -117,11 +131,17 @@ class RadioEngine {
           excludeIds: excludeIds,
         );
         if (!batch.isEmpty) {
+          final ref = RadioPlaylistRef(
+            id: playlist.id,
+            source: playlist.source,
+            title: playlist.title,
+          );
           return RadioBatch(
             songs: batch.songs,
             playlistId: playlist.id,
             playlistSource: playlist.source,
             playlistTitle: playlist.title,
+            songPlaylists: {for (final song in batch.songs) song.id: ref},
           );
         }
       }
@@ -162,6 +182,7 @@ class RadioEngine {
         .toList(growable: false);
 
     final collected = <String, Song>{};
+    final songPlaylists = <String, RadioPlaylistRef>{};
     final triedPlaylists = <String>{};
     String? lastPlaylistId;
     String? lastPlaylistSource;
@@ -192,8 +213,15 @@ class RadioEngine {
         excludeIds: {...excludeIds, ...collected.keys},
       );
       if (batch.isEmpty) continue;
+      final ref = RadioPlaylistRef(
+        id: playlist.id,
+        source: playlist.source,
+        title: playlist.title,
+      );
       for (final song in batch.songs) {
-        collected.putIfAbsent(song.id, () => song);
+        if (collected.containsKey(song.id)) continue;
+        collected[song.id] = song;
+        songPlaylists[song.id] = ref;
       }
       lastPlaylistId = playlist.id;
       lastPlaylistSource = playlist.source;
@@ -206,11 +234,16 @@ class RadioEngine {
     final songs = collected.values.toList(growable: false);
     final shuffled = [...songs]..shuffle(_random);
     final take = shuffled.length > minCount ? minCount : shuffled.length;
+    final selected = shuffled.take(take).toList(growable: false);
     return RadioBatch(
-      songs: shuffled.take(take).toList(growable: false),
+      songs: selected,
       playlistId: lastPlaylistId,
       playlistSource: lastPlaylistSource,
       playlistTitle: lastPlaylistTitle,
+      songPlaylists: {
+        for (final song in selected)
+          if (songPlaylists[song.id] != null) song.id: songPlaylists[song.id]!,
+      },
     );
   }
 
@@ -284,11 +317,17 @@ class RadioEngine {
       for (final playlist in ([...playlists]..shuffle(_random))) {
         final batch = await _songsFromPlaylist(playlist.id, minCount: minCount);
         if (!batch.isEmpty) {
+          final ref = RadioPlaylistRef(
+            id: playlist.id,
+            source: playlist.source,
+            title: playlist.title,
+          );
           return RadioBatch(
             songs: batch.songs,
             playlistId: playlist.id,
             playlistSource: playlist.source,
             playlistTitle: playlist.title,
+            songPlaylists: {for (final song in batch.songs) song.id: ref},
           );
         }
       }
@@ -348,11 +387,18 @@ class RadioEngine {
     if (songs.isEmpty) return const RadioBatch(songs: []);
     final shuffled = [...songs]..shuffle(_random);
     final take = shuffled.length > minCount ? minCount : shuffled.length;
+    final selected = shuffled.take(take).toList(growable: false);
+    final ref = RadioPlaylistRef(
+      id: playlistId,
+      source: playlistSource,
+      title: title,
+    );
     return RadioBatch(
-      songs: shuffled.take(take).toList(growable: false),
+      songs: selected,
       playlistId: playlistId,
       playlistSource: playlistSource,
       playlistTitle: title,
+      songPlaylists: {for (final song in selected) song.id: ref},
     );
   }
 }
