@@ -674,8 +674,7 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
 
   Widget _buildSearchTab(ThemeColors colors) {
     final sources = ref
-        .watch(allAvailableSourcesProvider)
-        .where((s) => s.id != 'all')
+        .watch(searchAvailableSourcesProvider)
         .toList(growable: false);
     return Column(
       children: [

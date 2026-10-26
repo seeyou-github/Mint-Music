@@ -247,11 +247,6 @@ class SettingsService {
   Future<void> setRememberProgress(bool v) =>
       _prefs.setBool('remember_progress', v);
 
-  // -- auto switch source when the current source fails (default off) --
-  bool getAutoSwitchSource() => _prefs.getBool('auto_switch_source') ?? false;
-  Future<void> setAutoSwitchSource(bool v) =>
-      _prefs.setBool('auto_switch_source', v);
-
   // -- 标记歌曲播放状态（已听标签，默认开启）--
   bool getMarkPlayedStatus() => _prefs.getBool('mark_played_status') ?? true;
   Future<void> setMarkPlayedStatus(bool v) =>

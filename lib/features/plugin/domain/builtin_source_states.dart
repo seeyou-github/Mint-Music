@@ -3,7 +3,7 @@
 /// 内置音源无法真正从程序里删除，这里把用户在插件管理页做的操作记成两份
 /// id 集合：
 ///
-/// * [disabled]：用户关掉了开关，音源只是不出现在音源选择器与聚合搜索里；
+/// * [disabled]：用户关掉了开关，音源只是不出现在音源选择器与搜索里；
 /// * [removed]：用户点了「卸载」，音源从列表里消失，可通过「恢复内置音源」
 ///   一键找回。
 ///
@@ -20,7 +20,7 @@ class BuiltInSourceStates {
   /// 被「卸载」的内置音源 id。
   final Set<String> removed;
 
-  /// 是否出现在音源选择器 / 聚合搜索中。
+  /// 是否出现在音源选择器 / 搜索中。
   bool isAvailable(String sourceId) {
     return !disabled.contains(sourceId) && !removed.contains(sourceId);
   }

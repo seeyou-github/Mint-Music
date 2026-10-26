@@ -10,6 +10,7 @@ import '../../discover/domain/models/search_collection.dart';
 import '../../plugin/application/plugin_providers.dart';
 import '../../plugin/application/music_source_manager.dart';
 import '../../plugin/domain/plugin_types.dart';
+import 'discover_providers.dart';
 
 /// 搜索页结果类型切换标签。
 enum SearchTab { songs, playlists, albums, artists }
@@ -21,7 +22,13 @@ final searchQueryProvider = StateProvider<String>((ref) => '');
 /// 避免退出后再次打开时搜索栏残留上一次搜索。
 final pendingSearchQueryProvider = StateProvider<String?>((ref) => null);
 
-final searchSourceIdProvider = StateProvider<String>((ref) => 'all');
+/// 搜索页当前使用的音源。
+///
+/// 默认取「发现页正在使用的音源」；搜索页进入时会再同步一次，页内切换音源
+/// 只对本次搜索有效，退出后不保留（下次进入仍回到发现页的音源）。
+final searchSourceIdProvider = StateProvider<String>(
+  (ref) => ref.read(discoverSourceIdProvider),
+);
 
 final searchPageProvider = StateProvider<int>((ref) => 1);
 
@@ -46,19 +53,6 @@ final searchResultsProvider = FutureProvider<List<Song>>((ref) async {
   final sourceId = ref.watch(searchSourceIdProvider);
   final manager = ref.watch(musicSourceManagerProvider);
   final page = ref.watch(searchPageProvider);
-
-  if (sourceId == 'all') {
-    final aggregated = await manager.aggregateSearch(
-      query,
-      page: page,
-      limit: 20,
-    );
-    final allSongs = <Song>[];
-    for (final songs in aggregated.values) {
-      allSongs.addAll(songs);
-    }
-    return allSongs;
-  }
 
   return manager.search(query, sourceId: sourceId, page: page, limit: 30);
 });
@@ -85,7 +79,7 @@ class SearchResultsState {
 
   const SearchResultsState({
     this.query = '',
-    this.sourceId = 'all',
+    this.sourceId = '',
     this.songs = const [],
     this.page = 0,
     this.isLoading = false,
@@ -131,9 +125,6 @@ class SearchResultsNotifier extends StateNotifier<SearchResultsState> {
   final MusicSourceManager _manager;
   int _requestId = 0;
   String _requestKey = '';
-  List<String> _aggregateSources = const [];
-  final Map<String, int> _aggregatePages = {};
-  final Set<String> _aggregateSourcesWithMore = {};
 
   Future<void> start(
     String query,
@@ -156,9 +147,6 @@ class SearchResultsNotifier extends StateNotifier<SearchResultsState> {
 
     final requestId = ++_requestId;
     _requestKey = key;
-    _aggregatePages.clear();
-    _aggregateSourcesWithMore.clear();
-    _aggregateSources = const [];
     state = SearchResultsState(
       query: normalizedQuery,
       sourceId: sourceId,
@@ -190,9 +178,6 @@ class SearchResultsNotifier extends StateNotifier<SearchResultsState> {
   void reset() {
     _requestId++;
     _requestKey = '';
-    _aggregatePages.clear();
-    _aggregateSourcesWithMore.clear();
-    _aggregateSources = const [];
     state = const SearchResultsState();
   }
 
@@ -210,22 +195,22 @@ class SearchResultsNotifier extends StateNotifier<SearchResultsState> {
     );
 
     try {
-      final pageSongs = state.sourceId == 'all'
-          ? await _loadAggregatePage(requestId, page)
-          : await _loadSingleSourcePage(state.sourceId, state.query, page);
+      final pageSongs = await _loadSingleSourcePage(
+        state.sourceId,
+        state.query,
+        page,
+      );
       if (requestId != _requestId) return;
 
       final merged = replace
           ? pageSongs
           : _appendUnique(state.songs, pageSongs);
       final appendedAny = merged.length > state.songs.length;
-      final hasMore = state.sourceId == 'all'
-          ? _aggregateSourcesWithMore.isNotEmpty && (replace || appendedAny)
-          // Different source endpoints do not consistently honor the requested
-          // page size. In particular, QQ may return a partial non-final page.
-          // Continue until the source actually returns no new songs, rather
-          // than treating a page shorter than 30 as the final page.
-          : pageSongs.isNotEmpty && (replace || appendedAny);
+      // Different source endpoints do not consistently honor the requested
+      // page size. In particular, QQ may return a partial non-final page.
+      // Continue until the source actually returns no new songs, rather
+      // than treating a page shorter than 30 as the final page.
+      final hasMore = pageSongs.isNotEmpty && (replace || appendedAny);
       state = state.copyWith(
         songs: merged,
         page: page,
@@ -269,79 +254,6 @@ class SearchResultsNotifier extends StateNotifier<SearchResultsState> {
     );
   }
 
-  Future<List<Song>> _loadAggregatePage(int requestId, int page) async {
-    if (page == 1) {
-      _aggregateSources = _manager
-          .getSearchSupportedSources()
-          .map((source) => source.id)
-          .where((id) => id != 'all')
-          // 同名插件的变体（'wy@插件id'）与基础音源结果重复，聚合搜索只取基础项。
-          .where((id) => !id.contains('@'))
-          .toSet()
-          .toList();
-    }
-
-    final sourcePages = <String, int>{};
-    for (final source in _aggregateSources) {
-      final nextPage = page == 1 ? 1 : (_aggregatePages[source] ?? 0) + 1;
-      if (page > 1 && !_aggregateSourcesWithMore.contains(source)) continue;
-      sourcePages[source] = nextPage;
-    }
-
-    final entries = await Future.wait(
-      sourcePages.entries.map((entry) async {
-        try {
-          final songs = await _manager
-              .search(
-                state.query,
-                sourceId: entry.key,
-                page: entry.value,
-                limit: _pageSize,
-              )
-              .timeout(const Duration(seconds: 5));
-          return MapEntry(entry.key, songs);
-        } catch (_) {
-          return MapEntry(entry.key, <Song>[]);
-        }
-      }),
-    );
-
-    if (requestId != _requestId) return [];
-    final bySource = <String, List<Song>>{};
-    for (final entry in entries) {
-      _aggregatePages[entry.key] = sourcePages[entry.key]!;
-      if (entry.value.length >= _pageSize) {
-        _aggregateSourcesWithMore.add(entry.key);
-      } else {
-        _aggregateSourcesWithMore.remove(entry.key);
-      }
-      bySource[entry.key] = entry.value;
-    }
-
-    // Keep the familiar aggregate ordering while still appending each page.
-    final orderedSources = [
-      ...const ['wy', 'kg', 'tx', 'kw', 'mg'],
-      ..._aggregateSources.where(
-        (source) => !const ['wy', 'kg', 'tx', 'kw', 'mg'].contains(source),
-      ),
-    ];
-    final result = <Song>[];
-    var index = 0;
-    while (true) {
-      var added = false;
-      for (final source in orderedSources) {
-        final songs = bySource[source];
-        if (songs != null && index < songs.length) {
-          result.add(songs[index]);
-          added = true;
-        }
-      }
-      if (!added) break;
-      index++;
-    }
-    return result;
-  }
-
   List<Song> _appendUnique(List<Song> current, List<Song> next) {
     final result = [...current];
     final seen = result.map((song) => '${song.source}:${song.id}').toSet();
@@ -365,49 +277,10 @@ final searchResultsControllerProvider =
       return SearchResultsNotifier(ref.watch(musicSourceManagerProvider));
     });
 
-final aggregatedSearchProvider = FutureProvider<Map<String, List<Song>>>((
-  ref,
-) async {
-  final query = ref.watch(searchQueryProvider);
-  if (query.isEmpty) return {};
-
-  final manager = ref.watch(musicSourceManagerProvider);
-  return manager.aggregateSearch(query, limit: 15);
-});
-
-final interleavedAggregatedProvider = FutureProvider<List<Song>>((ref) async {
-  final aggregated = await ref.watch(aggregatedSearchProvider.future);
-  if (aggregated.isEmpty) return [];
-
-  const sourceOrder = ['wy', 'kg', 'tx', 'kw', 'mg'];
-  final sourceLists = <String, List<Song>>{};
-  for (final s in sourceOrder) {
-    sourceLists[s] = aggregated[s] ?? [];
-  }
-
-  final maxLen = sourceLists.values.fold<int>(
-    0,
-    (max, list) => list.length > max ? list.length : max,
-  );
-  final result = <Song>[];
-
-  for (var i = 0; i < maxLen; i++) {
-    for (final s in sourceOrder) {
-      final list = sourceLists[s]!;
-      if (i < list.length) {
-        result.add(list[i]);
-      }
-    }
-  }
-
-  return result;
-});
-
 final hotSearchTagsProvider = FutureProvider<List<String>>((ref) async {
   final sourceId = ref.watch(searchSourceIdProvider);
   final manager = ref.watch(musicSourceManagerProvider);
-  final effectiveSourceId = sourceId == 'all' ? 'wy' : sourceId;
-  return manager.getHotSearchTags(sourceId: effectiveSourceId);
+  return manager.getHotSearchTags(sourceId: sourceId);
 });
 
 final searchSuggestionsProvider = FutureProvider<List<String>>((ref) async {
@@ -537,12 +410,15 @@ class SearchHistoryNotifier extends StateNotifier<List<String>> {
   }
 }
 
-final allAvailableSourcesProvider = Provider<List<SourceInfo>>((ref) {
+/// 搜索页可选的音源列表（与发现页一致：内置音源 + 已启用的插件音源）。
+///
+/// 没有「聚合搜索」这一项：搜索始终使用单个音源，默认是发现页正在用的音源。
+final searchAvailableSourcesProvider = Provider<List<SourceInfo>>((ref) {
   // searchSupportedSourcesProvider 已经包含「仍启用」的内置音源与插件音源。
   final searchSources = ref.watch(searchSupportedSourcesProvider);
 
-  final allSources = <SourceInfo>[const SourceInfo(id: 'all', name: '聚合搜索')];
-  final seenIds = <String>{'all'};
+  final allSources = <SourceInfo>[];
+  final seenIds = <String>{};
 
   for (final source in searchSources) {
     if (!seenIds.contains(source.id)) {
@@ -614,7 +490,7 @@ class PlaylistSearchNotifier extends StateNotifier<PlaylistSearchState> {
 
   final MusicSourceManager _manager;
   int _requestId = 0;
-  String _sourceId = 'all';
+  String _sourceId = '';
 
   Future<void> search(String query, String sourceId) async {
     final normalizedQuery = query.trim();
@@ -812,7 +688,7 @@ class CollectionSearchController extends StateNotifier<CollectionSearchState> {
 
   final MusicSourceManager _manager;
   int _requestId = 0;
-  String _sourceId = 'all';
+  String _sourceId = '';
   CollectionType _type = CollectionType.album;
 
   Future<void> search(

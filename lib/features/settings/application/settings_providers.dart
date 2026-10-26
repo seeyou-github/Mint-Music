@@ -30,10 +30,6 @@ final playbackSpeedProvider = StateProvider<double>((ref) => 1.0);
 final autoPlayProvider = StateProvider<bool>((ref) => false);
 final rememberProgressProvider = StateProvider<bool>((ref) => false);
 
-/// 当前音源播放失败时是否自动切换到其他音源（默认关闭）。
-/// 无论开关如何，播放失败都不会自动播放下一首。
-final autoSwitchSourceProvider = StateProvider<bool>((ref) => false);
-
 /// 是否记录并显示「已听 / 已听 N%」标记（默认开启）。
 ///
 /// 开启后播放过的歌曲会按 1% 粒度把进度写进临时库，
@@ -511,7 +507,6 @@ final settingsInitProvider = FutureProvider<void>((ref) async {
   ref.read(wifiOnlyDownloadProvider.notifier).state = false;
   ref.read(autoPlayProvider.notifier).state = svc.getAutoPlay();
   ref.read(rememberProgressProvider.notifier).state = svc.getRememberProgress();
-  ref.read(autoSwitchSourceProvider.notifier).state = svc.getAutoSwitchSource();
   ref.read(markPlayedStatusProvider.notifier).state = svc.getMarkPlayedStatus();
   final hideVipExclusive = svc.getHideVipExclusiveSongs();
   ref.read(hideVipExclusiveSongsProvider.notifier).state = hideVipExclusive;

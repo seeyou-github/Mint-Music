@@ -127,11 +127,11 @@ String upgradeFavoriteMarkerSource(String description, String? source) {
 /// 把收藏时记录的插件音源写成「这首歌优先使用的插件」。
 ///
 /// 收藏的专辑 / 作者 / 歌单 / 榜单记的是具体插件（`平台id@插件id`）。播放时
-/// 先用这个插件解析地址——比播放页顶部手动选的「优先音源」更具体；插件不
+/// 先用这个插件解析地址——比设置里的「优先音源」更具体；插件不
 /// 可用时仍按原规则回退，所以这里不改写歌曲的平台音源（[Song.source]）。
 ///
 /// 原来是「直接把 song.source 改成插件变体」，但那样会让内置平台失去兜底
-/// 解析（自动换源关闭时直接算失败），所以改成歌曲级优先插件。
+/// 解析时这首歌就算失败，所以改成歌曲级优先插件。
 List<Song> applyFavoriteSource(List<Song> songs, String? source) {
   final target = source?.trim();
   if (target == null || target.isEmpty || target == 'local') return songs;

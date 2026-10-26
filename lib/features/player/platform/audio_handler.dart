@@ -44,7 +44,7 @@ class MusicAudioHandler extends BaseAudioHandler
 
   /// 会话是否已被清空。
   ///
-  /// 清空播放列表后，任何**残留的在途请求**（取URL / 自动换源 / 音质切换，
+  /// 清空播放列表后，任何**残留的在途请求**（取URL / 音质切换，
   /// 这些流程里有十几处 `await`，无法只靠调用点的 requestId 守卫全部覆盖）
   /// 恢复执行时都会调用 [setAudioSource] / [setSource]，把已经删除的曲目
   /// 重新写回通知栏，并让系统媒体控制重新「可播放」。这里直接把它们全部忽略，
@@ -728,7 +728,7 @@ class MusicAudioHandler extends BaseAudioHandler
     debugPrint('MusicAudioHandler: 清空媒体会话');
 
     // 置位：此后所有过期的 setAudioSource / setSource 都会被忽略，
-    // 避免在途的取URL / 自动换源流程把已删除的曲目写回通知栏。
+    // 避免在途的取URL / 音质切换流程把已删除的曲目写回通知栏。
     _sessionCleared = true;
 
     _suppressBroadcast = true;

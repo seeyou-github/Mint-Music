@@ -17,13 +17,13 @@ import '../../../shared/widgets/song_list_item.dart';
 import '../../../shared/widgets/source_icon.dart';
 import '../../../shared/widgets/song_action_sheet.dart';
 import '../../../shared/widgets/song_selection.dart';
+import '../application/discover_providers.dart' as discover;
 import '../application/search_providers.dart';
 import '../../player/application/playback_context.dart';
 import '../../library/domain/models/recently_played.dart';
 import '../../library/application/playlist_providers.dart';
 import '../domain/models/playlist.dart';
 import '../domain/models/search_collection.dart';
-import 'collection_detail_page.dart';
 import '../../player/application/playback_controller.dart';
 import '../../player/domain/models/song.dart';
 import '../../plugin/domain/plugin_types.dart';
@@ -69,8 +69,9 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         ref.read(searchQueryProvider.notifier).state = '';
         ref.read(searchResultsControllerProvider.notifier).reset();
       }
-      // 搜索音源与主页 / 歌单的音源各自独立：进页面不再把主页音源同步过来，
-      // 沿用上一次在搜索页选的那个（首次为「聚合搜索」）。
+      // 搜索音源默认使用「发现页正在使用的音源」：每次进入搜索页都重置一次，
+      // 页内切换只在本次搜索有效，退出后不保留。
+      _syncSourceWithDiscover();
       final currentQuery = ref.read(searchQueryProvider).trim();
       if (currentQuery.isNotEmpty) {
         unawaited(
@@ -133,6 +134,30 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   }
 
   bool get _showSuggest => _isFocused && _inputText.isNotEmpty;
+
+  /// 把搜索音源重置成「发现页正在使用的音源」。
+  ///
+  /// 搜索页里的音源切换只对本次搜索有效：每次进入页面都重新同步一次，
+  /// 退出后再进来仍然跟着发现页的音源。发现页的音源如果不在搜索支持的
+  /// 列表里（例如插件还没加载完），退回到列表里的第一个音源。
+  void _syncSourceWithDiscover() {
+    final sources = ref.read(searchAvailableSourcesProvider);
+    final discoverSourceId = ref.read(discover.discoverSourceIdProvider);
+    final current = ref.read(searchSourceIdProvider);
+
+    String? target;
+    if (sources.any((source) => source.id == discoverSourceId)) {
+      target = discoverSourceId;
+    } else if (sources.any((source) => source.id == current)) {
+      target = current;
+    } else if (sources.isNotEmpty) {
+      target = sources.first.id;
+    }
+
+    if (target != null && target != current) {
+      ref.read(searchSourceIdProvider.notifier).state = target;
+    }
+  }
 
   void _performSearch(String query) {
     if (query.trim().isEmpty) return;
@@ -201,19 +226,17 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     final hotTagsAsync = ref.watch(hotSearchTagsProvider);
     final query = ref.watch(searchQueryProvider);
     final sourceId = ref.watch(searchSourceIdProvider);
-    final sources = ref.watch(allAvailableSourcesProvider);
+    final sources = ref.watch(searchAvailableSourcesProvider);
     final searchHistory = ref.watch(searchHistoryProvider);
 
-    // 这里**不监听** defaultSourceIdProvider：搜索音源是独立的一套，
-    // 主页 / 歌单那边切换音源不应该改变搜索页当前选的音源。
-
-    // 但当前选的音源可能已经被禁用 / 卸载（搜索音源现在会一直保留到下次切换），
-    // 这种情况回退到「聚合搜索」，避免拿着一个不存在的音源搜出空结果。
-    if (sourceId != 'all' && sources.every((s) => s.id != sourceId)) {
+    // 当前选的音源可能已经被禁用 / 卸载（搜索页的音源切换只在本次搜索有效），
+    // 这种情况回退到列表里的第一个音源，避免拿着一个不存在的音源搜出空结果。
+    if (sources.isNotEmpty && sources.every((s) => s.id != sourceId)) {
+      final fallback = sources.first.id;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         if (ref.read(searchSourceIdProvider) == sourceId) {
-          ref.read(searchSourceIdProvider.notifier).state = 'all';
+          ref.read(searchSourceIdProvider.notifier).state = fallback;
         }
       });
     }
@@ -514,14 +537,14 @@ class _SearchPageState extends ConsumerState<SearchPage> {
               ),
               // 图标铺满圆形按钮，不留内边距
               clipBehavior: Clip.antiAlias,
-              child: currentSource != null && currentSource.id != 'all'
-                  ? _buildSourceIcon(
+              child: currentSource == null
+                  ? _buildSourceIcon('', size: _searchFieldHeight)
+                  : _buildSourceIcon(
                       // 同名插件的变体 id 需要还原成平台 id 才能取到对应图标。
                       SourceInfo.baseIdOf(currentSource.id),
                       size: _searchFieldHeight,
                       label: currentSource.name,
-                    )
-                  : _buildSourceIcon('all', size: _searchFieldHeight),
+                    ),
             ),
           ),
         ],
@@ -732,14 +755,12 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           height: 44,
           child: Row(
             children: [
-              source.id != 'all'
-                  ? _buildSourceIcon(
-                      // 同名插件的变体 id 需要还原成平台 id 才能取到对应图标。
-                      SourceInfo.baseIdOf(source.id),
-                      size: 18,
-                      label: source.name,
-                    )
-                  : _buildSourceIcon('all', size: 18),
+              _buildSourceIcon(
+                // 同名插件的变体 id 需要还原成平台 id 才能取到对应图标。
+                SourceInfo.baseIdOf(source.id),
+                size: 18,
+                label: source.name,
+              ),
               const SizedBox(width: AppSpacing.sm),
               Expanded(
                 child: Text(
@@ -764,8 +785,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     ).then((selectedId) {
       if (selectedId == null) return;
       if (selectedId == ref.read(searchSourceIdProvider)) return;
-      // 只改搜索页自己的音源，不写「默认音源」设置：
-      // 否则主页 / 歌单的音源会被搜索页带着一起变。
+      // 只改搜索页自己的音源，不写「默认音源」设置：发现页 / 歌单的音源
+      // 不受搜索页影响。页内切换只对本次搜索有效，退出页面后重置。
       // 选中后由上面对 searchSourceIdProvider 的监听统一重新搜索（覆盖全部标签页）。
       ref.read(searchSourceIdProvider.notifier).state = selectedId;
     });
@@ -912,116 +933,6 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           ),
         ],
       ),
-    );
-  }
-
-  Widget _buildAggregatedResults(
-    ThemeColors colors,
-    AsyncValue<List<Song>> asyncResults,
-  ) {
-    final interleavedAsync = ref.watch(interleavedAggregatedProvider);
-
-    return interleavedAsync.when(
-      data: (songs) {
-        if (songs.isEmpty) return _buildEmptyResult(colors);
-
-        return ListView.builder(
-          padding: const EdgeInsets.only(bottom: AppSpacing.xxxl),
-          itemCount: songs.length,
-          itemExtent: SongListItem.itemExtent,
-          cacheExtent: 360,
-          addAutomaticKeepAlives: false,
-          addRepaintBoundaries: true,
-          itemBuilder: (context, index) {
-            final song = songs[index];
-            final currentSongId = ref.watch(
-              playbackControllerProvider.select((s) => s.currentSong?.id),
-            );
-            return SongListItem(
-              song: song,
-              index: index,
-              showIndex: true,
-              showCover: true,
-              showQuality: true,
-              // 歌手名左侧显示音源标签（聚合搜索能看出每首歌来自哪个源）。
-              showSource: true,
-              showDuration: true,
-              showMenuButton: true,
-              // 正在播放的歌曲高亮显示。
-              isPlaying: currentSongId != null && currentSongId == song.id,
-              // 主操作为「下一首播放」：插到当前播放歌曲之后，
-              // 不会把播放队列替换成全部搜索结果。
-              onMenuTap: () => SongActionSheet.show(
-                context,
-                song: song,
-                showPlayNextInsteadOfPlay: true,
-              ),
-              onPlayTap: () async {
-                final now = DateTime.now();
-                final lastTap = _globalLastTapTime;
-                final diff = lastTap != null
-                    ? now.difference(lastTap).inMilliseconds
-                    : null;
-                if (lastTap != null && diff! < _tapDebounceMs) {
-                  return;
-                }
-                _globalLastTapTime = now;
-                final controller = ref.read(
-                  playbackControllerProvider.notifier,
-                );
-                PlaybackContext.instance.set(PlaybackSourceType.search);
-                await controller.setQueue(songs, startIndex: index);
-              },
-            );
-          },
-        );
-      },
-      loading: () => const Center(child: CircularProgressIndicator()),
-      error: (_, __) => Center(
-        child: Text(
-          context.tr('搜索失败'),
-          style: TextStyle(color: colors.textHint),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSingleSourceResults(ThemeColors colors, List<Song> songs) {
-    return ListView.builder(
-      padding: const EdgeInsets.only(bottom: AppSpacing.xxxl),
-      itemCount: songs.length,
-      itemExtent: SongListItem.itemExtent,
-      cacheExtent: 360,
-      addAutomaticKeepAlives: false,
-      addRepaintBoundaries: true,
-      itemBuilder: (context, index) {
-        final song = songs[index];
-        final currentSongId = ref.watch(
-          playbackControllerProvider.select((s) => s.currentSong?.id),
-        );
-        return SongListItem(
-          song: song,
-          index: index,
-          // 歌手名左侧显示音源标签。
-          showSource: true,
-          // 正在播放的歌曲高亮显示。
-          isPlaying: currentSongId != null && currentSongId == song.id,
-          onPlayTap: () async {
-            final now = DateTime.now();
-            final lastTap = _globalLastTapTime;
-            final diff = lastTap != null
-                ? now.difference(lastTap).inMilliseconds
-                : null;
-            if (lastTap != null && diff! < _tapDebounceMs) {
-              return;
-            }
-            _globalLastTapTime = now;
-            final controller = ref.read(playbackControllerProvider.notifier);
-            PlaybackContext.instance.set(PlaybackSourceType.search);
-            await controller.setQueue(songs, startIndex: index);
-          },
-        );
-      },
     );
   }
 

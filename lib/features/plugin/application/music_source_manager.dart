@@ -116,7 +116,7 @@ class MusicSourceManager {
 
   bool get builtInSourceStatesLoaded => _builtInSourceStatesLoaded;
 
-  /// 内置音源是否出现在音源选择器 / 聚合搜索中。
+  /// 内置音源是否出现在音源选择器 / 搜索中。
   bool isBuiltInSourceAvailable(String sourceId) {
     return _builtInSourceStates.isAvailable(sourceId);
   }
@@ -398,7 +398,7 @@ class MusicSourceManager {
     final (_, pluginId) = splitSourceId(sourceId);
     if (pluginId != null) return sourceId;
     // 内置源：找提供该平台的插件。按「优先音源」排序后取第一个，
-    // 这样播放详情页顶部显示的就是真正会被优先使用的那个音源。
+    // 这样解析播放地址时用的就是真正会被优先使用的那个音源。
     for (final host in _orderedHostsForSource(
       sourceId,
       preferredPlugin: preferredPlugin,
@@ -704,13 +704,6 @@ class MusicSourceManager {
   /// 优先使用用户指定的音源，失败后再按原顺序尝试其它音源。
   Map<String, String> _preferredSources = const {};
 
-  /// 本次会话里用户在播放详情页手动选择的音源（`平台id@插件id`）。
-  ///
-  /// 不持久化：退出应用即失效。播放绑定内置音源的歌曲时优先用它解析；
-  /// 失败自动换源时也把它排在候选最前（见 [_orderedHostsForSource]）。
-  /// 歌曲自己记的「优先插件」（收藏绑定）比它更具体，仍排最前。
-  String? _sessionPreferredSource;
-
   void setPreferredSources(Map<String, String> map) {
     _preferredSources = Map<String, String>.from(map);
   }
@@ -722,16 +715,6 @@ class MusicSourceManager {
   /// 详情 / 榜单结果时直接过滤掉；已收藏的歌曲不走这条解析路径，不受
   /// 影响，仅显示「会员」标签。
   bool hideVipExclusiveSongs = true;
-
-  /// 当前会话的手动音源（null 表示本会话没有手动选过）。
-  String? get sessionPreferredSource => _sessionPreferredSource;
-
-  /// 设置 / 清除本次会话的手动音源。
-  void setSessionPreferredSource(String? sourceId) {
-    _sessionPreferredSource = (sourceId == null || sourceId.trim().isEmpty)
-        ? null
-        : sourceId.trim();
-  }
 
   /// 用户已安装、且能解析播放地址的插件音源（绑定切换 / 播放详情页的
   /// 手动音源列表都用它；内置音源不参与）。
@@ -786,9 +769,7 @@ class MusicSourceManager {
   ///
   /// 优先级（从高到低）：
   /// 1. [preferredPlugin] ——「这首歌自己记住的插件」（收藏时记下的绑定）；
-  /// 2. 本次会话用户手动选择的音源（仅绑定内置平台时参与，插件绑定的歌
-  ///    曲按绑定走，见 [_sessionPreferredSource]）；
-  /// 3. 设置里每个内置源的「优先音源」。
+  /// 2. 设置里每个内置源的「优先音源」。
   ///
   /// 只影响「取播放地址」，不影响搜索结果的顺序。
   List<PluginHost> _orderedHostsForSource(
@@ -804,10 +785,6 @@ class MusicSourceManager {
     String? preferred;
     for (final candidate in [
       preferredPlugin?.trim() ?? '',
-      // 手动音源只在歌曲绑定的还是内置平台时参与；歌曲没有自己的绑定
-      // （preferredPlugin 为空）才轮到它。
-      if (preferredPlugin?.trim().isNotEmpty != true)
-        _sessionPreferredSource ?? '',
       _preferredSources[baseId] ?? '',
     ]) {
       if (candidate.isNotEmpty) {
@@ -1300,7 +1277,11 @@ class MusicSourceManager {
     // canonical built-in ID. Resolve it before looking up the built-in source
     // so hot search follows the same source mapping as search itself.
     final effectiveSourceId = _canonicalSourceId(sourceId);
-    final builtIn = _builtInSourceFor(effectiveSourceId);
+    // 搜索页默认跟着发现页的音源，而发现页的音源经常是插件音源
+    // （`平台id@插件id`）。插件没有自己的热门搜索接口，这里退回同平台的内置源，
+    // 免得搜索落地页的「热门搜索」整块空掉。
+    final (baseId, _) = splitSourceId(effectiveSourceId);
+    final builtIn = _builtInSources[baseId];
     if (builtIn != null) {
       try {
         final result = await builtIn.getHotSearchTags();
@@ -2088,13 +2069,9 @@ class MusicSourceManager {
     if (sourceId.isEmpty) return false;
     final effective = _canonicalSourceId(sourceId);
     final wantAlbum = type == CollectionType.album;
-    // 「聚合搜索」：只要有一个插件音源支持就算支持。
-    final ids = effective == 'all' ? pluginSourceIds : <String>[effective];
-    for (final id in ids) {
-      for (final host in _findPluginHostsForSource(id)) {
-        if (wantAlbum ? host.supportsAlbumSearch : host.supportsArtistSearch) {
-          return true;
-        }
+    for (final host in _findPluginHostsForSource(effective)) {
+      if (wantAlbum ? host.supportsAlbumSearch : host.supportsArtistSearch) {
+        return true;
       }
     }
     return false;
@@ -2115,34 +2092,6 @@ class MusicSourceManager {
     if (query.isEmpty) return const CollectionSearchPage();
 
     final effective = _canonicalSourceId(sourceId);
-    // 「聚合搜索」：逐个插件音源查一遍再合并，只要有一个还有下一页就算没到底。
-    if (effective == 'all') {
-      final merged = <SearchCollection>[];
-      final seenIds = <String>{};
-      var anyMore = false;
-      var succeeded = 0;
-      Object? lastError;
-      for (final id in pluginSourceIds) {
-        try {
-          final part = await searchCollections(
-            query,
-            sourceId: id,
-            type: type,
-            page: page,
-            limit: limit,
-          );
-          succeeded++;
-          if (!part.isEnd) anyMore = true;
-          for (final item in part.items) {
-            if (seenIds.add('${item.source}:${item.id}')) merged.add(item);
-          }
-        } catch (e) {
-          lastError = e;
-        }
-      }
-      if (succeeded == 0 && lastError != null) throw lastError;
-      return CollectionSearchPage(items: merged, isEnd: !anyMore);
-    }
 
     final wantAlbum = type == CollectionType.album;
     final results = <SearchCollection>[];
@@ -3232,13 +3181,13 @@ class MusicSourceManager {
     return sources;
   }
 
-  /// 搜索歌单：通过各内置源的 searchPlaylist API 获取真实的歌单搜索结果。
+  /// 搜索歌单：通过指定音源的 searchPlaylist API 获取真实的歌单搜索结果。
   ///
-  /// 聚合模式（sourceId == 'all'）会并发请求所有内置源，去重后返回；
-  /// 指定源时只请求对应源。
+  /// 搜索页只使用单个音源（默认是发现页正在用的那个），因此这里不再支持
+  /// 聚合多个音源的模式。
   Future<List<Playlist>> searchPlaylists(
     String query, {
-    String sourceId = 'all',
+    required String sourceId,
     int page = 1,
     int limit = 30,
   }) async {
@@ -3254,49 +3203,28 @@ class MusicSourceManager {
       }
     }
 
-    if (sourceId == 'all') {
-      // 并发搜索所有「仍启用」的内置源
-      final futures = _availableBuiltInSources.map((entry) async {
-        try {
-          final playlists = await entry.value
-              .searchPlaylists(query, page: page, limit: limit)
-              .timeout(_perSourceTimeout);
-          return playlists;
-        } catch (_) {
-          return <Playlist>[];
-        }
-      });
-      final allResults = await Future.wait(futures);
-      for (final sourceResults in allResults) {
-        for (final p in sourceResults) {
+    final effectiveSourceId = _canonicalSourceId(sourceId);
+    final builtIn = _builtInSourceFor(effectiveSourceId);
+    if (builtIn != null) {
+      try {
+        final playlists = await builtIn
+            .searchPlaylists(query, page: page, limit: limit)
+            .timeout(_perSourceTimeout);
+        for (final p in playlists) {
           addUnique(p);
         }
-      }
+      } catch (_) {}
     } else {
-      // 搜索指定源
-      final effectiveSourceId = _canonicalSourceId(sourceId);
-      final builtIn = _builtInSourceFor(effectiveSourceId);
-      if (builtIn != null) {
-        try {
-          final playlists = await builtIn
-              .searchPlaylists(query, page: page, limit: limit)
-              .timeout(_perSourceTimeout);
-          for (final p in playlists) {
-            addUnique(p);
-          }
-        } catch (_) {}
-      } else {
-        // 插件音源：走 MusicFree 插件的 sheet 搜索（supportedSearchType
-        // 含 sheet）。结果 id 带 `mf:sheet:` 前缀，打开详情时会自动路由
-        // 回对应插件的 getMusicSheetInfo。
-        for (final p in await _searchPlaylistsFromPlugins(
-          query,
-          effectiveSourceId,
-          page: page,
-          limit: limit,
-        )) {
-          addUnique(p);
-        }
+      // 插件音源：走 MusicFree 插件的 sheet 搜索（supportedSearchType
+      // 含 sheet）。结果 id 带 `mf:sheet:` 前缀，打开详情时会自动路由
+      // 回对应插件的 getMusicSheetInfo。
+      for (final p in await _searchPlaylistsFromPlugins(
+        query,
+        effectiveSourceId,
+        page: page,
+        limit: limit,
+      )) {
+        addUnique(p);
       }
     }
 

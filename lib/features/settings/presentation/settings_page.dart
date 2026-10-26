@@ -1885,7 +1885,6 @@ class _PlaybackContent extends ConsumerWidget {
     ThemeColors colors,
   ) {
     final autoQualityDowngrade = ref.watch(autoQualityDowngradeProvider);
-    final autoSwitchSource = ref.watch(autoSwitchSourceProvider);
     final markPlayedStatus = ref.watch(markPlayedStatusProvider);
     final hideVipExclusive = ref.watch(hideVipExclusiveSongsProvider);
     return SettingGroup(
@@ -1902,23 +1901,6 @@ class _PlaybackContent extends ConsumerWidget {
               autoQualityDowngradeProvider,
               v,
               (s) => s.setAutoQualityDowngrade(v),
-            ),
-            activeTrackColor: colors.primary.withValues(alpha: 0.3),
-            activeThumbColor: colors.primary,
-          ),
-          colors: colors,
-        ),
-        SettingDivider(colors: colors),
-        SettingRow(
-          icon: Icons.swap_horiz,
-          title: '当前音源播放失败自动切换音源',
-          trailing: Switch(
-            value: autoSwitchSource,
-            onChanged: (v) => _persistBool(
-              context,
-              autoSwitchSourceProvider,
-              v,
-              (s) => s.setAutoSwitchSource(v),
             ),
             activeTrackColor: colors.primary.withValues(alpha: 0.3),
             activeThumbColor: colors.primary,

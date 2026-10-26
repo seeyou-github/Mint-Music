@@ -426,7 +426,7 @@ class PluginTestService {
     return (title: title, artist: artist);
   }
 
-  /// 与自动换源一致的歌曲匹配评分：标题 60% + 歌手 40%，阈值 0.5。
+  /// 歌曲匹配评分：标题 60% + 歌手 40%，阈值 0.5。
   ///
   /// 返回按得分降序的前 [_maxMatchCandidates] 首，解析失败时按顺序换下一
   /// 首尝试；同时强制规范 source，保证后续链接解析走当前音源。
