@@ -4,6 +4,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import '../../core/l10n/l10n.dart';
 import '../../core/theme/app_spacing.dart';
 import '../../core/theme/theme_provider.dart';
+import '../../features/blacklist/application/blacklist_providers.dart';
 import '../../features/discover/presentation/song_parts_navigation.dart';
 import '../../features/player/application/play_progress_providers.dart';
 import '../../features/player/domain/models/song.dart';
@@ -106,8 +107,11 @@ class SongListItem extends ConsumerWidget {
     final narrow =
         MediaQuery.orientationOf(context) == Orientation.portrait ||
         MediaQuery.sizeOf(context).width < 520;
+    final blocked = ref.watch(blacklistProvider).isBlocked(song);
     final effectiveTap = selectionMode
         ? () => onSelectionToggle?.call(song)
+        : blocked
+        ? () => _showBlockedHint(context)
         : () {
             // 分 P 歌曲：点击直接进专辑页列出全部分 P，不直接播放第一 P。
             if (openSongPartsIfNeeded(context, song)) return;
@@ -144,7 +148,9 @@ class SongListItem extends ConsumerWidget {
                     _buildCover(colors, ref),
                   ],
                   const SizedBox(width: AppSpacing.sm),
-                  Expanded(child: _buildSongInfo(colors, context, ref)),
+                  Expanded(
+                    child: _buildSongInfo(colors, context, ref, blocked),
+                  ),
                   if (trailing != null)
                     trailing!
                   else
@@ -230,6 +236,7 @@ class SongListItem extends ConsumerWidget {
     ThemeColors colors,
     BuildContext context,
     WidgetRef ref,
+    bool blocked,
   ) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -240,7 +247,10 @@ class SongListItem extends ConsumerWidget {
           style: TextStyle(
             fontSize: 14,
             fontWeight: FontWeight.w500,
-            color: isPlaying ? colors.primary : colors.textPrimary,
+            // 黑名单里的歌名颜色更浅，一眼能看出这首放不了。
+            color: blocked
+                ? colors.textPrimary.withValues(alpha: 0.45)
+                : (isPlaying ? colors.primary : colors.textPrimary),
           ),
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
@@ -248,6 +258,7 @@ class SongListItem extends ConsumerWidget {
         const SizedBox(height: 2),
         Row(
           children: [
+            if (blocked) _buildBlacklistTag(colors, context),
             if (showQuality) _buildQualityTag(colors, context),
             if (showSource && song.source != null)
               _buildSourceTag(colors, context, ref),
@@ -262,6 +273,37 @@ class SongListItem extends ConsumerWidget {
           ],
         ),
       ],
+    );
+  }
+
+  /// 黑名单标签（与音质 / 音源标签同一行）。
+  Widget _buildBlacklistTag(ThemeColors colors, BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(right: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+      decoration: BoxDecoration(
+        color: colors.error.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(2),
+      ),
+      child: Text(
+        context.tr('黑名单'),
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+          color: colors.error,
+        ),
+      ),
+    );
+  }
+
+  /// 点到黑名单歌曲时给个提示，避免看起来像「点了没反应」。
+  void _showBlockedHint(BuildContext context) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(context.tr('这首歌在黑名单里，已跳过播放')),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
+      ),
     );
   }
 

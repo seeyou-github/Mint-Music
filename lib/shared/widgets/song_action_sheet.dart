@@ -14,6 +14,7 @@ import '../../core/constants/app_routes.dart';
 import '../../core/l10n/l10n.dart';
 import '../../features/library/application/playlist_providers.dart';
 import '../../features/library/domain/models/playlist.dart';
+import '../../features/blacklist/application/blacklist_providers.dart';
 import '../../features/player/application/playback_controller.dart';
 import '../../features/player/domain/models/song.dart';
 import '../../features/download/application/download_providers.dart';
@@ -401,6 +402,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
   Widget build(BuildContext context) {
     final themeColors = ref.watch(themeColorsProvider);
     final playlistsAsync = ref.watch(playlistsProvider);
+    final blacklist = ref.watch(blacklistProvider);
     final bottomPadding = MediaQuery.of(context).padding.bottom;
 
     // Compact mode (player menu) uses always-dark colors matching the play queue window.
@@ -455,6 +457,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                   // Android 端的倍速也挪到播放页，这里不再重复。
                   if (!Platform.isAndroid) _buildSpeedItem(colors),
                   _buildLyricSettingsItem(colors),
+                  ..._buildBlacklistItems(colors, blacklist),
                 ],
                 // --- Full mode (song context menu) ---
                 if (!widget.compactMode) ...[
@@ -487,6 +490,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                     skipPop: true,
                   ),
                   _buildFavoriteItem(colors),
+                  ..._buildBlacklistItems(colors, blacklist),
                   if (widget.showRemove && widget.onRemove != null)
                     _buildActionItem(
                       colors: colors,
@@ -683,6 +687,77 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
         ),
       ),
     );
+  }
+
+  /// 黑名单菜单项（播放页「更多」里在「歌词设置」下方）。
+  ///
+  /// * 没被拉黑 → 「添加到黑名单」/「歌曲添加到黑名单」+「歌手添加到黑名单」
+  /// * 被歌曲黑名单拉黑 → 「从黑名单移除」（歌手也在黑名单里时顺带加入白名单）
+  /// * 只被歌手黑名单拉黑 → 「将此歌曲移出黑名单」（加白名单）
+  /// * 歌手在黑名单里 → 额外的「将此歌手移出黑名单」（解禁该歌手全部歌曲）
+  List<Widget> _buildBlacklistItems(
+    ThemeColors colors,
+    BlacklistData blacklist,
+  ) {
+    final song = widget.song;
+    final notifier = ref.read(blacklistProvider.notifier);
+    final songListed = blacklist.isSongListed(song);
+    final artistListed = blacklist.isArtistListed(song.artist);
+    final blocked = blacklist.isBlocked(song);
+    final items = <Widget>[];
+
+    if (!blocked) {
+      items.add(
+        _buildActionItem(
+          colors: colors,
+          icon: Icons.block,
+          label: context.tr(widget.compactMode ? '歌曲添加到黑名单' : '添加到黑名单'),
+          onTap: () => unawaited(notifier.addSong(song)),
+          iconColor: colors.error,
+        ),
+      );
+    } else if (songListed) {
+      items.add(
+        _buildActionItem(
+          colors: colors,
+          icon: Icons.remove_circle_outline,
+          label: context.tr('从黑名单移除'),
+          onTap: () => unawaited(notifier.removeSong(song)),
+        ),
+      );
+    } else {
+      // 只是被歌手黑名单拦住：把这首歌加进白名单，歌手本身仍保持拉黑。
+      items.add(
+        _buildActionItem(
+          colors: colors,
+          icon: Icons.lock_open_outlined,
+          label: context.tr('将此歌曲移出黑名单'),
+          onTap: () => unawaited(notifier.addToWhitelist(song)),
+        ),
+      );
+    }
+
+    if (artistListed) {
+      items.add(
+        _buildActionItem(
+          colors: colors,
+          icon: Icons.person_off_outlined,
+          label: context.tr('将此歌手移出黑名单'),
+          onTap: () => unawaited(notifier.removeArtist(song.artist)),
+        ),
+      );
+    } else if (widget.compactMode) {
+      items.add(
+        _buildActionItem(
+          colors: colors,
+          icon: Icons.person_off,
+          label: context.tr('歌手添加到黑名单'),
+          onTap: () => unawaited(notifier.addArtist(song.artist)),
+        ),
+      );
+    }
+
+    return items;
   }
 
   Widget _buildFavoriteItem(ThemeColors colors) {

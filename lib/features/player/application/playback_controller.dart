@@ -14,6 +14,7 @@ import '../../../core/services/audio_service_init.dart';
 import '../../plugin/application/music_source_manager.dart';
 import '../../plugin/application/plugin_providers.dart';
 import '../../plugin/domain/plugin_types.dart';
+import '../../blacklist/application/blacklist_providers.dart';
 import '../../settings/application/settings_providers.dart';
 import 'play_progress_providers.dart';
 import 'playback_context.dart';
@@ -63,6 +64,14 @@ final playbackControllerProvider =
       controller.setDataSourcePlaybackSources(
         ref.read(dataSourcePlaybackSourcesProvider),
       );
+
+      // 黑名单：播放时跳过被拉黑的歌（歌曲 / 歌手黑名单，白名单豁免）。
+      controller.isSongBlocked = (song) =>
+          ref.read(blacklistProvider).isBlocked(song);
+      ref.listen(blacklistProvider, (prev, next) {
+        // 正在播的歌被拉黑（或恢复的队列命中黑名单）→ 立刻跳下一首。
+        unawaited(controller.skipBlockedCurrent());
+      });
 
       // 「最近播放」：开始播放时记一条（带来源），切歌/退出时结算收听时长。
       final recentRepo = ref.read(recentlyPlayedRepositoryProvider);
@@ -297,6 +306,41 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   /// 播放位置变化时回调（写「已听 N%」进度）。位置 / 时长单位均为毫秒。
   void Function(Song song, int positionMs, int durationMs)? onProgress;
 
+  /// 判断一首歌是否在黑名单里（由 provider 注入，控制器不直接依赖黑名单模块）。
+  bool Function(Song song)? isSongBlocked;
+
+  bool _blocked(Song song) => isSongBlocked?.call(song) ?? false;
+
+  /// 从 [from] 开始按 [step] 方向找下一首**可播放**的歌（跳过黑名单）。
+  ///
+  /// 队列里的歌全是黑名单时返回 null。
+  int? _nextPlayableIndex(int from, {int step = 1}) {
+    final length = state.queue.length;
+    if (length == 0) return null;
+    for (var offset = 1; offset <= length; offset++) {
+      final index = (from + step * offset) % length;
+      if (!_blocked(state.queue[index])) return index;
+    }
+    return null;
+  }
+
+  /// 当前歌曲被拉黑时立刻跳到下一首可播放的歌。
+  ///
+  /// 用户把正在播放的歌加进黑名单时由 provider 触发；黑名单异步加载完成后
+  /// 恢复出来的那首歌也可能命中，同样走这里。
+  Future<void> skipBlockedCurrent() async {
+    final index = state.currentIndex;
+    if (index < 0 || index >= state.queue.length) return;
+    if (!_blocked(state.queue[index])) return;
+    final next = _nextPlayableIndex(index);
+    if (next == null) {
+      await pause();
+      onMessage?.call(tr('队列里的歌曲都在黑名单里'), backgroundColor: Colors.red);
+      return;
+    }
+    await playSongAt(next);
+  }
+
   int _currentPlayRequestId = 0;
   int? _qualitySwitchRequestId;
   bool _settingQueue = false;
@@ -499,9 +543,10 @@ class PlaybackController extends StateNotifier<PlaybackState> {
         );
         if (error is DataSourcePlaybackException) dataSourceFailure = true;
         if (_currentPlayRequestId == requestId) {
-          _lastResolveError = error
-              .toString()
-              .replaceFirst(RegExp(r'^Exception:\s*'), '');
+          _lastResolveError = error.toString().replaceFirst(
+            RegExp(r'^Exception:\s*'),
+            '',
+          );
         }
         return const <PluginMusicUrlResult>[];
       }
@@ -847,8 +892,24 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     onListenEnded?.call(song, listened);
   }
 
-  Future<void> playSongAt(int index, {bool finalizePrevious = true}) async {
+  Future<void> playSongAt(
+    int index, {
+    bool finalizePrevious = true,
+    int skipStep = 1,
+    bool skipBlocked = true,
+  }) async {
     if (index < 0 || index >= state.queue.length) return;
+
+    // 黑名单歌曲不播放：按播放方向跳到下一首可播放的歌。
+    if (skipBlocked && _blocked(state.queue[index])) {
+      final playable = _nextPlayableIndex(index, step: skipStep);
+      if (playable == null) {
+        state = state.copyWith(isLoading: false, isPlaying: false);
+        onMessage?.call(tr('队列里的歌曲都在黑名单里'), backgroundColor: Colors.red);
+        return;
+      }
+      index = playable;
+    }
 
     _needsSourceLoad = false;
     _cancelPendingAutoNext();
@@ -1053,9 +1114,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
           }
         }
 
-        await _stopPlaybackOnFailure(
-          _playbackFailureReason(song),
-        );
+        await _stopPlaybackOnFailure(_playbackFailureReason(song));
         return;
       }
 
@@ -1139,17 +1198,12 @@ class PlaybackController extends StateNotifier<PlaybackState> {
         }
 
         if (_currentPlayRequestId != requestId) return;
-        await _stopPlaybackOnFailure(
-          _playbackFailureReason(song),
-        );
+        await _stopPlaybackOnFailure(_playbackFailureReason(song));
         return;
       }
 
       // CeruMusic: 不乐观设 isPlaying
-      state = state.copyWith(
-        isLoading: false,
-        currentSong: currentSongToPlay,
-      );
+      state = state.copyWith(isLoading: false, currentSong: currentSongToPlay);
 
       _errorListenerSub = _mountOneTimeErrorListener(
         requestId,
@@ -1161,9 +1215,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
       if (_currentPlayRequestId != requestId) return;
       // 优先显示音源接口返回的具体错误（如 HTTP 412），没有才用笼统提示。
       final detail = _lastResolveError?.trim() ?? '';
-      await _stopPlaybackOnFailure(
-        detail.isEmpty ? tr('播放歌曲失败') : detail,
-      );
+      await _stopPlaybackOnFailure(detail.isEmpty ? tr('播放歌曲失败') : detail);
     } finally {
       if (pendingCoverFuture != null && _currentPlayRequestId == requestId) {
         unawaited(
@@ -1271,7 +1323,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
       }
 
       if (prevIndex >= 0 && prevIndex < state.queue.length) {
-        await playSongAt(prevIndex);
+        await playSongAt(prevIndex, skipStep: -1);
       }
     } catch (e) {
       debugPrint('[PlaybackController] previous() error: $e');
@@ -1714,10 +1766,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
       // Song 的相等性只看 id，copyWith 默认会把「同 id 的新歌」当成没变化
       // 直接丢弃；这里必须强制替换，否则补出来的封面只进了队列、播放页
       // 拿到的 currentSong 仍然没有封面（只有本来就没封面的歌会中招）。
-      state = state.copyWith(
-        currentSong: enrichedSong,
-        forceCurrentSong: true,
-      );
+      state = state.copyWith(currentSong: enrichedSong, forceCurrentSong: true);
       _audioHandler.updateCurrentMediaItem(enrichedSong);
     } catch (error) {
       debugPrint('[PlaybackController] cover resolution failed: $error');
@@ -1745,13 +1794,12 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     // preferredSource 上，所以这里按「整首歌」判断。
     if (_musicSourceManager.dataSourcePluginIdForSong(song) != null) {
       final detail = _lastResolveError?.trim() ?? '';
-      return detail.isEmpty
-          ? tr('此数据源未指定可用的播放源，请在插件管理中设置其他音源。')
-          : detail;
+      return detail.isEmpty ? tr('此数据源未指定可用的播放源，请在插件管理中设置其他音源。') : detail;
     }
     if (source.isNotEmpty && !source.contains('@')) {
       final (baseId, _) = MusicSourceManager.splitSourceId(source);
-      if (baseId.isNotEmpty && _musicSourceManager.hasPluginForPlatform(baseId)) {
+      if (baseId.isNotEmpty &&
+          _musicSourceManager.hasPluginForPlatform(baseId)) {
         // 装了插件（如 bilibili 插件）但接口失败 → 不是「没装插件」，
         // 提示里带上接口返回的真实错误（HTTP 状态码 / 响应内容）。
         final name =

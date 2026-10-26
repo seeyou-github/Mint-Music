@@ -18,6 +18,7 @@ import '../../../core/theme/app_typography.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import 'backup_restore_content.dart';
+import '../../blacklist/presentation/blacklist_settings_content.dart';
 import '../../../shared/services/app_image_cache.dart';
 import '../../../shared/services/cache_paths.dart';
 import '../../../shared/widgets/hsv_color_picker.dart';
@@ -88,7 +89,13 @@ Future<void> _doPersist(
   } catch (_) {}
 }
 
-enum SettingsCategory { appearance, playback, storage, backupRestore }
+enum SettingsCategory {
+  appearance,
+  playback,
+  storage,
+  blacklist,
+  backupRestore,
+}
 
 class SettingsPage extends ConsumerStatefulWidget {
   const SettingsPage({super.key});
@@ -113,6 +120,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     SettingsCategory.appearance: (icon: Icons.palette, label: '外观设置'),
     SettingsCategory.playback: (icon: Icons.play_circle, label: '播放设置'),
     SettingsCategory.storage: (icon: Icons.storage, label: '缓存设置'),
+    SettingsCategory.blacklist: (icon: Icons.block, label: '黑名单设置'),
     SettingsCategory.backupRestore: (
       icon: Icons.backup_outlined,
       label: '备份还原',
@@ -308,6 +316,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
         return const _PlaybackContent();
       case SettingsCategory.storage:
         return const _StorageContent();
+      case SettingsCategory.blacklist:
+        return const BlacklistSettingsContent();
       case SettingsCategory.backupRestore:
         return const BackupRestoreContent();
     }

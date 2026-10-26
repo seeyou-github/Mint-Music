@@ -7,6 +7,7 @@ import '../../../../core/l10n/l10n.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/utils/scroll_locate.dart';
 import '../../../../shared/widgets/music_cover_image.dart';
+import '../../../blacklist/application/blacklist_providers.dart';
 import '../../application/playback_controller.dart';
 import '../../domain/models/playback_state.dart';
 
@@ -101,7 +102,8 @@ class _PlayQueueSheetContent extends ConsumerStatefulWidget {
       _PlayQueueSheetContentState();
 }
 
-class _PlayQueueSheetContentState extends ConsumerState<_PlayQueueSheetContent> {
+class _PlayQueueSheetContentState
+    extends ConsumerState<_PlayQueueSheetContent> {
   final ScrollController _listScrollController = ScrollController();
 
   @override
@@ -132,6 +134,7 @@ class _PlayQueueSheetContentState extends ConsumerState<_PlayQueueSheetContent> 
     // 队列是「活」的：直接 watch provider，删除某首后就地刷新列表，
     // 不需要关闭弹层再重新打开。
     final playbackState = ref.watch(playbackControllerProvider);
+    final blacklist = ref.watch(blacklistProvider);
     final queue = playbackState.queue;
     final currentIndex = playbackState.currentIndex;
     return Container(
@@ -209,7 +212,10 @@ class _PlayQueueSheetContentState extends ConsumerState<_PlayQueueSheetContent> 
                         itemBuilder: (context, index) {
                           final queueSong = queue[index];
                           final isCurrent = index == currentIndex;
+                          // 黑名单歌曲：只显示、不可播放，播放时会自动跳过。
+                          final blocked = blacklist.isBlocked(queueSong);
                           return ListTile(
+                            enabled: !blocked,
                             leading: SizedBox(
                               width: 72,
                               child: Row(
@@ -219,7 +225,11 @@ class _PlayQueueSheetContentState extends ConsumerState<_PlayQueueSheetContent> 
                                   SizedBox(
                                     width: 18,
                                     child: isCurrent
-                                        ? Icon(Icons.play_arrow, size: 14, color: AppColors.primary)
+                                        ? Icon(
+                                            Icons.play_arrow,
+                                            size: 14,
+                                            color: AppColors.primary,
+                                          )
                                         : Padding(
                                             padding: EdgeInsets.only(left: 2),
                                             child: Text(
@@ -266,23 +276,63 @@ class _PlayQueueSheetContentState extends ConsumerState<_PlayQueueSheetContent> 
                               style: TextStyle(
                                 fontSize: 14,
                                 fontWeight: FontWeight.w500,
-                                color: isCurrent
-                                    ? AppColors.primary
-                                    : AppColors.textPrimary,
+                                color: blocked
+                                    // 黑名单歌曲名颜色更浅
+                                    ? AppColors.textPrimary.withValues(
+                                        alpha: 0.45,
+                                      )
+                                    : (isCurrent
+                                          ? AppColors.primary
+                                          : AppColors.textPrimary),
                               ),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                             ),
-                            subtitle: Text(
-                              '${queueSong.artist} - ${queueSong.album}',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: isCurrent
-                                    ? AppColors.primary.withValues(alpha: 0.7)
-                                    : AppColors.textHint,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                            subtitle: Row(
+                              children: [
+                                if (blocked) ...[
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 4,
+                                      vertical: 1,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: AppColors.error.withValues(
+                                        alpha: 0.15,
+                                      ),
+                                      borderRadius: BorderRadius.circular(2),
+                                    ),
+                                    child: Text(
+                                      context.tr('黑名单'),
+                                      style: const TextStyle(
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w600,
+                                        color: AppColors.error,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 4),
+                                ],
+                                Expanded(
+                                  child: Text(
+                                    '${queueSong.artist} - ${queueSong.album}',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: blocked
+                                          ? AppColors.textHint.withValues(
+                                              alpha: 0.7,
+                                            )
+                                          : (isCurrent
+                                                ? AppColors.primary.withValues(
+                                                    alpha: 0.7,
+                                                  )
+                                                : AppColors.textHint),
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
                             ),
                             trailing: isCurrent
                                 ? const Icon(
@@ -302,10 +352,12 @@ class _PlayQueueSheetContentState extends ConsumerState<_PlayQueueSheetContent> 
                                       widget.controller.removeFromQueue(index);
                                     },
                                   ),
-                            onTap: () {
-                              widget.controller.playSongAt(index);
-                              Navigator.pop(context);
-                            },
+                            onTap: blocked
+                                ? null
+                                : () {
+                                    widget.controller.playSongAt(index);
+                                    Navigator.pop(context);
+                                  },
                           );
                         },
                       ),
