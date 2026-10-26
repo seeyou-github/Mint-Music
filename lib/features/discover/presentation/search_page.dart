@@ -81,24 +81,18 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     _controller.text = query;
     _focusNode.requestFocus();
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       if (pendingQuery != null) {
-        ref.read(searchQueryProvider.notifier).state = pendingQuery;
         ref.read(pendingSearchQueryProvider.notifier).state = null;
-      } else {
-        ref.read(searchQueryProvider.notifier).state = '';
-        ref.read(searchResultsControllerProvider.notifier).reset();
+        _syncSourceWithDiscover();
+        _searchFromPending(pendingQuery);
+        return;
       }
+      ref.read(searchQueryProvider.notifier).state = '';
+      ref.read(searchResultsControllerProvider.notifier).reset();
       // 搜索音源默认使用「发现页正在使用的音源」：每次进入搜索页都重置一次，
       // 页内切换只在本次搜索有效，退出后不保留。
       _syncSourceWithDiscover();
-      final currentQuery = ref.read(searchQueryProvider).trim();
-      if (currentQuery.isNotEmpty) {
-        unawaited(
-          ref
-              .read(searchResultsControllerProvider.notifier)
-              .start(currentQuery, ref.read(searchSourceIdProvider)),
-        );
-      }
     });
     _focusNode.addListener(() {
       setState(() => _isFocused = _focusNode.hasFocus);
@@ -183,6 +177,35 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     ref.read(searchQueryProvider.notifier).state = query;
     ref.read(searchHistoryProvider.notifier).addQuery(query);
     _runSearch(ref.read(searchSourceIdProvider));
+  }
+
+  /// 只有最上层的搜索页消费「待搜索词」：被播放页盖住时等它退场，栈里被
+  /// 别的页面盖住的旧搜索页直接跳过，交给真正会显示出来的那一页。
+  void _consumePendingSearch(String query, {int retries = 30}) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (ref.read(pendingSearchQueryProvider)?.trim() != query) return;
+      if (ModalRoute.of(context)?.isCurrent != true) {
+        if (retries > 0) {
+          _consumePendingSearch(query, retries: retries - 1);
+        }
+        return;
+      }
+      ref.read(pendingSearchQueryProvider.notifier).state = null;
+      _searchFromPending(query);
+    });
+  }
+
+  /// 收到「待搜索词」（播放页「更多」里点歌曲名 / 歌手名）：直接在当前搜索页
+  /// 搜索，不再压入第二个搜索页。新关键词统一回到「歌曲」标签，避免停留在
+  /// 上一次的专辑 / 作者结果。
+  void _searchFromPending(String query) {
+    final trimmed = query.trim();
+    if (trimmed.isEmpty) return;
+    ref.read(searchTabProvider.notifier).state = SearchTab.songs;
+    setState(() => _inputText = trimmed);
+    _controller.text = trimmed;
+    _performSearch(trimmed);
   }
 
   /// 按当前关键词 + 当前标签页发起搜索。
@@ -453,6 +476,14 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       if (previous != null && previous != next) {
         _runSearch(next);
       }
+    });
+
+    // 搜索页已经打开时（播放页「更多」里点歌手 / 歌名），直接按新关键词搜索；
+    // 需要新开搜索页的情况由 initState 消费 pending。
+    ref.listen<String?>(pendingSearchQueryProvider, (previous, next) {
+      final pending = next?.trim() ?? '';
+      if (pending.isEmpty) return;
+      _consumePendingSearch(pending);
     });
 
     final searchTab = ref.watch(searchTabProvider);

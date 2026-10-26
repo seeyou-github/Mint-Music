@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -379,10 +380,20 @@ class SongActionSheet extends ConsumerStatefulWidget {
 class _SongActionSheetState extends ConsumerState<SongActionSheet> {
   bool _isFavorited = false;
 
+  /// 歌手名单独可点（点歌手名搜索该歌手）。
+  late final TapGestureRecognizer _artistTap;
+
   @override
   void initState() {
     super.initState();
+    _artistTap = TapGestureRecognizer()..onTap = _searchArtist;
     _checkFavorited();
+  }
+
+  @override
+  void dispose() {
+    _artistTap.dispose();
+    super.dispose();
   }
 
   void _checkFavorited() {
@@ -571,6 +582,16 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
   }
 
   Widget _buildSongInfo(ThemeColors colors) {
+    final title = Text(
+      widget.song.title,
+      style: TextStyle(
+        fontSize: 15,
+        fontWeight: FontWeight.w600,
+        color: colors.textPrimary,
+      ),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+    );
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
       child: Row(
@@ -581,18 +602,29 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  widget.song.title,
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                    color: colors.textPrimary,
+                // 播放页「更多」：点歌曲名搜索这首歌，点歌手名搜索该歌手。
+                if (widget.compactMode)
+                  GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => _searchFor(widget.song.title),
+                    child: title,
+                  )
+                else
+                  title,
+                Text.rich(
+                  TextSpan(
+                    children: [
+                      TextSpan(
+                        text: widget.song.artist,
+                        recognizer:
+                            widget.compactMode && widget.song.artist.isNotEmpty
+                            ? _artistTap
+                            : null,
+                      ),
+                      if (widget.song.album.isNotEmpty)
+                        TextSpan(text: ' · ${widget.song.album}'),
+                    ],
                   ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                Text(
-                  '${widget.song.artist}${widget.song.album.isNotEmpty ? ' · ${widget.song.album}' : ''}',
                   style: TextStyle(fontSize: 12, color: colors.textHint),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -715,6 +747,19 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
         song: widget.song,
       ),
     );
+  }
+
+  void _searchArtist() => _searchFor(widget.song.artist);
+
+  /// 点歌曲名 / 歌手名：关掉菜单和播放页，打开搜索页并自动搜索。
+  void _searchFor(String query) {
+    if (!widget.compactMode) return;
+    final trimmed = query.trim();
+    if (trimmed.isEmpty) return;
+    final context = this.context;
+    final container = ProviderScope.containerOf(context, listen: false);
+    Navigator.pop(context);
+    unawaited(openSearchForQuery(container, trimmed));
   }
 
   Widget _buildCover(ThemeColors colors) {

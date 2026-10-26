@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../../core/constants/app_routes.dart';
 import '../../../core/router/app_router.dart';
 import '../../../core/router/navigation_shell_provider.dart';
+import '../../discover/application/search_providers.dart';
 import '../../discover/domain/models/search_collection.dart';
 import '../../library/application/playlist_providers.dart';
 import '../../library/domain/models/recently_played.dart';
@@ -87,6 +88,32 @@ Future<void> openPlaybackSource(
     return;
   }
   _navigateToSource(container, target, extra, toggle: toggle);
+}
+
+/// 用歌曲名 / 歌手名打开搜索页并自动搜索。
+///
+/// 搜索页进入时读取 [pendingSearchQueryProvider]；如果搜索页已经打开
+/// （播放页盖在上面），搜索页会监听这个待搜索词直接重搜，不会重复压栈。
+Future<void> openSearchForQuery(
+  ProviderContainer container,
+  String query,
+) async {
+  final trimmed = query.trim();
+  if (trimmed.isEmpty) return;
+
+  void start() {
+    // 先安排待搜索词：新搜索页在 initState 里消费，已经打开的搜索页监听它。
+    container.read(pendingSearchQueryProvider.notifier).state = trimmed;
+    _navigateToSource(container, AppRoutes.search, null, toggle: false);
+  }
+
+  // 播放页盖在搜索页上时，先把播放页关掉，等它退场后再决定跳转 / 由当前
+  // 搜索页接手，避免搜索页还以为自己被盖着。
+  if (_closeRootOverlays()) {
+    WidgetsBinding.instance.addPostFrameCallback((_) => start());
+    return;
+  }
+  start();
 }
 
 /// 按当前页面决定：关闭同一个页面 / 切分类后推入 / 直接推入。
