@@ -11,6 +11,7 @@ import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../../../shared/widgets/cover_badge.dart';
+import '../../radio/presentation/radio_panel.dart';
 import '../../../shared/pagination/page_slicer.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../../../shared/widgets/page_bar.dart';
@@ -169,9 +170,11 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
             _buildHeader(context, colors),
             const SizedBox(height: AppSpacing.sm),
             Expanded(
-              child: tab == DiscoverTab.playlists
-                  ? _buildPlaylistsTab(colors)
-                  : _buildLeaderboardsTab(colors),
+              child: switch (tab) {
+                DiscoverTab.playlists => _buildPlaylistsTab(colors),
+                DiscoverTab.leaderboards => _buildLeaderboardsTab(colors),
+                DiscoverTab.radio => const RadioPanel(),
+              },
             ),
           ],
         ),
@@ -257,6 +260,14 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
             colors: colors,
             onTap: () => ref.read(discoverTabProvider.notifier).state =
                 DiscoverTab.leaderboards,
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          _buildTabChip(
+            label: context.tr('电台'),
+            isActive: tab == DiscoverTab.radio,
+            colors: colors,
+            onTap: () => ref.read(discoverTabProvider.notifier).state =
+                DiscoverTab.radio,
           ),
           const SizedBox(width: AppSpacing.md),
           // 搜索框

@@ -14,7 +14,9 @@ final discoverRepositoryProvider = Provider<DiscoverRepository>((ref) {
   return DiscoverRepository(manager);
 });
 
-final discoverSourceIdProvider = StateProvider<String>((ref) => ref.read(defaultSourceIdProvider));
+final discoverSourceIdProvider = StateProvider<String>(
+  (ref) => ref.read(defaultSourceIdProvider),
+);
 
 final discoverSupportedSourcesProvider = Provider<List<SourceInfo>>((ref) {
   // 插件初始化 + 内置音源启用/卸载状态 + 插件自带音源开关都会影响这里的列表。
@@ -46,12 +48,17 @@ final searchResultsProvider = FutureProvider<List<Song>>((ref) async {
   return repo.search(query);
 });
 
-final playlistDetailProvider = FutureProvider.family<PlaylistPage, String>((ref, playlistId) async {
+final playlistDetailProvider = FutureProvider.family<PlaylistPage, String>((
+  ref,
+  playlistId,
+) async {
   final repo = ref.watch(discoverRepositoryProvider);
   return repo.getPlaylistDetailPage(playlistId);
 });
 
-final playlistTagsProvider = FutureProvider<List<PlaylistTagGroup>>((ref) async {
+final playlistTagsProvider = FutureProvider<List<PlaylistTagGroup>>((
+  ref,
+) async {
   // 插件接管平台时，分类由插件提供（插件可能带「置顶分类」）；必须等插件加载
   // 完成再取，否则重启后只能拿到内置源的分类。
   await ref.watch(pluginInitializedProvider.future);
@@ -73,12 +80,17 @@ final activeCategoryNameProvider = StateProvider<String>((ref) => '热门');
 
 final categoryPlaylistsPageProvider = StateProvider<int>((ref) => 1);
 
-final categoryPlaylistsProvider = StateNotifierProvider<CategoryPlaylistsNotifier, AsyncValue<List<Playlist>>>((ref) {
-  final repo = ref.watch(discoverRepositoryProvider);
-  return CategoryPlaylistsNotifier(repo);
-});
+final categoryPlaylistsProvider =
+    StateNotifierProvider<
+      CategoryPlaylistsNotifier,
+      AsyncValue<List<Playlist>>
+    >((ref) {
+      final repo = ref.watch(discoverRepositoryProvider);
+      return CategoryPlaylistsNotifier(repo);
+    });
 
-class CategoryPlaylistsNotifier extends StateNotifier<AsyncValue<List<Playlist>>> {
+class CategoryPlaylistsNotifier
+    extends StateNotifier<AsyncValue<List<Playlist>>> {
   final DiscoverRepository _repo;
 
   CategoryPlaylistsNotifier(this._repo) : super(const AsyncValue.loading());
@@ -128,7 +140,8 @@ class CategoryPlaylistsNotifier extends StateNotifier<AsyncValue<List<Playlist>>
       // offset），会反复返回同一批歌单；重复项不再追加，避免一直刷出
       // 和第一页相同的内容。
       final merged = <String, Playlist>{
-        for (final playlist in [...current, ...playlists]) playlist.id: playlist,
+        for (final playlist in [...current, ...playlists])
+          playlist.id: playlist,
       }.values.toList();
 
       if (merged.length == current.length) {
@@ -161,6 +174,8 @@ final leaderboardsProvider = FutureProvider<List<Leaderboard>>((ref) async {
   return repo.getLeaderboards(sourceId: sourceId);
 });
 
-enum DiscoverTab { playlists, leaderboards }
+enum DiscoverTab { playlists, leaderboards, radio }
 
-final discoverTabProvider = StateProvider<DiscoverTab>((ref) => DiscoverTab.playlists);
+final discoverTabProvider = StateProvider<DiscoverTab>(
+  (ref) => DiscoverTab.playlists,
+);

@@ -13,6 +13,7 @@ import '../../../shared/services/app_image_cache.dart';
 import '../../../shared/widgets/share_preview_dialog.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../application/playback_controller.dart';
+import '../../radio/application/radio_session.dart';
 import '../application/playback_ui_providers.dart';
 import '../application/lyric_controller.dart';
 import '../domain/models/song.dart';
@@ -747,6 +748,8 @@ class _LyricControls extends ConsumerWidget {
       isPlaying: playback.isPlaying,
       isLoading: playback.isLoading,
       playMode: playback.playMode,
+      // 电台模式：播放列表 / 上一首 / 循环模式由电台接管。
+      radioMode: ref.watch(radioModeProvider),
       onPlayPause: controller.togglePlayPause,
       onPrevious: controller.previous,
       onNext: controller.next,

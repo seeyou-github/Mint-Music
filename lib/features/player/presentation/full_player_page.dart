@@ -19,6 +19,7 @@ import '../application/sleep_timer_provider.dart';
 import '../application/playback_ui_providers.dart';
 import '../application/root_overlay_tracker.dart';
 import '../application/lyric_controller.dart';
+import '../../radio/application/radio_session.dart';
 import '../domain/models/song.dart';
 import '../domain/services/cover_color_extractor.dart';
 import '../../library/application/playlist_providers.dart';
@@ -1332,6 +1333,8 @@ class _PlayerControls extends ConsumerWidget {
       isPlaying: isPlaying,
       isLoading: isLoading,
       playMode: playMode,
+      // 电台模式：播放列表 / 上一首 / 循环模式由电台接管，按钮置灰不可点。
+      radioMode: ref.watch(radioModeProvider),
       onPlayPause: () => controller.togglePlayPause(),
       onPrevious: () => controller.previous(),
       onNext: () => controller.next(),

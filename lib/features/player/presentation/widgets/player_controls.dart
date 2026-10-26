@@ -316,6 +316,9 @@ class PlaybackControlRow extends StatelessWidget {
   /// 紧凑模式：用于手机横屏等高度受限的场景，缩小按钮与内边距。
   final bool compact;
 
+  /// 电台模式：「播放列表」「上一首」「循环模式」不可用（电台自己控制队列）。
+  final bool radioMode;
+
   const PlaybackControlRow({
     super.key,
     required this.isPlaying,
@@ -327,6 +330,7 @@ class PlaybackControlRow extends StatelessWidget {
     required this.onCycleMode,
     required this.onQueue,
     this.compact = false,
+    this.radioMode = false,
   });
 
   @override
@@ -336,13 +340,13 @@ class PlaybackControlRow extends StatelessWidget {
       icon: _playModeIcon,
       size: compact ? 20 : 20,
       boxSize: compact ? 40 : 48,
-      onPressed: onCycleMode,
+      onPressed: radioMode ? null : onCycleMode,
     );
     final previousButton = _ControlButton(
       icon: Icons.skip_previous,
       size: compact ? 24 : 24,
       boxSize: compact ? 40 : 48,
-      onPressed: onPrevious,
+      onPressed: radioMode ? null : onPrevious,
     );
     final playButton = _PlayPauseButton(
       isPlaying: isPlaying,
@@ -360,7 +364,7 @@ class PlaybackControlRow extends StatelessWidget {
       icon: Icons.queue_music,
       size: compact ? 22 : 22,
       boxSize: compact ? 40 : 48,
-      onPressed: onQueue,
+      onPressed: radioMode ? null : onQueue,
     );
 
     if (compact) {
@@ -415,7 +419,9 @@ class _ControlButton extends StatelessWidget {
   final IconData icon;
   final double size;
   final double boxSize;
-  final VoidCallback onPressed;
+
+  /// 为 null 表示不可用（电台模式）：按钮变淡、点击无响应。
+  final VoidCallback? onPressed;
 
   const _ControlButton({
     required this.icon,
@@ -432,7 +438,9 @@ class _ControlButton extends StatelessWidget {
       child: IconButton(
         onPressed: onPressed,
         icon: Icon(icon, size: size),
-        color: Colors.white.withValues(alpha: 0.7),
+        color: Colors.white.withValues(
+          alpha: onPressed == null ? 0.28 : 0.7,
+        ),
         padding: EdgeInsets.zero,
         style: IconButton.styleFrom(
           hoverColor: Colors.white.withValues(alpha: 0.1),
