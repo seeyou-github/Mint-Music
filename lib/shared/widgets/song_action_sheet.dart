@@ -14,9 +14,12 @@ import '../../core/constants/app_routes.dart';
 import '../../core/l10n/l10n.dart';
 import '../../features/library/application/playlist_providers.dart';
 import '../../features/library/domain/models/playlist.dart';
+import '../../features/library/domain/models/recently_played.dart';
 import '../../features/blacklist/application/blacklist_providers.dart';
+import '../../features/player/application/playback_context.dart';
 import '../../features/player/application/playback_controller.dart';
 import '../../features/player/domain/models/song.dart';
+import '../../features/player/presentation/playback_source_navigation.dart';
 import '../../features/download/application/download_providers.dart';
 import '../../features/settings/application/font_providers.dart';
 import '../../features/settings/application/settings_providers.dart';
@@ -410,6 +413,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
     final colors = widget.compactMode
         ? ThemeColors.darkWithPrimary(AppColors.primary)
         : themeColors;
+    final sourceItem = widget.compactMode ? _buildSourceItem(colors) : null;
 
     return Container(
       decoration: BoxDecoration(
@@ -446,6 +450,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                 ),
                 // --- Compact mode (player menu: 4 options matching play queue style) ---
                 if (widget.compactMode) ...[
+                  ?sourceItem,
                   _buildActionItem(
                     colors: colors,
                     icon: Icons.add_to_photos,
@@ -595,6 +600,91 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// 「歌曲来源」菜单项（播放页「更多」）：显示当前播放来源，
+  /// 歌单（含我的收藏）/ 榜单 / 专辑 / 作者可点击打开来源页。
+  Widget? _buildSourceItem(ThemeColors colors) {
+    final ctx = PlaybackContext.instance;
+    final type = ctx.type;
+    if (type == PlaybackSourceType.unknown) return null;
+    final clickable = canOpenPlaybackSource(type) && (ctx.id ?? '').isNotEmpty;
+    return InkWell(
+      onTap: clickable ? _openSource : null,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.lg,
+          vertical: AppSpacing.md,
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.info_outline, size: 22, color: colors.textSecondary),
+            const SizedBox(width: AppSpacing.md),
+            Text(
+              context.tr('歌曲来源'),
+              style: TextStyle(fontSize: 15, color: colors.textPrimary),
+            ),
+            const SizedBox(width: AppSpacing.md),
+            Expanded(
+              child: Text(
+                _sourceLabel(type, ctx.id),
+                textAlign: TextAlign.right,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 13,
+                  color: clickable ? colors.primary : colors.textHint,
+                ),
+              ),
+            ),
+            if (clickable) ...[
+              const SizedBox(width: 2),
+              Icon(Icons.chevron_right, size: 18, color: colors.textHint),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _sourceLabel(PlaybackSourceType type, String? id) {
+    if (type == PlaybackSourceType.playlist && id == '__favorites__') {
+      return context.tr('我的收藏');
+    }
+    return switch (type) {
+      PlaybackSourceType.search => context.tr('搜索-歌曲分类'),
+      PlaybackSourceType.playlist => context.tr('歌单'),
+      PlaybackSourceType.rank => context.tr('榜单'),
+      PlaybackSourceType.album => context.tr('专辑'),
+      PlaybackSourceType.artist => context.tr('作者'),
+      PlaybackSourceType.local => context.tr('本地'),
+      PlaybackSourceType.radio => context.tr('电台'),
+      PlaybackSourceType.unknown => '',
+    };
+  }
+
+  /// 关闭菜单后打开来源页：先关掉播放详情页，再跳转到对应页面。
+  void _openSource() {
+    final context = this.context;
+    final container = ProviderScope.containerOf(context, listen: false);
+    // 跳转过程中菜单 / 播放页都会被关闭，先把来源快照下来。
+    final ctx = PlaybackContext.instance;
+    final type = ctx.type;
+    final id = ctx.id;
+    final name = ctx.name;
+    final meta = ctx.sourceMeta;
+    if (!canOpenPlaybackSource(type) || id == null || id.isEmpty) return;
+    Navigator.pop(context);
+    unawaited(
+      openPlaybackSource(
+        container,
+        type: type,
+        id: id,
+        name: name,
+        sourceMeta: meta,
+        song: widget.song,
       ),
     );
   }
