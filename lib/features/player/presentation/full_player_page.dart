@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/l10n/l10n.dart';
+import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../../../shared/widgets/music_cover_image.dart';
@@ -26,6 +27,7 @@ import '../../settings/application/settings_providers.dart';
 import '../../../shared/widgets/song_action_sheet.dart';
 import '../../../shared/widgets/sleep_timer_picker.dart';
 import 'widgets/lyric_scroll_view.dart';
+import 'widgets/lyric_search_sheet.dart';
 import 'widgets/play_queue_sheet.dart';
 import 'widgets/player_controls.dart';
 import '../platform/audio_effect_service.dart';
@@ -301,7 +303,8 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
                                   Positioned(
                                     left: coverLeft,
                                     right: coverLeft,
-                                    top: coverTopGap +
+                                    top:
+                                        coverTopGap +
                                         actualCoverSize +
                                         _portraitInfoGap,
                                     child: _PlayerSongInfo(
@@ -860,28 +863,10 @@ class _PlayerLyricsPage extends ConsumerWidget {
       );
     }
     if (lyricState.error != null && lyricState.lines.isEmpty) {
-      return Center(
-        child: Text(
-          lyricState.error!,
-          style: TextStyle(
-            fontSize: 14,
-            color: Colors.white.withValues(alpha: 0.4),
-            letterSpacing: 2,
-          ),
-        ),
-      );
+      return _buildEmptyState(context, ref, lyricState.error!);
     }
     if (lyricState.lines.isEmpty) {
-      return Center(
-        child: Text(
-          context.tr('暂无歌词'),
-          style: TextStyle(
-            fontSize: 14,
-            color: Colors.white.withValues(alpha: 0.4),
-            letterSpacing: 2,
-          ),
-        ),
-      );
+      return _buildEmptyState(context, ref, context.tr('暂无歌词'));
     }
     return LyricScrollView(
       lines: lyricState.lines,
@@ -907,6 +892,76 @@ class _PlayerLyricsPage extends ConsumerWidget {
             .read(playbackControllerProvider.notifier)
             .seek(Duration(milliseconds: startTimeMs));
       },
+    );
+  }
+
+  /// 没有歌词 / 歌词加载失败：提示下面给一个「搜索歌词」入口。
+  Widget _buildEmptyState(BuildContext context, WidgetRef ref, String message) {
+    final song = ref.read(playbackControllerProvider).currentSong;
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            message,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 14,
+              color: Colors.white.withValues(alpha: 0.4),
+              letterSpacing: 2,
+            ),
+          ),
+          if (song != null) ...[
+            const SizedBox(height: AppSpacing.md),
+            _SearchLyricButton(song: song),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// 歌词为空时的「搜索歌词」入口：打开搜索弹层，可换音源、改歌名 / 歌手。
+class _SearchLyricButton extends StatelessWidget {
+  const _SearchLyricButton({required this.song});
+
+  final Song song;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: () => showLyricSearchSheet(context, song: song),
+        child: Container(
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.lg,
+            vertical: 7,
+          ),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(AppRadius.full),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.35)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.search,
+                size: 15,
+                color: Colors.white.withValues(alpha: 0.75),
+              ),
+              const SizedBox(width: AppSpacing.xs),
+              Text(
+                context.tr('搜索歌词'),
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.white.withValues(alpha: 0.75),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

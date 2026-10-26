@@ -54,6 +54,39 @@ class LyricState {
   }
 }
 
+/// 把一份歌词解析成可直接显示的行（优先逐字歌词，合并翻译 / 音译）。
+///
+/// 「搜索歌词」预览与手动指定歌词共用这套规则，保证预览看到的和用上去的
+/// 完全一致。
+List<LyricLine> buildLyricLinesFrom(LyricResult result) {
+  final candidates = <String>[
+    if (result.crlyric != null && result.crlyric!.isNotEmpty) result.crlyric!,
+    if (result.lrc != null && result.lrc!.isNotEmpty) result.lrc!,
+  ];
+
+  var lines = <LyricLine>[];
+  for (final candidate in candidates) {
+    final parsed = parseLyricAuto(candidate);
+    if (parsed.isEmpty) continue;
+    final hasYrc = parsed.any((line) => line.isYrc);
+    if (hasYrc || lines.isEmpty) lines = parsed;
+    if (hasYrc) break;
+  }
+  if (lines.isEmpty) return const <LyricLine>[];
+
+  final tlyric = result.tlyric;
+  if (tlyric != null && tlyric.isNotEmpty) {
+    lines = mergeTranslation(lines, tlyric);
+    lines = stripTranslationFromWords(lines);
+  }
+  lines = extractAdLibWords(lines);
+  final rlyric = result.rlyric;
+  if (rlyric != null && rlyric.isNotEmpty) {
+    lines = mergeRomanLyric(lines, rlyric);
+  }
+  return sanitizeLyricLines(lines);
+}
+
 class LyricController extends StateNotifier<LyricState> {
   final MusicSourceManager _musicSourceManager;
   final TtmlDbService _ttmlDbService;
@@ -95,7 +128,9 @@ class LyricController extends StateNotifier<LyricState> {
       translatedLyric: line.translatedLyric == null
           ? null
           : HanConverter.s2t(line.translatedLyric!),
-      adLibText: line.adLibText == null ? null : HanConverter.s2t(line.adLibText!),
+      adLibText: line.adLibText == null
+          ? null
+          : HanConverter.s2t(line.adLibText!),
     );
   }
 
@@ -107,15 +142,16 @@ class LyricController extends StateNotifier<LyricState> {
     // 罕见情况下(非常用字符)转换前后长度可能不一致,退化为逐词转换。
     if (totalLen != convertedPlain.length) {
       return [
-        for (final w in words)
-          w.copyWith(word: HanConverter.s2t(w.word)),
+        for (final w in words) w.copyWith(word: HanConverter.s2t(w.word)),
       ];
     }
     final result = <LyricWord>[];
     var offset = 0;
     for (final w in words) {
       final len = w.word.length;
-      result.add(w.copyWith(word: convertedPlain.substring(offset, offset + len)));
+      result.add(
+        w.copyWith(word: convertedPlain.substring(offset, offset + len)),
+      );
       offset += len;
     }
     return result;
@@ -392,6 +428,29 @@ class LyricController extends StateNotifier<LyricState> {
       if (requestId != _requestId) return;
       state = LyricState(error: tr('加载歌词失败: $e'), currentSongId: song.id);
     }
+  }
+
+  /// 手动指定歌词（「搜索歌词」里选中并确认的那一份）。
+  ///
+  /// 立即替换当前显示，并写入歌词缓存：下次播放这首歌会先命中缓存，
+  /// 不会被自动匹配的歌词覆盖。
+  Future<void> applyManualLyric(Song song, LyricResult result) async {
+    final lines = buildLyricLinesFrom(result);
+    if (lines.isEmpty) return;
+    _rawLines = lines;
+    state = LyricState(
+      lines: _convertLines(lines),
+      currentSongId: song.id,
+      currentSongSource: song.source,
+      hasYrc: lines.any((line) => line.isYrc),
+    );
+    await LyricCache.write(
+      song,
+      lrc: result.lrc,
+      crlyric: result.crlyric,
+      tlyric: result.tlyric,
+      rlyric: result.rlyric,
+    );
   }
 
   void clear() {
