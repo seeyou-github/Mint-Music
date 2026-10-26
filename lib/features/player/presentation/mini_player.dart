@@ -6,6 +6,7 @@ import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../../../shared/widgets/music_cover_image.dart';
+import '../../radio/application/radio_session.dart';
 import '../application/playback_controller.dart';
 import '../application/root_overlay_tracker.dart';
 import '../domain/models/song.dart';
@@ -32,6 +33,9 @@ class MiniPlayer extends ConsumerWidget {
       playbackControllerProvider.select((s) => s.isLoading),
     );
     final controller = ref.read(playbackControllerProvider.notifier);
+    // 电台模式：队列由电台接管，「播放列表」「上一首」不可用。
+    final radioMode = ref.watch(radioModeProvider);
+    final disabledColor = colors.textSecondary.withValues(alpha: 0.3);
     if (song == null) return const SizedBox.shrink();
 
     // 迷你播放器是固定 56px 的紧凑布局，系统大字体/大显示设置会把两行
@@ -120,9 +124,9 @@ class MiniPlayer extends ConsumerWidget {
                 icon: Icon(
                   Icons.skip_previous,
                   size: iconSize,
-                  color: colors.textSecondary,
+                  color: radioMode ? disabledColor : colors.textSecondary,
                 ),
-                onPressed: () => controller.previous(),
+                onPressed: radioMode ? null : () => controller.previous(),
               ),
               IconButton(
                 visualDensity: VisualDensity.compact,
@@ -172,16 +176,18 @@ class MiniPlayer extends ConsumerWidget {
                 icon: Icon(
                   Icons.queue_music,
                   size: iconSize,
-                  color: colors.textSecondary,
+                  color: radioMode ? disabledColor : colors.textSecondary,
                 ),
                 // 与全屏播放页相同的播放队列面板，点击直接弹出，无需跳转
-                onPressed: () {
-                  showPlayQueueSheet(
-                    context,
-                    playbackState: ref.read(playbackControllerProvider),
-                    controller: controller,
-                  );
-                },
+                onPressed: radioMode
+                    ? null
+                    : () {
+                        showPlayQueueSheet(
+                          context,
+                          playbackState: ref.read(playbackControllerProvider),
+                          controller: controller,
+                        );
+                      },
               ),
             ],
           ),
