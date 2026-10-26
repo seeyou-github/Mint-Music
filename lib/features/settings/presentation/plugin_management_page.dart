@@ -812,6 +812,9 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
   Widget _buildDataSourcePlaybackRow(ThemeColors colors, PluginInfo plugin) {
     final manager = ref.read(musicSourceManagerProvider);
     final map = ref.watch(dataSourcePlaybackSourcesProvider);
+    // 安装 / 开关插件后会重建初始化，期间插件引擎被整体卸载重载、音源列表
+    // 是残缺的。监听初始化状态，完成后重算行内的「已失效」判断。
+    ref.watch(pluginInitializedProvider);
     final configuredId = map[plugin.id]?.trim() ?? '';
 
     // 可选的播放源：已安装、能解析播放地址的插件音源（数据源自己不参与）。
@@ -840,7 +843,7 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
             key: key,
             borderRadius: BorderRadius.circular(AppRadius.sm),
             onTap: () =>
-                _showDataSourcePlaybackMenu(colors, plugin, options, configuredId),
+                _showDataSourcePlaybackMenu(colors, plugin, configuredId),
             child: Padding(
               padding: const EdgeInsets.symmetric(vertical: 6),
               child: Row(
@@ -898,9 +901,20 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
   Future<void> _showDataSourcePlaybackMenu(
     ThemeColors colors,
     PluginInfo plugin,
-    List<SourceInfo> options,
     String currentId,
   ) async {
+    // 播放源列表在点击时才取：刚装完插件时页面不会因为插件引擎重载而重建，
+    // build 时缓存的列表会一直缺新插件。
+    if (ref.read(pluginInitializedProvider).isLoading) {
+      // 安装插件后会整体卸载重载插件引擎，期间列表是残缺的，等重载完成。
+      try {
+        await ref.read(pluginInitializedProvider.future);
+      } catch (_) {
+        // 初始化失败时仍用当前已加载的插件弹菜单。
+      }
+      if (!mounted) return;
+    }
+
     final anchor =
         _dataSourcePlaybackKeys[plugin.id]?.currentContext?.findRenderObject()
             as RenderBox?;
@@ -923,6 +937,7 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
     );
 
     final manager = ref.read(musicSourceManagerProvider);
+    final options = manager.playbackPluginSources();
     final selected = await showMenu<String>(
       context: context,
       position: position,
