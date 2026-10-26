@@ -906,15 +906,20 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
             as RenderBox?;
     if (anchor == null) return;
     final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    // 定位矩形取行右下角的一个窄条：left > right 时 showMenu 会向左生长、
+    // 右边缘对齐箭头（整行做锚点时 left < right，菜单会从行左侧弹出）。
+    // top 取行底部，让菜单在行的下方展开，而不是盖住整行。
+    final overlaySize = Offset.zero & overlay.size;
+    final rightEdge = anchor.localToGlobal(
+      Offset(anchor.size.width, anchor.size.height),
+      ancestor: overlay,
+    );
     final position = RelativeRect.fromRect(
       Rect.fromPoints(
-        anchor.localToGlobal(Offset.zero, ancestor: overlay),
-        anchor.localToGlobal(
-          anchor.size.bottomRight(Offset.zero),
-          ancestor: overlay,
-        ),
+        rightEdge - const Offset(1, 0),
+        rightEdge + const Offset(0, 1),
       ),
-      Offset.zero & overlay.size,
+      overlaySize,
     );
 
     final manager = ref.read(musicSourceManagerProvider);
