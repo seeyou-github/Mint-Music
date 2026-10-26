@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
@@ -6,6 +7,7 @@ import '../../discover/domain/models/leaderboard.dart';
 import '../../discover/domain/models/playlist.dart';
 import '../../player/domain/models/song.dart';
 import '../../plugin/application/music_source_manager.dart';
+import '../data/radio_page_limits.dart';
 import '../domain/models/radio_station.dart';
 
 /// 电台取歌失败（没有可用音源 / 随机不到歌单等），带一句能直接显示的说明。
@@ -138,21 +140,15 @@ class RadioEngine {
   }
 
   /// 随机电台：在指定音源里随机分类 / 随机页 / 随机歌单取歌。
+  ///
+  /// 每个歌单只取 [songsPerPlaylist] 首（默认 3），然后换下一个随机歌单，
+  /// 一直凑到 [minCount] 首，尽量保证「越随机越好」。
   Future<RadioBatch> randomSongs({
     required String sourceId,
     int minCount = 20,
-    String? preferPlaylistId,
+    int songsPerPlaylist = 3,
     Set<String> excludeIds = const <String>{},
   }) async {
-    if (preferPlaylistId != null && preferPlaylistId.isNotEmpty) {
-      final batch = await _songsFromPlaylist(
-        preferPlaylistId,
-        minCount: minCount,
-        excludeIds: excludeIds,
-      );
-      if (!batch.isEmpty) return batch;
-    }
-
     // 随机一个分类（拿不到分类就用「热门」）。
     List<PlaylistTag> tags = const [];
     try {
@@ -161,43 +157,71 @@ class RadioEngine {
     } catch (e) {
       debugPrint('[RadioEngine] 取分类失败: $e');
     }
-    final tag = tags.isEmpty
-        ? null
-        : _pick(tags.where((t) => t.id.isNotEmpty).toList(growable: false));
+    final candidates = tags
+        .where((t) => t.id.isNotEmpty)
+        .toList(growable: false);
 
-    final playlists = await _randomCategoryPlaylists(
-      sourceId: sourceId,
-      tagId: tag?.id ?? '',
-    );
-    if (playlists.isEmpty) {
-      throw const RadioException('这个音源暂时没有可用的歌单');
+    final collected = <String, Song>{};
+    final triedPlaylists = <String>{};
+    String? lastPlaylistId;
+    String? lastPlaylistSource;
+    String? lastPlaylistTitle;
+
+    // 最多换这么多个歌单，避免一直随机不到就无限请求。
+    final maxPlaylists = (minCount / songsPerPlaylist).ceil() + 6;
+    var attempts = 0;
+    while (collected.length < minCount && attempts < maxPlaylists) {
+      attempts++;
+      final tag = candidates.isEmpty ? null : _pick(candidates);
+      final playlists = await _randomCategoryPlaylists(
+        sourceId: sourceId,
+        tagId: tag?.id ?? '',
+      );
+      if (playlists.isEmpty) break;
+      // 同一轮里不重复用同一个歌单。
+      final pool = playlists
+          .where((p) => !triedPlaylists.contains(p.id))
+          .toList(growable: false);
+      if (pool.isEmpty) break;
+      final playlist = _pick(pool);
+      triedPlaylists.add(playlist.id);
+
+      final batch = await _songsFromPlaylist(
+        playlist.id,
+        minCount: songsPerPlaylist,
+        excludeIds: {...excludeIds, ...collected.keys},
+      );
+      if (batch.isEmpty) continue;
+      for (final song in batch.songs) {
+        collected.putIfAbsent(song.id, () => song);
+      }
+      lastPlaylistId = playlist.id;
+      lastPlaylistSource = playlist.source;
+      lastPlaylistTitle = playlist.title;
     }
-    final playlist = _pick(playlists);
-    final batch = await _songsFromPlaylist(
-      playlist.id,
-      minCount: minCount,
-      excludeIds: excludeIds,
-    );
-    if (batch.isEmpty) {
-      throw const RadioException('随机到的歌单里没有可播放的歌曲');
+
+    if (collected.isEmpty) {
+      throw const RadioException('随机不到可播放的歌曲，请稍后重试');
     }
+    final songs = collected.values.toList(growable: false);
+    final shuffled = [...songs]..shuffle(_random);
+    final take = shuffled.length > minCount ? minCount : shuffled.length;
     return RadioBatch(
-      songs: batch.songs,
-      playlistId: playlist.id,
-      playlistSource: playlist.source,
-      playlistTitle: playlist.title,
+      songs: shuffled.take(take).toList(growable: false),
+      playlistId: lastPlaylistId,
+      playlistSource: lastPlaylistSource,
+      playlistTitle: lastPlaylistTitle,
     );
   }
 
-  /// 分类页：随机取一页，取不到就往回缩（返回空数据时缩小随机范围）。
+  /// 分类页：随机取一页，取不到就按规则往回缩。
   Future<List<Playlist>> _randomCategoryPlaylists({
     required String sourceId,
     required String tagId,
-    int maxPage = 6,
-  }) async {
-    final start = 1 + _random.nextInt(maxPage);
-    for (var page = start; page >= 1; page--) {
-      try {
+  }) {
+    return _randomPagePlaylists(
+      cacheKey: 'tag:$sourceId:$tagId',
+      fetch: (page) async {
         final (playlists, _) = await manager.getCategoryPlaylists(
           sortId: 'hot',
           tagId: tagId,
@@ -205,10 +229,33 @@ class RadioEngine {
           limit: 30,
           sourceId: sourceId,
         );
-        if (playlists.isNotEmpty) return playlists;
+        return playlists;
+      },
+    );
+  }
+
+  Future<List<Playlist>> _randomPagePlaylists({
+    required String cacheKey,
+    required Future<List<Playlist>> Function(int page) fetch,
+  }) async {
+    // 随机页：上限记忆在设置文件里（按音源 + 分类 / 关键词区分）。
+    await RadioPageLimits.ensureLoaded();
+    final limit = RadioPageLimits.limitFor(cacheKey);
+    var page = 1 + _random.nextInt(limit < 1 ? 1 : limit);
+    var shrunk = false;
+    while (page >= 1) {
+      try {
+        final playlists = await fetch(page);
+        if (playlists.isNotEmpty) {
+          // 这次是缩回来的页：把它记成新的上限（只减不增），下次直接从这之内随机。
+          if (shrunk) unawaited(RadioPageLimits.record(cacheKey, page));
+          return playlists;
+        }
       } catch (e) {
-        debugPrint('[RadioEngine] 分类歌单第 $page 页失败: $e');
+        debugPrint('[RadioEngine] 第 $page 页取歌单失败: $e');
       }
+      shrunk = true;
+      page = nextPageAfterEmpty(page);
     }
     return const [];
   }
@@ -249,26 +296,16 @@ class RadioEngine {
     throw const RadioException('按关键词随机不到可播放的歌曲');
   }
 
-  Future<List<Playlist>> _searchPlaylists(
-    String sourceId,
-    String keyword, {
-    int maxPage = 4,
-  }) async {
-    final start = 1 + _random.nextInt(maxPage);
-    for (var page = start; page >= 1; page--) {
-      try {
-        final playlists = await manager.searchPlaylists(
-          keyword,
-          sourceId: sourceId,
-          page: page,
-          limit: 30,
-        );
-        if (playlists.isNotEmpty) return playlists;
-      } catch (e) {
-        debugPrint('[RadioEngine] 搜索歌单第 $page 页失败: $e');
-      }
-    }
-    return const [];
+  Future<List<Playlist>> _searchPlaylists(String sourceId, String keyword) {
+    return _randomPagePlaylists(
+      cacheKey: 'kw:$sourceId:$keyword',
+      fetch: (page) => manager.searchPlaylists(
+        keyword,
+        sourceId: sourceId,
+        page: page,
+        limit: 30,
+      ),
+    );
   }
 
   /// 从一个歌单里取随机歌曲（至少 [minCount] 首，够不够都把能拿到的过滤后返回）。

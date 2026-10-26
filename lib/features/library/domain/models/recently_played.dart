@@ -22,6 +22,9 @@ enum PlaybackSourceType {
 
   /// 本地音乐。
   local,
+
+  /// 电台（随机电台 / 自定义电台）。
+  radio,
 }
 
 extension PlaybackSourceTypeX on PlaybackSourceType {
@@ -33,6 +36,7 @@ extension PlaybackSourceTypeX on PlaybackSourceType {
     PlaybackSourceType.search => 'search',
     PlaybackSourceType.artist => 'artist',
     PlaybackSourceType.local => 'local',
+    PlaybackSourceType.radio => 'radio',
     PlaybackSourceType.unknown => 'unknown',
   };
 
@@ -44,6 +48,7 @@ extension PlaybackSourceTypeX on PlaybackSourceType {
     PlaybackSourceType.search => '搜索',
     PlaybackSourceType.artist => '作者',
     PlaybackSourceType.local => '本地',
+    PlaybackSourceType.radio => '电台',
     PlaybackSourceType.unknown => '',
   };
 
@@ -54,6 +59,7 @@ extension PlaybackSourceTypeX on PlaybackSourceType {
     'search' => PlaybackSourceType.search,
     'artist' => PlaybackSourceType.artist,
     'local' => PlaybackSourceType.local,
+    'radio' => PlaybackSourceType.radio,
     _ => PlaybackSourceType.unknown,
   };
 }

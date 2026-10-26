@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mintmusic/features/radio/data/radio_page_limits.dart';
 import 'package:mintmusic/features/radio/domain/models/radio_station.dart';
 
 void main() {
@@ -58,6 +59,26 @@ void main() {
       );
       expect(data.stationsIn(RadioCategory.allId).length, 2);
       expect(data.stationsIn('cat_1').length, 1);
+    });
+  });
+
+  group('随机页回缩规则', () {
+    test('空页后先缩 5 页，5 页以内每次缩 1 页', () {
+      expect(nextPageAfterEmpty(50), 45);
+      expect(nextPageAfterEmpty(12), 7);
+      expect(nextPageAfterEmpty(6), 1);
+      expect(nextPageAfterEmpty(5), 4);
+      expect(nextPageAfterEmpty(1), 0);
+    });
+
+    test('一直缩到 0 就停（页面用 >= 1 判断）', () {
+      var page = 8;
+      final visited = <int>[];
+      while (page >= 1) {
+        visited.add(page);
+        page = nextPageAfterEmpty(page);
+      }
+      expect(visited, [8, 3, 2, 1]);
     });
   });
 }

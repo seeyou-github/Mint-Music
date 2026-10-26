@@ -25,6 +25,7 @@ class SourceBadge extends StatelessWidget {
     PlaybackSourceType.search => const Color(0xFF5B9BFF),
     PlaybackSourceType.artist => const Color(0xFFB07CFF),
     PlaybackSourceType.local => colors.primary,
+    PlaybackSourceType.radio => const Color(0xFF4FC3A1),
     PlaybackSourceType.unknown => colors.textHint,
   };
 

@@ -227,6 +227,7 @@ class SidebarPlayer extends ConsumerWidget {
         );
       case PlaybackSourceType.search:
       case PlaybackSourceType.local:
+      case PlaybackSourceType.radio:
       case PlaybackSourceType.unknown:
         return;
     }

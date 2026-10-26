@@ -5,6 +5,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../blacklist/application/blacklist_providers.dart';
 import '../../discover/application/discover_providers.dart';
+import '../../library/domain/models/recently_played.dart';
+import '../../player/application/playback_context.dart';
 import '../../player/application/playback_controller.dart';
 import '../../player/domain/models/playback_state.dart';
 import '../../plugin/application/plugin_providers.dart';
@@ -121,6 +123,12 @@ class RadioSessionController extends Notifier<RadioSession?> {
     if (batch.isEmpty) {
       throw const RadioException('没有随机到可播放的歌曲，请稍后重试');
     }
+    // 记成「电台」来源：最近播放里会显示「电台」标签（点击不跳转）。
+    PlaybackContext.instance.set(
+      PlaybackSourceType.radio,
+      id: station.id,
+      name: station.name,
+    );
     state = RadioSession(
       stationId: station.id,
       name: station.name,
@@ -152,6 +160,12 @@ class RadioSessionController extends Notifier<RadioSession?> {
     if (batch.isEmpty) {
       throw const RadioException('随机不到可播放的歌曲，请稍后重试');
     }
+    // 记成「电台」来源：最近播放里会显示「电台」标签（点击不跳转）。
+    PlaybackContext.instance.set(
+      PlaybackSourceType.radio,
+      id: RadioStation.randomId,
+      name: '随机电台',
+    );
     state = RadioSession(
       stationId: RadioStation.randomId,
       name: '随机电台',
@@ -205,10 +219,11 @@ class RadioSessionController extends Notifier<RadioSession?> {
           .toSet();
       RadioBatch batch;
       if (session.isRandom) {
+        // 随机电台：每个歌单只取 3 首，取完就换下一个随机歌单，
+        // 直到凑够 20 首（引擎内部循环）。
         batch = await engine.randomSongs(
           sourceId: session.randomSourceId,
           minCount: refillCount,
-          preferPlaylistId: session.playlistId,
           excludeIds: existing,
         );
       } else {
