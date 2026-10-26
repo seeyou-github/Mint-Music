@@ -300,8 +300,13 @@ class MusicSourceManager {
         if (!isPluginSourceEnabled(pluginId, baseId)) continue;
         final id = _uniqueSourceId(baseId, pluginId, seenIds);
         seenIds.add(id);
+        final displayName = _sourceDisplayName(source.name, pluginName);
         sources.add(
-          SourceInfo(id: id, name: _sourceDisplayName(source.name, pluginName)),
+          SourceInfo(
+            id: id,
+            // 数据源只提供元数据，名字上标出来，避免和同名插件音源混淆。
+            name: host.isDataSource ? '$displayName（数据源）' : displayName,
+          ),
         );
       }
     }
@@ -429,7 +434,8 @@ class MusicSourceManager {
           : '';
       for (final source in host.sources) {
         if (SourceIdMapping.deriveId(source.name) == baseId) {
-          return _sourceDisplayName(source.name, pluginName);
+          final displayName = _sourceDisplayName(source.name, pluginName);
+          return host.isDataSource ? '$displayName（数据源）' : displayName;
         }
       }
     }
@@ -725,12 +731,94 @@ class MusicSourceManager {
     ];
   }
 
+  // ---------------------------------------------------------------------
+  // 数据源（只提供元数据、不解析播放地址的插件）
+  // ---------------------------------------------------------------------
+
+  /// 已启用且声明自己是「数据源」的插件 id。
+  Set<String> get dataSourcePluginIds {
+    final ids = <String>{};
+    for (final host in _pluginService.enabledPlugins) {
+      if (!host.isDataSource) continue;
+      final pluginId = _pluginService.getPluginIdForHost(host);
+      if (pluginId != null && pluginId.isNotEmpty) ids.add(pluginId);
+    }
+    return ids;
+  }
+
+  /// 插件是否是数据源。
+  bool isDataSourcePlugin(String pluginId) {
+    if (pluginId.isEmpty) return false;
+    for (final host in _pluginService.enabledPlugins) {
+      if (_pluginService.getPluginIdForHost(host) != pluginId) continue;
+      return host.isDataSource;
+    }
+    return false;
+  }
+
+  /// 音源 id（`平台id@插件id`）是否由数据源插件提供。
+  bool isDataSourceSource(String sourceId) {
+    final (baseId, pluginId) = splitSourceId(sourceId.trim());
+    if (baseId.isEmpty || pluginId == null) return false;
+    return isDataSourcePlugin(pluginId);
+  }
+
+  /// 歌曲实际归属的数据源插件 id（不是数据源的歌返回 null）。
+  ///
+  /// 优先看歌曲级绑定（收藏 / 歌单记下的 `preferredSource`），再看音源本身。
+  String? dataSourcePluginIdForSong(Song song) {
+    final preferred = song.preferredSource?.trim() ?? '';
+    if (preferred.isNotEmpty) {
+      final (_, preferredPlugin) = splitSourceId(preferred);
+      if (preferredPlugin != null && isDataSourcePlugin(preferredPlugin)) {
+        return preferredPlugin;
+      }
+    }
+    final source = song.source?.trim() ?? '';
+    final (_, pluginId) = splitSourceId(source);
+    if (pluginId != null && isDataSourcePlugin(pluginId)) return pluginId;
+    return null;
+  }
+
+  /// 数据源的展示名（用于「此 xxx数据源…」提示）。
+  ///
+  /// 插件名本身可能已经带「数据源」后缀，避免出现「xx数据源数据源」。
+  String dataSourceDisplayName(String pluginId) {
+    for (final host in _pluginService.enabledPlugins) {
+      if (_pluginService.getPluginIdForHost(host) != pluginId) continue;
+      final name = (host.pluginInfo?.name ?? '').trim();
+      if (name.isEmpty) break;
+      final stripped = name.endsWith('数据源')
+          ? name.substring(0, name.length - 3).trim()
+          : name;
+      return stripped.isEmpty ? name : '$stripped数据源';
+    }
+    return '数据源';
+  }
+
+  /// 数据源 → 指定播放源（`平台id@插件id`）。
+  ///
+  /// 由设置页 / 插件管理页维护：数据源只提供元数据，播放地址由这里指定的
+  /// 播放源解析。
+  Map<String, String> _dataSourcePlaybackSources = const {};
+
+  void setDataSourcePlaybackSources(Map<String, String> map) {
+    _dataSourcePlaybackSources = Map<String, String>.from(map);
+  }
+
+  /// 某个数据源当前指定的播放源 id（未指定返回 null）。
+  String? dataSourcePlaybackSource(String pluginId) {
+    final value = _dataSourcePlaybackSources[pluginId]?.trim() ?? '';
+    return value.isEmpty ? null : value;
+  }
+
   /// 把一个音源 id 落成「能真正解析播放地址」的具体插件音源。
   ///
   /// 收藏歌曲 / 歌单 / 专辑 / 作者时用它记下「以后优先用哪个插件播放」：
   /// 搜索结果（尤其是聚合搜索）里的歌往往只带平台 id（`wy`），直接存进收藏
   /// 的话，以后播放只能临时靠「优先音源」或回退去猜，容易失败。
   ///
+  /// * 数据源（只提供元数据）→ 原样返回，收藏继续绑定数据源插件；
   /// * 已经带插件（`平台id@插件id`）且插件仍可用 → 原样返回；
   /// * 否则先看该平台的「优先音源」，再取第一个能解析地址的插件；
   /// * 一个插件都没有 → 原样返回（仍按内置源 + 回退逻辑播放）。
@@ -742,6 +830,8 @@ class MusicSourceManager {
     if (trimmed.isEmpty || trimmed == 'local') return sourceId;
     final (baseId, pluginId) = splitSourceId(trimmed);
     if (baseId.isEmpty) return sourceId;
+    // 数据源只提供元数据：不能改写成别的插件，否则收藏就丢了「数据源绑定」。
+    if (pluginId != null && isDataSourcePlugin(pluginId)) return trimmed;
     // 已经指定了插件：插件还支持解析地址就保持不变。
     if (pluginId != null && _pluginSourceCanResolveUrls(trimmed)) {
       return trimmed;
@@ -1566,12 +1656,14 @@ class MusicSourceManager {
     Song song, {
     String quality = '320k',
     Set<String> excludedUrls = const <String>{},
+    void Function(String message)? onResolveError,
   }) async {
     if (song.source == null || song.source == 'local') return song;
     final result = await getMusicUrlResult(
       song,
       quality: quality,
       excludedUrls: excludedUrls,
+      onResolveError: onResolveError,
     );
     if (result != null && result.url.isNotEmpty) {
       return _applyMusicUrlResult(song, result, requestedQuality: quality);
@@ -1675,6 +1767,18 @@ class MusicSourceManager {
     final sourceId = song.source;
     if (sourceId == null) return const <PluginMusicUrlResult>[];
 
+    // 数据源（只提供元数据）的歌曲：播放地址交给用户为它指定的播放源解析。
+    final dataSourcePluginId = dataSourcePluginIdForSong(song);
+    if (dataSourcePluginId != null) {
+      return _resolveViaDataSourcePlayback(
+        song,
+        dataSourcePluginId: dataSourcePluginId,
+        quality: quality,
+        excludedUrls: excludedUrls,
+        onResolveError: onResolveError,
+      );
+    }
+
     final musicInfo = _buildPluginMusicInfo(song, sourceId);
     final results = <PluginMusicUrlResult>[];
 
@@ -1682,9 +1786,16 @@ class MusicSourceManager {
     // the provider-specific song metadata and requested quality. In
     // particular, Kuwo's legacy endpoint can return HTTP 200 for its
     // free-listening permission prompt instead of the requested song.
-    final hosts =
-        pluginHosts ??
-        _orderedHostsForSource(sourceId, preferredPlugin: song.preferredSource);
+    //
+    // 数据源插件没有 musicUrl，取地址时必须排除：否则会拿「musicUrl 不是函数」
+    // 这类无关错误盖掉真正的原因（内置源 + 只装了数据源时尤其明显）。
+    final hosts = (pluginHosts ??
+            _orderedHostsForSource(
+              sourceId,
+              preferredPlugin: song.preferredSource,
+            ))
+        .where((host) => !host.isDataSource)
+        .toList(growable: false);
     for (final host in hosts) {
       final pluginSourceId = _getSourceIdForHost(host, sourceId);
       if (pluginSourceId == null) continue;
@@ -1740,6 +1851,135 @@ class MusicSourceManager {
     }
 
     return results;
+  }
+
+  /// 数据源歌曲：用「数据源 → 指定播放源」解析播放地址。
+  ///
+  /// 数据源只提供元数据（搜索 / 歌单 / 榜单 / 专辑 / 作者），本身没有地址接口。
+  /// 这里在用户为它指定的播放源里重新找同一首歌，再由那个音源解析地址。
+  ///
+  /// 任何一步失败都抛 [DataSourcePlaybackException]，提示语按产品要求固定为：
+  /// `此xxx数据源指定的 xxx音源失效，错误："…" 请在插件管理中设置其他音源。`
+  Future<List<PluginMusicUrlResult>> _resolveViaDataSourcePlayback(
+    Song song, {
+    required String dataSourcePluginId,
+    required String quality,
+    required Set<String> excludedUrls,
+    void Function(String message)? onResolveError,
+  }) async {
+    final dataSourceName = dataSourceDisplayName(dataSourcePluginId);
+    final playbackSourceId = dataSourcePlaybackSource(dataSourcePluginId);
+
+    String fail(String playbackName, Object? error) {
+      var detail = error == null ? '' : '$error';
+      detail = detail
+          .replaceFirst(RegExp(r'^Exception:\s*'), '')
+          .replaceAll('"', "'")
+          .replaceAll('\n', ' ')
+          .trim();
+      if (detail.isEmpty) detail = '未知错误';
+      return '此$dataSourceName指定的 $playbackName音源失效，错误："$detail" '
+          '请在插件管理中设置其他音源。';
+    }
+
+    if (playbackSourceId == null) {
+      final message =
+          '此$dataSourceName未指定播放源，错误："未设置播放源" '
+          '请在插件管理中设置其他音源。';
+      onResolveError?.call(message);
+      throw DataSourcePlaybackException(message);
+    }
+
+    final playbackName = sourceDisplayName(playbackSourceId);
+    if (isDataSourceSource(playbackSourceId)) {
+      final message = fail(playbackName, '指定的播放源本身也是数据源，无法解析播放地址');
+      onResolveError?.call(message);
+      throw DataSourcePlaybackException(message);
+    }
+
+    // 指定的播放源必须仍然可用（插件没被卸载 / 关闭）。
+    final hosts = _findPluginHostsForSource(playbackSourceId);
+    if (hosts.isEmpty) {
+      final message = fail(playbackName, '该音源不可用（插件未启用或已卸载）');
+      onResolveError?.call(message);
+      throw DataSourcePlaybackException(message);
+    }
+
+    // 1) 在播放源里重新找同一首歌（歌名 + 歌手完全一致才算命中）。
+    Song? matched;
+    try {
+      final keyword = '${song.title} ${song.artist}'.trim();
+      final candidates = await search(
+        keyword,
+        sourceId: playbackSourceId,
+        page: 1,
+        limit: 20,
+      );
+      for (final item in candidates) {
+        if (_isSameSong(song, item)) {
+          matched = item;
+          break;
+        }
+      }
+      matched ??= _bestTitleMatch(song, candidates);
+    } catch (e) {
+      final message = fail(playbackName, e);
+      onResolveError?.call(message);
+      throw DataSourcePlaybackException(message);
+    }
+
+    if (matched == null) {
+      final message = fail(playbackName, '在$playbackName里没有搜到这首歌');
+      onResolveError?.call(message);
+      throw DataSourcePlaybackException(message);
+    }
+
+    // 2) 由播放源解析地址。
+    final resolved = <PluginMusicUrlResult>[];
+    String? lastError;
+    try {
+      final results = await getMusicUrlResultCandidates(
+        matched,
+        quality: quality,
+        excludedUrls: excludedUrls,
+        onResolveError: (message) => lastError = message,
+      );
+      for (final result in results) {
+        if (result.url.isEmpty) continue;
+        // 不写 result.source：歌曲仍然归属数据源，收藏 / 队列继续绑定数据源插件。
+        resolved.add(
+          PluginMusicUrlResult(
+            url: result.url,
+            quality: result.quality,
+            headers: result.headers,
+          ),
+        );
+      }
+    } catch (e) {
+      lastError = '$e';
+    }
+
+    if (resolved.isEmpty) {
+      final message = fail(playbackName, lastError);
+      onResolveError?.call(message);
+      throw DataSourcePlaybackException(message);
+    }
+    return resolved;
+  }
+
+  /// 歌名完全一致（忽略大小写 / 空白）的候选中取第一个；没有则返回 null。
+  ///
+  /// 只按歌名放宽（允许歌手写法不同，例如「A、B」与「A/B」），不做模糊匹配，
+  /// 避免把别的歌的地址用到当前歌曲上。
+  static Song? _bestTitleMatch(Song target, List<Song> candidates) {
+    String norm(String value) =>
+        value.trim().toLowerCase().replaceAll(RegExp(r'\s+'), '');
+    final title = norm(target.title);
+    if (title.isEmpty) return null;
+    for (final item in candidates) {
+      if (norm(item.title) == title) return item;
+    }
+    return null;
   }
 
   /// Quality order used after the current quality is rejected by the real
@@ -2609,11 +2849,37 @@ class MusicSourceManager {
           id: pluginBoardId(sourceId, rawId),
           name: (group == null || group == name) ? name : '$group · $name',
           coverUrl: _nonEmptyText(entry['coverUrl']),
+          // 榜单卡片的播放量与更新时间（与内置源一致，由插件给出已格式化的
+          // 文本，例如「65.2亿」「刚刚更新」「每周四更新」「更新20首」）。
+          playCount: _nonEmptyText(entry['playCount']),
+          updateFrequency: _nonEmptyText(entry['updateFrequency']),
           source: sourceId,
         ),
       );
     }
     return boards;
+  }
+
+  /// 插件返回的热门标签：`[{id,name}]` 或 `{tags:[{id,name}]}`。
+  List<PlaylistTag> _pluginHotTagsFromJson(String sourceId, dynamic decoded) {
+    final tags = <PlaylistTag>[];
+    final list = decoded is List
+        ? decoded
+        : (decoded is Map ? decoded['tags'] : null);
+    if (list is! List) return tags;
+    for (final entry in list) {
+      if (entry is! Map) continue;
+      final id = _nonEmptyText(entry['id']);
+      if (id == null) continue;
+      tags.add(
+        PlaylistTag(
+          id: id,
+          name: _nonEmptyText(entry['name']) ?? id,
+          source: sourceId,
+        ),
+      );
+    }
+    return tags;
   }
 
   List<PlaylistTagGroup> _pluginTagGroupsFromJson(
@@ -2843,6 +3109,18 @@ class MusicSourceManager {
     // 插件接管平台时用插件的推荐分类当标签栏（插件没有浏览接口时用内置源兜底）。
     final host = _findDiscoverHost(sourceId, needSheets: true);
     if (host != null) {
+      // 插件可选地单独提供「热门标签」（对应内置源的 /api/playlist/hottags）：
+      // 这样顶部标签栏才能和内置源一样是 热门/华语/流行/摇滚…，而不是把
+      // 「语种」分类的标签拿来顶替。
+      try {
+        final hot = _pluginHotTagsFromJson(
+          sourceId,
+          _decodePluginJson(await host.getHotPlaylistTags()),
+        );
+        if (hot.isNotEmpty) return hot;
+      } catch (e) {
+        print('[MusicSourceManager] 插件热门标签获取失败 source=$sourceId: $e');
+      }
       try {
         final groups = _pluginTagGroupsFromJson(
           sourceId,

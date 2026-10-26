@@ -1,0 +1,792 @@
+/*
+ * MintMusic 数据源插件 —— 网易云音乐
+ * ---------------------------------------------------------------------------
+ * 这是一个「数据源」插件：只提供搜索 / 发现页（歌单分类、榜单、歌单详情）/
+ * 专辑 / 作者 / 歌词 / 封面等**元数据**，**不提供播放地址**（没有 musicUrl）。
+ *
+ * 数据源标记：pluginInfo.isDataSource === true
+ *   · 导入时会被归到「插件管理 → 数据源」分类（与内置音源、普通插件音源并列）；
+ *   · 在「数据源」里给这个插件指定一个已安装的播放源，播放时用该播放源解析
+ *     地址（数据源只负责“有哪些歌”）。
+ *
+ * 接口与内置源网易云音乐保持一致（lib/features/plugin/data/netease_music_source.dart）：
+ *   · 直连 music.163.com 的 /api/* 老接口（等价于内置源的 linuxapi 通道）；
+ *   · 直连失败时依次回退到内置源用到的两个代理；
+ *   · 播放量格式与内置源完全相同：≥1 亿 → 「x.x亿」，≥1 万 → 「x.x万」，否则原样；
+ *   · 榜单更新时间直接透传网易云的 updateFrequency（「刚刚更新」/「每周四更新」/
+ *     「更新20首」…）。
+ * ---------------------------------------------------------------------------
+ */
+
+var HOST = 'https://music.163.com';
+var PROXIES = [
+  'https://netease-cloud-music-api.fe-mm.com',
+  'https://ncmapi.btwoa.com'
+];
+
+var BASE_HEADERS = {
+  'User-Agent':
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+    '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'Referer': 'https://music.163.com/',
+  'Origin': 'https://music.163.com',
+  'Accept': 'application/json, text/plain, */*',
+  'Cookie': 'os=pc; appver=2.9.7; osver=Microsoft-Windows-10; deviceId=mintmusic'
+};
+
+/* ---------------------------------------------------------------- 基础工具 */
+
+function encodeQuery(params) {
+  var parts = [];
+  for (var key in params) {
+    if (!Object.prototype.hasOwnProperty.call(params, key)) continue;
+    var value = params[key];
+    if (value === undefined || value === null) continue;
+    parts.push(encodeURIComponent(key) + '=' + encodeURIComponent(String(value)));
+  }
+  return parts.join('&');
+}
+
+function decodeBody(res) {
+  var body = res && res.body;
+  if (typeof body === 'string') {
+    try {
+      body = JSON.parse(body);
+    } catch (e) {
+      /* 保持原样，交给下面判断 */
+    }
+  }
+  if (!body || typeof body !== 'object') {
+    var text = body === undefined || body === null ? '' : String(body);
+    throw new Error('接口返回异常：' + text.substring(0, 120));
+  }
+  if (body.code !== undefined && Number(body.code) !== 200) {
+    throw new Error('接口返回 code=' + body.code);
+  }
+  return body;
+}
+
+function getJson(url) {
+  return cerumusic
+    .request(url, { method: 'GET', headers: BASE_HEADERS, timeout: 15000 })
+    .then(decodeBody);
+}
+
+function postForm(url, form) {
+  return cerumusic
+    .request(url, {
+      method: 'POST',
+      headers: BASE_HEADERS,
+      form: form,
+      timeout: 15000
+    })
+    .then(decodeBody);
+}
+
+/**
+ * 依次尝试多个请求，返回第一个成功的结果。
+ * 全部失败时抛出最后一个错误（错误文案里带上每个失败原因，便于排查）。
+ */
+function chain(steps) {
+  var errors = [];
+  var index = 0;
+  function next() {
+    if (index >= steps.length) {
+      throw new Error(
+        errors.length ? errors.join(' / ') : '接口不可用（未配置请求）'
+      );
+    }
+    var step = steps[index++];
+    return Promise.resolve()
+      .then(step)
+      .catch(function (err) {
+        errors.push((err && err.message) || String(err));
+        return next();
+      });
+  }
+  return Promise.resolve().then(next);
+}
+
+/* ---------------------------------------------------------------- 字段映射 */
+
+/** 封面地址规范化（与内置源 _normalizeCoverUrl 一致：https + 400x400）。 */
+function normalizeCover(url) {
+  if (!url) return '';
+  var value = String(url).trim();
+  if (!value) return '';
+  if (value.indexOf('//') === 0) value = 'https:' + value;
+  if (value.indexOf('http://') === 0) value = 'https://' + value.substring(7);
+  if (value.indexOf('music.126.net') >= 0) {
+    var queryIndex = value.indexOf('?');
+    if (queryIndex >= 0) value = value.substring(0, queryIndex);
+    value = value + '?param=400y400';
+  }
+  return value;
+}
+
+/**
+ * 播放量格式化 —— 与内置源 _formatPlayCount 完全一致：
+ *   ≥ 100000000 → 「x.x亿」，≥ 10000 → 「x.x万」，否则整数原样。
+ */
+function formatPlayCount(count) {
+  if (count === undefined || count === null || count === '') return '';
+  var n = typeof count === 'number' ? count : parseInt(count, 10);
+  if (isNaN(n)) n = 0;
+  if (n >= 100000000) return (n / 100000000).toFixed(1) + '亿';
+  if (n >= 10000) return (n / 10000).toFixed(1) + '万';
+  return String(n);
+}
+
+function artistsOf(track) {
+  var artists = track.ar || track.artists || [];
+  if (!artists || !artists.length) return '';
+  var names = [];
+  for (var i = 0; i < artists.length; i++) {
+    var name = artists[i] && artists[i].name;
+    if (name) names.push(String(name));
+  }
+  return names.join('、');
+}
+
+function albumOf(track) {
+  var album = track.al || track.album || {};
+  return {
+    id: album.id,
+    name: album.name || track.albumName || '',
+    picUrl: album.picUrl || album.pic_url || album.blurPicUrl || track.picUrl || ''
+  };
+}
+
+/** 网易云歌曲 → 插件歌曲结构（时长统一换算成秒）。 */
+function songOf(track) {
+  if (!track) return null;
+  var album = albumOf(track);
+  var rawDuration = track.dt || track.duration || 0;
+  var ms = Number(rawDuration) || 0;
+  var seconds = ms > 10000 ? Math.floor(ms / 1000) : Math.floor(ms);
+  var id = track.id !== undefined && track.id !== null ? String(track.id) : '';
+  return {
+    id: id,
+    songId: id,
+    songmid: id,
+    name: track.name || track.title || '',
+    singer: artistsOf(track),
+    albumName: album.name,
+    artwork: normalizeCover(album.picUrl),
+    duration: seconds,
+    source: 'wy'
+  };
+}
+
+function songsOf(list) {
+  var result = [];
+  if (!list || !list.length) return result;
+  for (var i = 0; i < list.length; i++) {
+    var song = songOf(list[i]);
+    if (song && song.id) result.push(song);
+  }
+  return result;
+}
+
+/** 网易云歌单 → 插件歌单结构（播放量已格式化）。 */
+function playlistOf(item) {
+  var creator = item.creator || {};
+  return {
+    id: String(item.id),
+    title: item.name || '',
+    description: item.description || '',
+    coverUrl: normalizeCover(item.coverImgUrl || item.picUrl),
+    songCount: Number(item.trackCount || 0),
+    playCount: formatPlayCount(item.playCount),
+    author: creator.nickname ? String(creator.nickname) : ''
+  };
+}
+
+function playlistsOf(list) {
+  var result = [];
+  if (!list || !list.length) return result;
+  for (var i = 0; i < list.length; i++) {
+    if (!list[i] || list[i].id === undefined) continue;
+    result.push(playlistOf(list[i]));
+  }
+  return result;
+}
+
+/* ---------------------------------------------------------------- 接口请求 */
+
+function fetchCategories() {
+  return chain([
+    function () {
+      return getJson(HOST + '/api/playlist/catalogue');
+    },
+    function () {
+      return getJson(PROXIES[0] + '/playlist/catlist');
+    },
+    function () {
+      return getJson(PROXIES[1] + '/playlist/catlist');
+    }
+  ]);
+}
+
+function fetchHotTags() {
+  return chain([
+    function () {
+      return getJson(HOST + '/api/playlist/hottags');
+    },
+    function () {
+      return getJson(PROXIES[0] + '/playlist/hot');
+    },
+    function () {
+      return getJson(PROXIES[1] + '/playlist/hot');
+    }
+  ]);
+}
+
+function fetchPlaylistList(cat, order, limit, offset) {
+  var params = { cat: cat, order: order, limit: limit, offset: offset };
+  return chain([
+    function () {
+      return getJson(HOST + '/api/playlist/list?' + encodeQuery(params));
+    },
+    function () {
+      return postForm(HOST + '/api/playlist/list', {
+        cat: cat,
+        order: order,
+        limit: limit,
+        offset: offset,
+        total: 'true'
+      });
+    },
+    function () {
+      return getJson(PROXIES[0] + '/top/playlist?' + encodeQuery(params));
+    },
+    function () {
+      return getJson(PROXIES[1] + '/top/playlist?' + encodeQuery(params));
+    }
+  ]);
+}
+
+function fetchPlaylistDetail(id) {
+  return chain([
+    function () {
+      return getJson(
+        HOST + '/api/v3/playlist/detail?' + encodeQuery({ id: id, n: 100000, s: 8 })
+      );
+    },
+    function () {
+      return getJson(
+        HOST + '/api/playlist/detail?' + encodeQuery({ id: id, n: 100000, s: 8 })
+      );
+    },
+    function () {
+      return getJson(
+        PROXIES[0] + '/playlist/detail?' + encodeQuery({ id: id, n: 100000, s: 8 })
+      );
+    },
+    function () {
+      return getJson(
+        PROXIES[1] + '/playlist/detail?' + encodeQuery({ id: id, n: 100000, s: 8 })
+      );
+    }
+  ]);
+}
+
+function fetchTopList() {
+  return chain([
+    function () {
+      return getJson(HOST + '/api/toplist');
+    },
+    function () {
+      return getJson(PROXIES[0] + '/toplist');
+    },
+    function () {
+      return getJson(PROXIES[1] + '/toplist');
+    }
+  ]);
+}
+
+function fetchSearch(keyword, type, limit, offset) {
+  var form = { s: keyword, type: type, limit: limit, offset: offset };
+  return chain([
+    function () {
+      return postForm(HOST + '/api/search/get', form);
+    },
+    function () {
+      return getJson(HOST + '/api/search/get?' + encodeQuery(form));
+    },
+    function () {
+      return getJson(
+        PROXIES[0] +
+          '/search?' +
+          encodeQuery({
+            keywords: keyword,
+            type: type,
+            limit: limit,
+            offset: offset
+          })
+      );
+    },
+    function () {
+      return getJson(
+        PROXIES[1] +
+          '/search?' +
+          encodeQuery({
+            keywords: keyword,
+            type: type,
+            limit: limit,
+            offset: offset
+          })
+      );
+    }
+  ]);
+}
+
+function fetchAlbum(id) {
+  return chain([
+    // 注意：music.163.com 没有 /api/v3/album/<id>（会返回 code=404），
+    // 老接口 /api/album/<id> 的歌曲在 album.songs 里。
+    function () {
+      return getJson(HOST + '/api/album/' + encodeURIComponent(id));
+    },
+    function () {
+      return getJson(PROXIES[0] + '/album?' + encodeQuery({ id: id }));
+    },
+    function () {
+      return getJson(PROXIES[1] + '/album?' + encodeQuery({ id: id }));
+    }
+  ]);
+}
+
+function fetchArtistSongs(id, limit, offset) {
+  return chain([
+    function () {
+      return getJson(
+        HOST +
+          '/api/artist/top/song?' +
+          encodeQuery({ id: id, limit: limit, offset: offset })
+      );
+    },
+    function () {
+      return getJson(
+        PROXIES[0] +
+          '/artist/top/song?' +
+          encodeQuery({ id: id, limit: limit, offset: offset })
+      );
+    },
+    function () {
+      return getJson(PROXIES[0] + '/artists?' + encodeQuery({ id: id }));
+    },
+    function () {
+      return getJson(
+        PROXIES[1] +
+          '/artist/top/song?' +
+          encodeQuery({ id: id, limit: limit, offset: offset })
+      );
+    }
+  ]);
+}
+
+function fetchLyric(id) {
+  var params = { id: id, lv: -1, kv: -1, tv: -1 };
+  return chain([
+    function () {
+      return getJson(HOST + '/api/song/lyric?' + encodeQuery(params));
+    },
+    function () {
+      return getJson(PROXIES[0] + '/lyric?' + encodeQuery(params));
+    },
+    function () {
+      return getJson(PROXIES[1] + '/lyric?' + encodeQuery(params));
+    }
+  ]);
+}
+
+function fetchSongDetail(id) {
+  return chain([
+    function () {
+      return getJson(
+        HOST + '/api/song/detail?' + encodeQuery({ ids: '[' + id + ']' })
+      );
+    },
+    function () {
+      return getJson(
+        PROXIES[0] + '/song/detail?' + encodeQuery({ ids: '[' + id + ']' })
+      );
+    }
+  ]);
+}
+
+/* ---------------------------------------------------------------- 解析工具 */
+
+/** 搜索结果里的歌曲列表（直连老接口用 artists/album，代理用 ar/al）。 */
+function songsFromSearch(body) {
+  var result = (body && body.result) || {};
+  var songs = result.songs || result.data || [];
+  return songsOf(songs);
+}
+
+function playlistDetailOf(body, fallbackId) {
+  var playlist = body.playlist || body.result || {};
+  var tracks = playlist.tracks || [];
+  var songs = songsOf(tracks);
+  if (!songs.length && playlist.trackIds && playlist.trackIds.length) {
+    // 只拿到 trackIds 时至少保证歌曲数量对得上，具体信息由播放源补。
+    for (var i = 0; i < playlist.trackIds.length; i++) {
+      var id = playlist.trackIds[i] && playlist.trackIds[i].id;
+      if (!id) continue;
+      songs.push({
+        id: String(id),
+        songId: String(id),
+        songmid: String(id),
+        name: '',
+        singer: '',
+        albumName: '',
+        artwork: '',
+        duration: 0,
+        source: 'wy'
+      });
+    }
+  }
+  var creator = playlist.creator || {};
+  return {
+    id: String(playlist.id || fallbackId || ''),
+    title: playlist.name || '',
+    description: playlist.description || '',
+    coverUrl: normalizeCover(playlist.coverImgUrl),
+    author: creator.nickname ? String(creator.nickname) : '',
+    songCount: Number(playlist.trackCount || songs.length),
+    songs: songs
+  };
+}
+
+function textOf(block) {
+  if (!block) return '';
+  if (typeof block === 'string') return block;
+  var value = block.lyric;
+  return value ? String(value) : '';
+}
+
+/* ---------------------------------------------------------------- 插件接口 */
+
+module.exports = {
+  pluginInfo: {
+    name: '网易云音乐数据源',
+    version: '1.0.0',
+    author: 'MintMusic',
+    description:
+      '只提供搜索、歌单分类、榜单、歌单 / 专辑 / 作者详情的网易云数据源；' +
+      '播放需要在「插件管理 → 数据源」里指定一个已安装的播放源。',
+    // ★ 数据源标记：导入时会归到「插件管理 → 数据源」分类
+    isDataSource: true
+  },
+
+  // 只声明搜索能力，不声明 musicUrl —— 数据源不解析播放地址
+  sources: {
+    wy: {
+      name: '网易云音乐',
+      qualitys: ['128k', '320k', 'flac', 'flac24bit', 'hires', 'atmos'],
+      actions: ['musicSearch']
+    }
+  },
+
+  capabilities: {
+    sheets: true,
+    sheetDetail: true,
+    topList: true,
+    playlistSearch: true
+  },
+
+  // 数据源标记（部分宿主读取顶层字段，这里再写一份，保持兼容）
+  isDataSource: true,
+
+  /** 支持的搜索类型：歌曲 / 专辑 / 作者。 */
+  supportedSearchTypes: function () {
+    return ['music', 'album', 'artist'];
+  },
+
+  /* ------------------------------------------------------------ 搜索歌曲 */
+  search: function (source, keyword, page, limit) {
+    var size = limit || 30;
+    var offset = (page || 1) > 1 ? size * ((page || 1) - 1) : 0;
+    return fetchSearch(keyword, 1, size, offset).then(function (body) {
+      var songs = songsFromSearch(body);
+      return JSON.stringify({ list: songs, page: page || 1, limit: size });
+    });
+  },
+
+  /* ------------------------------------------------------------ 搜索歌单 */
+  searchPlaylists: function (keyword, page) {
+    var size = 30;
+    var offset = (page || 1) > 1 ? size * ((page || 1) - 1) : 0;
+    return fetchSearch(keyword, 1000, size, offset).then(function (body) {
+      var result = (body && body.result) || {};
+      var list = result.playlists || [];
+      return JSON.stringify({
+        isEnd: list.length < size,
+        playlists: playlistsOf(list)
+      });
+    });
+  },
+
+  /* ------------------------------------------------------- 搜索专辑 / 作者 */
+  searchTyped: function (source, keyword, page, limit, type) {
+    var size = limit || 30;
+    var offset = (page || 1) > 1 ? size * ((page || 1) - 1) : 0;
+    var isAlbum = type === 'album';
+    var searchType = isAlbum ? 10 : 100;
+    return fetchSearch(keyword, searchType, size, offset).then(function (body) {
+      var result = (body && body.result) || {};
+      var list = isAlbum ? result.albums || [] : result.artists || [];
+      var items = [];
+      for (var i = 0; i < list.length; i++) {
+        var item = list[i] || {};
+        if (item.id === undefined) continue;
+        if (isAlbum) {
+          var artist = item.artist || {};
+          // 老接口里 item.artist 可能是空对象，真正的歌手在 item.artists 数组里
+          var artistName = artist.name ? String(artist.name) : '';
+          if (!artistName && item.artists && item.artists.length) {
+            var names = [];
+            for (var j = 0; j < item.artists.length; j++) {
+              var artistName2 = item.artists[j] && item.artists[j].name;
+              if (artistName2) names.push(String(artistName2));
+            }
+            artistName = names.join('、');
+          }
+          items.push({
+            id: String(item.id),
+            title: item.name || '',
+            coverUrl: normalizeCover(item.picUrl),
+            artist: artistName,
+            worksNum: Number(item.size || 0),
+            date: item.publishTime ? formatDate(item.publishTime) : '',
+            description: item.description || '',
+            // getAlbumInfo 需要原样带回的信息
+            raw: { id: String(item.id), name: item.name || '' }
+          });
+        } else {
+          items.push({
+            id: String(item.id),
+            title: item.name || '',
+            coverUrl: normalizeCover(item.picUrl || item.img1v1Url),
+            worksNum: Number(item.albumSize || item.musicSize || 0),
+            description: item.briefDesc || '',
+            raw: { id: String(item.id), name: item.name || '' }
+          });
+        }
+      }
+      return JSON.stringify({ list: items, isEnd: list.length < size });
+    });
+  },
+
+  /* ------------------------------------------------------------- 专辑详情 */
+  getAlbumInfo: function (source, albumItem, page) {
+    var raw = (albumItem && albumItem.raw) || albumItem || {};
+    var id = raw.id || (albumItem && albumItem.id) || '';
+    return fetchAlbum(id).then(function (body) {
+      var album = body.album || {};
+      // 直连老接口把歌曲放在 album.songs 里，代理接口放在顶层 songs。
+      var songs = songsOf(body.songs || album.songs || []);
+      var artist = album.artist || {};
+      return JSON.stringify({
+        isEnd: true,
+        albumItem: {
+          id: String(album.id || id),
+          title: album.name || (albumItem && albumItem.title) || raw.name || '',
+          coverUrl: normalizeCover(album.picUrl),
+          artist: artist.name ? String(artist.name) : '',
+          worksNum: Number(album.size || songs.length),
+          date: album.publishTime ? formatDate(album.publishTime) : '',
+          description: album.description || ''
+        },
+        musicList: songs
+      });
+    });
+  },
+
+  /* ------------------------------------------------------------- 作者作品 */
+  getArtistWorks: function (source, artistItem, page, type) {
+    var raw = (artistItem && artistItem.raw) || artistItem || {};
+    var id = raw.id || (artistItem && artistItem.id) || '';
+    var size = 50;
+    var offset = (page || 1) > 1 ? size * ((page || 1) - 1) : 0;
+    return fetchArtistSongs(id, size, offset).then(function (body) {
+      var list = body.songs || body.hotSongs || [];
+      var songs = songsOf(list);
+      return JSON.stringify({
+        isEnd: list.length < size,
+        artistItem: {
+          id: String(id),
+          title: (artistItem && artistItem.title) || raw.name || '',
+          coverUrl: (artistItem && artistItem.coverUrl) || '',
+          worksNum: songs.length
+        },
+        musicList: songs
+      });
+    });
+  },
+
+  /* ------------------------------------------------- 歌单分类（更多分类面板） */
+  getRecommendSheetTags: function () {
+    return fetchCategories().then(function (body) {
+      var categories = body.categories || {};
+      var sub = body.sub || [];
+      var groups = {};
+      for (var i = 0; i < sub.length; i++) {
+        var item = sub[i] || {};
+        var key = String(item.category === undefined ? 0 : item.category);
+        if (!groups[key]) groups[key] = [];
+        var name = item.name ? String(item.name) : '';
+        if (!name) continue;
+        groups[key].push({ id: name, name: name });
+      }
+      var result = [];
+      for (var categoryKey in categories) {
+        if (!Object.prototype.hasOwnProperty.call(categories, categoryKey)) continue;
+        var tags = groups[categoryKey] || [];
+        if (!tags.length) continue;
+        result.push({
+          name: String(categories[categoryKey]),
+          tags: tags
+        });
+      }
+      return JSON.stringify(result);
+    });
+  },
+
+  /* --------------------------------------------------- 分类歌单（歌单卡片） */
+  getRecommendSheetsByTag: function (tagId, page) {
+    var size = 30;
+    var currentPage = page || 1;
+    var offset = currentPage > 1 ? size * (currentPage - 1) : 0;
+    var cat = tagId ? tagId : '全部';
+    return fetchPlaylistList(cat, 'hot', size, offset).then(function (body) {
+      var list = body.playlists || [];
+      return JSON.stringify({
+        // 网易云按 offset 翻页：不足一页即到底
+        isEnd: list.length < size,
+        playlists: playlistsOf(list)
+      });
+    });
+  },
+
+  /* ------------------------------------------------------- 热门标签（顶部） */
+  getHotPlaylistTags: function () {
+    return fetchHotTags().then(function (body) {
+      var tags = body.tags || [];
+      var result = [];
+      for (var i = 0; i < tags.length; i++) {
+        var tag = tags[i] || {};
+        var playlistTag = tag.playlistTag || tag;
+        var name = playlistTag.name ? String(playlistTag.name) : '';
+        if (!name) continue;
+        result.push({ id: name, name: name });
+      }
+      return JSON.stringify(result);
+    });
+  },
+
+  /* ------------------------------------------------------------- 榜单列表 */
+  getTopLists: function () {
+    return fetchTopList().then(function (body) {
+      var list = body.list || [];
+      var result = [];
+      for (var i = 0; i < list.length; i++) {
+        var item = list[i] || {};
+        if (item.id === undefined) continue;
+        result.push({
+          id: String(item.id),
+          name: item.name || '',
+          coverUrl: normalizeCover(item.coverImgUrl),
+          playCount: formatPlayCount(item.playCount),
+          updateFrequency: item.updateFrequency ? String(item.updateFrequency) : '',
+          description: item.description || ''
+        });
+      }
+      return JSON.stringify(result);
+    });
+  },
+
+  /* ------------------------------------------------------------- 榜单详情 */
+  getTopListDetail: function (id, page) {
+    return fetchPlaylistDetail(id).then(function (body) {
+      var detail = playlistDetailOf(body, id);
+      return JSON.stringify({
+        isEnd: true,
+        sheet: {
+          title: detail.title,
+          coverUrl: detail.coverUrl,
+          description: detail.description,
+          author: detail.author
+        },
+        songs: detail.songs
+      });
+    });
+  },
+
+  /* ------------------------------------------------------------- 歌单详情 */
+  getMusicSheetInfo: function (sheetId, page) {
+    var raw = String(sheetId || '');
+    // 兼容 `wy_xxx` / `wy:xxx` 形式的 id
+    raw = raw.replace(/^wy[_:]/, '');
+    return fetchPlaylistDetail(raw).then(function (body) {
+      var detail = playlistDetailOf(body, raw);
+      return JSON.stringify({
+        isEnd: true,
+        sheet: {
+          title: detail.title,
+          coverUrl: detail.coverUrl,
+          description: detail.description,
+          author: detail.author
+        },
+        songs: detail.songs
+      });
+    });
+  },
+
+  /* --------------------------------------------------------------- 歌词 */
+  getLyric: function (source, musicInfo) {
+    var id = musicInfo && (musicInfo.songmid || musicInfo.songId || musicInfo.id);
+    if (!id) return Promise.resolve('');
+    return fetchLyric(id).then(function (body) {
+      var lrc = textOf(body.lrc);
+      var tlyric = textOf(body.tlyric);
+      var romalrc = textOf(body.romalrc);
+      // 只返回标准 LRC：网易云的 yrc（逐字）格式与 App 的歌词解析器不兼容，
+      // 强行返回会让歌词显示错乱，这里与内置源的 lrc 通道保持一致。
+      return JSON.stringify({
+        lyric: lrc,
+        lrc: lrc,
+        tlyric: tlyric,
+        romalrc: romalrc
+      });
+    });
+  },
+
+  /* --------------------------------------------------------------- 封面 */
+  getPic: function (source, musicInfo) {
+    var id = musicInfo && (musicInfo.songmid || musicInfo.songId || musicInfo.id);
+    if (!id) return Promise.resolve('');
+    return fetchSongDetail(id).then(function (body) {
+      var songs = body.songs || [];
+      if (!songs.length) return '';
+      return normalizeCover(albumOf(songs[0]).picUrl);
+    });
+  }
+};
+
+/** 毫秒时间戳 → yyyy-MM-dd（专辑发行日期）。 */
+function formatDate(timestamp) {
+  var value = Number(timestamp);
+  if (!value || isNaN(value)) return '';
+  var date = new Date(value);
+  var month = date.getMonth() + 1;
+  var day = date.getDate();
+  return (
+    date.getFullYear() +
+    '-' +
+    (month < 10 ? '0' + month : String(month)) +
+    '-' +
+    (day < 10 ? '0' + day : String(day))
+  );
+}

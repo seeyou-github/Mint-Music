@@ -40,6 +40,13 @@ class PluginInfo {
   final String? filePath;
   final String? updateUrl;
 
+  /// 是否是「数据源」插件（只提供元数据、不解析播放地址）。
+  ///
+  /// 由插件脚本自己声明（`pluginInfo.isDataSource = true`），导入时解析并
+  /// 持久化：插件管理页据此把它归到「数据源」分类，播放时用用户为它指定的
+  /// 播放源解析地址。
+  final bool isDataSource;
+
   const PluginInfo({
     required this.id,
     required this.name,
@@ -52,6 +59,7 @@ class PluginInfo {
     this.supportedSources = const [],
     this.filePath,
     this.updateUrl,
+    this.isDataSource = false,
   });
 
   PluginInfo copyWith({
@@ -66,6 +74,7 @@ class PluginInfo {
     List<PluginSource>? supportedSources,
     String? filePath,
     String? updateUrl,
+    bool? isDataSource,
   }) {
     return PluginInfo(
       id: id ?? this.id,
@@ -79,6 +88,7 @@ class PluginInfo {
       supportedSources: supportedSources ?? this.supportedSources,
       filePath: filePath ?? this.filePath,
       updateUrl: updateUrl ?? this.updateUrl,
+      isDataSource: isDataSource ?? this.isDataSource,
     );
   }
 
@@ -95,6 +105,7 @@ class PluginInfo {
       'supportedSources': supportedSources.map((s) => s.toJson()).toList(),
       'filePath': filePath,
       if (updateUrl != null) 'updateUrl': updateUrl,
+      'isDataSource': isDataSource,
     };
   }
 
@@ -114,6 +125,7 @@ class PluginInfo {
           [],
       filePath: json['filePath'] as String?,
       updateUrl: json['updateUrl'] as String?,
+      isDataSource: json['isDataSource'] as bool? ?? false,
     );
   }
 }

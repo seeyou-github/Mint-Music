@@ -315,26 +315,33 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
     }
 
     final content = pluginsAsync.when(
-      data: (plugins) => ListView(
-        padding: const EdgeInsets.all(AppSpacing.lg),
-        children: [
-          _buildAutoUpdateSection(colors),
-          const SizedBox(height: AppSpacing.lg),
-          _buildBuiltInSourcesSection(colors),
-          const SizedBox(height: AppSpacing.lg),
-          _buildPluginSectionHeader(colors, plugins.length),
-          const SizedBox(height: AppSpacing.sm),
-          if (plugins.isEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: AppSpacing.xxl),
-              child: _buildEmptyState(colors),
-            )
-          else
-            ...plugins.map(
-              (plugin) => _buildPluginCard(colors, plugin, mergedResults),
-            ),
-        ],
-      ),
+      data: (plugins) {
+        // 数据源插件单独成组（内置源下方），普通插件列表里不再重复出现。
+        final dataSources = plugins.where((p) => p.isDataSource).toList();
+        final normalPlugins = plugins.where((p) => !p.isDataSource).toList();
+        return ListView(
+          padding: const EdgeInsets.all(AppSpacing.lg),
+          children: [
+            _buildAutoUpdateSection(colors),
+            const SizedBox(height: AppSpacing.lg),
+            _buildBuiltInSourcesSection(colors),
+            const SizedBox(height: AppSpacing.lg),
+            _buildDataSourceSection(colors, dataSources, mergedResults),
+            const SizedBox(height: AppSpacing.lg),
+            _buildPluginSectionHeader(colors, normalPlugins.length),
+            const SizedBox(height: AppSpacing.sm),
+            if (normalPlugins.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: AppSpacing.xxl),
+                child: _buildEmptyState(colors),
+              )
+            else
+              ...normalPlugins.map(
+                (plugin) => _buildPluginCard(colors, plugin, mergedResults),
+              ),
+          ],
+        );
+      },
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (e, _) => Center(
         child: Column(
@@ -721,6 +728,188 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
     await ref.read(builtInSourceStateProvider.notifier).restoreAll();
   }
 
+  /* ---------------------------------------------------------------- *
+   * 数据源（只提供元数据、不解析播放地址的插件）
+   * ---------------------------------------------------------------- */
+
+  /// 「数据源」分类：只列脚本里声明了 `isDataSource` 的插件。
+  ///
+  /// 数据源本身没有播放接口，所以每个插件都要指定一个「播放源」：播放数据源
+  /// 里的歌曲时，用这个播放源重新找歌并解析地址。
+  Widget _buildDataSourceSection(
+    ThemeColors colors,
+    List<PluginInfo> plugins,
+    List<PluginUpdateResult> updateResults,
+  ) {
+    final dataSources = plugins.where((plugin) => plugin.isDataSource).toList();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                context.tr('数据源'),
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: colors.textPrimary,
+                ),
+              ),
+            ),
+            if (dataSources.isNotEmpty)
+              Text(
+                context.tr('${dataSources.length} 个'),
+                style: TextStyle(fontSize: 12, color: colors.textHint),
+              ),
+          ],
+        ),
+        const SizedBox(height: AppSpacing.xs),
+        Text(
+          context.tr('只提供搜索 / 歌单 / 榜单等数据，播放时使用下面指定的播放源'),
+          style: TextStyle(fontSize: 12, color: colors.textHint),
+        ),
+        const SizedBox(height: AppSpacing.md),
+        if (dataSources.isEmpty)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(AppSpacing.md),
+            decoration: BoxDecoration(
+              color: colors.surface,
+              borderRadius: BorderRadius.circular(AppRadius.lg),
+              border: Border.all(color: colors.divider),
+            ),
+            child: Text(
+              context.tr(
+                '还没有数据源插件。添加的 JS 插件如果在 pluginInfo 里声明了 isDataSource: true，就会出现在这里。',
+              ),
+              style: TextStyle(fontSize: 12, color: colors.textHint),
+            ),
+          )
+        else
+          ...dataSources.map(
+            (plugin) => _buildPluginCard(
+              colors,
+              plugin,
+              updateResults,
+              footer: _buildDataSourcePlaybackRow(colors, plugin),
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// 数据源卡片里的「设置播放源」下拉框。
+  Widget _buildDataSourcePlaybackRow(ThemeColors colors, PluginInfo plugin) {
+    final manager = ref.read(musicSourceManagerProvider);
+    final map = ref.watch(dataSourcePlaybackSourcesProvider);
+    final configuredId = map[plugin.id]?.trim() ?? '';
+
+    // 可选的播放源：已安装、能解析播放地址的插件音源（数据源自己不参与）。
+    final options = manager.playbackPluginSources();
+    final available = options.any((source) => source.id == configuredId);
+    final currentValue = available ? configuredId : '';
+
+    final unavailableHint = configuredId.isNotEmpty && !available
+        ? context.tr('已失效：${manager.sourceDisplayName(configuredId)}')
+        : null;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: AppSpacing.xs),
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+      child: Row(
+        children: [
+          Icon(Icons.play_circle_outline, size: 16, color: colors.textHint),
+          const SizedBox(width: 6),
+          Text(
+            context.tr('设置播放源'),
+            style: TextStyle(fontSize: 12, color: colors.textSecondary),
+          ),
+          const Spacer(),
+          if (unavailableHint != null) ...[
+            Flexible(
+              child: Text(
+                unavailableHint,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 11, color: colors.error),
+              ),
+            ),
+            const SizedBox(width: AppSpacing.sm),
+          ],
+          SizedBox(
+            width: 152,
+            child: DropdownButton<String>(
+              value: currentValue,
+              isDense: true,
+              isExpanded: true,
+              underline: const SizedBox.shrink(),
+              dropdownColor: colors.surface,
+              borderRadius: BorderRadius.circular(AppRadius.md),
+              style: TextStyle(fontSize: 12, color: colors.textPrimary),
+              hint: Text(
+                context.tr('未设置'),
+                style: TextStyle(fontSize: 12, color: colors.textHint),
+              ),
+              items: [
+                DropdownMenuItem<String>(
+                  value: '',
+                  child: Text(
+                    context.tr('未设置'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 12, color: colors.textHint),
+                  ),
+                ),
+                for (final source in options)
+                  DropdownMenuItem<String>(
+                    value: source.id,
+                    child: Text(
+                      manager.sourceDisplayName(source.id),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: colors.textPrimary,
+                      ),
+                    ),
+                  ),
+              ],
+              onChanged: (value) =>
+                  _setDataSourcePlaybackSource(plugin, value ?? ''),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _setDataSourcePlaybackSource(
+    PluginInfo plugin,
+    String sourceId,
+  ) async {
+    await setDataSourcePlaybackSource(
+      ref,
+      pluginId: plugin.id,
+      sourceId: sourceId,
+    );
+    if (!mounted) return;
+    final manager = ref.read(musicSourceManagerProvider);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          sourceId.isEmpty
+              ? context.tr('已清除「${plugin.name}」的播放源')
+              : context.tr(
+                  '「${plugin.name}」的播放源已设为 ${manager.sourceDisplayName(sourceId)}',
+                ),
+        ),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
   Widget _buildEmptyState(ThemeColors colors) {
     return Center(
       child: Column(
@@ -780,8 +969,9 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
   Widget _buildPluginCard(
     ThemeColors colors,
     PluginInfo plugin,
-    List<PluginUpdateResult> updateResults,
-  ) {
+    List<PluginUpdateResult> updateResults, {
+    Widget? footer,
+  }) {
     final sourceStates = ref.watch(pluginSourceStateProvider);
     final typeLabel = PluginService.pluginTypeLabel(plugin.type);
     final typeColor = switch (plugin.type) {
@@ -961,6 +1151,7 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
             ),
           ],
           const SizedBox(height: AppSpacing.sm),
+          if (footer != null) footer,
           Divider(height: 1, color: colors.divider),
           SizedBox(
             height: 40,
@@ -1010,7 +1201,8 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
                 ),
                 // 插件测试仅对已启用插件显示：未启用的插件未加载运行时，
                 // 测试服务无法解析其音源与音质，展示按钮只会误导用户。
-                if (plugin.isEnabled)
+                // 数据源没有播放接口，测试没有意义，同样不显示。
+                if (plugin.isEnabled && !plugin.isDataSource)
                   GestureDetector(
                     onTap: () => _showPluginTestDialog(plugin),
                     child: Padding(

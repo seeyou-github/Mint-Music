@@ -397,6 +397,12 @@ class SettingsService {
   Future<void> setPreferredSourceMap(String v) =>
       _prefs.setString('preferred_sources', v);
 
+  // -- 数据源 → 播放源（JSON 对象：数据源插件 id → 音源 id） --
+  String getDataSourcePlaybackSources() =>
+      _prefs.getString('data_source_playback_sources') ?? '';
+  Future<void> setDataSourcePlaybackSources(String v) =>
+      _prefs.setString('data_source_playback_sources', v);
+
   // -- equalizer custom presets (JSON array) --
   String getEqualizerCustomPresets() =>
       _prefs.getString('eq_custom_presets') ?? '[]';

@@ -564,6 +564,8 @@ class PluginService {
         // 新添加的插件默认启用（用户可在插件管理里随时关闭）。
         isEnabled: true,
         updateUrl: pluginInfo.homepage ?? sourceUrl,
+        // 插件自己声明是「数据源」时记下来，插件管理页据此归类。
+        isDataSource: host.isDataSource,
       );
 
       plugins.add(plugin);
@@ -827,6 +829,13 @@ class PluginService {
       _loadedPlugins[plugin.id] = host;
       _engines[plugin.id] = engine;
 
+      // 老版本导入时还没有「数据源」这个概念（字段不存在），插件脚本更新后
+      // 才声明自己是数据源：加载时以脚本为准同步一次，避免插件管理页里
+      // 一直归在「插件音源」分类。
+      if (plugin.isDataSource != host.isDataSource) {
+        await _syncDataSourceFlag(plugin, host.isDataSource);
+      }
+
       return host;
     } on StackOverflowError catch (e) {
       engine.dispose();
@@ -834,6 +843,20 @@ class PluginService {
     } catch (_) {
       engine.dispose();
       rethrow;
+    }
+  }
+
+  /// 把「数据源」标记同步到已保存的插件列表。
+  Future<void> _syncDataSourceFlag(PluginInfo plugin, bool isDataSource) async {
+    try {
+      final plugins = await loadPlugins();
+      final index = plugins.indexWhere((item) => item.id == plugin.id);
+      if (index < 0) return;
+      if (plugins[index].isDataSource == isDataSource) return;
+      plugins[index] = plugins[index].copyWith(isDataSource: isDataSource);
+      await savePlugins(plugins);
+    } catch (e) {
+      print('[PluginService] 同步数据源标记失败: $e');
     }
   }
 

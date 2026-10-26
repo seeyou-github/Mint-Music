@@ -13,6 +13,12 @@ class PluginHost {
   /// 插件支持的搜索类型（music / album / artist）。
   List<String> _searchTypes = const ['music'];
 
+  /// 是否是「数据源」插件（只提供元数据、不解析播放地址）。
+  ///
+  /// 由插件自己声明：`pluginInfo.isDataSource === true`（也兼容顶层
+  /// `isDataSource` / `dataSource` 与 `pluginInfo.type === 'dataSource'`）。
+  bool _isDataSource = false;
+
   bool _loaded = false;
   bool _apiInjected = false;
 
@@ -24,6 +30,9 @@ class PluginHost {
   List<PluginSourceInfo> get sources => _sources;
   Map<String, List<String>> get sourceActions => _sourceActions;
   Map<String, bool> get capabilities => _capabilities;
+
+  /// 插件是否声明自己是「数据源」。
+  bool get isDataSource => _isDataSource;
 
   /// 插件是否提供榜单（getTopLists + getTopListDetail）。
   bool get supportsTopLists => _capabilities['topList'] == true;
@@ -204,7 +213,9 @@ JSON.stringify((function() {
     pluginInfo: value.pluginInfo,
     sources: value.sources,
     sourceActions: value.sourceActions,
-    capabilities: value.capabilities
+    capabilities: value.capabilities,
+    isDataSource: value.isDataSource,
+    dataSource: value.dataSource
   };
 })())
 ''');
@@ -225,6 +236,7 @@ JSON.stringify((function() {
         final exports = jsonDecode(exportsStr) as Map<String, dynamic>;
 
         _pluginInfo = _parsePluginInfo(exports['pluginInfo']);
+        _isDataSource = _detectDataSource(exports);
         final sourcesResult = _parseSourcesWithActions(exports['sources']);
         _sources = sourcesResult['sources'] as List<PluginSourceInfo>;
         _sourceActions = sourcesResult['actions'] as Map<String, List<String>>;
@@ -272,6 +284,7 @@ JSON.stringify((function() {
       }
     } catch (e) {
       _loaded = false;
+      _isDataSource = false;
       final message = _friendlyPluginError(e);
       print('[PluginHost] 插件加载失败: $e');
       _pluginInfo = PluginMetadata(
@@ -282,6 +295,25 @@ JSON.stringify((function() {
       );
       throw Exception(message);
     }
+  }
+
+  /// 插件是否声明自己是「数据源」。
+  ///
+  /// 兼容几种写法（按顺序判断）：
+  /// * `pluginInfo.isDataSource === true`（推荐）
+  /// * 顶层 `module.exports.isDataSource === true`
+  /// * 顶层 `module.exports.dataSource === true`
+  /// * `pluginInfo.type === 'dataSource'`
+  static bool _detectDataSource(Map<String, dynamic> exports) {
+    final info = exports['pluginInfo'];
+    final infoMap = info is Map ? info : const {};
+    bool truthy(dynamic value) =>
+        value == true || '$value'.toLowerCase() == 'true';
+    if (truthy(infoMap['isDataSource'])) return true;
+    if (truthy(exports['isDataSource'])) return true;
+    if (truthy(exports['dataSource'])) return true;
+    final type = '${infoMap['type'] ?? ''}'.toLowerCase().replaceAll('_', '');
+    return type == 'datasource';
   }
 
   /// 把底层 JS/Dart 异常转成用户可读的失败原因。
@@ -328,6 +360,7 @@ JSON.stringify((function() {
       author: author,
       description: _safeString(data['description']),
       homepage: _safeString(data['homepage']),
+      isDataSource: _detectDataSource({'pluginInfo': data}),
     );
   }
 
@@ -976,6 +1009,13 @@ JSON.stringify((function() {
   /// 推荐歌单分类；返回 `[{name,tags:[{id,name}]}]`。
   Future<String?> getRecommendSheetTags() =>
       _callBrowseMethod('getRecommendSheetTags', '');
+
+  /// 热门歌单标签（可选）；返回 `[{id,name}]`。
+  ///
+  /// 内置源对应 `/api/playlist/hottags`（热门 / 华语 / 流行 …）。插件没实现时
+  /// 返回 null，调用方退回用推荐分类的前几个标签。
+  Future<String?> getHotPlaylistTags() =>
+      _callBrowseMethod('getHotPlaylistTags', '');
 
   /// 按分类取歌单；返回 `{isEnd, playlists}`。
   Future<String?> getRecommendSheetsByTag(String tagId, {int page = 1}) {

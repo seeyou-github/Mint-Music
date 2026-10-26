@@ -48,12 +48,20 @@ class PluginMetadata {
   final String? description;
   final String? homepage;
 
+  /// 是否是「数据源」插件。
+  ///
+  /// 数据源只提供搜索 / 发现页 / 专辑 / 作者等元数据，**不提供播放地址**；
+  /// 插件用 `pluginInfo.isDataSource = true`（或顶层 `isDataSource`）声明自己，
+  /// 导入后归到「插件管理 → 数据源」分类，播放时用用户指定的播放源解析地址。
+  final bool isDataSource;
+
   const PluginMetadata({
     required this.name,
     required this.version,
     required this.author,
     this.description,
     this.homepage,
+    this.isDataSource = false,
   });
 
   factory PluginMetadata.fromJson(Map<String, dynamic> json) {
@@ -63,6 +71,7 @@ class PluginMetadata {
       author: json['author'] as String,
       description: json['description'] as String?,
       homepage: json['homepage'] as String?,
+      isDataSource: json['isDataSource'] == true,
     );
   }
 
@@ -72,6 +81,7 @@ class PluginMetadata {
     'author': author,
     'description': description,
     if (homepage != null) 'homepage': homepage,
+    if (isDataSource) 'isDataSource': true,
   };
 }
 
@@ -257,6 +267,20 @@ class PluginMusicUrlResult {
 }
 
 enum PluginType { ceruMusic, lx }
+
+/// 数据源（只提供元数据的插件）的歌曲解析播放地址失败。
+///
+/// 这类失败要原样展示给用户（例如「此网易云音乐数据源指定的 xxx音源失效…」），
+/// 调用方不要再加「当前音源播放失败」之类的前缀。
+class DataSourcePlaybackException implements Exception {
+  const DataSourcePlaybackException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 
 class SourceInfo {
   final String id;

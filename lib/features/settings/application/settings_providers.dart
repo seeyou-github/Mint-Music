@@ -304,6 +304,57 @@ Future<void> setPreferredSource(
   }
 }
 
+/// 数据源 → 指定播放源（数据源插件 id → 音源 id）。
+///
+/// 数据源插件只提供元数据（搜索 / 歌单 / 榜单 / 专辑 / 作者），不解析播放地址；
+/// 这里记录用户在「插件管理 → 数据源」里为它选的播放源，播放时用它取地址。
+final dataSourcePlaybackSourcesProvider = StateProvider<Map<String, String>>(
+  (ref) => const {},
+);
+
+/// 解析持久化的「数据源 → 播放源」JSON。
+Map<String, String> _decodeDataSourcePlaybackSources(String raw) {
+  if (raw.trim().isEmpty) return const {};
+  try {
+    final decoded = jsonDecode(raw);
+    if (decoded is! Map) return const {};
+    final result = <String, String>{};
+    decoded.forEach((key, value) {
+      final k = '$key'.trim();
+      final v = '$value'.trim();
+      if (k.isNotEmpty && v.isNotEmpty) result[k] = v;
+    });
+    return result;
+  } catch (_) {
+    return const {};
+  }
+}
+
+/// 给某个数据源指定播放源（[sourceId] 为空表示清除）。
+Future<void> setDataSourcePlaybackSource(
+  WidgetRef ref, {
+  required String pluginId,
+  required String sourceId,
+}) async {
+  final key = pluginId.trim();
+  if (key.isEmpty) return;
+  final current = Map<String, String>.from(
+    ref.read(dataSourcePlaybackSourcesProvider),
+  );
+  if (sourceId.trim().isEmpty) {
+    current.remove(key);
+  } else {
+    current[key] = sourceId.trim();
+  }
+  ref.read(dataSourcePlaybackSourcesProvider.notifier).state = current;
+  try {
+    final svc = await ref.read(settingsServiceProvider.future);
+    await svc.setDataSourcePlaybackSources(jsonEncode(current));
+  } catch (e) {
+    debugPrint('[Settings] 保存数据源播放源失败: $e');
+  }
+}
+
 /// 歌词字体颜色（hex ARGB 字符串，空表示使用默认/沉浸色）
 final lyricFontColorProvider = StateProvider<String>((ref) => '');
 
@@ -566,6 +617,15 @@ final settingsInitProvider = FutureProvider<void>((ref) async {
   ref.read(preferredSourceMapProvider.notifier).state = _decodePreferredSources(
     svc.getPreferredSourceMap(),
   );
+  // 数据源 → 播放源（每个数据源插件可单独指定）
+  final dataSourcePlaybackSources = _decodeDataSourcePlaybackSources(
+    svc.getDataSourcePlaybackSources(),
+  );
+  ref.read(dataSourcePlaybackSourcesProvider.notifier).state =
+      dataSourcePlaybackSources;
+  ref
+      .read(musicSourceManagerProvider)
+      .setDataSourcePlaybackSources(dataSourcePlaybackSources);
   ref.read(appearanceBgAnimationProvider.notifier).state = svc
       .getAppearanceBgAnimation();
   // WebDAV / 备份配置

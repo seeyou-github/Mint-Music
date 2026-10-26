@@ -60,6 +60,9 @@ final playbackControllerProvider =
         ref.read(autoQualityDowngradeProvider),
       );
       controller.setPreferredSources(ref.read(preferredSourceMapProvider));
+      controller.setDataSourcePlaybackSources(
+        ref.read(dataSourcePlaybackSourcesProvider),
+      );
 
       // 「最近播放」：开始播放时记一条（带来源），切歌/退出时结算收听时长。
       final recentRepo = ref.read(recentlyPlayedRepositoryProvider);
@@ -105,6 +108,9 @@ final playbackControllerProvider =
 
       ref.listen(preferredSourceMapProvider, (prev, next) {
         controller.setPreferredSources(next);
+      });
+      ref.listen(dataSourcePlaybackSourcesProvider, (prev, next) {
+        controller.setDataSourcePlaybackSources(next);
       });
       controller.onEnsureMusicSourcesReady = () =>
           ref.read(pluginInitializedProvider.future);
@@ -378,6 +384,13 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     _musicSourceManager.setPreferredSources(_preferredSources);
   }
 
+  /// 更新「数据源 → 指定播放源」映射。
+  ///
+  /// 数据源插件只提供元数据，播放地址由这里指定的播放源解析。
+  void setDataSourcePlaybackSources(Map<String, String> map) {
+    _musicSourceManager.setDataSourcePlaybackSources(map);
+  }
+
   void setAudioEffects(AudioEffectsConfig config) {
     unawaited(_audioEffectService.apply(config));
   }
@@ -461,6 +474,9 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     required int requestId,
     Set<String> excludedUrls = const <String>{},
   }) async {
+    // 数据源（只提供元数据）解析失败属于「配置问题」，重试没有意义：还会让
+    // 用户多等一轮搜索 + 取地址。
+    var dataSourceFailure = false;
     Future<List<PluginMusicUrlResult>> resolveOnce() async {
       try {
         return await _musicSourceManager
@@ -481,6 +497,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
           '[PlaybackController] current-source URL resolve failed: '
           'source=${song.source} error=$error',
         );
+        if (error is DataSourcePlaybackException) dataSourceFailure = true;
         if (_currentPlayRequestId == requestId) {
           _lastResolveError = error
               .toString()
@@ -491,7 +508,9 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     }
 
     var candidates = await resolveOnce();
-    if (candidates.isNotEmpty || _currentPlayRequestId != requestId) {
+    if (candidates.isNotEmpty ||
+        _currentPlayRequestId != requestId ||
+        dataSourceFailure) {
       return candidates;
     }
 
@@ -1035,7 +1054,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
         }
 
         await _stopPlaybackOnFailure(
-          _playbackFailureReason(song.source ?? ''),
+          _playbackFailureReason(song),
         );
         return;
       }
@@ -1121,7 +1140,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
 
         if (_currentPlayRequestId != requestId) return;
         await _stopPlaybackOnFailure(
-          _playbackFailureReason(song.source ?? ''),
+          _playbackFailureReason(song),
         );
         return;
       }
@@ -1712,13 +1731,24 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   ///   专享），则显示「解析失败」并带上接口返回的具体错误；
   /// * **插件绑定音源**（`平台@插件`）：直接说明当前音源播放失败，
   ///   并尽量附上接口返回的具体错误。
-  String _playbackFailureReason(String source) {
+  String _playbackFailureReason(Song song) {
+    final source = song.source ?? '';
     String withDetail(String base) {
       final detail = _lastResolveError?.trim() ?? '';
       return detail.isEmpty ? base : '$base：$detail';
     }
 
     if (source == 'local') return tr('本地文件无法播放');
+    // 数据源（只提供元数据）的失败提示本身就是完整说明（含「请在插件管理中
+    // 设置其他音源」），不要再套一层「当前音源播放失败」。
+    // 注意：数据源的歌 source 仍记平台 id（如 wy），数据源绑定在
+    // preferredSource 上，所以这里按「整首歌」判断。
+    if (_musicSourceManager.dataSourcePluginIdForSong(song) != null) {
+      final detail = _lastResolveError?.trim() ?? '';
+      return detail.isEmpty
+          ? tr('此数据源未指定可用的播放源，请在插件管理中设置其他音源。')
+          : detail;
+    }
     if (source.isNotEmpty && !source.contains('@')) {
       final (baseId, _) = MusicSourceManager.splitSourceId(source);
       if (baseId.isNotEmpty && _musicSourceManager.hasPluginForPlatform(baseId)) {
@@ -1771,8 +1801,17 @@ class PlaybackController extends StateNotifier<PlaybackState> {
 
     // 限频/限流时给出更具体的提示。
     final isRateLimited = reason.contains('频率') || reason.contains('限制');
+    // 数据源（只提供元数据）的失败原因本身就是一整句完整说明
+    // （「此 xxx数据源指定的 xxx音源失效… 请在插件管理中设置其他音源。」），
+    // 原样展示，不再加「播放失败：」前缀。
+    final isDataSourceFailure =
+        reason.startsWith('此') && reason.contains('数据源');
     onMessage?.call(
-      isRateLimited ? tr('播放失败：$reason，请稍后重试') : tr('播放失败：$reason，已停止播放'),
+      isDataSourceFailure
+          ? reason
+          : (isRateLimited
+                ? tr('播放失败：$reason，请稍后重试')
+                : tr('播放失败：$reason，已停止播放')),
       backgroundColor: Colors.red,
     );
   }
@@ -2060,6 +2099,11 @@ class PlaybackController extends StateNotifier<PlaybackState> {
               song,
               quality: state.currentQuality,
               excludedUrls: excludedUrls,
+              onResolveError: (message) {
+                if (_currentPlayRequestId == requestId) {
+                  _lastResolveError = message;
+                }
+              },
             )
             .timeout(_urlFetchTimeout, onTimeout: () => song);
         if (_currentPlayRequestId != requestId) return;
@@ -2106,11 +2150,13 @@ class PlaybackController extends StateNotifier<PlaybackState> {
 
         // 2) 本音源已无可用地址 → 停止播放（不跨音源换源、不自动跳歌）
         if (_currentPlayRequestId != requestId) return;
-        await _stopPlaybackOnFailure(_playbackFailureReason(song.source ?? ''));
+        await _stopPlaybackOnFailure(_playbackFailureReason(song));
       } catch (e) {
         debugPrint('[PlaybackController] 处理播放错误时出错: $e');
         if (_currentPlayRequestId != requestId) return;
-        await _stopPlaybackOnFailure(tr('播放出错'));
+        // 用统一的失败提示：数据源（只提供元数据）的「指定的 xxx音源失效」
+        // 说明会由 _playbackFailureReason 原样带出，不能退化成「播放出错」。
+        await _stopPlaybackOnFailure(_playbackFailureReason(song));
       }
     });
 
