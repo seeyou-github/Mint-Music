@@ -610,7 +610,12 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
     final ctx = PlaybackContext.instance;
     final type = ctx.type;
     if (type == PlaybackSourceType.unknown) return null;
-    final clickable = canOpenPlaybackSource(type) && (ctx.id ?? '').isNotEmpty;
+    // 电台的歌也是随机从歌单里取的，来源显示成「歌单」而不是「电台」。
+    // 随机电台一次可能跨多个歌单，确定不了当前这首具体属于哪个，所以不给跳转。
+    final clickable =
+        type != PlaybackSourceType.radio &&
+        canOpenPlaybackSource(type) &&
+        (ctx.id ?? '').isNotEmpty;
     return InkWell(
       onTap: clickable ? _openSource : null,
       child: Padding(
@@ -660,7 +665,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
       PlaybackSourceType.album => context.tr('专辑'),
       PlaybackSourceType.artist => context.tr('作者'),
       PlaybackSourceType.local => context.tr('本地'),
-      PlaybackSourceType.radio => context.tr('电台'),
+      PlaybackSourceType.radio => context.tr('歌单'),
       PlaybackSourceType.unknown => '',
     };
   }
