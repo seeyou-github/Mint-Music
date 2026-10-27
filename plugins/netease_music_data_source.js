@@ -472,7 +472,7 @@ function textOf(block) {
 module.exports = {
   pluginInfo: {
     name: '网易云音乐数据源',
-    version: '1.0.0',
+    version: '1.1.0',
     author: 'MintMusic',
     description:
       '只提供搜索、歌单分类、榜单、歌单 / 专辑 / 作者详情的网易云数据源；' +
