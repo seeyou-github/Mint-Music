@@ -212,6 +212,33 @@ function fetchPlaylistSearch(keyword, page, limit) {
   return getJson(url);
 }
 
+/**
+ * 酷我搜索接口的「按类型」变体（专辑 / 作者 / 专辑详情 / 歌手作品）。
+ * 关键是 itemset=web_2013 + pcjson=1，缺了会返回单引号 JSON 甚至空列表。
+ */
+function fetchTyped(params) {
+  var query = {
+    itemset: 'web_2013',
+    client: 'kt',
+    rformat: 'json',
+    encoding: 'utf8',
+    pcjson: 1,
+    alflac: 1,
+    show_copyright_off: 1,
+    pcmp4: 1,
+    plat: 'pc',
+    thost: 'search.kuwo.cn',
+    vipver: 'MUSIC_9.1.1.2_BCS2',
+    devid: '38668888',
+    newver: 1
+  };
+  for (var key in params) {
+    if (!Object.prototype.hasOwnProperty.call(params, key)) continue;
+    query[key] = params[key];
+  }
+  return getJson(SEARCH + '/r.s?' + encodeQuery(query));
+}
+
 function fetchTagList() {
   var url =
     WAPI +
@@ -402,6 +429,11 @@ module.exports = {
     playlistSearch: true
   },
 
+  /** 支持的搜索类型：歌曲 / 专辑 / 作者。 */
+  supportedSearchTypes: function () {
+    return ['music', 'album', 'artist'];
+  },
+
   isDataSource: true,
 
   /* ------------------------------------------------------- 热门搜索（搜索页） */
@@ -470,6 +502,130 @@ module.exports = {
       return JSON.stringify({
         isEnd: list.length < size,
         playlists: playlists
+      });
+    });
+  },
+
+  /* ------------------------------------------------------- 搜索专辑 / 作者 */
+  searchTyped: function (source, keyword, page, limit, type) {
+    var size = limit || 30;
+    var currentPage = page || 1;
+    var isAlbum = type === 'album';
+    return fetchTyped({
+      all: keyword,
+      ft: isAlbum ? 'album' : 'artist',
+      pn: currentPage - 1,
+      rn: size
+    }).then(function (body) {
+      var list = isAlbum ? body.albumlist || [] : body.abslist || [];
+      var items = [];
+      for (var i = 0; i < list.length; i++) {
+        var item = list[i] || {};
+        if (isAlbum) {
+          var albumId = item.albumid || item.id;
+          if (!albumId) continue;
+          items.push({
+            id: String(albumId),
+            title: decodeName(item.name || item.title),
+            coverUrl: normalizeCover(item.img || item.hts_img || item.pic),
+            artist: decodeName(item.artist),
+            worksNum: Number(item.musiccnt || 0),
+            date: String(item.pub || item.showtime || ''),
+            description: decodeName(item.info),
+            // getAlbumInfo 需要原样带回的信息
+            raw: {
+              id: String(albumId),
+              albumid: String(albumId),
+              name: decodeName(item.name || item.title)
+            }
+          });
+        } else {
+          var artistId = item.ARTISTID || item.artistid;
+          if (!artistId) continue;
+          items.push({
+            id: String(artistId),
+            title: decodeName(item.ARTIST || item.artist),
+            coverUrl: normalizeCover(
+              item.PICPATH || item.pic || item.artistpic,
+              true
+            ),
+            worksNum: Number(item.SONGNUM || item.songnum || 0),
+            description: decodeName(item.desc || item.info),
+            raw: {
+              id: String(artistId),
+              artistid: String(artistId),
+              name: decodeName(item.ARTIST || item.artist)
+            }
+          });
+        }
+      }
+      return JSON.stringify({
+        list: items,
+        isEnd: list.length < size
+      });
+    });
+  },
+
+  /* ------------------------------------------------------------- 专辑详情 */
+  getAlbumInfo: function (source, albumItem, page) {
+    var raw = (albumItem && albumItem.raw) || albumItem || {};
+    var albumId = raw.albumid || raw.id || (albumItem && albumItem.id) || '';
+    if (!albumId) return Promise.resolve(JSON.stringify({ musicList: [] }));
+    return fetchTyped({
+      pn: 0,
+      rn: 1000,
+      albumid: albumId,
+      stype: 'albuminfo',
+      sortby: 0
+    }).then(function (body) {
+      var songs = songsOf(body.musiclist || []);
+      return enrichCovers(songs).then(function () {
+        return JSON.stringify({
+          isEnd: true,
+          albumItem: {
+            id: String(albumId),
+            title: decodeName(body.name || body.title || raw.name),
+            coverUrl: normalizeCover(body.img || body.hts_img || body.pic),
+            artist: decodeName(body.artist),
+            worksNum: Number(body.songnum || songs.length),
+            date: String(body.pub || ''),
+            description: decodeName(body.info)
+          },
+          musicList: songs
+        });
+      });
+    });
+  },
+
+  /* ------------------------------------------------------------- 作者作品 */
+  getArtistWorks: function (source, artistItem, page, type) {
+    var raw = (artistItem && artistItem.raw) || artistItem || {};
+    var artistId =
+      raw.artistid || raw.id || (artistItem && artistItem.id) || '';
+    if (!artistId) return Promise.resolve(JSON.stringify({ musicList: [] }));
+    var size = 100;
+    return fetchTyped({
+      pn: (page || 1) - 1,
+      rn: size,
+      artistid: artistId,
+      stype: 'artist2music',
+      sortby: 0
+    }).then(function (body) {
+      var songs = songsOf(body.musiclist || body.abslist || []);
+      var total = Number(body.total || songs.length);
+      return enrichCovers(songs).then(function () {
+        return JSON.stringify({
+          isEnd: songs.length >= total || songs.length < size,
+          artistItem: {
+            id: String(artistId),
+            title: decodeName(
+              body.artist || raw.name || (artistItem && artistItem.title)
+            ),
+            coverUrl: (artistItem && artistItem.coverUrl) || '',
+            worksNum: total
+          },
+          musicList: songs
+        });
       });
     });
   },
