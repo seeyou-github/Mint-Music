@@ -85,7 +85,7 @@ async function pagedFixture(route, total, count, page = 1, flags = {}) {
   const request = requests[0];
   const offset = (page - 1) * route.size;
   assert.equal(request.url.hostname, 'music.163.com');
-  assert.equal(request.url.pathname, route.pathname || '/api/search/get');
+  assert.equal(request.url.pathname, route.pathname || '/api/cloudsearch/pc');
   if (route.type) {
     assert.equal(request.method, 'POST');
     assert.deepEqual(request.form, { s: '周杰伦', type: route.type, limit: route.size, offset });
@@ -147,17 +147,38 @@ for (const route of pagedRoutes) {
   });
 }
 
-test('歌曲首个 POST 的 hasMore 生效，自定义 limit/offset 和旧字段保持兼容', async () => {
-  const { plugin, requests } = loadPlugin(() => ({
-    code: 200, result: {
-      hasMore: true,
-      songs: [{ id: 1, name: '旧歌曲', duration: 180000, artists: [{ name: '歌手' }], album: { name: '旧专辑' } }]
+test('歌曲搜索：cloudsearch 失败回退老接口，并用代理 song/detail 补封面', async () => {
+  const { plugin, requests } = loadPlugin(request => {
+    const path = request.url.pathname;
+    if (path === '/api/cloudsearch/pc') {
+      // 直连 cloudsearch 挂掉：走老接口兜底
+      return { code: 405 };
     }
-  }));
+    if (path === '/api/search/get') {
+      return {
+        code: 200,
+        result: {
+          hasMore: true,
+          songs: [{ id: 1, name: '旧歌曲', duration: 180000, artists: [{ name: '歌手' }], album: { name: '旧专辑' } }]
+        }
+      };
+    }
+    if (path === '/song/detail') {
+      return {
+        code: 200,
+        songs: [{ id: 1, name: '旧歌曲', al: { name: '旧专辑', picUrl: 'http://p1.music.126.net/cover.jpg' } }]
+      };
+    }
+    throw new Error('未预期的请求: ' + request.url.href);
+  });
   const result = await resultOf(plugin.search('wy', '旧歌曲', 3, 2));
-  assert.equal(requests.length, 1);
+  assert.deepEqual(
+    requests.map(request => request.url.pathname),
+    ['/api/cloudsearch/pc', '/cloudsearch', '/api/search/get', '/song/detail']
+  );
   assert.equal(requests[0].method, 'POST');
   assert.equal(requests[0].form.offset, 4);
+  assert.equal(requests[3].url.searchParams.get('ids'), '1');
   assert.equal(result.total, null);
   assert.equal(result.isEnd, false);
   assert.equal(result.limit, 2);
@@ -166,6 +187,33 @@ test('歌曲首个 POST 的 hasMore 生效，自定义 limit/offset 和旧字段
   assert.equal(result.list[0].singer, '歌手');
   assert.equal(result.list[0].albumName, '旧专辑');
   assert.equal(result.list[0].duration, 180);
+  assert.equal(
+    result.list[0].artwork,
+    'https://p1.music.126.net/cover.jpg?param=400y400',
+    '老接口的歌曲补上了封面'
+  );
+});
+
+test('cloudsearch 响应的歌曲自带封面，不再额外补图', async () => {
+  const { plugin, requests } = loadPlugin(request => {
+    assert.equal(request.url.pathname, '/api/cloudsearch/pc');
+    assert.equal(request.method, 'POST');
+    return {
+      code: 200,
+      result: {
+        songCount: 293,
+        songs: [{
+          id: 1, name: '歌', duration: 180000,
+          ar: [{ name: '歌手' }],
+          al: { name: '专辑', picUrl: 'http://p2.music.126.net/al.jpg' }
+        }]
+      }
+    };
+  });
+  const result = await resultOf(plugin.search('wy', '陈奕迅', 1, 30));
+  assert.equal(requests.length, 1);
+  assert.equal(result.total, 293);
+  assert.equal(result.list[0].artwork, 'https://p2.music.126.net/al.jpg?param=400y400');
 });
 
 test('作者匿名 6452：total=580，offset=550 返回最后 30 首', async () => {
@@ -418,7 +466,7 @@ test('已知 tracks 不完整却无 trackIds 时不能仅凭 n 值标记末页',
   assert.equal(requests.length, 1);
 });
 
-test('榜单列表仍是数组，插件版本为 1.1.1', async () => {
+test('榜单列表仍是数组，插件版本为 1.2.0', async () => {
   const { plugin } = loadPlugin(request => {
     assert.equal(request.url.pathname, '/api/toplist');
     return { code: 200, list: [{ id: 99, name: '榜单', updateFrequency: '每天更新' }] };
@@ -427,14 +475,15 @@ test('榜单列表仍是数组，插件版本为 1.1.1', async () => {
   assert.ok(Array.isArray(result));
   assert.equal(result.length, 1);
   assert.equal(result[0].updateFrequency, '每天更新');
-  assert.equal(plugin.pluginInfo.version, '1.1.1');
+  assert.equal(plugin.pluginInfo.version, '1.2.0');
 });
 
-test('单曲封面仍可复用歌曲详情请求', async () => {
-  const { plugin } = loadPlugin(request => {
-    assert.equal(request.url.pathname, '/api/song/detail');
-    assert.equal(request.url.searchParams.get('ids'), '[1]');
+test('单曲封面走代理优先的 song/detail', async () => {
+  const { plugin, requests } = loadPlugin(request => {
+    assert.equal(request.url.pathname, '/song/detail');
+    assert.equal(request.url.searchParams.get('ids'), '1');
     return { code: 200, songs: [song(1)] };
   });
   assert.equal(await plugin.getPic('wy', { id: 1 }), 'https://p1.music.126.net/cover.jpg?param=400y400');
+  assert.equal(requests.length, 1, '代理命中后不再请求直连');
 });

@@ -245,4 +245,48 @@ void main() {
     expect(pager.pageSize, 25);
     expect(pager.pageCount(50, hasMore: false), 2);
   });
+
+  group('跳页直达（缓冲区基页）', () {
+    test('rebase 后切片从缓冲区开头算起，序号仍用全局下标', () {
+      final pager = PageSlicer(pageSize: 30);
+      expect(pager.bufferBase, 1);
+      pager.rebase(12);
+      expect(pager.bufferBase, 12);
+      expect(pager.page, 12);
+      expect(pager.start, 0);
+      expect(pager.end, 30);
+      expect(pager.absoluteStart, 330);
+      // 相邻页追加后切片接续缓冲区
+      pager.next();
+      expect(pager.start, 30);
+      expect(pager.absoluteStart, 360);
+    });
+
+    test('窗口缓冲下已知总数按总数算页数，未知总数保留当前页入口', () {
+      final pager = PageSlicer(pageSize: 30)..rebase(12);
+      // total=600：缓冲里只有 30 条也不能按 loaded 算成 1 页
+      expect(pager.pageCount(30, hasMore: true, total: 600), 20);
+      expect(pager.pageCount(30, hasMore: false, total: 600), 20);
+      // 未知总数：至少给到当前页 + 下一页入口
+      expect(pager.pageCount(30, hasMore: true), 13);
+      expect(pager.pageCount(30, hasMore: false), 12);
+    });
+
+    test('目标页在缓冲区之前时切片为空、missing 为 0，clamp 不收回', () {
+      final pager = PageSlicer(pageSize: 30)..rebase(12);
+      pager.jumpTo(11);
+      expect(pager.slice([1, 2, 3]), isEmpty, reason: '第 11 页还没加载');
+      expect(pager.missing(30, hasMore: true), 0);
+      pager.clampTo(30, hasMore: true, total: 600);
+      expect(pager.page, 11, reason: '正在加载的回翻页不被 clamp 收走');
+    });
+
+    test('reset 恢复连续追加模型', () {
+      final pager = PageSlicer(pageSize: 30)..rebase(12);
+      pager.reset();
+      expect(pager.bufferBase, 1);
+      expect(pager.page, 1);
+      expect(pager.absoluteStart, 0);
+    });
+  });
 }

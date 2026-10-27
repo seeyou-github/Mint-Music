@@ -135,6 +135,9 @@ class SearchResultsNotifier extends StateNotifier<SearchResultsState> {
   int _requestId = 0;
   String _requestKey = '';
 
+  /// 跳页直达的目标页：加载失败时保留，供重试仍直取该页；成功后清零。
+  int _pendingPage = 0;
+
   Future<void> start(
     String query,
     String sourceId, {
@@ -156,6 +159,7 @@ class SearchResultsNotifier extends StateNotifier<SearchResultsState> {
 
     final requestId = ++_requestId;
     _requestKey = key;
+    _pendingPage = 0;
     state = SearchResultsState(
       query: normalizedQuery,
       sourceId: sourceId,
@@ -181,12 +185,68 @@ class SearchResultsNotifier extends StateNotifier<SearchResultsState> {
   Future<void> retryLoadMore() async {
     if (state.query.isEmpty || state.isLoading || state.isLoadingMore) return;
     state = state.copyWith(clearLoadMoreError: true, hasMore: true);
+    final pending = _pendingPage;
+    if (pending > 0 && pending != state.page + 1) {
+      // 上次是跳页直达失败：重试仍直取那一页
+      await goToPage(pending);
+      return;
+    }
     await _loadPage(_requestId, state.page + 1, replace: false);
+  }
+
+  /// 跳页直达：只请求第 [page] 页并替换缓冲，不逐页补齐中间页。
+  ///
+  /// 点页码 / 尾页时用——缓冲里没有的远页一次请求到位；相邻页仍走
+  /// [loadMore] 追加。代价是缓冲只剩目标页起的数据，返回是否成功。
+  Future<bool> goToPage(int page) async {
+    if (state.query.isEmpty ||
+        page < 1 ||
+        page == state.page ||
+        state.isLoading ||
+        state.isLoadingMore) {
+      return page == state.page;
+    }
+    final requestId = ++_requestId;
+    _pendingPage = page;
+    state = state.copyWith(isLoadingMore: true, clearLoadMoreError: true);
+    try {
+      final result = await _loadSingleSourcePage(
+        state.sourceId,
+        state.query,
+        page,
+      );
+      if (!mounted || requestId != _requestId) return false;
+      final total = result.total ?? state.total;
+      final hasMore =
+          result.isEnd != true &&
+          result.items.isNotEmpty &&
+          (total == null || result.items.length < total);
+      state = state.copyWith(
+        songs: result.items,
+        page: page,
+        isLoading: false,
+        isLoadingMore: false,
+        hasMore: hasMore,
+        total: hasMore ? total : result.items.length,
+        clearError: true,
+      );
+      _pendingPage = 0;
+      return true;
+    } catch (error) {
+      if (!mounted || requestId != _requestId) return false;
+      state = state.copyWith(
+        isLoadingMore: false,
+        loadMoreError: _readableError(error),
+        hasMore: true,
+      );
+      return false;
+    }
   }
 
   void reset() {
     _requestId++;
     _requestKey = '';
+    _pendingPage = 0;
     state = const SearchResultsState();
   }
 
@@ -509,6 +569,9 @@ class PlaylistSearchNotifier extends StateNotifier<PlaylistSearchState> {
   int _requestId = 0;
   String _sourceId = '';
 
+  /// 跳页直达的目标页：失败时保留供重试，成功后清零。
+  int _pendingPage = 0;
+
   Future<void> search(String query, String sourceId) async {
     final normalizedQuery = query.trim();
     if (normalizedQuery.isEmpty) {
@@ -518,6 +581,7 @@ class PlaylistSearchNotifier extends StateNotifier<PlaylistSearchState> {
 
     final requestId = ++_requestId;
     _sourceId = sourceId;
+    _pendingPage = 0;
     state = PlaylistSearchState(query: normalizedQuery, isLoading: true);
     await _loadPage(requestId, normalizedQuery, sourceId, 1, replace: true);
   }
@@ -544,6 +608,11 @@ class PlaylistSearchNotifier extends StateNotifier<PlaylistSearchState> {
   Future<void> retryLoadMore() async {
     if (state.query.isEmpty || state.isLoading || state.isLoadingMore) return;
     state = state.copyWith(clearLoadMoreError: true, hasMore: true);
+    final pending = _pendingPage;
+    if (pending > 0 && pending != state.page + 1) {
+      await goToPage(pending);
+      return;
+    }
     await _loadPage(
       _requestId,
       state.query,
@@ -551,6 +620,54 @@ class PlaylistSearchNotifier extends StateNotifier<PlaylistSearchState> {
       state.page + 1,
       replace: false,
     );
+  }
+
+  /// 跳页直达：只请求第 [page] 页并替换缓冲，返回是否成功。
+  Future<bool> goToPage(int page) async {
+    if (state.query.isEmpty ||
+        page < 1 ||
+        page == state.page ||
+        state.isLoading ||
+        state.isLoadingMore) {
+      return page == state.page;
+    }
+    final requestId = ++_requestId;
+    _pendingPage = page;
+    state = state.copyWith(isLoadingMore: true, clearLoadMoreError: true);
+    try {
+      // 单页直取：点第 N 页只发一次请求，不聚合中间页
+      final result = await _manager.searchPlaylistsSinglePage(
+        state.query,
+        sourceId: _sourceId,
+        page: page,
+        limit: _pageSize,
+      );
+      if (!mounted || requestId != _requestId) return false;
+      final total = result.total ?? state.total;
+      final hasMore =
+          result.isEnd != true &&
+          result.items.isNotEmpty &&
+          (total == null || result.items.length < total);
+      state = state.copyWith(
+        playlists: result.items,
+        page: page,
+        isLoading: false,
+        isLoadingMore: false,
+        hasMore: hasMore,
+        total: hasMore ? total : result.items.length,
+        clearError: true,
+      );
+      _pendingPage = 0;
+      return true;
+    } catch (e) {
+      if (!mounted || requestId != _requestId) return false;
+      state = state.copyWith(
+        isLoadingMore: false,
+        loadMoreError: _readableError(e),
+        hasMore: true,
+      );
+      return false;
+    }
   }
 
   Future<void> _loadPage(
@@ -565,7 +682,9 @@ class PlaylistSearchNotifier extends StateNotifier<PlaylistSearchState> {
       state = state.copyWith(isLoadingMore: true, clearLoadMoreError: true);
     }
     try {
-      final result = await _manager.searchPlaylistsPage(
+      // 单页直取：相邻页追加也只取插件的一页；插件页不足一页时由
+      // 页面的补齐循环继续取下一页，效果与聚合一致但跳页不会级联。
+      final result = await _manager.searchPlaylistsSinglePage(
         query,
         sourceId: sourceId,
         page: page,
@@ -628,6 +747,7 @@ class PlaylistSearchNotifier extends StateNotifier<PlaylistSearchState> {
 
   void reset() {
     _requestId++;
+    _pendingPage = 0;
     state = const PlaylistSearchState();
   }
 }
@@ -719,6 +839,9 @@ class CollectionSearchController extends StateNotifier<CollectionSearchState> {
   String _sourceId = '';
   CollectionType _type = CollectionType.album;
 
+  /// 跳页直达的目标页：失败时保留供重试，成功后清零。
+  int _pendingPage = 0;
+
   Future<void> search(
     String query,
     String sourceId,
@@ -732,6 +855,7 @@ class CollectionSearchController extends StateNotifier<CollectionSearchState> {
     }
     _sourceId = sourceId;
     _type = type;
+    _pendingPage = 0;
     if (!_manager.sourceSupportsCollectionSearch(sourceId, type)) {
       state = CollectionSearchState(query: keyword, unsupported: true);
       return;
@@ -763,6 +887,11 @@ class CollectionSearchController extends StateNotifier<CollectionSearchState> {
   Future<void> retryLoadMore() async {
     if (state.query.isEmpty || state.loading || state.loadingMore) return;
     state = state.copyWith(clearLoadMoreError: true, hasMore: true);
+    final pending = _pendingPage;
+    if (pending > 0 && pending != state.page + 1) {
+      await goToPage(pending);
+      return;
+    }
     await _loadPage(
       _requestId,
       state.query,
@@ -771,6 +900,54 @@ class CollectionSearchController extends StateNotifier<CollectionSearchState> {
       state.page + 1,
       replace: false,
     );
+  }
+
+  /// 跳页直达：只请求第 [page] 页并替换缓冲，返回是否成功。
+  Future<bool> goToPage(int page) async {
+    if (state.query.isEmpty ||
+        page < 1 ||
+        page == state.page ||
+        state.loading ||
+        state.loadingMore) {
+      return page == state.page;
+    }
+    final requestId = ++_requestId;
+    _pendingPage = page;
+    state = state.copyWith(loadingMore: true, clearLoadMoreError: true);
+    try {
+      final result = await _manager.searchCollections(
+        state.query,
+        sourceId: _sourceId,
+        type: _type,
+        page: page,
+        limit: _pageSize,
+      );
+      if (!mounted || requestId != _requestId) return false;
+      final total = result.total ?? state.total;
+      final hasMore =
+          !result.isEnd &&
+          result.items.isNotEmpty &&
+          (total == null || result.items.length < total);
+      state = state.copyWith(
+        results: result.items,
+        page: page,
+        loading: false,
+        loadingMore: false,
+        hasMore: hasMore,
+        total: hasMore ? total : result.items.length,
+        clearError: true,
+      );
+      _pendingPage = 0;
+      return true;
+    } catch (e) {
+      if (!mounted || requestId != _requestId) return false;
+      state = state.copyWith(
+        loadingMore: false,
+        loadMoreError: _readableError(e),
+        hasMore: true,
+      );
+      return false;
+    }
   }
 
   Future<void> _loadPage(

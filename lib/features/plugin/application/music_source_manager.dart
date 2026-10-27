@@ -2968,6 +2968,54 @@ class MusicSourceManager {
 
   /// 插件歌单搜索的分页聚合缓存（只保留最近一次搜索的）。
   _PluginPlaylistSearchCache? _playlistSearchCache;
+
+  /// 歌单搜索单页直取：只请求插件的第 [page] 页，不做多页聚合。
+  ///
+  /// 搜索页跳页直达用——点第 N 页只发一次请求，即使插件页比界面页小、
+  /// 返回不满一页也接受，绝不把中间页逐页拉一遍。
+  Future<PageResult<Playlist>> searchPlaylistsSinglePage(
+    String query, {
+    required String sourceId,
+    int page = 1,
+    int limit = 30,
+  }) async {
+    if (query.isEmpty) return const PageResult(total: 0, isEnd: true);
+    final effective = _canonicalSourceId(sourceId);
+    final hosts = _findPluginHostsForSource(
+      effective,
+    ).where((host) => host.supportsPlaylistSearch).toList();
+
+    final items = <Playlist>[];
+    final seen = <String>{};
+    var isEnd = true;
+    int? total;
+    Object? lastError;
+    for (final host in hosts) {
+      final pluginSourceId = _getSourceIdForHost(host, effective);
+      if (pluginSourceId == null) continue;
+      try {
+        final raw = await host
+            .searchPlaylists(query, page: page)
+            .timeout(const Duration(seconds: 20));
+        final appId = _pluginSourceAppId(host, pluginSourceId);
+        final result = _parsePluginPlaylistPage(raw, appId);
+        for (final p in result.items) {
+          if (seen.add(p.id)) items.add(p);
+        }
+        total = result.total;
+        if (result.isEnd == false) isEnd = false;
+      } catch (e) {
+        lastError = e;
+      }
+    }
+    if (lastError != null && items.isEmpty) throw lastError;
+    return PageResult(
+      items: items,
+      // 插件页不足一页且没报告还有更多时才算到底
+      isEnd: isEnd && items.length < limit,
+      total: hosts.length == 1 ? total : null,
+    );
+  }
 }
 
 /// 按 (音源, 关键词) 聚合插件歌单搜索的多页结果。

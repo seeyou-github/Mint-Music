@@ -288,13 +288,43 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     _songPager.updatePageSize(size);
   }
 
+  /// 目标页是否超出「缓冲区 + 下一页」的连续范围。
+  ///
+  /// 超出（或往回翻出缓冲区）就走跳页直达——只取目标页，不把中间页
+  /// 逐页拉一遍；范围内仍走追加补齐，缓冲可以继续复用。
+  bool _beyondBuffer(PageSlicer pager, int page, int loaded) {
+    final contiguousEnd =
+        pager.bufferBase - 1 + (loaded / pager.pageSize).ceil();
+    return page < pager.bufferBase || page > contiguousEnd + 1;
+  }
+
   Future<void> _goToSongPage(int page) async {
     if (page < 1 || _pagingLoading) return;
     setState(() => _songPager.jumpTo(page));
     if (_resultsScrollController.hasClients) {
       _resultsScrollController.jumpTo(0);
     }
-    await _ensureSongPage();
+    final loaded = ref.read(searchResultsControllerProvider).songs.length;
+    if (_beyondBuffer(_songPager, page, loaded)) {
+      await _jumpSongPageDirect(page);
+    } else {
+      await _ensureSongPage();
+    }
+  }
+
+  /// 跳页直达：只取目标页并替换缓冲；失败回退到原页面（底部有重试）。
+  Future<void> _jumpSongPageDirect(int page) async {
+    final ok = await ref
+        .read(searchResultsControllerProvider.notifier)
+        .goToPage(page);
+    if (!mounted) return;
+    setState(() {
+      if (ok) {
+        _songPager.rebase(page);
+      } else {
+        _songPager.jumpTo(ref.read(searchResultsControllerProvider).page);
+      }
+    });
   }
 
   /// 当前页数据不够（接口每页比设定的少）时继续取；多出来的留在已加载列表里
@@ -337,7 +367,27 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     if (page < 1 || _pagingLoading) return;
     setState(() => _playlistPager.jumpTo(page));
     if (_gridScrollController.hasClients) _gridScrollController.jumpTo(0);
-    await _ensurePlaylistPage();
+    final loaded = ref
+        .read(playlistSearchControllerProvider)
+        .playlists
+        .length;
+    if (_beyondBuffer(_playlistPager, page, loaded)) {
+      final ok = await ref
+          .read(playlistSearchControllerProvider.notifier)
+          .goToPage(page);
+      if (!mounted) return;
+      setState(() {
+        if (ok) {
+          _playlistPager.rebase(page);
+        } else {
+          _playlistPager.jumpTo(
+            ref.read(playlistSearchControllerProvider).page,
+          );
+        }
+      });
+    } else {
+      await _ensurePlaylistPage();
+    }
   }
 
   Future<void> _ensurePlaylistPage() async {
@@ -383,7 +433,22 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     final pager = _collectionPager(type);
     setState(() => pager.jumpTo(page));
     if (_gridScrollController.hasClients) _gridScrollController.jumpTo(0);
-    await _ensureCollectionPage(type);
+    final loaded = ref.read(collectionSearchProvider).results.length;
+    if (_beyondBuffer(pager, page, loaded)) {
+      final ok = await ref
+          .read(collectionSearchProvider.notifier)
+          .goToPage(page);
+      if (!mounted) return;
+      setState(() {
+        if (ok) {
+          pager.rebase(page);
+        } else {
+          pager.jumpTo(ref.read(collectionSearchProvider).page);
+        }
+      });
+    } else {
+      await _ensureCollectionPage(type);
+    }
   }
 
   Future<void> _ensureCollectionPage(CollectionType type) async {
@@ -1250,8 +1315,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       itemBuilder: (context, index) {
         if (index >= visible.length) return footer;
         final song = visible[index];
-        // 序号接着上一页继续编号
-        final songIndex = _songPager.start + index;
+        // 序号按全局位置编号（跳页直达后缓冲区从当前页起，也要接续页码）
+        final songIndex = _songPager.absoluteStart + index;
         return SongListItem(
           song: song,
           index: songIndex,

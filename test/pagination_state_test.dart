@@ -27,7 +27,7 @@ class _Manager implements MusicSourceManager {
   }) => songPage!(query, page);
 
   @override
-  Future<PageResult<Playlist>> searchPlaylistsPage(
+  Future<PageResult<Playlist>> searchPlaylistsSinglePage(
     String query, {
     required String sourceId,
     int page = 1,
@@ -180,6 +180,81 @@ void main() {
     expect(notifier.state.total, 0);
     expect(notifier.state.results, isEmpty);
     expect(notifier.state.hasMore, isFalse);
+  });
+
+  test('跳页直达只请求目标页并替换缓冲，相邻页仍追加', () async {
+    final manager = _Manager();
+    final pages = <int>[];
+    manager.songPage = (_, page) async {
+      pages.add(page);
+      return PageResult(items: [_song(page * 10)], total: 500, isEnd: false);
+    };
+    final notifier = SearchResultsNotifier(manager);
+    addTearDown(notifier.dispose);
+    await notifier.start('song', 'wy');
+    final ok = await notifier.goToPage(5);
+    expect(ok, isTrue);
+    expect(pages, [1, 5], reason: '不补齐中间页');
+    expect(notifier.state.page, 5);
+    expect(notifier.state.songs.single.id, '50');
+    expect(notifier.state.hasMore, isTrue);
+    await notifier.loadMore();
+    expect(pages, [1, 5, 6], reason: '相邻页继续追加');
+    expect(notifier.state.songs.map((s) => s.id).toList(), ['50', '60']);
+  });
+
+  test('跳页失败保留原缓冲，重试仍直取目标页', () async {
+    final manager = _Manager();
+    final pages = <int>[];
+    var fail = true;
+    manager.songPage = (_, page) async {
+      pages.add(page);
+      if (page == 7 && fail) throw Exception('offline');
+      return PageResult(items: [_song(page)], total: 100, isEnd: false);
+    };
+    final notifier = SearchResultsNotifier(manager);
+    addTearDown(notifier.dispose);
+    await notifier.start('song', 'wy');
+    final ok = await notifier.goToPage(7);
+    expect(ok, isFalse);
+    expect(notifier.state.loadMoreError, 'offline');
+    expect(notifier.state.songs.single.id, '1', reason: '原缓冲保留');
+    fail = false;
+    await notifier.retryLoadMore();
+    expect(pages, [1, 7, 7]);
+    expect(notifier.state.songs.single.id, '7');
+    expect(notifier.state.loadMoreError, isNull);
+  });
+
+  test('歌单与专辑作者跳页同样单页直取', () async {
+    final manager = _Manager();
+    final playlistCalls = <int>[];
+    final collectionCalls = <int>[];
+    manager.playlistPage = (page) async {
+      playlistCalls.add(page);
+      return PageResult(items: [_playlist(page)], total: 90, isEnd: false);
+    };
+    manager.collectionPage = (page) async {
+      collectionCalls.add(page);
+      return CollectionSearchPage(
+        items: [_collection(page)],
+        total: 90,
+        isEnd: false,
+      );
+    };
+    final playlists = PlaylistSearchNotifier(manager);
+    addTearDown(playlists.dispose);
+    await playlists.search('list', 'wy');
+    expect(await playlists.goToPage(3), isTrue);
+    expect(playlistCalls, [1, 3]);
+    expect(playlists.state.playlists.single.id, '3');
+
+    final collections = CollectionSearchController(manager);
+    addTearDown(collections.dispose);
+    await collections.search('album', 'wy', CollectionType.album);
+    expect(await collections.goToPage(4), isTrue);
+    expect(collectionCalls, [1, 4]);
+    expect(collections.state.results.single.id, '4');
   });
 
   test('发现分类短页不中断，总数在通知状态前更新', () async {

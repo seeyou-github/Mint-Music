@@ -323,7 +323,21 @@ function fetchTopList() {
 
 function fetchSearch(keyword, type, limit, offset) {
   var form = { s: keyword, type: type, limit: limit, offset: offset };
+  var query = {
+    keywords: keyword,
+    type: type,
+    limit: limit,
+    offset: offset
+  };
   return chain([
+    // 新版 cloudsearch：歌曲自带 ar/al（含封面），数量字段也更全
+    function () {
+      return postForm(HOST + '/api/cloudsearch/pc', form);
+    },
+    function () {
+      return getJson(PROXIES[0] + '/cloudsearch?' + encodeQuery(query));
+    },
+    // 老接口兜底：响应里没有封面，search 出口用代理 song/detail 批量补
     function () {
       return postForm(HOST + '/api/search/get', form);
     },
@@ -331,28 +345,10 @@ function fetchSearch(keyword, type, limit, offset) {
       return getJson(HOST + '/api/search/get?' + encodeQuery(form));
     },
     function () {
-      return getJson(
-        PROXIES[0] +
-          '/search?' +
-          encodeQuery({
-            keywords: keyword,
-            type: type,
-            limit: limit,
-            offset: offset
-          })
-      );
+      return getJson(PROXIES[0] + '/search?' + encodeQuery(query));
     },
     function () {
-      return getJson(
-        PROXIES[1] +
-          '/search?' +
-          encodeQuery({
-            keywords: keyword,
-            type: type,
-            limit: limit,
-            offset: offset
-          })
-      );
+      return getJson(PROXIES[1] + '/search?' + encodeQuery(query));
     }
   ]);
 }
@@ -428,6 +424,61 @@ function fetchSongDetails(ids) {
 
 function fetchSongDetail(id) {
   return fetchSongDetails([id]);
+}
+
+/**
+ * 封面专用详情：代理优先。
+ * 直连老接口 /api/song/detail 的歌曲对象不带 picUrl，只有代理的响应里有，
+ * 所以查封面必须先走代理；代理都挂了再退回直连（至少保证歌曲信息可用）。
+ */
+function fetchCoverDetails(ids) {
+  function once(url) {
+    return getJson(url).then(function (body) {
+      if (!Array.isArray(body.songs)) throw new Error('歌曲详情缺少 songs');
+      return body.songs;
+    });
+  }
+  return chain([
+    function () {
+      return once(PROXIES[0] + '/song/detail?' + encodeQuery({ ids: ids.join(',') }));
+    },
+    function () {
+      return once(PROXIES[1] + '/song/detail?' + encodeQuery({ ids: ids.join(',') }));
+    },
+    function () {
+      return once(
+        HOST + '/api/song/detail?' + encodeQuery({ ids: '[' + ids.join(',') + ']' })
+      );
+    }
+  ]);
+}
+
+/** 老搜索接口的歌曲没有封面：按 id 批量补（一次请求，缺封面才发）。 */
+function hydrateSearchCovers(songs) {
+  var missing = {};
+  for (var i = 0; i < songs.length; i++) {
+    if (!songs[i].artwork) missing[songs[i].id] = true;
+  }
+  var ids = Object.keys(missing);
+  if (!ids.length) return Promise.resolve(songs);
+  return fetchCoverDetails(ids.slice(0, 50))
+    .then(function (details) {
+      var byId = {};
+      for (var d = 0; d < details.length; d++) {
+        var song = songOf(details[d]);
+        if (song && song.artwork) byId[song.id] = song.artwork;
+      }
+      for (var s = 0; s < songs.length; s++) {
+        if (!songs[s].artwork && byId[songs[s].id]) {
+          songs[s].artwork = byId[songs[s].id];
+        }
+      }
+      return songs;
+    })
+    .catch(function () {
+      // 补封面失败不影响列表本身
+      return songs;
+    });
 }
 
 /* ---------------------------------------------------------------- 解析工具 */
@@ -521,7 +572,7 @@ function textOf(block) {
 module.exports = {
   pluginInfo: {
     name: '数据源-网易',
-    version: '1.1.1',
+    version: '1.2.0',
     author: 'MintMusic',
     description:
       '只提供搜索、歌单分类、榜单、歌单 / 专辑 / 作者详情的网易云数据源；' +
@@ -606,13 +657,16 @@ module.exports = {
       var result = (body && body.result) || {};
       var songs = songsFromSearch(body);
       var total = totalOf(result.songCount);
-      return JSON.stringify({
-        list: songs,
-        page: page || 1,
-        total: total,
-        limit: size,
-        offset: offset,
-        isEnd: isPageEnd(total, offset, songs.length, size, result)
+      // 直连老接口兜底时响应里没有封面：用代理批量补一次
+      return hydrateSearchCovers(songs).then(function (filled) {
+        return JSON.stringify({
+          list: filled,
+          page: page || 1,
+          total: total,
+          limit: size,
+          offset: offset,
+          isEnd: isPageEnd(total, offset, songs.length, size, result)
+        });
       });
     });
   },
@@ -681,7 +735,9 @@ module.exports = {
             id: String(item.id),
             title: item.name || '',
             coverUrl: normalizeCover(item.picUrl || item.img1v1Url),
-            worksNum: Number(item.albumSize || item.musicSize || 0),
+            // musicSize 是歌曲数（详情页作者作品总数同口径）；
+            // albumSize 是专辑数，老代码优先取它导致「133 首 / 1841 首」对不上
+            worksNum: Number(item.musicSize || item.albumSize || 0),
             description: item.briefDesc || '',
             raw: { id: String(item.id), name: item.name || '' }
           });
@@ -900,8 +956,8 @@ module.exports = {
   getPic: function (source, musicInfo) {
     var id = musicInfo && (musicInfo.songmid || musicInfo.songId || musicInfo.id);
     if (!id) return Promise.resolve('');
-    return fetchSongDetail(id).then(function (body) {
-      var songs = body.songs || [];
+    // 封面只在代理的 song/detail 响应里有，走代理优先的查询
+    return fetchCoverDetails([id]).then(function (songs) {
       if (!songs.length) return '';
       return normalizeCover(albumOf(songs[0]).picUrl);
     });
