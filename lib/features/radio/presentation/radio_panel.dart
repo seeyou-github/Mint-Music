@@ -11,6 +11,7 @@ import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../../discover/application/discover_providers.dart';
+import '../../player/application/playback_controller.dart';
 import '../application/radio_providers.dart';
 import '../application/radio_session.dart';
 import 'radio_edit_page.dart';
@@ -256,6 +257,11 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
 
   Widget _buildRandomCard(ThemeColors colors) {
     final starting = _startingId == RadioStation.randomId;
+    final isCurrent =
+        ref.watch(radioSessionProvider)?.stationId == RadioStation.randomId;
+    final isPlaying = ref.watch(
+      playbackControllerProvider.select((state) => state.isPlaying),
+    );
     return _buildCardFrame(
       colors,
       child: InkWell(
@@ -274,11 +280,13 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
                   ],
                 ),
               ),
-              child: Icon(
-                Icons.shuffle,
-                size: 44,
-                color: colors.textOnPrimary.withValues(alpha: 0.9),
-              ),
+              child: isCurrent
+                  ? null
+                  : Icon(
+                      Icons.shuffle,
+                      size: 44,
+                      color: colors.textOnPrimary.withValues(alpha: 0.9),
+                    ),
             ),
             Positioned(
               left: AppSpacing.sm,
@@ -295,6 +303,7 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
                 ),
               ),
             ),
+            if (isCurrent) _buildNowPlayingBadge(colors, isPlaying: isPlaying),
             if (starting)
               Positioned.fill(
                 child: Container(
@@ -319,6 +328,10 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
 
   Widget _buildStationCard(ThemeColors colors, RadioStation station) {
     final starting = _startingId == station.id;
+    final isCurrent = ref.watch(radioSessionProvider)?.stationId == station.id;
+    final isPlaying = ref.watch(
+      playbackControllerProvider.select((state) => state.isPlaying),
+    );
     return _buildCardFrame(
       colors,
       child: InkWell(
@@ -365,6 +378,7 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
               right: 2,
               child: _buildStationMenu(colors, station),
             ),
+            if (isCurrent) _buildNowPlayingBadge(colors, isPlaying: isPlaying),
             if (starting)
               Positioned.fill(
                 child: Container(
@@ -382,6 +396,35 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
                 ),
               ),
           ],
+        ),
+      ),
+    );
+  }
+
+  /// 当前电台封面的正中央「正在播放 / 已暂停」标志。
+  Widget _buildNowPlayingBadge(ThemeColors colors, {required bool isPlaying}) {
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: Center(
+          child: Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: Colors.white.withValues(alpha: 0.94),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.35),
+                  blurRadius: 12,
+                ),
+              ],
+            ),
+            child: Icon(
+              isPlaying ? Icons.equalizer : Icons.play_arrow,
+              size: 28,
+              color: colors.primary,
+            ),
+          ),
         ),
       ),
     );
