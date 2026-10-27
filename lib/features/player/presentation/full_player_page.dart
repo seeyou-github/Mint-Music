@@ -12,6 +12,7 @@ import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../../../shared/widgets/fallback_cover_image.dart';
+import '../../../shared/widgets/source_name_tag.dart';
 import '../../plugin/application/music_source_manager.dart';
 import '../application/desktop_lyric_sync.dart';
 import '../application/playback_controller.dart';
@@ -194,6 +195,8 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
                         safePadding.top -
                         _PlayerHeader.height,
                   );
+                  // 音源标签在封面上方，封面整体下移标签占用的高度。
+                  final coverTop = coverTopGap + _PlayerSourceTag.space;
                   return Column(
                     children: [
                       _PlayerHeader(
@@ -208,12 +211,12 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
                       Expanded(
                         child: LayoutBuilder(
                           builder: (context, constraints) {
-                            // 封面还要扣掉 PageView 内部的顶部留白，并给歌名 /
-                            // 歌手 / 操作按钮预留空间，矮窗口下也不会被挤出。
+                            // 封面还要扣掉 PageView 内部的顶部留白（含音源标签），
+                            // 并给歌名 / 歌手 / 操作按钮预留空间，矮窗口下也不会被挤出。
                             final pageHeight = constraints.maxHeight;
                             final availableForCover = math.min(
                               constraints.maxWidth,
-                              math.max(0.0, pageHeight - coverTopGap),
+                              math.max(0.0, pageHeight - coverTop),
                             );
                             final actualCoverSize = math.min(
                               coverSize,
@@ -221,9 +224,7 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
                                 availableForCover,
                                 math.max(
                                   0.0,
-                                  pageHeight -
-                                      coverTopGap -
-                                      _portraitInfoReserve,
+                                  pageHeight - coverTop - _portraitInfoReserve,
                                 ),
                               ),
                             );
@@ -249,7 +250,7 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
                                             padding: EdgeInsets.only(
                                               left: coverLeft,
                                               right: coverLeft,
-                                              top: coverTopGap,
+                                              top: coverTop,
                                             ),
                                             child: _PlayerCoverPage(
                                               isPlaying: isPlaying,
@@ -301,11 +302,22 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
                                 // 对齐，spaceBetween 均匀分布 5 个按钮）。
                                 // 窗口高度变化时两者各自移动、互不牵连。
                                 if (_currentPage == 0) ...[
+                                  // 封面上方的音源标签：居中，宽度不超过封面。
+                                  Positioned(
+                                    left: coverLeft,
+                                    right: coverLeft,
+                                    top: coverTopGap,
+                                    child: Center(
+                                      child: _PlayerSourceTag(
+                                        maxWidth: actualCoverSize,
+                                      ),
+                                    ),
+                                  ),
                                   Positioned(
                                     left: coverLeft,
                                     right: coverLeft,
                                     top:
-                                        coverTopGap +
+                                        coverTop +
                                         actualCoverSize +
                                         _portraitInfoGap,
                                     child: _PlayerSongInfo(
@@ -442,17 +454,20 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
           child: LayoutBuilder(
             builder: (context, constraints) {
               // 封面缩小：宽高都收一点，并整体上移（不再垂直居中）。
-              // 预留约 300px 给歌名/按钮/进度条/播放控制，避免小窗口溢出。
+              // 预留约 300px 给歌名/按钮/进度条/播放控制，再加上封面上方
+              // 音源标签的高度，避免小窗口溢出。
               final coverSize = math.max(
                 96.0,
                 math.min(
                   math.min(constraints.maxWidth * 0.62, 315.0),
-                  constraints.maxHeight - 300,
+                  constraints.maxHeight - 300 - _PlayerSourceTag.space,
                 ),
               );
               return Column(
                 children: [
                   const SizedBox(height: 8),
+                  _PlayerSourceTag(maxWidth: coverSize),
+                  const SizedBox(height: _PlayerSourceTag.gap),
                   _PlayerCoverPage(
                     isPlaying: isPlaying,
                     coverSize: coverSize,
@@ -527,6 +542,8 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
+                            _PlayerSourceTag(maxWidth: coverSize),
+                            const SizedBox(height: 4),
                             _PlayerCoverPage(
                               isPlaying: isPlaying,
                               coverSize: coverSize,
@@ -665,6 +682,77 @@ class _PlayerHeader extends ConsumerWidget {
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// 封面上方的「当前播放音源」标签。
+///
+/// 宽度不超过封面（[maxWidth]），名称过长时省略；本地歌曲显示「本地音乐」。
+class _PlayerSourceTag extends ConsumerWidget {
+  const _PlayerSourceTag({required this.maxWidth});
+
+  /// 标签的最大宽度，由封面边长决定。
+  final double maxWidth;
+
+  static const double height = 20;
+  static const double gap = 6;
+
+  /// 标签本身 + 与封面的间距，各布局按这个值给封面预留空间。
+  static const double space = height + gap;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    ref.watch(currentSongIdentityProvider);
+    final song = ref.read(playbackControllerProvider).currentSong;
+    final sourceId = (song?.displaySource ?? '').trim();
+    // 太窄时放不下图标 + 文字，直接不显示（封面本身已经很小了）。
+    if (song == null || sourceId.isEmpty || maxWidth < 56) {
+      return const SizedBox.shrink();
+    }
+    final name = sourceId == 'local'
+        ? context.tr('本地音乐')
+        : ref.read(musicSourceManagerProvider).sourceDisplayName(sourceId);
+    if (name.trim().isEmpty) return const SizedBox.shrink();
+
+    // 固定高度的标签用固定字号，限制文字缩放避免撑破布局。
+    return MediaQuery.withClampedTextScaling(
+      maxScaleFactor: 1.2,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: maxWidth),
+        child: Container(
+          height: height,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.06),
+            borderRadius: BorderRadius.circular(AppRadius.xs),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.28)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.music_note,
+                size: 12,
+                color: Colors.white.withValues(alpha: 0.7),
+              ),
+              const SizedBox(width: 3),
+              Flexible(
+                child: Text(
+                  SourceNameTag.shorten(name.trim()),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                    color: Colors.white.withValues(alpha: 0.88),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
