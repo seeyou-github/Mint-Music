@@ -78,6 +78,26 @@ function getJson(url, headers) {
   });
 }
 
+/** 接口总数容错解析：只接受非负整数，异常一律视为「未知」。 */
+function totalOf(value) {
+  if (typeof value !== 'number' && typeof value !== 'string') return null;
+  if (typeof value === 'string' && !value.trim()) return null;
+  var total = Number(value);
+  return isFinite(total) && total >= 0 && Math.floor(total) === total &&
+    total <= 9007199254740991 ? total : null;
+}
+
+/**
+ * 是否翻到头了。有总数按总数判；接口给 more / hasMore 时以它为准；
+ * 都没有才退化成「本页不足一页」。
+ */
+function isPageEnd(total, offset, count, limit, body) {
+  if (total !== null) return offset + count >= total;
+  if (typeof body.more === 'boolean') return !body.more;
+  if (typeof body.hasMore === 'boolean') return !body.hasMore;
+  return count < limit;
+}
+
 /* ---------------------------------------------------------------- 字段映射 */
 
 /**
@@ -300,15 +320,15 @@ function fetchTopListDetail(boardId, page) {
   return getJson(url);
 }
 
-function fetchSheetDetail(pid) {
+function fetchSheetDetail(pid, page, size) {
   var url =
     NPL +
     '/pl.svc?' +
     encodeQuery({
       op: 'getlistinfo',
       pid: pid,
-      pn: 0,
-      rn: 1000,
+      pn: (page || 1) - 1,
+      rn: size || 1000,
       encode: 'utf8',
       keyset: 'pl2012',
       identity: 'kuwo',
@@ -403,7 +423,7 @@ function lrcFromList(list) {
 module.exports = {
   pluginInfo: {
     name: '数据源-酷我',
-    version: '1.1.0',
+    version: '1.2.0',
     author: 'MintMusic',
     description:
       '只提供搜索、歌单分类、榜单、歌单详情的酷我音乐数据源；' +
@@ -471,10 +491,24 @@ module.exports = {
     var size = limit || 30;
     var currentPage = page || 1;
     return fetchSearch(keyword, currentPage, size).then(function (body) {
-      if (String(body.SHOW) === '0') return JSON.stringify({ list: [] });
+      // 无版权 / 无结果时 SHOW=0
+      if (String(body.SHOW) === '0') {
+        return JSON.stringify({
+          list: [],
+          page: currentPage,
+          total: 0,
+          limit: size,
+          isEnd: true
+        });
+      }
+      var list = body.abslist || [];
+      var total = totalOf(body.TOTAL);
       return JSON.stringify({
-        list: songsOf(body.abslist || []),
-        page: currentPage
+        list: songsOf(list),
+        page: currentPage,
+        total: total,
+        limit: size,
+        isEnd: isPageEnd(total, size * (currentPage - 1), list.length, size, body)
       });
     });
   },
@@ -484,6 +518,7 @@ module.exports = {
     var size = 30;
     return fetchPlaylistSearch(keyword, page || 1, size).then(function (body) {
       var list = body.abslist || [];
+      var total = totalOf(body.TOTAL);
       var playlists = [];
       for (var i = 0; i < list.length; i++) {
         var item = list[i] || {};
@@ -500,7 +535,9 @@ module.exports = {
         });
       }
       return JSON.stringify({
-        isEnd: list.length < size,
+        total: total,
+        limit: size,
+        isEnd: isPageEnd(total, size * ((page || 1) - 1), list.length, size, body),
         playlists: playlists
       });
     });
@@ -559,9 +596,20 @@ module.exports = {
           });
         }
       }
+      // 专辑接口的总数是小写 total，作者接口是大写 TOTAL，两个都要兜
+      var total = totalOf(body.total);
+      if (total === null) total = totalOf(body.TOTAL);
       return JSON.stringify({
         list: items,
-        isEnd: list.length < size
+        total: total,
+        limit: size,
+        isEnd: isPageEnd(
+          total,
+          size * (currentPage - 1),
+          list.length,
+          size,
+          body
+        )
       });
     });
   },
@@ -580,14 +628,18 @@ module.exports = {
     }).then(function (body) {
       var songs = songsOf(body.musiclist || []);
       return enrichCovers(songs).then(function () {
+        var total = totalOf(body.songnum);
+        if (total === null) total = songs.length;
         return JSON.stringify({
+          // 专辑接口一次返回全部歌曲（rn=1000）
           isEnd: true,
+          total: total,
           albumItem: {
             id: String(albumId),
             title: decodeName(body.name || body.title || raw.name),
             coverUrl: normalizeCover(body.img || body.hts_img || body.pic),
             artist: decodeName(body.artist),
-            worksNum: Number(body.songnum || songs.length),
+            worksNum: total,
             date: String(body.pub || ''),
             description: decodeName(body.info)
           },
@@ -612,10 +664,19 @@ module.exports = {
       sortby: 0
     }).then(function (body) {
       var songs = songsOf(body.musiclist || body.abslist || []);
-      var total = Number(body.total || songs.length);
+      var total = totalOf(body.total);
+      if (total === null) total = songs.length;
       return enrichCovers(songs).then(function () {
         return JSON.stringify({
-          isEnd: songs.length >= total || songs.length < size,
+          total: total,
+          limit: size,
+          isEnd: isPageEnd(
+            total,
+            size * ((page || 1) - 1),
+            songs.length,
+            size,
+            body
+          ),
           artistItem: {
             id: String(artistId),
             title: decodeName(
@@ -679,6 +740,7 @@ module.exports = {
     var size = 30;
     return fetchSheets(tagId || '', page || 1, size).then(function (body) {
       var data = (body.data && body.data.data) || [];
+      var total = totalOf(body.data && body.data.total);
       var playlists = [];
       for (var i = 0; i < data.length; i++) {
         var item = data[i] || {};
@@ -695,7 +757,9 @@ module.exports = {
         });
       }
       return JSON.stringify({
-        isEnd: playlists.length < size,
+        total: total,
+        limit: size,
+        isEnd: isPageEnd(total, size * ((page || 1) - 1), playlists.length, size, body),
         playlists: playlists
       });
     });
@@ -732,19 +796,33 @@ module.exports = {
   /* ------------------------------------------------------------- 榜单详情 */
   getTopListDetail: function (id, page) {
     var boardId = String(id || '').replace(/^kw_/, '');
-    return fetchTopListDetail(boardId, page || 1).then(function (body) {
+    var currentPage = page || 1;
+    var size = 100;
+    return fetchTopListDetail(boardId, currentPage).then(function (body) {
       var list =
         body.musiclist || (body.bang && body.bang.musiclist) || [];
       var songs = songsOf(list);
+      // num 是榜单总歌曲数（榜单通常固定 300 首），按 100 首一页翻
+      var total = totalOf(body.num);
+      if (total === null) total = songs.length;
       // 榜单接口不返回任何封面字段，逐首补图
       return enrichCovers(songs).then(function () {
         return JSON.stringify({
-          isEnd: true,
+          total: total,
+          limit: size,
+          isEnd: isPageEnd(
+            total,
+            size * (currentPage - 1),
+            songs.length,
+            size,
+            body
+          ),
           sheet: {
             title: decodeName(body.title || body.name || '排行榜'),
             coverUrl: String(body.pic || ''),
             description: String(body.info || ''),
-            author: String(body.uname || '')
+            author: String(body.uname || ''),
+            songCount: total
           },
           songs: songs
         });
@@ -759,17 +837,31 @@ module.exports = {
     // `digest-8__123456` → 123456
     var parts = raw.split('__');
     if (parts.length === 2) pid = parts[1];
-    return fetchSheetDetail(pid).then(function (body) {
+    var currentPage = page || 1;
+    var size = 1000;
+    // pn 是页号（rn 为每页条数）；歌单可能超过 1000 首，靠翻页拿全
+    return fetchSheetDetail(pid, currentPage, size).then(function (body) {
       var songs = songsOf(body.musiclist || []);
+      var total = totalOf(body.total);
+      if (total === null) total = songs.length;
       // 个别歌曲没有 albumpic，补一次封面（歌单详情整列占位图就是它导致的）
       return enrichCovers(songs).then(function () {
         return JSON.stringify({
-          isEnd: true,
+          total: total,
+          limit: size,
+          isEnd: isPageEnd(
+            total,
+            size * (currentPage - 1),
+            songs.length,
+            size,
+            body
+          ),
           sheet: {
             title: decodeName(body.title || body.name || ''),
             coverUrl: normalizeCover(body.pic),
             description: String(body.info || ''),
-            author: String(body.uname || '')
+            author: String(body.uname || ''),
+            songCount: total
           },
           songs: songs
         });

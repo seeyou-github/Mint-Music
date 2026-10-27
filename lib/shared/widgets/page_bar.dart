@@ -8,7 +8,8 @@ import '../../core/theme/theme_provider.dart';
 /// 列表底部的胶囊分页条，加载中禁用导航。
 ///
 /// [totalKnown] 为 false 时，[pageCount] 仅代表已加载可达页及下一页入口，
-/// 不展示总页数、远端末页锚点或任意跳页。调用方在加载结束时改为 true。
+/// 不展示总页数、尾页按钮或任意跳页。调用方在加载结束时改为 true。
+/// 已知总页数（接口返回了总数）时额外提供「尾页」一键直达。
 class PageBar extends ConsumerStatefulWidget {
   const PageBar({
     super.key,
@@ -114,6 +115,17 @@ class _PageBarState extends ConsumerState<PageBar> {
       enabled: _current < _count && !widget.loading,
       onTap: () => widget.onChanged(_current + 1),
     );
+    // 总页数已知时提供「尾页」直达；未知总数时 pageCount 只到已加载范围，
+    // 点尾页会误导，所以整个按钮都不出现。
+    final showLast = widget.totalKnown && _count > 1;
+    final last = _buildStepButton(
+      colors,
+      label: context.tr('尾页'),
+      icon: Icons.keyboard_double_arrow_right,
+      iconAfter: true,
+      enabled: showLast && _current < _count && !widget.loading,
+      onTap: () => widget.onChanged(_count),
+    );
     final total = Text(
       context.tr('共 $_count 页'),
       maxLines: 1,
@@ -162,6 +174,7 @@ class _PageBarState extends ConsumerState<PageBar> {
                       const Spacer(),
                     gap,
                     Flexible(child: next),
+                    if (showLast) ...[gap, Flexible(child: last)],
                   ],
                 ),
               ],
@@ -180,6 +193,7 @@ class _PageBarState extends ConsumerState<PageBar> {
               ],
               gap,
               next,
+              if (showLast) ...[gap, last],
             ],
           );
         },

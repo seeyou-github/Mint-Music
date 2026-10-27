@@ -331,6 +331,7 @@ void main() {
       expect(find.textContaining('共 '), findsNothing);
       expect(find.byType(TextField), findsNothing);
       expect(find.text('确定'), findsNothing);
+      expect(find.text('尾页'), findsNothing);
       await tester.tap(_button('下一页'));
       expect(changes, [9]);
       await _pumpBar(tester, count: 50, totalKnown: false);
@@ -367,6 +368,27 @@ void main() {
       await _pumpBar(tester, count: 20, current: 8);
       expect(find.text('共 20 页'), findsOneWidget);
       expect(find.byType(TextField), findsNothing);
+    });
+  });
+
+  group('尾页直达', () {
+    testWidgets('总数已知时显示尾页，点击直达最后一页', (tester) async {
+      final changes = <int>[];
+      await _pumpBar(tester, count: 12, current: 1, onChanged: changes.add);
+      expect(_enabled(tester, '尾页'), isTrue);
+      await tester.tap(_button('尾页'));
+      expect(changes, [12]);
+      await _pumpBar(tester, count: 12, current: 12, onChanged: changes.add);
+      expect(_enabled(tester, '尾页'), isFalse, reason: '已在末页');
+      await tester.tap(_button('尾页'));
+      expect(changes, [12]);
+    });
+
+    testWidgets('单页与加载中不提供尾页', (tester) async {
+      await _pumpBar(tester, count: 1);
+      expect(find.text('尾页'), findsNothing);
+      await _pumpBar(tester, count: 12, current: 1, loading: true);
+      expect(_enabled(tester, '尾页'), isFalse);
     });
   });
 

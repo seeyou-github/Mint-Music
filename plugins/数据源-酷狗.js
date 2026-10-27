@@ -67,6 +67,26 @@ function getJson(url, headers) {
     .then(decodeBody);
 }
 
+/** 接口总数容错解析：只接受非负整数，异常一律视为「未知」。 */
+function totalOf(value) {
+  if (typeof value !== 'number' && typeof value !== 'string') return null;
+  if (typeof value === 'string' && !value.trim()) return null;
+  var total = Number(value);
+  return isFinite(total) && total >= 0 && Math.floor(total) === total &&
+    total <= 9007199254740991 ? total : null;
+}
+
+/**
+ * 是否翻到头了。有总数按总数判；接口给 more / hasMore 时以它为准；
+ * 都没有才退化成「本页不足一页」。
+ */
+function isPageEnd(total, offset, count, limit, body) {
+  if (total !== null) return offset + count >= total;
+  if (typeof body.more === 'boolean') return !body.more;
+  if (typeof body.hasMore === 'boolean') return !body.hasMore;
+  return count < limit;
+}
+
 /* ---------------------------------------------------------------- 字段映射 */
 
 /**
@@ -440,7 +460,7 @@ function fetchLyric(hash, duration) {
 module.exports = {
   pluginInfo: {
     name: '数据源-酷狗',
-    version: '1.1.0',
+    version: '1.2.0',
     author: 'MintMusic',
     description:
       '只提供搜索、歌单分类、榜单、歌单详情的酷狗音乐数据源；' +
@@ -518,7 +538,14 @@ module.exports = {
     return fetchSearch(keyword, currentPage, size).then(function (body) {
       var data = body.data || {};
       var list = data.lists || data.info || [];
-      return JSON.stringify({ list: songsOf(list), page: currentPage });
+      var total = totalOf(data.total);
+      return JSON.stringify({
+        list: songsOf(list),
+        page: currentPage,
+        total: total,
+        limit: size,
+        isEnd: isPageEnd(total, size * (currentPage - 1), list.length, size, data)
+      });
     });
   },
 
@@ -526,7 +553,9 @@ module.exports = {
   searchPlaylists: function (keyword, page) {
     var size = 30;
     return fetchPlaylistSearch(keyword, page || 1, size).then(function (body) {
-      var list = (body.data && body.data.info) || [];
+      var data = body.data || {};
+      var list = data.info || [];
+      var total = totalOf(data.total);
       var playlists = [];
       for (var i = 0; i < list.length; i++) {
         var item = list[i] || {};
@@ -542,7 +571,9 @@ module.exports = {
         });
       }
       return JSON.stringify({
-        isEnd: list.length < size,
+        total: total,
+        limit: size,
+        isEnd: isPageEnd(total, size * ((page || 1) - 1), list.length, size, data),
         playlists: playlists
       });
     });
@@ -586,7 +617,8 @@ module.exports = {
 
   /* --------------------------------------------------- 分类歌单（歌单卡片） */
   getRecommendSheetsByTag: function (tagId, page) {
-    var size = 30;
+    // getSpecial 固定每页 20 条，且不返回总数，只能按「不足一页即到底」判
+    var size = 20;
     return fetchSheets(tagId || '', page || 1).then(function (body) {
       var list = body.special_db || [];
       var playlists = [];
@@ -621,6 +653,8 @@ module.exports = {
       }
       return Promise.all(pending).then(function () {
         return JSON.stringify({
+          total: null,
+          limit: size,
           isEnd: playlists.length < size,
           playlists: playlists
         });
@@ -660,6 +694,8 @@ module.exports = {
   /* ------------------------------------------------------------- 榜单详情 */
   getTopListDetail: function (id, page) {
     var rankId = String(id || '').replace(/^kg_/, '');
+    var currentPage = page || 1;
+    var size = 100;
     // 榜单歌曲接口不返回榜单名 / 封面，从榜单列表里补一次
     var metaPromise = fetchTopLists()
       .then(function (body) {
@@ -675,14 +711,25 @@ module.exports = {
         return null;
       });
     return Promise.all([
-      fetchTopListDetail(rankId, page || 1),
+      fetchTopListDetail(rankId, currentPage),
       metaPromise
     ]).then(function (results) {
       var data = (results[0] && results[0].data) || {};
       var meta = results[1] || {};
       var songs = songsOf(data.info || data.list || []);
+      // data.total 是榜单歌曲总数（可到 500），100 首一页翻页拿全
+      var total = totalOf(data.total);
+      if (total === null) total = songs.length;
       return JSON.stringify({
-        isEnd: true,
+        total: total,
+        limit: size,
+        isEnd: isPageEnd(
+          total,
+          size * (currentPage - 1),
+          songs.length,
+          size,
+          data
+        ),
         sheet: {
           title: decodeName(meta.rankname || data.rankname || '排行榜'),
           coverUrl: normalizeImage(
@@ -694,7 +741,8 @@ module.exports = {
             '400'
           ),
           description: String(data.intro || ''),
-          author: ''
+          author: '',
+          songCount: total
         },
         songs: songs
       });
@@ -705,6 +753,7 @@ module.exports = {
   getMusicSheetInfo: function (sheetId, page) {
     var specialId = String(sheetId || '').replace(/^kg_/, '');
     var currentPage = page || 1;
+    var size = 1000;
     return Promise.all([
       fetchSpecialSongs(specialId, currentPage),
       currentPage === 1 ? fetchSpecialInfo(specialId) : Promise.resolve(null)
@@ -713,17 +762,30 @@ module.exports = {
       var info = results[1] || {};
       var data = body.data || {};
       var songs = songsOf(data.info || data.list || []);
-      var total = Number(info.songcount || data.total || songs.length);
+      // 歌曲数优先取 special/info 的 songcount，其次 special/song 的
+      // data.total；只有第一页才允许用「本页条数」兜底，翻页时宁缺毋滥。
+      var total = totalOf(info.songcount);
+      if (total === null) total = totalOf(data.total);
+      if (total === null && currentPage === 1) total = songs.length;
       // special/song 不返回专辑信息：封面 / 歌名 / 歌手用 album_audio 批量补，
       // 否则歌单详情页的歌曲列表整列都是灰底音符占位图。
       return hydrateSongs(songs).then(function () {
         return JSON.stringify({
-          isEnd: songs.length >= total || songs.length < 1000,
+          total: total,
+          limit: size,
+          isEnd: isPageEnd(
+            total,
+            size * (currentPage - 1),
+            songs.length,
+            size,
+            data
+          ),
           sheet: {
             title: decodeName(info.specialname || data.specialname || ''),
             coverUrl: normalizeImage(info.imgurl || data.imgurl || '', '400'),
             description: decodeName(info.intro || ''),
-            author: String(info.nickname || '')
+            author: String(info.nickname || ''),
+            songCount: total === null ? 0 : total
           },
           songs: songs
         });

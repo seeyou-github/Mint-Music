@@ -1,0 +1,467 @@
+// QQ / 酷我 / 酷狗 数据源插件：各位置 total 与 isEnd 输出契约。
+// 与 netease_data_source_test.cjs 同一套夹具方式：接管 cerumusic.request，
+// 按 URL 特征路由到固定响应，不发起真实网络请求。
+'use strict';
+
+const assert = require('node:assert/strict');
+const { readFileSync } = require('node:fs');
+const path = require('node:path');
+const test = require('node:test');
+const vm = require('node:vm');
+
+const PLUGIN_DIR = path.resolve(__dirname, '../plugins');
+
+function loadPlugin(fileName, route) {
+  const requests = [];
+  const script = new vm.Script(readFileSync(path.join(PLUGIN_DIR, fileName), 'utf8'), {
+    filename: fileName
+  });
+  const context = {
+    module: { exports: {} },
+    cerumusic: {
+      async request(url, options) {
+        const parsed = new URL(url);
+        const request = { url: parsed, method: options.method || 'GET', form: options.form };
+        requests.push(request);
+        const body = route(parsed, request, requests.length);
+        if (body === undefined) throw new Error('夹具未覆盖: ' + url);
+        return { body: JSON.stringify(body) };
+      }
+    }
+  };
+  script.runInNewContext(context);
+  return { plugin: context.module.exports, requests };
+}
+
+async function resultOf(promise) {
+  return JSON.parse(await promise);
+}
+
+/** musicu.fcg 的 data 参数里按模块名找业务节点。 */
+function musicuNode(request, moduleName) {
+  const data = JSON.parse(request.url.searchParams.get('data') || '{}');
+  for (const value of Object.values(data)) {
+    if (value && value.module === moduleName) return value;
+  }
+  return null;
+}
+
+function range(count, start, make) {
+  return Array.from({ length: count }, (_, i) => make(start + i));
+}
+
+/* ------------------------------------------------------------------ QQ 音乐 */
+
+function qqSong(index) {
+  return {
+    mid: 'M' + index,
+    songname: '歌' + index,
+    interval: 180,
+    singer: [{ name: '歌手' }],
+    album: { mid: 'AM', name: '专辑' }
+  };
+}
+
+test('QQ：搜索歌曲 / 歌单搜索输出 totalnum / display_num', async () => {
+  const { plugin, requests } = loadPlugin('数据源-QQ.js', (url) => {
+    if (url.pathname.includes('search_for_qq_cp')) {
+      const page = Number(url.searchParams.get('p'));
+      return {
+        data: {
+          song: {
+            list: range(30, (page - 1) * 30 + 1, qqSong),
+            totalnum: 600,
+            curnum: 30
+          }
+        }
+      };
+    }
+    if (url.pathname.includes('client_music_search_songlist')) {
+      const page = Number(url.searchParams.get('page_no')) + 1;
+      return {
+        data: {
+          list: [{ dissid: 'D' + page, dissname: '歌单' }],
+          display_num: 91
+        }
+      };
+    }
+    return undefined;
+  });
+
+  const first = await resultOf(plugin.search('tx', '周杰伦', 1, 30));
+  assert.equal(first.total, 600);
+  assert.equal(first.isEnd, false);
+  assert.equal(requests[0].url.searchParams.get('p'), '1');
+
+  const last = await resultOf(plugin.search('tx', '周杰伦', 20, 30));
+  assert.equal(last.isEnd, true, '570 + 30 >= 600');
+
+  const playlists = await resultOf(plugin.searchPlaylists('华语', 4));
+  assert.equal(playlists.total, 91);
+  assert.equal(playlists.isEnd, true, '90 + 1 >= 91（短页）');
+  assert.equal(requests[2].url.searchParams.get('page_no'), '3');
+  assert.equal(playlists.playlists[0].id, 'D4');
+});
+
+test('QQ：分类歌单带分类取 content.total_cnt，不带分类取 data.total', async () => {
+  const { plugin, requests } = loadPlugin('数据源-QQ.js', (url, request) => {
+    if (musicuNode(request, 'playlist.PlayListCategoryServer')) {
+      return {
+        playlist: {
+          data: {
+            content: {
+              total_cnt: 10,
+              v_item: [{ basic: { tid: 1, title: '歌单' } }]
+            }
+          }
+        }
+      };
+    }
+    if (musicuNode(request, 'playlist.PlayListPlazaServer')) {
+      return {
+        playlist: { data: { total: 11617, v_playlist: [{ tid: 2, title: '歌单' }] } }
+      };
+    }
+    return undefined;
+  });
+
+  const tagged = await resultOf(plugin.getRecommendSheetsByTag('3316', 1));
+  assert.equal(tagged.total, 10);
+  assert.equal(tagged.isEnd, false, '第 1 页 1 条 < total=10');
+  assert.equal(
+    musicuNode(requests[0], 'playlist.PlayListCategoryServer').param.page,
+    0,
+    '分类内容接口 page 从 0 开始'
+  );
+
+  const plaza = await resultOf(plugin.getRecommendSheetsByTag('', 3));
+  assert.equal(plaza.total, 11617);
+  assert.equal(plaza.isEnd, false);
+  assert.equal(plaza.limit, 36);
+});
+
+test('QQ：榜单 / 歌单详情透出 total 与 sheet.songCount', async () => {
+  const { plugin } = loadPlugin('数据源-QQ.js', (url, request) => {
+    if (musicuNode(request, 'musicToplist.ToplistInfoServer')) {
+      return {
+        toplist: {
+          data: {
+            songInfoList: [qqSong(1), qqSong(2)],
+            data: { totalNum: 300, title: '巅峰榜' }
+          }
+        }
+      };
+    }
+    if (musicuNode(request, 'music.srfDissInfo.aiDissInfo')) {
+      return {
+        req: {
+          data: {
+            total_song_num: 30,
+            dirinfo: { title: '歌单', songnum: 30 },
+            songlist: [qqSong(1)]
+          }
+        }
+      };
+    }
+    return undefined;
+  });
+
+  const board = await resultOf(plugin.getTopListDetail('26', 1));
+  assert.equal(board.total, 300);
+  assert.equal(board.sheet.songCount, 300);
+  assert.equal(board.isEnd, true, '榜单一次全量返回');
+
+  const sheet = await resultOf(plugin.getMusicSheetInfo('8825915544', 1));
+  assert.equal(sheet.total, 30);
+  assert.equal(sheet.sheet.songCount, 30);
+  assert.equal(sheet.isEnd, true);
+});
+
+/* -------------------------------------------------------------------- 酷我 */
+
+function kwSong(index) {
+  // 带封面字段，避免触发逐首补图请求
+  return {
+    MUSICRID: 'MUSIC_' + index,
+    SONGNAME: '歌' + index,
+    ARTIST: '歌手',
+    DURATION: 180,
+    web_albumpic_short: 'cover/' + index + '.jpg'
+  };
+}
+
+test('酷我：搜索歌曲 / 歌单 / 专辑 / 作者的 TOTAL 与大小写差异', async () => {
+  const { plugin, requests } = loadPlugin('数据源-酷我.js', (url) => {
+    const params = url.searchParams;
+    if (url.hostname !== 'search.kuwo.cn') return undefined;
+    const page = Number(params.get('pn')) + 1;
+    if (params.get('ft') === 'music') {
+      return { TOTAL: 3292, abslist: range(30, (page - 1) * 30 + 1, kwSong) };
+    }
+    if (params.get('ft') === 'playlist') {
+      return {
+        TOTAL: 150,
+        abslist: range(30, (page - 1) * 30 + 1, (i) => ({
+          playlistid: i,
+          name: '歌单',
+          songnum: 9,
+          nickname: '作者'
+        }))
+      };
+    }
+    if (params.get('ft') === 'album') {
+      // 专辑接口的总数是小写 total
+      return { total: 106, albumlist: [{ albumid: page, name: '专辑', artist: '歌手' }] };
+    }
+    if (params.get('ft') === 'artist') {
+      // 作者接口的总数是大写 TOTAL
+      return {
+        TOTAL: 58,
+        abslist: range(30, (page - 1) * 30 + 1, (i) => ({ ARTISTID: i, ARTIST: '周杰伦' }))
+      };
+    }
+    return undefined;
+  });
+
+  const songs = await resultOf(plugin.search('kw', '周杰伦', 1, 30));
+  assert.equal(songs.total, 3292);
+  assert.equal(songs.isEnd, false);
+  assert.equal(songs.list[0].id, '1');
+
+  const playlists = await resultOf(plugin.searchPlaylists('华语', 5));
+  assert.equal(playlists.total, 150);
+  assert.equal(playlists.isEnd, true, '120 + 30 >= 150');
+  assert.equal(playlists.playlists[0].id, '121');
+
+  const albums = await resultOf(plugin.searchTyped('kw', '周杰伦', 1, 30, 'album'));
+  assert.equal(albums.total, 106);
+  assert.equal(albums.isEnd, false);
+
+  const artists = await resultOf(plugin.searchTyped('kw', '周杰伦', 2, 30, 'artist'));
+  assert.equal(artists.total, 58, '大写 TOTAL 也要读到');
+  assert.equal(artists.isEnd, true, '30 + 30 >= 58');
+  assert.equal(artists.list[0].id, '31');
+
+  assert.equal(requests[0].url.searchParams.get('ft'), 'music');
+  assert.equal(requests[3].url.searchParams.get('ft'), 'artist');
+});
+
+test('酷我：分类歌单取 data.total，专辑 / 作者详情透出顶层 total', async () => {
+  const { plugin, requests } = loadPlugin('数据源-酷我.js', (url) => {
+    const params = url.searchParams;
+    if (url.hostname === 'wapi.kuwo.cn') {
+      return {
+        data: {
+          total: 1753,
+          data: [{ id: 9, name: '歌单', digest: '8', total: 17, uname: '作者' }]
+        }
+      };
+    }
+    if (url.hostname === 'search.kuwo.cn') {
+      if (params.get('stype') === 'albuminfo') {
+        return { songnum: 12, name: '专辑', artist: '歌手', musiclist: [kwSong(1), kwSong(2)] };
+      }
+      if (params.get('stype') === 'artist2music') {
+        const page = Number(params.get('pn')) + 1;
+        const count = page === 3 ? 50 : 100;
+        return {
+          total: 250,
+          musiclist: range(count, (page - 1) * 100 + 1, kwSong)
+        };
+      }
+    }
+    return undefined;
+  });
+
+  const sheets = await resultOf(plugin.getRecommendSheetsByTag('1848-8', 1));
+  assert.equal(sheets.total, 1753);
+  assert.equal(sheets.isEnd, false);
+  assert.equal(sheets.playlists[0].id, 'digest-8__9');
+
+  const album = await resultOf(plugin.getAlbumInfo('kw', { albumid: '1' }, 1));
+  assert.equal(album.total, 12);
+  assert.equal(album.isEnd, true, '专辑一次返回全部歌曲');
+
+  const worksFirst = await resultOf(
+    plugin.getArtistWorks('kw', { artistid: '336' }, 1, 'music')
+  );
+  assert.equal(worksFirst.total, 250);
+  assert.equal(worksFirst.artistItem.worksNum, 250);
+  assert.equal(worksFirst.isEnd, false);
+  const typedCall = requests[requests.length - 1];
+  assert.equal(typedCall.url.searchParams.get('pn'), '0');
+  assert.equal(typedCall.url.searchParams.get('rn'), '100');
+
+  const worksLast = await resultOf(
+    plugin.getArtistWorks('kw', { artistid: '336' }, 3, 'music')
+  );
+  assert.equal(worksLast.isEnd, true, '200 + 50 >= 250');
+});
+
+test('酷我：歌单详情按 pn 翻页（total=1877 超过单页 1000），榜单按 num 翻页', async () => {
+  const { plugin, requests } = loadPlugin('数据源-酷我.js', (url) => {
+    const params = url.searchParams;
+    if (url.hostname === 'nplserver.kuwo.cn') {
+      const page = Number(params.get('pn')) + 1;
+      return {
+        total: 1877,
+        musiclist: range(page === 2 ? 877 : 1000, (page - 1) * 1000 + 1, kwSong),
+        title: '华语',
+        info: '简介'
+      };
+    }
+    if (url.hostname === 'kbangserver.kuwo.cn') {
+      const page = Number(params.get('pn')) + 1;
+      return {
+        num: 300,
+        musiclist: range(100, (page - 1) * 100 + 1, kwSong),
+        title: '飙升榜'
+      };
+    }
+    return undefined;
+  });
+
+  const sheetFirst = await resultOf(plugin.getMusicSheetInfo('3690679141', 1));
+  assert.equal(sheetFirst.total, 1877);
+  assert.equal(sheetFirst.sheet.songCount, 1877);
+  assert.equal(sheetFirst.isEnd, false, '第 1 页 1000 < 1877');
+  assert.equal(requests[0].url.searchParams.get('pn'), '0');
+  assert.equal(requests[0].url.searchParams.get('rn'), '1000');
+
+  const sheetSecond = await resultOf(plugin.getMusicSheetInfo('3690679141', 2));
+  assert.equal(sheetSecond.isEnd, true, '1000 + 877 >= 1877');
+  assert.equal(requests[1].url.searchParams.get('pn'), '1', '第 2 页 pn=1');
+  assert.equal(sheetSecond.songs[0].id, '1001');
+
+  const boardLast = await resultOf(plugin.getTopListDetail('93', 3));
+  assert.equal(boardLast.total, 300);
+  assert.equal(boardLast.sheet.songCount, 300);
+  assert.equal(boardLast.isEnd, true, '200 + 100 >= 300');
+  assert.equal(requests[requests.length - 1].url.searchParams.get('pn'), '2');
+});
+
+/* -------------------------------------------------------------------- 酷狗 */
+
+function kgSong(index) {
+  return {
+    FileHash: 'HASH' + index,
+    SongName: '歌' + index,
+    SingerName: '歌手',
+    Duration: 180,
+    album_info: { sizable_cover: 'http://img/cover/{size}.jpg' }
+  };
+}
+
+test('酷狗：搜索歌曲 / 歌单取 data.total', async () => {
+  const { plugin, requests } = loadPlugin('数据源-酷狗.js', (url) => {
+    if (url.hostname === 'songsearch.kugou.com') {
+      const page = Number(url.searchParams.get('page'));
+      return { data: { total: 480, lists: range(30, (page - 1) * 30 + 1, kgSong) } };
+    }
+    if (url.hostname === 'msearchretry.kugou.com') {
+      const page = Number(url.searchParams.get('page'));
+      return {
+        data: {
+          total: 480,
+          info: range(30, (page - 1) * 30 + 1, (i) => ({
+            specialid: i,
+            specialname: '歌单',
+            songcount: 9,
+            nickname: '作者'
+          }))
+        }
+      };
+    }
+    return undefined;
+  });
+
+  const songs = await resultOf(plugin.search('kg', '周杰伦', 1, 30));
+  assert.equal(songs.total, 480);
+  assert.equal(songs.isEnd, false);
+  assert.equal(songs.list[0].id, 'HASH1');
+
+  const playlists = await resultOf(plugin.searchPlaylists('华语', 16));
+  assert.equal(playlists.total, 480);
+  assert.equal(playlists.isEnd, true, '450 + 30 >= 480');
+  assert.equal(requests[1].url.searchParams.get('page'), '16');
+  assert.equal(playlists.playlists[0].id, '451');
+});
+
+test('酷狗：分类歌单接口无总数（total=null），固定 20 条/页判底', async () => {
+  const { plugin } = loadPlugin('数据源-酷狗.js', (url) => {
+    if (url.hostname === 'www2.kugou.kugou.com') {
+      const page = Number(url.searchParams.get('p'));
+      return {
+        status: 1,
+        special_db: range(page === 1 ? 20 : 8, page * 100, (i) => ({
+          specialid: i,
+          specialname: '歌单',
+          song_count: 5,
+          nickname: '作者'
+        }))
+      };
+    }
+    return undefined;
+  });
+
+  const first = await resultOf(plugin.getRecommendSheetsByTag('', 1));
+  assert.equal(first.total, null, 'getSpecial 不返回总数');
+  assert.equal(first.limit, 20);
+  assert.equal(first.isEnd, false, '整页 20 条 → 还有下一页');
+  assert.equal(first.playlists.length, 20);
+
+  const second = await resultOf(plugin.getRecommendSheetsByTag('', 2));
+  assert.equal(second.isEnd, true, '短页 8 条 → 到底');
+  assert.equal(second.playlists.length, 8);
+});
+
+test('酷狗：歌单详情 songcount / data.total，榜单 data.total=500 可翻页', async () => {
+  const rankSongPages = [];
+  const { plugin } = loadPlugin('数据源-酷狗.js', (url) => {
+    if (url.pathname.includes('/special/song')) {
+      const page = Number(url.searchParams.get('page'));
+      return {
+        data: {
+          total: 1234,
+          info: range(page === 1 ? 1000 : 234, (page - 1) * 1000 + 1, kgSong)
+        }
+      };
+    }
+    if (url.pathname.includes('/special/info')) {
+      return { data: { songcount: 1234, specialname: '歌单', nickname: '作者' } };
+    }
+    if (url.pathname.includes('/rank/list')) {
+      return {
+        data: { info: [{ isvol: '1', rankid: 8888, rankname: 'TOP500', banner_9: 'http://img/{size}' }] }
+      };
+    }
+    if (url.pathname.includes('/rank/song')) {
+      const page = Number(url.searchParams.get('page'));
+      rankSongPages.push(page);
+      return {
+        data: { total: 500, info: range(100, (page - 1) * 100 + 1, kgSong) }
+      };
+    }
+    return undefined;
+  });
+
+  const sheetFirst = await resultOf(plugin.getMusicSheetInfo('64463', 1));
+  assert.equal(sheetFirst.total, 1234);
+  assert.equal(sheetFirst.sheet.songCount, 1234);
+  assert.equal(sheetFirst.isEnd, false, '第 1 页 1000 < 1234');
+  assert.equal(sheetFirst.songs.length, 1000);
+
+  const sheetSecond = await resultOf(plugin.getMusicSheetInfo('64463', 2));
+  assert.equal(sheetSecond.total, 1234, '第 2 页从 data.total 取总数');
+  assert.equal(sheetSecond.isEnd, true, '1000 + 234 >= 1234');
+  assert.equal(sheetSecond.songs.length, 234);
+
+  const boardFirst = await resultOf(plugin.getTopListDetail('8888', 1));
+  assert.equal(boardFirst.total, 500);
+  assert.equal(boardFirst.sheet.title, 'TOP500');
+  assert.equal(boardFirst.isEnd, false, '榜单不再一次判死，100 < 500');
+
+  const boardLast = await resultOf(plugin.getTopListDetail('8888', 5));
+  assert.equal(boardLast.isEnd, true, '400 + 100 >= 500');
+  assert.deepEqual(rankSongPages, [1, 5], 'rank/song 的 page 参数逐页递增');
+});

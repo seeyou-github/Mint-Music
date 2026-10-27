@@ -65,6 +65,26 @@ function getJson(url, headers) {
     .then(decodeBody);
 }
 
+/** 接口总数容错解析：只接受非负整数，异常一律视为「未知」。 */
+function totalOf(value) {
+  if (typeof value !== 'number' && typeof value !== 'string') return null;
+  if (typeof value === 'string' && !value.trim()) return null;
+  var total = Number(value);
+  return isFinite(total) && total >= 0 && Math.floor(total) === total &&
+    total <= 9007199254740991 ? total : null;
+}
+
+/**
+ * 是否翻到头了。有总数按总数判；接口给 more / hasMore 时以它为准；
+ * 都没有才退化成「本页不足一页」（QQ 分类歌单接口不回总数时只能这么判）。
+ */
+function isPageEnd(total, offset, count, limit, body) {
+  if (total !== null) return offset + count >= total;
+  if (typeof body.more === 'boolean') return !body.more;
+  if (typeof body.hasMore === 'boolean') return !body.hasMore;
+  return count < limit;
+}
+
 /** musicu.fcg 的通用调用（GET + data=JSON，与内置源一致，无需签名）。 */
 function musicu(data, modules) {
   var url =
@@ -367,7 +387,7 @@ function base64Decode(text) {
 module.exports = {
   pluginInfo: {
     name: '数据源-QQ',
-    version: '1.1.0',
+    version: '1.2.0',
     author: 'MintMusic',
     description:
       '只提供搜索、歌单分类、榜单、歌单详情的 QQ音乐数据源；' +
@@ -436,8 +456,16 @@ module.exports = {
     var currentPage = page || 1;
     return fetchSearch(keyword, currentPage, size).then(function (body) {
       var data = body.data || {};
-      var list = (data.song && data.song.list) || [];
-      return JSON.stringify({ list: songsOf(list), page: currentPage });
+      var song = data.song || {};
+      var list = song.list || [];
+      var total = totalOf(song.totalnum);
+      return JSON.stringify({
+        list: songsOf(list),
+        page: currentPage,
+        total: total,
+        limit: size,
+        isEnd: isPageEnd(total, size * (currentPage - 1), list.length, size, data)
+      });
     });
   },
 
@@ -450,6 +478,8 @@ module.exports = {
     ) {
       var data = body.data || {};
       var list = data.list || [];
+      // 该接口的总数叫 display_num（不是 total）
+      var total = totalOf(data.display_num);
       var playlists = [];
       for (var i = 0; i < list.length; i++) {
         var item = list[i] || {};
@@ -466,7 +496,12 @@ module.exports = {
           author: creator.name ? String(creator.name) : ''
         });
       }
-      return JSON.stringify({ isEnd: list.length < size, playlists: playlists });
+      return JSON.stringify({
+        total: total,
+        limit: size,
+        isEnd: isPageEnd(total, size * (currentPage - 1), list.length, size, data),
+        playlists: playlists
+      });
     });
   },
 
@@ -516,6 +551,11 @@ module.exports = {
     var currentPage = page || 1;
     return fetchSheetsByTag(tagId || '', currentPage).then(function (body) {
       var data = (body.playlist && body.playlist.data) || {};
+      // 带分类走 get_category_content，总数在 content.total_cnt；
+      // 不带分类走 get_playlist_by_tag，总数在 data.total。
+      var total = tagId
+        ? totalOf(data.content && data.content.total_cnt)
+        : totalOf(data.total);
       var playlists = [];
       if (tagId) {
         var content = (data.content && data.content.v_item) || [];
@@ -555,8 +595,10 @@ module.exports = {
         }
       }
       return JSON.stringify({
-        // 分类歌单按页返回，不足一页即到底
-        isEnd: playlists.length < 36,
+        // 分类歌单接口不回总数时按「不足一页即到底」兜底
+        total: total,
+        limit: 36,
+        isEnd: isPageEnd(total, 36 * (currentPage - 1), playlists.length, 36, data),
         playlists: playlists
       });
     });
@@ -589,13 +631,18 @@ module.exports = {
       var data = (body.toplist && body.toplist.data) || {};
       var info = data.data || data.topInfo || {};
       var songs = songsOf(data.songInfoList || []);
+      // 榜单一次全量返回（toplist.data.data.totalNum），无需翻页
+      var total = totalOf(data.data && data.data.totalNum);
+      if (total === null) total = songs.length;
       return JSON.stringify({
         isEnd: true,
+        total: total,
         sheet: {
           title: info.title || info.topTitle || '排行榜',
           coverUrl: info.headPicUrl || info.frontPicUrl || '',
           description: info.updateTime || '',
-          author: ''
+          author: '',
+          songCount: total
         },
         songs: songs
       });
@@ -609,15 +656,21 @@ module.exports = {
       var data = (body.req && body.req.data) || {};
       var dirinfo = data.dirinfo || {};
       var songs = songsOf(data.songlist || []);
+      // 请求带 song_num: 1000 一次取全量；总数优先取 total_song_num
+      var total = totalOf(data.total_song_num);
+      if (total === null) total = totalOf(dirinfo.songnum);
+      if (total === null) total = songs.length;
       return JSON.stringify({
         isEnd: true,
+        total: total,
         sheet: {
           title: dirinfo.title || '',
           coverUrl: String(dirinfo.picurl || '').replace(/\{size\}/g, '400'),
           description: stripBr(dirinfo.desc),
           author: dirinfo.creator && dirinfo.creator.nick
             ? String(dirinfo.creator.nick)
-            : ''
+            : '',
+          songCount: total
         },
         songs: songs
       });
