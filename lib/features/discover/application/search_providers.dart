@@ -22,6 +22,10 @@ final searchQueryProvider = StateProvider<String>((ref) => '');
 /// 避免退出后再次打开时搜索栏残留上一次搜索。
 final pendingSearchQueryProvider = StateProvider<String?>((ref) => null);
 
+/// 与 [pendingSearchQueryProvider] 配套：这次跳转希望落到的结果标签页。
+/// 为空时按「歌曲」处理；消费待搜索词时一并清空。
+final pendingSearchTabProvider = StateProvider<SearchTab?>((ref) => null);
+
 /// 搜索页当前使用的音源。
 ///
 /// 默认取「发现页正在使用的音源」；搜索页进入时会再同步一次，页内切换音源

@@ -13,6 +13,7 @@ import '../../core/theme/app_font_manager.dart';
 import '../../core/theme/theme_provider.dart';
 import '../../core/constants/app_routes.dart';
 import '../../core/l10n/l10n.dart';
+import '../../features/discover/application/search_providers.dart';
 import '../../features/library/application/playlist_providers.dart';
 import '../../features/library/domain/models/playlist.dart';
 import '../../features/library/domain/models/recently_played.dart';
@@ -582,6 +583,9 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
   }
 
   Widget _buildSongInfo(ThemeColors colors) {
+    // 歌曲列表项的「更多」：不显示封面，改成歌曲 / 歌手 / 专辑三行。
+    if (!widget.compactMode) return _buildMetaRows(colors);
+
     final title = Text(
       widget.song.title,
       style: TextStyle(
@@ -603,21 +607,17 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 // 播放页「更多」：点歌曲名搜索这首歌，点歌手名搜索该歌手。
-                if (widget.compactMode)
-                  GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: () => _searchFor(widget.song.title),
-                    child: title,
-                  )
-                else
-                  title,
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => _searchFor(widget.song.title),
+                  child: title,
+                ),
                 Text.rich(
                   TextSpan(
                     children: [
                       TextSpan(
                         text: widget.song.artist,
-                        recognizer:
-                            widget.compactMode && widget.song.artist.isNotEmpty
+                        recognizer: widget.song.artist.isNotEmpty
                             ? _artistTap
                             : null,
                       ),
@@ -635,6 +635,85 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
         ],
       ),
     );
+  }
+
+  /// 歌曲 / 歌手 / 专辑三行（歌曲列表项「更多」顶部）。
+  ///
+  /// 三行都可点击：歌曲名、歌手名直接搜索；专辑能拿到 id 时打开专辑详情，
+  /// 否则按专辑名到「专辑」分类里搜索。专辑名缺失时不显示专辑行。
+  Widget _buildMetaRows(ThemeColors colors) {
+    final song = widget.song;
+    final album = _albumName;
+    return Column(
+      children: [
+        _buildMetaRow(
+          colors,
+          label: context.tr('歌曲'),
+          value: song.title,
+          onTap: () => _searchFor(song.title),
+        ),
+        if (song.artist.trim().isNotEmpty)
+          _buildMetaRow(
+            colors,
+            label: context.tr('歌手'),
+            value: song.artist,
+            onTap: _searchArtist,
+          ),
+        if (album != null)
+          _buildMetaRow(
+            colors,
+            label: context.tr('专辑'),
+            value: '《$album》',
+            onTap: _openAlbum,
+          ),
+      ],
+    );
+  }
+
+  Widget _buildMetaRow(
+    ThemeColors colors, {
+    required String label,
+    required String value,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.lg,
+          vertical: AppSpacing.md,
+        ),
+        child: Row(
+          children: [
+            Icon(
+              Icons.format_list_bulleted,
+              size: 20,
+              color: colors.textSecondary,
+            ),
+            const SizedBox(width: AppSpacing.md),
+            Text(
+              '$label：',
+              style: TextStyle(fontSize: 15, color: colors.textSecondary),
+            ),
+            Expanded(
+              child: Text(
+                value,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 15, color: colors.textPrimary),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 可展示、可搜索的专辑名：空值与本地歌曲的「未知专辑」占位都算拿不到。
+  String? get _albumName {
+    final album = widget.song.album.trim();
+    if (album.isEmpty || album == '未知专辑') return null;
+    return album;
   }
 
   /// 「歌曲来源」菜单项（播放页「更多」）：显示当前播放来源，
@@ -753,13 +832,64 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
 
   /// 点歌曲名 / 歌手名：关掉菜单和播放页，打开搜索页并自动搜索。
   void _searchFor(String query) {
-    if (!widget.compactMode) return;
     final trimmed = query.trim();
     if (trimmed.isEmpty) return;
     final context = this.context;
     final container = ProviderScope.containerOf(context, listen: false);
     Navigator.pop(context);
     unawaited(openSearchForQuery(container, trimmed));
+  }
+
+  /// 点专辑：能拿到专辑 id 就直接打开专辑详情页（播放的是这张专辑时用来源
+  /// 里记的 id，内置源歌曲从插件元数据里取），否则按专辑名到「专辑」分类搜。
+  void _openAlbum() {
+    final album = _albumName;
+    if (album == null) return;
+    final context = this.context;
+    final container = ProviderScope.containerOf(context, listen: false);
+    final albumId = _albumIdOf(widget.song);
+    Navigator.pop(context);
+    if (albumId != null) {
+      unawaited(
+        openPlaybackSource(
+          container,
+          type: PlaybackSourceType.album,
+          id: albumId,
+          name: album,
+          song: widget.song,
+          // 已经停在这张专辑页时不要再把它关掉。
+          toggle: false,
+        ),
+      );
+      return;
+    }
+    unawaited(openSearchForQuery(container, album, tab: SearchTab.albums));
+  }
+
+  /// 歌曲数据里能拿到的专辑 id；拿不到返回 null。
+  String? _albumIdOf(Song song) {
+    final lx = song.lx;
+    if (lx != null) {
+      for (final key in const ['albumId', 'albumid']) {
+        final id = (lx[key] ?? '').toString().trim();
+        if (id.isNotEmpty) return id;
+      }
+      for (final key in const ['album', 'al']) {
+        final value = lx[key];
+        if (value is Map) {
+          final id = (value['id'] ?? '').toString().trim();
+          if (id.isNotEmpty) return id;
+        }
+      }
+    }
+    // 正在播放的这首歌就来自这张专辑的详情页：直接用播放来源里记的 id。
+    final playback = PlaybackContext.instance;
+    if (playback.type == PlaybackSourceType.album &&
+        (playback.name ?? '').trim() == song.album.trim()) {
+      final id = (playback.id ?? '').trim();
+      if (id.isNotEmpty) return id;
+    }
+    return null;
   }
 
   Widget _buildCover(ThemeColors colors) {

@@ -90,19 +90,22 @@ Future<void> openPlaybackSource(
   _navigateToSource(container, target, extra, toggle: toggle);
 }
 
-/// 用歌曲名 / 歌手名打开搜索页并自动搜索。
+/// 用歌曲名 / 歌手名 / 专辑名打开搜索页并自动搜索。
 ///
 /// 搜索页进入时读取 [pendingSearchQueryProvider]；如果搜索页已经打开
 /// （播放页盖在上面），搜索页会监听这个待搜索词直接重搜，不会重复压栈。
+/// [tab] 指定结果标签页（默认「歌曲」）。
 Future<void> openSearchForQuery(
   ProviderContainer container,
-  String query,
-) async {
+  String query, {
+  SearchTab? tab,
+}) async {
   final trimmed = query.trim();
   if (trimmed.isEmpty) return;
 
   void start() {
     // 先安排待搜索词：新搜索页在 initState 里消费，已经打开的搜索页监听它。
+    container.read(pendingSearchTabProvider.notifier).state = tab;
     container.read(pendingSearchQueryProvider.notifier).state = trimmed;
     _navigateToSource(container, AppRoutes.search, null, toggle: false);
   }
