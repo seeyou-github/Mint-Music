@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -494,82 +495,85 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
     }
     return SizedBox(
       height: 62,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
-        itemCount: _results.length,
-        separatorBuilder: (_, _) => const SizedBox(width: AppSpacing.sm),
-        itemBuilder: (context, index) {
-          final song = _results[index];
-          final selected = index == _selectedIndex;
-          return GestureDetector(
-            onTap: () => unawaited(_selectResult(index)),
-            child: Container(
-              width: 210,
-              padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(
-                color: colors.surfaceVariant,
-                borderRadius: BorderRadius.circular(AppRadius.md),
-                border: Border.all(
-                  color: selected ? colors.primary : Colors.transparent,
-                ),
-              ),
-              child: Row(
-                children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(AppRadius.sm),
-                    child: SizedBox(
-                      width: 40,
-                      height: 40,
-                      child: MusicCoverImage(
-                        url: song.coverUrl,
-                        songId: song.id,
-                        mediaStoreId: song.mediaStoreId,
-                        fit: BoxFit.cover,
-                        errorWidget: Icon(
-                          Icons.music_note,
-                          size: 18,
-                          color: colors.textHint,
-                        ),
-                      ),
-                    ),
+      child: ScrollConfiguration(
+        behavior: const _ResultsScrollBehavior(),
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+          itemCount: _results.length,
+          separatorBuilder: (_, _) => const SizedBox(width: AppSpacing.sm),
+          itemBuilder: (context, index) {
+            final song = _results[index];
+            final selected = index == _selectedIndex;
+            return GestureDetector(
+              onTap: () => unawaited(_selectResult(index)),
+              child: Container(
+                width: 210,
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: colors.surfaceVariant,
+                  borderRadius: BorderRadius.circular(AppRadius.md),
+                  border: Border.all(
+                    color: selected ? colors.primary : Colors.transparent,
                   ),
-                  const SizedBox(width: AppSpacing.sm),
-                  Expanded(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          song.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w500,
-                            color: selected
-                                ? colors.primary
-                                : colors.textPrimary,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          song.artist,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 11,
+                ),
+                child: Row(
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(AppRadius.sm),
+                      child: SizedBox(
+                        width: 40,
+                        height: 40,
+                        child: MusicCoverImage(
+                          url: song.coverUrl,
+                          songId: song.id,
+                          mediaStoreId: song.mediaStoreId,
+                          fit: BoxFit.cover,
+                          errorWidget: Icon(
+                            Icons.music_note,
+                            size: 18,
                             color: colors.textHint,
                           ),
                         ),
-                      ],
+                      ),
                     ),
-                  ),
-                ],
+                    const SizedBox(width: AppSpacing.sm),
+                    Expanded(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            song.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                              color: selected
+                                  ? colors.primary
+                                  : colors.textPrimary,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            song.artist,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: colors.textHint,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-          );
-        },
+            );
+          },
+        ),
       ),
     );
   }
@@ -650,4 +654,20 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
       ),
     );
   }
+}
+
+/// Material 默认只允许触摸 / 触控笔拖动横向列表，桌面端要用鼠标拖动
+/// 搜索结果，需要把 mouse / trackpad 也加进来。
+class _ResultsScrollBehavior extends MaterialScrollBehavior {
+  const _ResultsScrollBehavior();
+
+  @override
+  Set<PointerDeviceKind> get dragDevices => const {
+    PointerDeviceKind.touch,
+    PointerDeviceKind.stylus,
+    PointerDeviceKind.invertedStylus,
+    PointerDeviceKind.mouse,
+    PointerDeviceKind.trackpad,
+    PointerDeviceKind.unknown,
+  };
 }
