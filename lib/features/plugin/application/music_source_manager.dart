@@ -543,8 +543,8 @@ class MusicSourceManager {
   ///
   /// 由设置页在启动加载 / 用户切换时同步进来：开启时插件音源返回的
   /// 会员专属歌曲（`isVipExclusive`，如 bilibili 充电专属）在解析搜索 /
-  /// 详情 / 榜单结果时直接过滤掉；已收藏的歌曲不走这条解析路径，不受
-  /// 影响，仅显示「会员」标签。
+  /// 详情 / 榜单结果时直接过滤掉。已收藏的歌单由收藏详情页按同一开关
+  /// 过滤展示（歌曲仍保留在歌单数据里）。
   bool hideVipExclusiveSongs = true;
 
   /// 用户已安装、且能解析播放地址的插件音源（绑定切换 / 播放详情页的
@@ -1282,7 +1282,8 @@ class MusicSourceManager {
               : song.copyWith(preferredSource: boundPlugin);
         }).toList();
         // 「隐藏B站会员专属歌曲」开启时，插件列表里的会员专属歌曲直接过滤
-        // （搜索 / 专辑 / 作者 / 榜单详情都走这里；收藏不走，仅显示标签）。
+        // （搜索 / 专辑 / 作者 / 榜单详情都走这里；已收藏的歌单由收藏详情页
+        // 按同一开关过滤展示）。
         if (hideVipExclusiveSongs) {
           return songs.where((song) => !song.isVipExclusive).toList();
         }

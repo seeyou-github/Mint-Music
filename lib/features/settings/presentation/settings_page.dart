@@ -1939,7 +1939,7 @@ class _PlaybackContent extends ConsumerWidget {
         SettingRow(
           icon: Icons.workspace_premium_outlined,
           title: '隐藏B站会员专属歌曲',
-          subtitle: '充电专属 / 大会员专享作品不出现在歌曲列表，已收藏的仅显示「会员」标签',
+          subtitle: '充电专属 / 大会员专享作品不出现在歌曲列表，已收藏的歌单也按此开关隐藏',
           trailing: Switch(
             value: hideVipExclusive,
             onChanged: (v) {
@@ -1949,7 +1949,7 @@ class _PlaybackContent extends ConsumerWidget {
                 v,
                 (s) => s.setHideVipExclusiveSongs(v),
               );
-              // 过滤在音源管理器解析插件歌曲列表时生效，切换后立即同步。
+              // 音源管理器解析插件列表时过滤；收藏详情页监听 provider 立即重算。
               ref.read(musicSourceManagerProvider).hideVipExclusiveSongs = v;
             },
             activeTrackColor: colors.primary.withValues(alpha: 0.3),

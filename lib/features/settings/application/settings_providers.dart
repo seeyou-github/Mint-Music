@@ -39,9 +39,9 @@ final markPlayedStatusProvider = StateProvider<bool>((ref) => true);
 /// 隐藏B站会员专属歌曲（默认开启）。
 ///
 /// 开启时插件音源（如 bilibili）返回的会员专属歌曲（充电专属 / 大会员
-/// 专享）不出现在搜索、专辑、作者、榜单等歌曲列表里；已收藏的仅显示
-/// 「会员」标签不过滤。真实过滤发生在 MusicSourceManager（由加载 /
-/// 切换设置时同步）。
+/// 专享）不出现在搜索、专辑、作者、榜单等歌曲列表里；已收藏的歌单详情
+/// 也按此开关过滤展示（歌曲仍保留在歌单数据里，关掉开关即恢复）。
+/// 真实过滤发生在 MusicSourceManager（由加载 / 切换设置时同步）。
 final hideVipExclusiveSongsProvider = StateProvider<bool>((ref) => true);
 
 // -- download --

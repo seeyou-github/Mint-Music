@@ -21,6 +21,7 @@ import '../../../shared/widgets/source_name_tag.dart';
 import '../../../shared/widgets/song_list_item.dart';
 import '../../../shared/widgets/song_selection.dart';
 import '../../plugin/application/plugin_providers.dart';
+import '../../settings/application/settings_providers.dart';
 import '../application/playlist_providers.dart';
 import '../application/recently_played_providers.dart';
 import '../domain/models/playlist.dart';
@@ -46,9 +47,12 @@ class _LocalPlaylistDetailPageState
     extends ConsumerState<LocalPlaylistDetailPage> {
   SongSortMode _sortMode = SongSortMode.addedTime;
   bool _sortAscending = true;
+  /// 当前展示（已过滤会员专属 + 已排序）的歌曲，列表 / 播放 / 多选都用它。
   List<Song> _sortedSongs = [];
+  /// 歌单里存储的完整歌曲，不因「隐藏会员专属」而丢失，写盘始终基于它。
   List<Song> _originalSongs = [];
   bool _isCustomSortMode = false;
+  bool _hideVipExclusive = false;
   final ScrollController _scrollController = ScrollController();
 
   /// 批量选择控制器（长按歌曲或右上角菜单进入）。
@@ -260,18 +264,32 @@ class _LocalPlaylistDetailPageState
 
   void _updateSortedSongs(List<Song> songs) {
     _originalSongs = List<Song>.from(songs);
-    _sortedSongs = _isCustomSortMode
-        ? List<Song>.from(songs)
-        : _applySort(songs);
+    _rebuildSortedSongs();
+  }
+
+  /// 按「隐藏会员专属」开关与排序方式重新计算展示列表。
+  ///
+  /// 自定义排序复用完整列表：列表里缺失的歌曲在保存时会被写掉，
+  /// 属于数据丢失，因此拖拽编辑时不做会员专属过滤。
+  void _rebuildSortedSongs() {
+    if (_isCustomSortMode) {
+      _sortedSongs = List<Song>.from(_originalSongs);
+      return;
+    }
+    _sortedSongs = _applySort(_visibleOriginalSongs());
+  }
+
+  /// 完整歌曲中当前允许展示的部分（按「隐藏会员专属」开关过滤）。
+  List<Song> _visibleOriginalSongs() {
+    if (!_hideVipExclusive) return List<Song>.from(_originalSongs);
+    return _originalSongs.where((s) => !s.isVipExclusive).toList();
   }
 
   void _onSortModeChanged(SongSortMode mode) {
     setState(() {
       _sortMode = mode;
       _isCustomSortMode = mode == SongSortMode.custom;
-      _sortedSongs = _isCustomSortMode
-          ? List<Song>.from(_originalSongs)
-          : _applySort(_originalSongs);
+      _rebuildSortedSongs();
     });
     Navigator.pop(context);
   }
@@ -299,6 +317,8 @@ class _LocalPlaylistDetailPageState
     setState(() {
       _originalSongs = List<Song>.from(_sortedSongs);
       _isCustomSortMode = false;
+      // 保存的是完整列表；退出拖拽编辑后按开关恢复会员专属过滤。
+      _rebuildSortedSongs();
     });
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -312,9 +332,9 @@ class _LocalPlaylistDetailPageState
 
   void _cancelCustomSort() {
     setState(() {
-      _sortedSongs = List<Song>.from(_originalSongs);
       _isCustomSortMode = false;
       _sortMode = SongSortMode.addedTime;
+      _rebuildSortedSongs();
     });
   }
 
@@ -322,6 +342,12 @@ class _LocalPlaylistDetailPageState
   Widget build(BuildContext context) {
     final colors = ref.watch(themeColorsProvider);
     final playlistsAsync = ref.watch(playlistsProvider);
+    // 开关切换后立即重算展示列表，已收藏的歌单也随之隐藏会员专属歌曲。
+    final hideVipExclusive = ref.watch(hideVipExclusiveSongsProvider);
+    if (hideVipExclusive != _hideVipExclusive) {
+      _hideVipExclusive = hideVipExclusive;
+      if (!_isCustomSortMode) _rebuildSortedSongs();
+    }
 
     return ListenableBuilder(
       listenable: _selection,
@@ -583,7 +609,8 @@ class _LocalPlaylistDetailPageState
                       ),
                       const SizedBox(width: AppSpacing.sm),
                       Text(
-                        context.tr('${playlist.songCount}首歌曲'),
+                        // 与列表保持一致：隐藏会员专属时按可见歌曲数显示。
+                        context.tr('${_sortedSongs.length}首歌曲'),
                         style: TextStyle(fontSize: 11, color: colors.textHint),
                       ),
                     ],
@@ -782,7 +809,11 @@ class _LocalPlaylistDetailPageState
                               _sortAscending = !_sortAscending;
                             });
                             setState(() {
-                              _sortedSongs = _applySort(_originalSongs);
+                              _sortedSongs = _applySort(
+                                _isCustomSortMode
+                                    ? _originalSongs
+                                    : _visibleOriginalSongs(),
+                              );
                             });
                           },
                           child: Container(
@@ -1160,6 +1191,7 @@ class _LocalPlaylistDetailPageState
     Playlist playlist,
   ) {
     if (_sortedSongs.isEmpty) {
+      final hiddenCount = _originalSongs.length - _sortedSongs.length;
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -1170,15 +1202,22 @@ class _LocalPlaylistDetailPageState
               color: colors.textHint.withValues(alpha: 0.3),
             ),
             const SizedBox(height: AppSpacing.md),
-            Text(context.tr('歌单为空'), style: TextStyle(color: colors.textHint)),
-            const SizedBox(height: AppSpacing.sm),
             Text(
-              context.tr('在发现页搜索歌曲并添加到歌单'),
-              style: TextStyle(
-                fontSize: 12,
-                color: colors.textHint.withValues(alpha: 0.6),
-              ),
+              hiddenCount > 0
+                  ? context.tr('已隐藏 $hiddenCount 首会员专属歌曲')
+                  : context.tr('歌单为空'),
+              style: TextStyle(color: colors.textHint),
             ),
+            if (hiddenCount == 0) ...[
+              const SizedBox(height: AppSpacing.sm),
+              Text(
+                context.tr('在发现页搜索歌曲并添加到歌单'),
+                style: TextStyle(
+                  fontSize: 12,
+                  color: colors.textHint.withValues(alpha: 0.6),
+                ),
+              ),
+            ],
           ],
         ),
       );
