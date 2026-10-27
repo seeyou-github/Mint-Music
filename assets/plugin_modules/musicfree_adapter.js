@@ -292,6 +292,19 @@ function __mfUnwrapItem(musicInfo) {
   };
 }
 
+/** 角标里是否带「充电专属 / 会员专享」文案（App 列表的充电标记）。 */
+function __mfHasVipBadge(badges) {
+  if (!Array.isArray(badges)) return false;
+  for (var i = 0; i < badges.length; i++) {
+    var badge = badges[i];
+    var text = badge && typeof badge.text === 'string' ? badge.text : '';
+    if (text.indexOf('充电专属') >= 0 || text.indexOf('会员专享') >= 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /** 把 MusicFree musicItem 展平成本项目 _musicInfoToSong 可识别的字段。 */
 function __mfMapMusicItem(item, sourceId) {
   if (!item || typeof item !== 'object') return null;
@@ -339,10 +352,17 @@ function __mfMapMusicItem(item, sourceId) {
   };
   // 会员专属作品标记（bilibili 充电专属 / 大会员专享）：
   // 插件在 musicItem 上标记后透传给 Dart，歌曲列表据此显示「会员」标签。
+  // bilibili 各列表接口字段不统一，这里把已知的几种都认一遍，兼容没更新
+  // 到最新版标记逻辑的插件变体。
   if (
     item.vipExclusive === true ||
     item.is_charging_arc === true ||
-    item.is_upower_exclusive === true
+    item.is_upower_exclusive === true ||
+    item.is_charge_video === 1 ||
+    item.is_charge_video === '1' ||
+    item.is_ugcpay === true ||
+    item.ugc_pay === 1 ||
+    __mfHasVipBadge(item.badges)
   ) {
     mapped.vipExclusive = true;
   }

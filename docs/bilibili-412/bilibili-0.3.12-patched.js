@@ -248,6 +248,40 @@ async function getFavoriteList(id) {
     }
     return result;
 }
+/**
+ * 充电 / 会员专属标记。
+ *
+ * 各列表接口给的字段并不统一（2026-10 实测）：
+ *   - 网页搜索 search/type：is_charge_video === 1
+ *   - 网页投稿列表 vlist：is_charging_arc === true
+ *   - App 投稿列表 archive/cursor：is_ugcpay 恒为 false，
+ *     真正的标记是 badges 里文案为「充电专属」的角标
+ *   - view 接口：is_upower_exclusive === true
+ * 统一在这里判断，避免某个列表路径漏标导致「隐藏会员专属歌曲」失效。
+ */
+function isVipExclusive(result) {
+    if (!result || typeof result !== "object") {
+        return false;
+    }
+    if (result.vipExclusive === true ||
+        result.is_charging_arc === true ||
+        result.is_upower_exclusive === true ||
+        result.is_charge_video === 1 ||
+        result.is_charge_video === "1" ||
+        result.is_ugcpay === true ||
+        result.ugc_pay === 1) {
+        return true;
+    }
+    if (Array.isArray(result.badges)) {
+        for (const badge of result.badges) {
+            const text = badge && typeof badge.text === "string" ? badge.text : "";
+            if (text.indexOf("充电专属") >= 0 || text.indexOf("会员专享") >= 0) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
 function formatMedia(result) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k;
     const title = he.decode((_b = (_a = result.title) === null || _a === void 0 ? void 0 : _a.replace(/(\<em(.*?)\>)|(\<\/em\>)/g, "")) !== null && _b !== void 0 ? _b : "");
@@ -266,9 +300,8 @@ function formatMedia(result) {
         tags: (_k = result.tag) === null || _k === void 0 ? void 0 : _k.split(","),
         date: dayjs.unix(result.pubdate || result.created).format("YYYY-MM-DD"),
     };
-    // 充电专属视频（与 PiliPlus 一致：投稿列表 vlist 的 is_charging_arc），
     // 标记后透传给 MintMusic 显示「会员」标签 / 按设置过滤。
-    if (result.is_charging_arc === true) {
+    if (isVipExclusive(result)) {
         media.vipExclusive = true;
     }
     return media;
@@ -576,8 +609,9 @@ function formatAppMedia(item) {
             ? dayjs.unix(item.ctime || item.pubdate).format("YYYY-MM-DD")
             : undefined,
     };
-    // 充电专属：App 列表用 is_ugcpay 标记（网页 vlist 是 is_charging_arc）
-    if (item.is_ugcpay === true) {
+    // 充电专属：App 列表的 is_ugcpay 恒为 false，只能看 badges 角标
+    // （helper 里同时兼容网页 vlist / view 的旧字段）。
+    if (isVipExclusive(item)) {
         media.vipExclusive = true;
     }
     return media;
@@ -983,7 +1017,7 @@ async function importMusicSheet(urlLike) {
     const musicSheet = await getFavoriteList(id);
     return musicSheet.map((_) => {
         var _a, _b;
-        return ({
+        const media = {
             id: _.id,
             aid: _.aid,
             bvid: _.bvid,
@@ -992,7 +1026,11 @@ async function importMusicSheet(urlLike) {
             artist: (_a = _.upper) === null || _a === void 0 ? void 0 : _a.name,
             album: (_b = _.bvid) !== null && _b !== void 0 ? _b : _.aid,
             duration: durationToSec(_.duration),
-        });
+        };
+        if (isVipExclusive(_)) {
+            media.vipExclusive = true;
+        }
+        return media;
     });
 }
 function formatComment(item) {
@@ -1082,9 +1120,8 @@ module.exports = {
         const _ref2 = cidRes.data;
         const cid = _ref2.cid;
         const pages = _ref2.pages || [];
-        // 大会员 / 充电专属视频（view 接口的 is_upower_exclusive，
-        // 与 PiliPlus 的判断字段一致），标记到每一首（分 P）上。
-        const upowerExclusive = _ref2.is_upower_exclusive === true;
+        // 大会员 / 充电专属视频，标记到每一首（分 P）上。
+        const upowerExclusive = isVipExclusive(_ref2);
         let musicList;
         if (pages.length === 1) {
             musicList = [Object.assign(Object.assign({}, albumItem), { cid: cid })];
