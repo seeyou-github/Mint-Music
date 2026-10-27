@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -28,7 +27,6 @@ import '../../features/settings/application/font_providers.dart';
 import '../../features/settings/application/settings_providers.dart';
 import '../../features/settings/data/settings_service.dart';
 import '../../features/plugin/application/plugin_providers.dart';
-import 'music_cover_image.dart';
 
 const _sheetAnimationStyle = AnimationStyle(
   duration: Duration(milliseconds: 220),
@@ -381,20 +379,10 @@ class SongActionSheet extends ConsumerStatefulWidget {
 class _SongActionSheetState extends ConsumerState<SongActionSheet> {
   bool _isFavorited = false;
 
-  /// 歌手名单独可点（点歌手名搜索该歌手）。
-  late final TapGestureRecognizer _artistTap;
-
   @override
   void initState() {
     super.initState();
-    _artistTap = TapGestureRecognizer()..onTap = _searchArtist;
     _checkFavorited();
-  }
-
-  @override
-  void dispose() {
-    _artistTap.dispose();
-    super.dispose();
   }
 
   void _checkFavorited() {
@@ -426,7 +414,6 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
     final colors = widget.compactMode
         ? ThemeColors.darkWithPrimary(AppColors.primary)
         : themeColors;
-    final sourceItem = widget.compactMode ? _buildSourceItem(colors) : null;
 
     return Container(
       decoration: BoxDecoration(
@@ -453,7 +440,8 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                   ),
                 ),
                 const SizedBox(height: AppSpacing.md),
-                _buildSongInfo(colors),
+                // 顶部固定四行：歌曲 / 歌手 / 专辑（+ 播放页的「来源」）。
+                _buildMetaRows(colors, includeSource: widget.compactMode),
                 const SizedBox(height: AppSpacing.sm),
                 Divider(
                   height: 1,
@@ -463,7 +451,6 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                 ),
                 // --- Compact mode (player menu: 4 options matching play queue style) ---
                 if (widget.compactMode) ...[
-                  ?sourceItem,
                   _buildActionItem(
                     colors: colors,
                     icon: Icons.add_to_photos,
@@ -582,68 +569,15 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
     );
   }
 
-  Widget _buildSongInfo(ThemeColors colors) {
-    // 歌曲列表项的「更多」：不显示封面，改成歌曲 / 歌手 / 专辑三行。
-    if (!widget.compactMode) return _buildMetaRows(colors);
-
-    final title = Text(
-      widget.song.title,
-      style: TextStyle(
-        fontSize: 15,
-        fontWeight: FontWeight.w600,
-        color: colors.textPrimary,
-      ),
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-    );
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
-      child: Row(
-        children: [
-          _buildCover(colors),
-          const SizedBox(width: AppSpacing.md),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // 播放页「更多」：点歌曲名搜索这首歌，点歌手名搜索该歌手。
-                GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: () => _searchFor(widget.song.title),
-                  child: title,
-                ),
-                Text.rich(
-                  TextSpan(
-                    children: [
-                      TextSpan(
-                        text: widget.song.artist,
-                        recognizer: widget.song.artist.isNotEmpty
-                            ? _artistTap
-                            : null,
-                      ),
-                      if (widget.song.album.isNotEmpty)
-                        TextSpan(text: ' · ${widget.song.album}'),
-                    ],
-                  ),
-                  style: TextStyle(fontSize: 12, color: colors.textHint),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// 歌曲 / 歌手 / 专辑三行（歌曲列表项「更多」顶部）。
+  /// 歌曲 / 歌手 / 专辑（播放页「更多」再加一行「来源」），全部可点击。
   ///
-  /// 三行都可点击：歌曲名、歌手名直接搜索；专辑能拿到 id 时打开专辑详情，
-  /// 否则按专辑名到「专辑」分类里搜索。专辑名缺失时不显示专辑行。
-  Widget _buildMetaRows(ThemeColors colors) {
+  /// 歌曲名、歌手名直接搜索；专辑能拿到 id 时打开专辑详情，否则按专辑名到
+  /// 「专辑」分类里搜索，专辑名缺失时不显示专辑行；来源可打开对应的歌单 /
+  /// 榜单 / 专辑 / 作者页。
+  Widget _buildMetaRows(ThemeColors colors, {bool includeSource = false}) {
     final song = widget.song;
     final album = _albumName;
+    final sourceRow = includeSource ? _buildSourceRow(colors) : null;
     return Column(
       children: [
         _buildMetaRow(
@@ -666,6 +600,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
             value: '《$album》',
             onTap: _openAlbum,
           ),
+        ?sourceRow,
       ],
     );
   }
@@ -674,7 +609,9 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
     ThemeColors colors, {
     required String label,
     required String value,
-    required VoidCallback onTap,
+    VoidCallback? onTap,
+    bool showChevron = false,
+    Color? valueColor,
   }) {
     return InkWell(
       onTap: onTap,
@@ -700,9 +637,14 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                 value,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 15, color: colors.textPrimary),
+                style: TextStyle(
+                  fontSize: 15,
+                  color: valueColor ?? colors.textPrimary,
+                ),
               ),
             ),
+            if (showChevron)
+              Icon(Icons.chevron_right, size: 18, color: colors.textHint),
           ],
         ),
       ),
@@ -716,9 +658,9 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
     return album;
   }
 
-  /// 「歌曲来源」菜单项（播放页「更多」）：显示当前播放来源，
+  /// 「来源」行（播放页「更多」顶部）：显示当前播放来源，
   /// 歌单（含我的收藏）/ 榜单 / 专辑 / 作者可点击打开来源页。
-  Widget? _buildSourceItem(ThemeColors colors) {
+  Widget? _buildSourceRow(ThemeColors colors) {
     final ctx = PlaybackContext.instance;
     final type = ctx.type;
     if (type == PlaybackSourceType.unknown) return null;
@@ -730,41 +672,13 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
     final clickable = type == PlaybackSourceType.radio
         ? radioPlaylist != null
         : canOpenPlaybackSource(type) && (ctx.id ?? '').isNotEmpty;
-    return InkWell(
+    return _buildMetaRow(
+      colors,
+      label: context.tr('来源'),
+      value: _sourceLabel(type, ctx.id),
       onTap: clickable ? _openSource : null,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.lg,
-          vertical: AppSpacing.md,
-        ),
-        child: Row(
-          children: [
-            Icon(Icons.info_outline, size: 22, color: colors.textSecondary),
-            const SizedBox(width: AppSpacing.md),
-            Text(
-              context.tr('歌曲来源'),
-              style: TextStyle(fontSize: 15, color: colors.textPrimary),
-            ),
-            const SizedBox(width: AppSpacing.md),
-            Expanded(
-              child: Text(
-                _sourceLabel(type, ctx.id),
-                textAlign: TextAlign.right,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 13,
-                  color: clickable ? colors.primary : colors.textHint,
-                ),
-              ),
-            ),
-            if (clickable) ...[
-              const SizedBox(width: 2),
-              Icon(Icons.chevron_right, size: 18, color: colors.textHint),
-            ],
-          ],
-        ),
-      ),
+      showChevron: clickable,
+      valueColor: clickable ? colors.primary : colors.textHint,
     );
   }
 
@@ -890,60 +804,6 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
       if (id.isNotEmpty) return id;
     }
     return null;
-  }
-
-  Widget _buildCover(ThemeColors colors) {
-    // 优先使用 coverUrl（精准匹配后的在线封面），再回退到设备本地封面
-    if (widget.song.coverUrl != null && widget.song.coverUrl!.isNotEmpty) {
-      return MusicCoverImage(
-        url: widget.song.coverUrl,
-        width: 44,
-        height: 44,
-        fit: BoxFit.cover,
-        borderRadius: BorderRadius.circular(AppRadius.md),
-        errorWidget: Container(
-          width: 44,
-          height: 44,
-          decoration: BoxDecoration(
-            color: colors.surfaceVariant,
-            borderRadius: BorderRadius.circular(AppRadius.md),
-          ),
-          child: Icon(Icons.music_note, size: 22, color: colors.primary),
-        ),
-      );
-    }
-    if (widget.song.isLocal && widget.song.mediaStoreId != null) {
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(AppRadius.md),
-        child: MusicCoverImage(
-          key: ValueKey('sas_cover_${widget.song.id}'),
-          songId: widget.song.id,
-          mediaStoreId: widget.song.mediaStoreId,
-          width: 44,
-          height: 44,
-          fit: BoxFit.cover,
-          errorWidget: Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: colors.surfaceVariant,
-              borderRadius: BorderRadius.circular(AppRadius.md),
-            ),
-            child: Icon(Icons.music_note, size: 22, color: colors.primary),
-          ),
-        ),
-      );
-    }
-
-    return Container(
-      width: 44,
-      height: 44,
-      decoration: BoxDecoration(
-        color: colors.surfaceVariant,
-        borderRadius: BorderRadius.circular(AppRadius.md),
-      ),
-      child: Icon(Icons.music_note, size: 22, color: colors.primary),
-    );
   }
 
   Widget _buildActionItem({
