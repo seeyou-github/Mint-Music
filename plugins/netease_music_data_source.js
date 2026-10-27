@@ -507,6 +507,48 @@ module.exports = {
     return ['music', 'album', 'artist'];
   },
 
+  /* ------------------------------------------------------- 热门搜索（搜索页） */
+  getHotSearchTags: function () {
+    // 直连：热搜榜详情（eapi 的老接口，不需要签名）
+    var url =
+      HOST +
+      '/api/search/chart/detail?id=' +
+      encodeURIComponent('HOT_SEARCH_SONG#@#');
+    return getJson(url)
+      .then(function (body) {
+        var items = (body.data && body.data.itemList) || [];
+        return items
+          .map(function (item) {
+            return item && item.searchWord ? String(item.searchWord) : '';
+          })
+          .filter(function (word) {
+            return word;
+          })
+          .slice(0, 10);
+      })
+      .catch(function () {
+        // 兜底：代理的热搜接口
+        return getJson(PROXIES[0] + '/search/hot')
+          .then(function (body) {
+            var hots = (body.result && body.result.hots) || [];
+            return hots
+              .map(function (item) {
+                return item && item.first ? String(item.first) : '';
+              })
+              .filter(function (word) {
+                return word;
+              })
+              .slice(0, 10);
+          })
+          .catch(function () {
+            return [];
+          });
+      })
+      .then(function (tags) {
+        return JSON.stringify(tags);
+      });
+  },
+
   /* ------------------------------------------------------------ 搜索歌曲 */
   search: function (source, keyword, page, limit) {
     var size = limit || 30;

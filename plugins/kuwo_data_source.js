@@ -404,6 +404,36 @@ module.exports = {
 
   isDataSource: true,
 
+  /* ------------------------------------------------------- 热门搜索（搜索页） */
+  getHotSearchTags: function () {
+    var url =
+      'https://hotword.kuwo.cn/hotword.s?prod=kwplayer_ar_9.3.0.1&corp=kuwo' +
+      '&newver=2&vipver=9.3.0.1&source=kwplayer_ar_9.3.0.1_40.apk&p2p=1' +
+      '&notrace=0&uid=0&plat=kwplayer_ar&rformat=json&encoding=utf8&tabid=1';
+    return getJson(url, {
+      'User-Agent': 'Dalvik/2.1.0 (Linux; U; Android 9;)',
+      Referer: 'https://kuwo.cn/'
+    })
+      .then(function (body) {
+        if (String(body.status || '').toLowerCase() !== 'ok') return [];
+        var list = body.tagvalue || [];
+        var tags = [];
+        for (var i = 0; i < list.length && tags.length < 10; i++) {
+          var item = list[i] || {};
+          var word = item.key || '';
+          if (!word) continue;
+          tags.push(String(word));
+        }
+        return tags;
+      })
+      .catch(function () {
+        return [];
+      })
+      .then(function (tags) {
+        return JSON.stringify(tags);
+      });
+  },
+
   /* ------------------------------------------------------------ 搜索歌曲 */
   search: function (source, keyword, page, limit) {
     var size = limit || 30;

@@ -1021,6 +1021,12 @@ JSON.stringify((function() {
   Future<String?> getHotPlaylistTags() =>
       _callBrowseMethod('getHotPlaylistTags', '');
 
+  /// 搜索页的「热门搜索」词（可选）；返回 `["a","b"]` 或 `[{name}]`。
+  ///
+  /// 插件没实现时返回 null，搜索页就不显示热门搜索这一块。
+  Future<String?> getHotSearchTags() =>
+      _callBrowseMethod('getHotSearchTags', '');
+
   /// 按分类取歌单；返回 `{isEnd, playlists}`。
   Future<String?> getRecommendSheetsByTag(String tagId, {int page = 1}) {
     final escaped = _escapeForJs(tagId);

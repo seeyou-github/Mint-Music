@@ -1145,8 +1145,46 @@ class MusicSourceManager {
   }
 
   Future<List<String>> getHotSearchTags({String sourceId = 'wy'}) async {
-    // 插件没有热门搜索接口；返回空列表让搜索页按实际状态展示。
+    final effective = _canonicalSourceId(sourceId);
+    final host = _findPluginForSource(effective);
+    if (host == null) return const <String>[];
+    try {
+      final raw = await host.getHotSearchTags();
+      final tags = _pluginHotSearchTags(raw);
+      if (tags.isNotEmpty) return tags;
+    } catch (e) {
+      print('[MusicSourceManager] 插件热门搜索获取失败 source=$sourceId: $e');
+    }
     return const <String>[];
+  }
+
+  /// 解析插件返回的热门搜索词。
+  ///
+  /// 兼容 `["晴天", ...]`、`[{name:"晴天"}]`、`{tags:[...]}` 三种写法。
+  List<String> _pluginHotSearchTags(String? raw) {
+    final decoded = _decodePluginJson(raw);
+    final list = decoded is List
+        ? decoded
+        : (decoded is Map
+              ? (decoded['tags'] ?? decoded['data'] ?? decoded['list'])
+              : null);
+    if (list is! List) return const <String>[];
+    final tags = <String>[];
+    for (final item in list) {
+      String? text;
+      if (item is String) {
+        text = _nonEmptyText(item);
+      } else if (item is Map) {
+        text = _nonEmptyText(
+          item['name'] ?? item['keyword'] ?? item['query'] ?? item['word'],
+        );
+      }
+      if (text == null) continue;
+      if (tags.contains(text)) continue;
+      tags.add(text);
+      if (tags.length >= 12) break;
+    }
+    return tags;
   }
 
   List<Song> _parsePluginSearchResult(String resultJson, String sourceId) {

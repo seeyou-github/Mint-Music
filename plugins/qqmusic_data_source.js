@@ -395,6 +395,41 @@ module.exports = {
 
   isDataSource: true,
 
+  /* ------------------------------------------------------- 热门搜索（搜索页） */
+  getHotSearchTags: function () {
+    return musicu(
+      {
+        comm: {
+          ct: '19',
+          cv: '1803',
+          guid: '0',
+          patch: '118',
+          tmeAppID: 'qqmusic',
+          tmeLoginType: 0,
+          uin: '0',
+          wid: '0'
+        },
+        hotkey: {
+          method: 'GetHotkeyForQQMusicPC',
+          module: 'tencent_musicsoso_hotkey.HotkeyService',
+          param: { search_id: '', uin: 0 }
+        }
+      },
+      ['hotkey']
+    ).then(function (body) {
+      var data = (body.hotkey && body.hotkey.data) || {};
+      var list = data.vec_hotkey || [];
+      var tags = [];
+      for (var i = 0; i < list.length && tags.length < 10; i++) {
+        var item = list[i] || {};
+        var word = item.query || item.k || '';
+        if (!word) continue;
+        tags.push(String(word));
+      }
+      return JSON.stringify(tags);
+    });
+  },
+
   /* ------------------------------------------------------------ 搜索歌曲 */
   search: function (source, keyword, page, limit) {
     var size = limit || 30;

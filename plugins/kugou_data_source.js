@@ -468,6 +468,49 @@ module.exports = {
 
   isDataSource: true,
 
+  /* ------------------------------------------------------- 热门搜索（搜索页） */
+  getHotSearchTags: function () {
+    var url =
+      'https://gateway.kugou.com/api/v3/search/hot_tab' +
+      '?signature=ee44edb9d7155821412d220bcaf509dd&appid=1005' +
+      '&clientver=10026&plat=0';
+    return cerumusic
+      .request(url, {
+        method: 'GET',
+        headers: {
+          dfid: '1ssiv93oVqMp27cirf2CvoF1',
+          mid: '156798703528610303473757548878786007104',
+          clienttime: '1584257267',
+          'x-router': 'msearch.kugou.com',
+          'kg-rc': '1',
+          'User-Agent':
+            'Android9-AndroidPhone-10020-130-0-searchrecommendprotocol-wifi'
+        },
+        timeout: 15000
+      })
+      .then(decodeBody)
+      .then(function (body) {
+        var data = body.data || {};
+        var list = data.list || [];
+        var tags = [];
+        for (var i = 0; i < list.length; i++) {
+          var keywords = (list[i] && list[i].keywords) || [];
+          for (var j = 0; j < keywords.length; j++) {
+            var word = keywords[j] && keywords[j].keyword;
+            if (!word) continue;
+            var text = String(word);
+            if (tags.indexOf(text) >= 0) continue;
+            tags.push(text);
+            if (tags.length >= 10) return JSON.stringify(tags);
+          }
+        }
+        return JSON.stringify(tags);
+      })
+      .catch(function () {
+        return JSON.stringify([]);
+      });
+  },
+
   /* ------------------------------------------------------------ 搜索歌曲 */
   search: function (source, keyword, page, limit) {
     var size = limit || 30;

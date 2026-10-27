@@ -136,6 +136,13 @@
   - 点击可删除远端备份文件，删除前二次确认，失败时显示具体原因
 
 ### 修复
+- 搜索页「热门搜索」一直没有数据
+  - 内置源删除后 `MusicSourceManager.getHotSearchTags()` 变成直接返回空列表，
+    插件侧也没有这个接口，所以任何音源下都是空白
+  - `PluginHost` 新增可选的 `getHotSearchTags()`（`module.exports.getHotSearchTags`），
+    管理器解析插件返回值（`["词"]` / `[{name}]` / `{tags:[...]}` 都兼容）
+  - 四个数据源插件各自实现：网易云热搜榜详情、QQ `GetHotkeyForQQMusicPC`、
+    酷我 `hotword.kuwo.cn`、酷狗 `search/hot_tab`，各取前 10 条
 - 插件图标（数据源站点的 favicon）一直不显示
   - `PluginHost` 解析插件信息时漏了 `pluginInfo.iconUrl`，导入时存下的 iconUrl
     恒为 null，`_cachePluginIcon()` 第一步就返回，`AppData\plugin\icons`
