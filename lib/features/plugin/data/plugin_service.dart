@@ -594,7 +594,8 @@ class PluginService {
       } else {
         engine.dispose();
       }
-      return plugin;
+      // 返回带 iconPath 的那份，调用方（插件管理页）刷新后立刻能显示图标
+      return created;
     } catch (e) {
       engine.dispose();
       rethrow;
@@ -632,8 +633,14 @@ class PluginService {
 
     print('[PluginService] 插件初始化完成，已加载 ${_loadedPlugins.length} 个插件');
 
-    // 后台补齐插件图标（老插件 / 之前下载失败的场景），不阻塞启动。
-    unawaited(_syncPluginIcons());
+    // 补齐插件图标（老插件 / 之前下载失败的场景）。
+    // 这里必须 await：插件列表在初始化完成后才读取，图标没写完的话
+    // 界面会一直用旧数据（没有 iconPath），表现为「装了插件也没有图标」。
+    // 正常情况下没有缺失图标，这一步是空转；最多等 20 秒兜底。
+    await _syncPluginIcons().timeout(
+      const Duration(seconds: 20),
+      onTimeout: () => print('[PluginService] 同步插件图标超时，跳过'),
+    );
   }
 
   /// 补齐已安装插件的图标缓存。
@@ -804,6 +811,13 @@ class PluginService {
       }
     }
 
+    // 图标缓存也一起删掉（icons/<插件id>.png），避免残留
+    try {
+      final iconsDir = Directory(p.join(await _getPluginsDir(), 'icons'));
+      final iconFile = File(p.join(iconsDir.path, '$id.png'));
+      if (await iconFile.exists()) await iconFile.delete();
+    } catch (_) {}
+
     _unloadPlugin(id);
 
     plugins.removeWhere((p) => p.id == id);
@@ -916,12 +930,10 @@ class PluginService {
       _loadedPlugins[plugin.id] = host;
       _engines[plugin.id] = engine;
 
-      // 老版本导入时还没有「数据源」这个概念（字段不存在），插件脚本更新后
-      // 才声明自己是数据源：加载时以脚本为准同步一次，避免插件管理页里
-      // 一直归在「插件音源」分类。
-      if (plugin.isDataSource != host.isDataSource) {
-        await _syncDataSourceFlag(plugin, host.isDataSource);
-      }
+      // 老版本导入时还没有「数据源」「站点图标」这些字段（值都是空的），
+      // 插件脚本更新后才声明：加载时以脚本为准同步一次，避免插件管理页里
+      // 一直归错分类、音源列表里一直没有图标。字段一致时这里会直接返回。
+      await _syncPluginMeta(plugin, host);
 
       return host;
     } on StackOverflowError catch (e) {
@@ -933,17 +945,33 @@ class PluginService {
     }
   }
 
-  /// 把「数据源」标记同步到已保存的插件列表。
-  Future<void> _syncDataSourceFlag(PluginInfo plugin, bool isDataSource) async {
+  /// 把脚本里声明的元数据同步到已保存的插件列表。
+  ///
+  /// 老版本导入时还没有「数据源」和「站点图标」这两个概念，字段是空的；
+  /// 脚本更新后再启动就会以脚本为准补上，用户不用重新导入插件。
+  Future<void> _syncPluginMeta(PluginInfo plugin, PluginHost host) async {
+    final hostInfo = host.pluginInfo;
+    if (hostInfo == null) return;
+    final iconUrl = (hostInfo.iconUrl ?? '').trim();
+    final nextIconUrl = iconUrl.isEmpty ? null : iconUrl;
+    final nextIsDataSource = host.isDataSource;
+    final sameIcon = (plugin.iconUrl ?? '').trim() == (nextIconUrl ?? '');
+    if (plugin.isDataSource == nextIsDataSource && sameIcon) return;
     try {
       final plugins = await loadPlugins();
       final index = plugins.indexWhere((item) => item.id == plugin.id);
       if (index < 0) return;
-      if (plugins[index].isDataSource == isDataSource) return;
-      plugins[index] = plugins[index].copyWith(isDataSource: isDataSource);
+      plugins[index] = plugins[index].copyWith(
+        isDataSource: nextIsDataSource,
+        iconUrl: nextIconUrl,
+      );
       await savePlugins(plugins);
+      print(
+        '[PluginService] 已同步插件元数据: ${plugin.name} '
+        'iconUrl=$nextIconUrl isDataSource=$nextIsDataSource',
+      );
     } catch (e) {
-      print('[PluginService] 同步数据源标记失败: $e');
+      print('[PluginService] 同步插件元数据失败: $e');
     }
   }
 

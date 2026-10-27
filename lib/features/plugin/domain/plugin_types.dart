@@ -91,6 +91,7 @@ class PluginMetadata {
     'author': author,
     'description': description,
     if (homepage != null) 'homepage': homepage,
+    if (iconUrl != null) 'iconUrl': iconUrl,
     if (isDataSource) 'isDataSource': true,
   };
 }

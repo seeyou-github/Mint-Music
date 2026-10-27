@@ -54,6 +54,14 @@ final pluginScriptUpdateNoticesProvider =
 class PluginsNotifier extends AsyncNotifier<List<PluginInfo>> {
   @override
   Future<List<PluginInfo>> build() async {
+    // 等插件初始化完成再读列表：初始化时会补齐插件元数据（iconUrl）并下载
+    // 图标缓存（iconPath），早于它读取会拿到没有图标的旧数据，
+    // 界面上就表现为「插件都装了但一个图标都没有」。
+    try {
+      await ref.watch(pluginInitializedProvider.future);
+    } catch (_) {
+      // 初始化失败也要能打开插件管理页（至少能看列表 / 卸载）。
+    }
     final repo = ref.read(pluginRepositoryProvider);
     return repo.loadPlugins();
   }

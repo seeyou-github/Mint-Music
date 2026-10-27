@@ -361,6 +361,11 @@ JSON.stringify((function() {
       description: _safeString(data['description']),
       homepage: _safeString(data['homepage']),
       isDataSource: _detectDataSource({'pluginInfo': data}),
+      // 站点图标（favicon / logo）：导入插件时下载并缓存，音源列表与切换按钮用它
+      iconUrl:
+          _safeString(data['iconUrl']) ??
+          _safeString(data['icon']) ??
+          _safeString(data['logo']),
     );
   }
 

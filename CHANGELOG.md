@@ -136,6 +136,16 @@
   - 点击可删除远端备份文件，删除前二次确认，失败时显示具体原因
 
 ### 修复
+- 插件图标（数据源站点的 favicon）一直不显示
+  - `PluginHost` 解析插件信息时漏了 `pluginInfo.iconUrl`，导入时存下的 iconUrl
+    恒为 null，`_cachePluginIcon()` 第一步就返回，`AppData\plugin\icons`
+    从来没被创建过
+  - 启动时以脚本为准补齐已安装插件的 iconUrl（老版本导入的插件不用重装），
+    再把图标下载并转成 PNG 缓存到 `AppData\plugin\icons\<插件id>.png`
+  - 插件列表改为等初始化（含图标补齐）完成后再读取，否则拿到的是没有 iconPath
+    的旧数据，界面仍然没有图标
+  - 导入插件返回带 iconPath 的对象；卸载插件时一并删掉图标缓存
+  - 酷我 favicon 实际返回的是 PNG（不是 ICO），转换器按已知图片原样透传
 - 插件（元力酷我）歌单 / 榜单歌曲播放详情页仍无封面（搜索歌曲正常）
   - 搜索结果的歌曲自带 artwork；歌单 / 榜单条目只有 id，封面靠播放时
     `getPic` 异步补（内置酷我封面接口按 rid 能取到）
