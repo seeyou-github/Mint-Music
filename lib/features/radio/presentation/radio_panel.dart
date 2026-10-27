@@ -401,28 +401,38 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
     );
   }
 
-  /// 当前电台封面的正中央「正在播放 / 已暂停」标志。
+  /// 当前电台封面的正中央「正在播放 / 已暂停」标志：点一下切换播放与暂停。
   Widget _buildNowPlayingBadge(ThemeColors colors, {required bool isPlaying}) {
     return Positioned.fill(
-      child: IgnorePointer(
-        child: Center(
-          child: Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: Colors.white.withValues(alpha: 0.94),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.35),
-                  blurRadius: 12,
+      child: Center(
+        child: MouseRegion(
+          cursor: SystemMouseCursors.click,
+          child: GestureDetector(
+            // 点击只落在标志上，不触发卡片的「重新开始电台」。
+            behavior: HitTestBehavior.opaque,
+            onTap: () =>
+                ref.read(playbackControllerProvider.notifier).togglePlayPause(),
+            child: Tooltip(
+              message: context.tr(isPlaying ? '暂停' : '播放'),
+              child: Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.white.withValues(alpha: 0.94),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.35),
+                      blurRadius: 12,
+                    ),
+                  ],
                 ),
-              ],
-            ),
-            child: Icon(
-              isPlaying ? Icons.equalizer : Icons.play_arrow,
-              size: 28,
-              color: colors.primary,
+                child: Icon(
+                  isPlaying ? Icons.equalizer : Icons.play_arrow,
+                  size: 28,
+                  color: colors.primary,
+                ),
+              ),
             ),
           ),
         ),
