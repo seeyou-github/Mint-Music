@@ -20,7 +20,7 @@ import '../../player/domain/models/lyric_line.dart';
 
 /// 下载地址获取器。
 ///
-/// 返回地址以及实际使用的音源 id（内置源会由插件解析地址，换源后下载列表
+/// 返回地址以及实际使用的音源 id（平台歌曲会由插件解析地址，换源后下载列表
 /// 里显示的来源也跟着变）。
 typedef UrlFetcher =
     Future<({String url, String? source})?> Function(DownloadTask task);

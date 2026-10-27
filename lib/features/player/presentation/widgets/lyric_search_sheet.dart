@@ -10,7 +10,6 @@ import '../../../../shared/widgets/music_cover_image.dart';
 import '../../../../shared/widgets/source_icon.dart';
 import '../../../plugin/application/music_source_manager.dart';
 import '../../../plugin/application/plugin_providers.dart';
-import '../../../plugin/domain/plugin_types.dart';
 import '../../application/lyric_controller.dart';
 import '../../application/playback_controller.dart';
 import '../../domain/models/lyric_line.dart';

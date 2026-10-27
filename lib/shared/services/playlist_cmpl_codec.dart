@@ -109,5 +109,8 @@ String _aesDecryptCryptoJS(String encryptedBase64, String password) {
   final key = enc.Key(keyBytes);
   final iv = enc.IV(ivBytes);
   final encrypter = enc.Encrypter(enc.AES(key, mode: enc.AESMode.cbc));
-  return encrypter.decrypt(enc.Encrypted(Uint8List.fromList(ciphertextBytes)), iv: iv);
+  return encrypter.decrypt(
+    enc.Encrypted(Uint8List.fromList(ciphertextBytes)),
+    iv: iv,
+  );
 }

@@ -216,12 +216,8 @@ class LocalMetadataReader {
 
       // Xing / Info 头（VBR 精确时长）
       final sideInfo = frame.version == 1
-          ? (frame.channelMode == 3
-                ? 17
-                : 32)
-          : (frame.channelMode == 3
-                ? 9
-                : 17);
+          ? (frame.channelMode == 3 ? 17 : 32)
+          : (frame.channelMode == 3 ? 9 : 17);
       final xingOffset = i + 4 + sideInfo;
       if (xingOffset + 12 <= buffer.length) {
         final tag = String.fromCharCodes(
@@ -257,7 +253,8 @@ class LocalMetadataReader {
     int samplesPerFrame,
     int version,
     int channelMode,
-  })? _parseMpegFrameHeader(Uint8List buffer, int offset) {
+  })?
+  _parseMpegFrameHeader(Uint8List buffer, int offset) {
     if (offset + 4 > buffer.length) return null;
     final b1 = buffer[offset + 1];
     final b2 = buffer[offset + 2];
@@ -278,19 +275,94 @@ class LocalMetadataReader {
 
     // 码率表（kbps）
     const v1l1 = [
-      0, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448, 0,
+      0,
+      32,
+      64,
+      96,
+      128,
+      160,
+      192,
+      224,
+      256,
+      288,
+      320,
+      352,
+      384,
+      416,
+      448,
+      0,
     ];
     const v1l2 = [
-      0, 32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384, 0,
+      0,
+      32,
+      48,
+      56,
+      64,
+      80,
+      96,
+      112,
+      128,
+      160,
+      192,
+      224,
+      256,
+      320,
+      384,
+      0,
     ];
     const v1l3 = [
-      0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0,
+      0,
+      32,
+      40,
+      48,
+      56,
+      64,
+      80,
+      96,
+      112,
+      128,
+      160,
+      192,
+      224,
+      256,
+      320,
+      0,
     ];
     const v2l1 = [
-      0, 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256, 0,
+      0,
+      32,
+      48,
+      56,
+      64,
+      80,
+      96,
+      112,
+      128,
+      144,
+      160,
+      176,
+      192,
+      224,
+      256,
+      0,
     ];
     const v2l23 = [
-      0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 0,
+      0,
+      8,
+      16,
+      24,
+      32,
+      40,
+      48,
+      56,
+      64,
+      80,
+      96,
+      112,
+      128,
+      144,
+      160,
+      0,
     ];
 
     int kbps;
@@ -365,8 +437,7 @@ class LocalMetadataReader {
       final headerByte = header[0];
       isLast = (headerByte & 0x80) != 0;
       final type = headerByte & 0x7F;
-      final length =
-          (header[1] << 16) | (header[2] << 8) | header[3];
+      final length = (header[1] << 16) | (header[2] << 8) | header[3];
       final dataStart = offset + 4;
       if (dataStart + length > fileLength) break;
 
@@ -513,7 +584,8 @@ class LocalMetadataReader {
     int? year,
     String? lyrics,
     Uint8List? artwork,
-  }) _parseMp4Udta(Uint8List udta) {
+  })
+  _parseMp4Udta(Uint8List udta) {
     String? title;
     String? artist;
     String? album;
@@ -568,7 +640,8 @@ class LocalMetadataReader {
     int? year,
     String? lyrics,
     Uint8List? artwork,
-  }) _parseMp4Ilst(Uint8List ilst) {
+  })
+  _parseMp4Ilst(Uint8List ilst) {
     String? title;
     String? artist;
     String? album;
@@ -708,7 +781,10 @@ class LocalMetadataReader {
       final dataStart = pos + 8;
       if (size < 0 || dataStart + size > list.length) break;
       final value = utf8
-          .decode(list.sublist(dataStart, dataStart + size), allowMalformed: true)
+          .decode(
+            list.sublist(dataStart, dataStart + size),
+            allowMalformed: true,
+          )
           .replaceAll('\u0000', '')
           .trim();
       switch (id) {
@@ -958,9 +1034,7 @@ class LocalMetadataReader {
         littleEndian = false;
       }
     }
-    final value = littleEndian
-        ? _decodeUtf16Le(bytes)
-        : _decodeUtf16Be(bytes);
+    final value = littleEndian ? _decodeUtf16Le(bytes) : _decodeUtf16Be(bytes);
     // v2.4 允许多个以 0 分隔的字符串，只取第一个
     final index = value.indexOf('\u0000');
     final first = index >= 0 ? value.substring(0, index) : value;

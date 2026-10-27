@@ -98,9 +98,7 @@ class SongSelectionBar extends StatelessWidget {
           decoration: BoxDecoration(
             color: colors.primary.withValues(alpha: 0.08),
             border: Border(
-              bottom: BorderSide(
-                color: colors.divider.withValues(alpha: 0.5),
-              ),
+              bottom: BorderSide(color: colors.divider.withValues(alpha: 0.5)),
             ),
           ),
           child: Row(
@@ -368,7 +366,10 @@ Future<void> showAddSongsToPlaylistSheet(
                             .read(playlistsProvider.notifier)
                             .addSongsToPlaylist(playlist.id, songs);
                         if (context.mounted) {
-                          _snack(context, '已添加 ${songs.length} 首到"${playlist.name}"');
+                          _snack(
+                            context,
+                            '已添加 ${songs.length} 首到"${playlist.name}"',
+                          );
                         }
                       },
                     ),

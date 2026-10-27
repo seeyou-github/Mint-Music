@@ -33,8 +33,7 @@ String describeWebDavError(Object error) {
       case dio.DioExceptionType.badCertificate:
         return 'HTTPS 证书校验失败：$uri';
       case dio.DioExceptionType.connectionError:
-        return '网络连接失败：无法访问 $uri\n${error.error ?? error.message ?? ''}'
-            .trim();
+        return '网络连接失败：无法访问 $uri\n${error.error ?? error.message ?? ''}'.trim();
       case dio.DioExceptionType.cancel:
         return '请求已取消';
       case dio.DioExceptionType.badResponse:
@@ -110,7 +109,12 @@ class WebDavConfig {
 
 /// 远端备份文件条目。
 class RemoteBackupFile {
-  const RemoteBackupFile({required this.name, required this.path, required this.size, required this.modified});
+  const RemoteBackupFile({
+    required this.name,
+    required this.path,
+    required this.size,
+    required this.modified,
+  });
 
   final String name;
   final String path;
@@ -142,9 +146,7 @@ class WebDavService {
 
   void _requireConfigured() {
     if (!config.isConfigured) {
-      throw const WebDavException(
-        '未配置 WebDAV：请先在「设置 → 备份还原」中填写 WebDAV 地址',
-      );
+      throw const WebDavException('未配置 WebDAV：请先在「设置 → 备份还原」中填写 WebDAV 地址');
     }
   }
 
@@ -332,7 +334,10 @@ class WebDavService {
         ),
       );
     }
-    result.sort((a, b) => (b.modified ?? DateTime(0)).compareTo(a.modified ?? DateTime(0)));
+    result.sort(
+      (a, b) =>
+          (b.modified ?? DateTime(0)).compareTo(a.modified ?? DateTime(0)),
+    );
     return result;
   }
 

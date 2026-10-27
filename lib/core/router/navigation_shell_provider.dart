@@ -10,5 +10,6 @@ import 'package:go_router/go_router.dart';
 ///
 /// 单独放在一个文件里，避免 `app_router.dart` 与 `app_shell.dart` 互相
 /// 引用形成循环依赖。
-final navigationShellProvider =
-    StateProvider<StatefulNavigationShell?>((ref) => null);
+final navigationShellProvider = StateProvider<StatefulNavigationShell?>(
+  (ref) => null,
+);

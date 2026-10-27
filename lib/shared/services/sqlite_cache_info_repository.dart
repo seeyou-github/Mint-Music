@@ -130,7 +130,10 @@ class SqliteCacheInfoRepository extends CacheInfoRepository {
   @override
   Future<List<CacheObject>> getObjectsOverCapacity(int capacity) async {
     final all = await getAllObjects();
-    all.sort((c1, c2) => (c1.touched ?? DateTime(0)).compareTo(c2.touched ?? DateTime(0)));
+    all.sort(
+      (c1, c2) =>
+          (c1.touched ?? DateTime(0)).compareTo(c2.touched ?? DateTime(0)),
+    );
     if (all.length <= capacity) return <CacheObject>[];
     return all.getRange(0, all.length - capacity).toList();
   }
@@ -140,8 +143,10 @@ class SqliteCacheInfoRepository extends CacheInfoRepository {
     final oldestTimestamp = DateTime.now().subtract(maxAge);
     final all = await getAllObjects();
     return all
-        .where((element) =>
-            (element.touched ?? DateTime(0)).isBefore(oldestTimestamp))
+        .where(
+          (element) =>
+              (element.touched ?? DateTime(0)).isBefore(oldestTimestamp),
+        )
         .toList();
   }
 
@@ -209,19 +214,15 @@ class SqliteCacheInfoRepository extends CacheInfoRepository {
           final map = element.map((k, v) => MapEntry('$k', v));
           final key = map[CacheObject.columnKey] ?? map[CacheObject.columnUrl];
           if (key == null) continue;
-          batch.insert(
-            'cache_index',
-            {
-              'cache_key': '$key',
-              'url': map[CacheObject.columnUrl] ?? '',
-              'relative_path': map[CacheObject.columnPath] ?? '',
-              'e_tag': map[CacheObject.columnETag],
-              'valid_till': map[CacheObject.columnValidTill] ?? 0,
-              'length': map[CacheObject.columnLength],
-              'touched': map[CacheObject.columnTouched] ?? 0,
-            },
-            conflictAlgorithm: ConflictAlgorithm.ignore,
-          );
+          batch.insert('cache_index', {
+            'cache_key': '$key',
+            'url': map[CacheObject.columnUrl] ?? '',
+            'relative_path': map[CacheObject.columnPath] ?? '',
+            'e_tag': map[CacheObject.columnETag],
+            'valid_till': map[CacheObject.columnValidTill] ?? 0,
+            'length': map[CacheObject.columnLength],
+            'touched': map[CacheObject.columnTouched] ?? 0,
+          }, conflictAlgorithm: ConflictAlgorithm.ignore);
         }
         await batch.commit(noResult: true);
       }

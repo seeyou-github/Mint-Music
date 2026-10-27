@@ -297,14 +297,13 @@ class _PluginTestDialogState extends ConsumerState<PluginTestDialog> {
 
   Widget _buildSummary(ThemeColors colors, PluginTestReport report) {
     if (report.running) {
-      final doneSources =
-          report.sources
-              .where(
-                (s) =>
-                    s.status == PluginTestSourceStatus.done ||
-                    s.status == PluginTestSourceStatus.failed,
-              )
-              .length;
+      final doneSources = report.sources
+          .where(
+            (s) =>
+                s.status == PluginTestSourceStatus.done ||
+                s.status == PluginTestSourceStatus.failed,
+          )
+          .length;
       return Row(
         children: [
           SizedBox(
@@ -318,9 +317,7 @@ class _PluginTestDialogState extends ConsumerState<PluginTestDialog> {
           const SizedBox(width: AppSpacing.sm),
           Expanded(
             child: Text(
-              context.tr(
-                '测试中 $doneSources/${report.sources.length} 个音源…',
-              ),
+              context.tr('测试中 $doneSources/${report.sources.length} 个音源…'),
               style: TextStyle(fontSize: 12, color: colors.textSecondary),
             ),
           ),
@@ -410,10 +407,7 @@ class _PluginTestDialogState extends ConsumerState<PluginTestDialog> {
                         ),
                         child: Text(
                           context.tr('${source.sourceId}源'),
-                          style: TextStyle(
-                            fontSize: 10,
-                            color: colors.primary,
-                          ),
+                          style: TextStyle(fontSize: 10, color: colors.primary),
                         ),
                       ),
                     ],
@@ -432,10 +426,9 @@ class _PluginTestDialogState extends ConsumerState<PluginTestDialog> {
                   : context.tr('匹配：${source.matchText}'),
               style: TextStyle(
                 fontSize: 11,
-                color:
-                    source.status == PluginTestSourceStatus.failed
-                        ? colors.warning
-                        : colors.textHint,
+                color: source.status == PluginTestSourceStatus.failed
+                    ? colors.warning
+                    : colors.textHint,
               ),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
@@ -505,7 +498,10 @@ class _PluginTestDialogState extends ConsumerState<PluginTestDialog> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(Icons.close, size: 14, color: colors.error),
-            Text('0/${source.qualities.length}', style: TextStyle(fontSize: 11, color: colors.error)),
+            Text(
+              '0/${source.qualities.length}',
+              style: TextStyle(fontSize: 11, color: colors.error),
+            ),
           ],
         );
       case PluginTestSourceStatus.done:
@@ -572,26 +568,17 @@ class _PluginTestDialogState extends ConsumerState<PluginTestDialog> {
         children: [
           icon,
           const SizedBox(width: 3),
-          Text(
-            quality.quality,
-            style: TextStyle(fontSize: 11, color: color),
-          ),
+          Text(quality.quality, style: TextStyle(fontSize: 11, color: color)),
         ],
       ),
     );
   }
 
-  Widget _buildFailureNotes(
-    ThemeColors colors,
-    PluginTestSourceResult source,
-  ) {
-    final notes =
-        source.qualities
-            .where(
-              (q) => q.status == PluginTestItemStatus.failed && q.note != null,
-            )
-            .map((q) => '${q.quality}: ${q.note}')
-            .toList();
+  Widget _buildFailureNotes(ThemeColors colors, PluginTestSourceResult source) {
+    final notes = source.qualities
+        .where((q) => q.status == PluginTestItemStatus.failed && q.note != null)
+        .map((q) => '${q.quality}: ${q.note}')
+        .toList();
     if (notes.isEmpty) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.only(top: 6),
@@ -624,11 +611,7 @@ class _PluginTestDialogState extends ConsumerState<PluginTestDialog> {
                   ),
                 )
               : const Icon(Icons.stop_circle_outlined, size: 18),
-          label: Text(
-            _stopRequested
-                ? context.tr('停止中…')
-                : context.tr('停止测试'),
-          ),
+          label: Text(_stopRequested ? context.tr('停止中…') : context.tr('停止测试')),
           style: OutlinedButton.styleFrom(
             foregroundColor: colors.error,
             side: BorderSide(color: colors.error.withValues(alpha: 0.5)),
@@ -692,9 +675,6 @@ class _PluginTestDialogState extends ConsumerState<PluginTestDialog> {
       );
     }
 
-    return Padding(
-      padding: const EdgeInsets.all(AppSpacing.md),
-      child: child,
-    );
+    return Padding(padding: const EdgeInsets.all(AppSpacing.md), child: child);
   }
 }

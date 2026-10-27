@@ -248,9 +248,7 @@ class PluginRepository {
 
     // GitHub repo page → try fetching latest release JS
     // e.g. https://github.com/owner/repo → look for a .js file in repo
-    final githubRepoPattern = RegExp(
-      r'^https?://github\.com/([^/]+/[^/]+)/?$'
-    );
+    final githubRepoPattern = RegExp(r'^https?://github\.com/([^/]+/[^/]+)/?$');
     final repoMatch = githubRepoPattern.firstMatch(url);
     if (repoMatch != null) {
       // Can't reliably determine the JS file path from just the repo URL.
@@ -292,7 +290,8 @@ class PluginRepository {
       final code = response.data.toString();
       final remoteVersion = _extractVersionFromCode(code);
 
-      if (remoteVersion != null && _isNewerVersion(remoteVersion, plugin.version)) {
+      if (remoteVersion != null &&
+          _isNewerVersion(remoteVersion, plugin.version)) {
         return PluginUpdateResult(
           plugin: plugin,
           available: true,

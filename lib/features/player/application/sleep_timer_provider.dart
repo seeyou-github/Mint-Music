@@ -41,8 +41,8 @@ class SleepTimerState {
 
 class SleepTimerController extends StateNotifier<SleepTimerState> {
   SleepTimerController({required Future<void> Function() onFire})
-      : _onFire = onFire,
-        super(SleepTimerState.idle);
+    : _onFire = onFire,
+      super(SleepTimerState.idle);
 
   final Future<void> Function() _onFire;
 
@@ -85,14 +85,14 @@ class SleepTimerController extends StateNotifier<SleepTimerState> {
 
 final sleepTimerProvider =
     StateNotifierProvider<SleepTimerController, SleepTimerState>((ref) {
-  return SleepTimerController(
-    onFire: () async {
-      // 到点暂停播放（若已暂停则为空操作）。
-      await ref.read(playbackControllerProvider.notifier).pause();
-      debugPrint('[SleepTimer] 定时时间到，已暂停播放');
-    },
-  );
-});
+      return SleepTimerController(
+        onFire: () async {
+          // 到点暂停播放（若已暂停则为空操作）。
+          await ref.read(playbackControllerProvider.notifier).pause();
+          debugPrint('[SleepTimer] 定时时间到，已暂停播放');
+        },
+      );
+    });
 
 /// 将剩余时长格式化为 "m:ss" 或 "h:mm:ss"（如 29:59 / 1:02:03）。
 String formatSleepTimerRemaining(Duration duration) {

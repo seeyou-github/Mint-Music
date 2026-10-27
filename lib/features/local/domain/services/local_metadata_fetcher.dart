@@ -67,18 +67,21 @@ class LocalMetadataFetcher {
       for (final entry in aggregated.entries) {
         final sourceId = entry.key;
         for (final searchSong in entry.value) {
-          candidates.add(_Candidate(
-            song: searchSong.copyWith(source: sourceId),
-            sourceId: sourceId,
-          ));
+          candidates.add(
+            _Candidate(
+              song: searchSong.copyWith(source: sourceId),
+              sourceId: sourceId,
+            ),
+          );
         }
       }
 
       if (candidates.isEmpty) return song;
 
       // 评分并排序
-      candidates.sort((a, b) =>
-          _scoreCandidate(b, song).compareTo(_scoreCandidate(a, song)));
+      candidates.sort(
+        (a, b) => _scoreCandidate(b, song).compareTo(_scoreCandidate(a, song)),
+      );
 
       // 过滤掉低分候选
       final goodCandidates = candidates
@@ -134,12 +137,7 @@ class LocalMetadataFetcher {
         '(lyric=${bestLyric != null}, cover=${bestCoverUrl != null})',
       );
 
-      return _applyResults(
-        song,
-        matchCandidate,
-        bestCoverUrl,
-        bestLyric,
-      );
+      return _applyResults(song, matchCandidate, bestCoverUrl, bestLyric);
     } catch (e) {
       debugPrint('[LocalMetadataFetcher] 自动获取失败: ${song.title} - $e');
       _confirmedMissing.add(song.id);
@@ -232,10 +230,10 @@ class LocalMetadataFetcher {
       final durationScore = durationDiff <= 3
           ? 1.0
           : durationDiff <= 10
-              ? 0.7
-              : durationDiff <= 30
-                  ? 0.3
-                  : 0.0;
+          ? 0.7
+          : durationDiff <= 30
+          ? 0.3
+          : 0.0;
       score += durationScore * 0.1;
     }
 
@@ -266,10 +264,9 @@ class LocalMetadataFetcher {
   /// 从候选源获取封面 URL。
   Future<String?> _fetchCoverUrl(_Candidate candidate) async {
     try {
-      return await _musicSourceManager.getPic(
-        candidate.song,
-        preferBuiltIn: false,
-      ).timeout(const Duration(seconds: 8));
+      return await _musicSourceManager
+          .getPic(candidate.song)
+          .timeout(const Duration(seconds: 8));
     } catch (_) {
       return null;
     }
@@ -305,9 +302,15 @@ class LocalMetadataFetcher {
     // MusicCoverImage 内部通过 Dio + 内存缓存加载网络图片，
     // 如果存为本地文件路径，MusicCoverImage 无法识别。
     return local.copyWith(
-      title: candidate.song.title.isNotEmpty ? candidate.song.title : local.title,
-      artist: candidate.song.artist.isNotEmpty ? candidate.song.artist : local.artist,
-      album: candidate.song.album.isNotEmpty ? candidate.song.album : local.album,
+      title: candidate.song.title.isNotEmpty
+          ? candidate.song.title
+          : local.title,
+      artist: candidate.song.artist.isNotEmpty
+          ? candidate.song.artist
+          : local.artist,
+      album: candidate.song.album.isNotEmpty
+          ? candidate.song.album
+          : local.album,
       coverUrl: coverUrl ?? local.coverUrl,
       hasCover: (coverUrl != null && coverUrl.isNotEmpty) || local.hasCover,
       lrc: lyric ?? local.lrc,

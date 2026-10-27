@@ -166,9 +166,12 @@ class PlaylistSyncService {
     Map<String, dynamic> local,
     Map<String, dynamic> remote,
   ) {
-    final localSongs = local['songs'] is List ? local['songs'] as List : const [];
-    final remoteSongs =
-        remote['songs'] is List ? remote['songs'] as List : const [];
+    final localSongs = local['songs'] is List
+        ? local['songs'] as List
+        : const [];
+    final remoteSongs = remote['songs'] is List
+        ? remote['songs'] as List
+        : const [];
     if (localSongs.isEmpty && remoteSongs.isNotEmpty) return remote;
     if (remoteSongs.isEmpty && localSongs.isNotEmpty) return local;
     return _updatedAt(remote) > _updatedAt(local) ? remote : local;
@@ -178,10 +181,7 @@ class PlaylistSyncService {
     Map<String, Map<String, dynamic>> byId,
   ) {
     final favorites = byId.remove(favoritesId);
-    return [
-      if (favorites != null) favorites,
-      ...byId.values,
-    ];
+    return [if (favorites != null) favorites, ...byId.values];
   }
 
   static Map<String, int> _activeTombstones(

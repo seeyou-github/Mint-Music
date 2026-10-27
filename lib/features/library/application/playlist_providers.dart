@@ -54,10 +54,10 @@ class PlaylistsNotifier extends AsyncNotifier<List<Playlist>> {
 
   /// 收藏入库存的歌：清掉会过期的播放地址 / 请求头 / 音质标记。
   ///
-  /// **音源绑定保持收藏时的原样**：内置源（平台 id）就绑内置源，插件源
-  /// （`平台id@插件id`）保持插件绑定——不落成「实际解析播放」的用户插件。
-  /// 之后从收藏播放时按优先音源 / 会话手动音源 / 回退链解析，与内置源
-  /// 歌曲的行为完全一致。
+  /// **音源绑定保持收藏时的原样**：裸平台 id 保持平台 id，插件源
+  /// （`平台id@插件id`）保持插件绑定——不落成「实际解析播放」的插件。
+  /// 之后从收藏播放时按优先音源 / 会话手动音源 / 回退链解析，与平台歌曲
+  /// 的行为完全一致。
   Song _songForStorage(Song song) {
     if (song.sourceUrl == null &&
         song.sourceHeaders == null &&
@@ -86,7 +86,7 @@ class PlaylistsNotifier extends AsyncNotifier<List<Playlist>> {
     String? coverImgUrl,
   }) async {
     final repo = ref.read(playlistRepositoryProvider);
-    // 收藏保持「收藏时的音源」：内置源绑内置源，插件源保持插件绑定。
+    // 收藏保持「收藏时的音源」：裸平台 id 保持平台 id，插件源保持插件绑定。
     // 专辑 / 作者描述标记里的音源同步为传入的音源（相同则原样）。
     await repo.createPlaylistWithSongs(
       name,
@@ -101,7 +101,7 @@ class PlaylistsNotifier extends AsyncNotifier<List<Playlist>> {
 
   Future<void> createPlaylistFromModel(Playlist playlist) async {
     final repo = ref.read(playlistRepositoryProvider);
-    // 音源保持歌单自己的 source（内置源绑内置源），不落成实际播放的插件。
+    // 音源保持歌单自己的 source，不落成实际播放的插件。
     await repo.savePlaylist(playlist);
     ref.invalidateSelf();
     _syncToRemote();

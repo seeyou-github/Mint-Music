@@ -250,11 +250,11 @@ final lyricFontFamilyProvider = StateProvider<String>(
 final lyricFontRateProvider = StateProvider<double>((ref) => 0.9);
 final lyricFontWeightProvider = StateProvider<int>((ref) => 500);
 
-/// 内置音源 → 优先音源（平台 id → 音源 id）。
+/// 平台 id → 优先插件音源。
 ///
-/// 内置音源（wy / tx / kg / kw / mg）自己没有地址接口，播放时由插件解析。
-/// 这里记录用户为每个内置源指定的「优先音源」：解析播放地址时先试它，
-/// 失败再按原有顺序尝试其它音源。
+/// 裸平台 id（wy / tx / kg / kw / mg）的歌曲由插件解析播放地址。这里记录
+/// 用户为每个平台指定的「优先插件音源」：解析播放地址时先试它，失败再按
+/// 原有顺序尝试其它音源。
 ///
 /// 例：`{'wy': 'wy@luoxue', 'kg': 'kg@musicfree'}`
 final preferredSourceMapProvider = StateProvider<Map<String, String>>(
@@ -279,7 +279,7 @@ Map<String, String> _decodePreferredSources(String raw) {
   }
 }
 
-/// 设置某个内置源的优先音源（[sourceId] 为空表示清除）。
+/// 设置某个平台的优先插件音源（[sourceId] 为空表示清除）。
 Future<void> setPreferredSource(
   WidgetRef ref, {
   required String baseSourceId,
@@ -562,8 +562,7 @@ final settingsInitProvider = FutureProvider<void>((ref) async {
   final hideVipExclusive = svc.getHideVipExclusiveSongs();
   ref.read(hideVipExclusiveSongsProvider.notifier).state = hideVipExclusive;
   // 过滤行为在音源管理器里生效（解析插件歌曲列表时按开关隐藏会员专属）。
-  ref.read(musicSourceManagerProvider).hideVipExclusiveSongs =
-      hideVipExclusive;
+  ref.read(musicSourceManagerProvider).hideVipExclusiveSongs = hideVipExclusive;
   ref.read(notificationEnabledProvider.notifier).state = svc
       .getNotificationEnabled();
   ref.read(defaultSourceIdSettingProvider.notifier).state = svc
@@ -613,7 +612,7 @@ final settingsInitProvider = FutureProvider<void>((ref) async {
       await _migrateLyricFontWeight(svc);
 
   ref.read(lyricFontColorProvider.notifier).state = svc.getLyricFontColor();
-  // 内置音源 → 优先音源（每个内置源可单独指定）
+  // 平台 id → 优先插件音源（每个平台可单独指定）
   ref.read(preferredSourceMapProvider.notifier).state = _decodePreferredSources(
     svc.getPreferredSourceMap(),
   );

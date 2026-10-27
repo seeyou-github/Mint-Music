@@ -414,11 +414,11 @@ class SearchHistoryNotifier extends StateNotifier<List<String>> {
   }
 }
 
-/// 搜索页可选的音源列表（与发现页一致：内置音源 + 已启用的插件音源）。
+/// 搜索页可选的音源列表（与发现页一致：已启用的插件音源）。
 ///
 /// 没有「聚合搜索」这一项：搜索始终使用单个音源，默认是发现页正在用的音源。
 final searchAvailableSourcesProvider = Provider<List<SourceInfo>>((ref) {
-  // searchSupportedSourcesProvider 已经包含「仍启用」的内置音源与插件音源。
+  // searchSupportedSourcesProvider 已经包含「仍启用」的插件音源。
   final searchSources = ref.watch(searchSupportedSourcesProvider);
 
   final allSources = <SourceInfo>[];

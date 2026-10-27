@@ -138,10 +138,7 @@ class PlaylistRepository {
     });
   }
 
-  Future<Playlist> createPlaylist(
-    String name, {
-    String description = '',
-  }) {
+  Future<Playlist> createPlaylist(String name, {String description = ''}) {
     return _serialized(() async {
       final playlists = await loadPlaylists();
       final now = DateTime.now();
@@ -178,7 +175,9 @@ class PlaylistRepository {
       // 「bilibili 视频信息 -400」（拿不到 bvid/aid/cid）。
       final songs = songsData.map((data) {
         final song = Song.fromJson(data);
-        if (song.title.isNotEmpty && song.artist.isNotEmpty && song.album.isNotEmpty) {
+        if (song.title.isNotEmpty &&
+            song.artist.isNotEmpty &&
+            song.album.isNotEmpty) {
           return song;
         }
         return song.copyWith(
@@ -190,7 +189,9 @@ class PlaylistRepository {
 
       // 收藏专辑 / 作者时用详情页拿到的封面或头像;普通歌单仍跟随第一首歌。
       final explicitCover = coverImgUrl?.trim() ?? '';
-      final fallbackCover = songs.isNotEmpty ? (songs.first.coverUrl ?? '') : '';
+      final fallbackCover = songs.isNotEmpty
+          ? (songs.first.coverUrl ?? '')
+          : '';
 
       final playlist = Playlist(
         id: now.millisecondsSinceEpoch.toString(),
@@ -269,7 +270,9 @@ class PlaylistRepository {
       final index = playlists.indexWhere((p) => p.id == playlistId);
       if (index != -1) {
         final playlist = playlists[index];
-        final updatedSongs = playlist.songs.where((s) => s.id != songId).toList();
+        final updatedSongs = playlist.songs
+            .where((s) => s.id != songId)
+            .toList();
         playlists[index] = playlist.copyWith(
           songs: updatedSongs,
           updateTime: DateTime.now(),

@@ -77,7 +77,7 @@ class SearchCollection {
         ? (json['raw'] as Map).map((k, v) => MapEntry('$k', v))
         : <String, dynamic>{};
     // 各音源的封 / 头像字段不统一：
-    //   内置源：coverUrl / picUrl
+    //   平台直出：coverUrl / picUrl
     //   MusicFree 专辑：artwork
     //   MusicFree 作者：avatar（以前没读，导致作者头像一直加载不出来）
     final cover = _firstString([

@@ -25,7 +25,7 @@ class Song {
   /// 从收藏 / 歌单播放时优先使用的插件音源（`平台id@插件id`）。
   ///
   /// 收藏搜索结果时把「当时是哪个插件」记下来：播放时先用它解析地址，
-  /// 优先级高于设置里给内置源指定的「优先音源」；它失败后仍按原规则回退，
+  /// 优先级高于设置里给平台指定的「优先音源」；它失败后仍按原规则回退，
   /// 所以这里不做硬绑定（[source] 依旧是平台 id）。
   final String? preferredSource;
 
@@ -78,7 +78,7 @@ class Song {
   /// 插件搜索出来的歌，[source] 只记平台 id（播放、歌词等仍按平台处理），
   /// 真正是哪个插件在提供记在 [preferredSource] 里；收藏时绑定的优先插件
   /// 同理。展示层要优先用它，否则「用元力KW 搜出来的歌」会被标成
-  /// 「酷我音乐-内置」，看起来像没走插件。
+  /// 「酷我音乐」，看起来像没走插件。
   String? get displaySource {
     final preferred = preferredSource?.trim() ?? '';
     return preferred.isNotEmpty ? preferred : source;

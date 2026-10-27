@@ -336,7 +336,7 @@ class SongListItem extends ConsumerWidget {
   ) {
     // 插件搜索出来的歌，song.source 只记平台 id（播放 / 歌词仍按平台处理），
     // 真正用的是哪个插件记在 preferredSource 里。只读 source 会把「用元力KW
-    // 搜出来的歌」全部标成「酷我音乐-内置」，看起来像根本没走插件。
+    // 搜出来的歌」全部标成「酷我音乐」，看起来像根本没走插件。
     // 收藏时绑定的优先插件同理，这里统一优先显示它（见 [Song.displaySource]）。
     final displaySource = song.displaySource ?? song.source!;
     // 名称最长 10 个字，超出省略（与详情页头部的音源标签一致）。
@@ -592,7 +592,7 @@ class SongListItem extends ConsumerWidget {
   }
 
   String _getSourceName(String source, WidgetRef ref) {
-    // 插件音源（平台id@插件id）显示为「平台名-插件名」，内置音源带「-内置」。
+    // 插件音源（平台id@插件id）显示为「平台名-插件名」，裸平台 id 显示平台名。
     final display = ref
         .read(musicSourceManagerProvider)
         .sourceDisplayName(source);

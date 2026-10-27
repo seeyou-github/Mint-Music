@@ -25,7 +25,13 @@ class LxPluginConverter {
   };
 
   /// 静态分析完全失败时的兜底平台（落雪脚本几乎都覆盖这几个平台）。
-  static const List<String> _fallbackPlatformIds = ['kw', 'wy', 'tx', 'kg', 'mg'];
+  static const List<String> _fallbackPlatformIds = [
+    'kw',
+    'wy',
+    'tx',
+    'kg',
+    'mg',
+  ];
 
   /// 静态分析识别不出音质时的默认音质。
   static const List<String> _defaultQualities = ['128k', '320k', 'flac'];
@@ -667,9 +673,13 @@ module.exports = {
     // 128k），只要识别出来的音质一致就统一套用到所有平台，避免出现
     // 「一部分平台只有 128k、另一部分却有 flac」的不一致结果。
     final listed = qualities.values.toList();
-    final unified = listed.length >= 2 &&
-        listed.every((q) => q.length == listed.first.length &&
-            List<String>.from(q).join() == listed.first.join());
+    final unified =
+        listed.length >= 2 &&
+        listed.every(
+          (q) =>
+              q.length == listed.first.length &&
+              List<String>.from(q).join() == listed.first.join(),
+        );
 
     // 完全识别不出来时退回常见平台，保证插件仍然可以被测试与选择。
     if (ids.isEmpty) {
@@ -769,10 +779,7 @@ module.exports = {
         if (i + 1 < raw.length && raw[i + 1] == '{') {
           final end = raw.indexOf('}', i);
           if (end > i + 2) {
-            final code = int.tryParse(
-              raw.substring(i + 2, end),
-              radix: 16,
-            );
+            final code = int.tryParse(raw.substring(i + 2, end), radix: 16);
             if (code != null) {
               buffer.writeCharCode(code);
               i = end;
@@ -780,10 +787,7 @@ module.exports = {
             }
           }
         } else if (i + 4 < raw.length) {
-          final code = int.tryParse(
-            raw.substring(i + 1, i + 5),
-            radix: 16,
-          );
+          final code = int.tryParse(raw.substring(i + 1, i + 5), radix: 16);
           if (code != null) {
             buffer.writeCharCode(code);
             i += 4;

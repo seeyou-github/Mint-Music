@@ -374,7 +374,7 @@ class RadioEngine {
           collected.putIfAbsent(song.id, () => song);
         }
         if (result.isEnd) break;
-        // 内置源一次给全量，不需要继续翻。
+        // 只有一页内容时（插件直接给全量）不用继续翻。
         if (page == 1 && playlist.songs.isEmpty) break;
       } catch (e) {
         debugPrint('[RadioEngine] 歌单第 $page 页取歌失败: $e');

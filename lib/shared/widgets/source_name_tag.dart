@@ -5,7 +5,6 @@ import '../../core/l10n/l10n.dart';
 import '../../core/theme/app_spacing.dart';
 import '../../core/theme/theme_provider.dart';
 import '../../features/plugin/application/plugin_providers.dart';
-import '../../features/plugin/domain/plugin_types.dart';
 import 'source_icon.dart';
 
 /// 音源名称标签（详情页头部 / 歌曲列表通用）。
@@ -86,8 +85,8 @@ class SourceNameTag extends StatelessWidget {
 /// 弹出「用户已安装的音源插件」列表让用户选择，返回选中的音源 id；
 /// 取消返回 null。
 ///
-/// 只列用户安装的插件音源（内置音源不参与绑定切换），且只列能解析播放
-/// 地址的（绑定后无法解析地址的音源没有意义）。
+/// 只列用户安装的插件音源，且只列能解析播放地址的（绑定后无法解析地址的
+/// 音源没有意义）。
 Future<String?> showPluginSourcePicker(
   BuildContext context,
   WidgetRef ref, {

@@ -54,9 +54,7 @@ void main() {
     test('parses interleaved word timestamps with line start tag', () {
       // `[00:12.00]我[00:12.30]感[00:13.00]觉`：词级时间轴，标签不再作为文本显示
       // （我@行首00:12.00，感@00:13.00，觉=尾段无标签用最后标签时间兜底）
-      final lines = parseLyricAuto(
-        '[00:12.00]我[00:12.30]感[00:13.00]觉',
-      );
+      final lines = parseLyricAuto('[00:12.00]我[00:12.30]感[00:13.00]觉');
 
       expect(lines, hasLength(1));
       expect(lines.first.plainText, '我感觉');
@@ -69,9 +67,7 @@ void main() {
 
     test('parses interleaved word timestamps without line start tag', () {
       // 用户反馈样例：无行首时间戳的交错式标签，不能整行丢弃或显示标签
-      final lines = parseLyricAuto(
-        '我[02:13.20]感[02:13.64]觉[02:14.53]',
-      );
+      final lines = parseLyricAuto('我[02:13.20]感[02:13.64]觉[02:14.53]');
 
       expect(lines, hasLength(1));
       expect(lines.first.plainText, '我感觉');

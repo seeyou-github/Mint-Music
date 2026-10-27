@@ -266,10 +266,10 @@ const _sourceIdToChineseName = {
   'local': '本地音乐',
 };
 
-/// 音源展示名：内置音源带「-内置」，插件音源带插件名。
+/// 音源展示名。
 ///
-/// 播放地址由插件解析时，歌曲的音源字段可能还是内置源的平台 id，这里统一
-/// 交给音源管理器给出与切换列表一致的名称。
+/// 播放地址由插件解析时，歌曲的音源字段可能是平台 id 或「平台@插件」，
+/// 这里统一交给音源管理器给出与切换列表一致的名称。
 String _getSourceName(String sourceId, MusicSourceManager manager) {
   if (sourceId.isEmpty) return sourceId;
   final name = manager.sourceDisplayName(sourceId);
@@ -363,7 +363,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
 
   bool _autoQualityDowngrade = false;
 
-  /// 内置音源 → 优先音源（平台 id → 音源 id），由设置页维护。
+  /// 平台 id → 优先插件音源（由设置页维护）。
   Map<String, String> _preferredSources = const {};
   Timer? _loadingTimer;
 
@@ -421,10 +421,10 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     _autoQualityDowngrade = enabled;
   }
 
-  /// 更新「内置音源 → 优先音源」映射。
+  /// 更新「平台 id → 优先插件音源」映射。
   void setPreferredSources(Map<String, String> map) {
     _preferredSources = Map<String, String>.from(map);
-    // 同步给管理器：内置源「第一次」解析播放地址时也优先用这个音源。
+    // 同步给管理器：解析裸平台 id 时优先用这个插件音源。
     _musicSourceManager.setPreferredSources(_preferredSources);
   }
 
@@ -951,38 +951,15 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     _errorListenerSub?.cancel();
     _errorListenerSub = null;
 
-    final sourceId = song.source ?? 'wy';
+    final sourceId = song.source ?? '';
     final isLocal = sourceId == 'local';
-    // 「内置酷我」歌曲（source 是裸平台 id 且没有插件绑定）才有酷我专属的
-    // 高清封面提升 / 强制刷新：插件酷我歌曲（preferredSource 带插件）的
-    // 封面在解析时已经可用，走这条通道反而会被 getPic 的结果（内置接口按
-    // 不可互换的歌曲 id 查询 / 插件 getPic 失败）替换成坏地址，表现为
-    // 列表封面正常、播放时左侧栏与播放详情页无封面。
-    final isKwBuiltInSong =
-        sourceId == 'kw' && (song.preferredSource?.trim().isEmpty ?? true);
     if (!isLocal) {
       await _ensureMusicSourcesReady();
       if (_currentPlayRequestId != requestId) return;
     }
-    final initialDisplayCover = isKwBuiltInSong
-        ? _musicSourceManager.getHighResolutionCoverUrl(song)
-        : null;
-    final initialSong =
-        initialDisplayCover == null || initialDisplayCover == song.coverUrl
-        ? song
-        : song.copyWith(coverUrl: initialDisplayCover);
-    if (!identical(initialSong, song)) {
-      _replaceSongInQueue(index, initialSong);
-    }
     final pendingCoverFuture =
-        !isLocal &&
-            ((song.coverUrl == null || song.coverUrl!.isEmpty) ||
-                isKwBuiltInSong)
-        ? _musicSourceManager.getPic(
-            song,
-            preferBuiltIn: isKwBuiltInSong,
-            bypassCache: isKwBuiltInSong,
-          )
+        !isLocal && (song.coverUrl == null || song.coverUrl!.isEmpty)
+        ? _musicSourceManager.getPic(song)
         : null;
     final quality = isLocal
         ? _getQualityFromSong(song)
@@ -995,7 +972,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
         : (availableQualities.isNotEmpty ? availableQualities.last : '320k');
     state = state.copyWith(
       currentIndex: index,
-      currentSong: initialSong,
+      currentSong: song,
       position: Duration.zero,
       isLoading: true,
       currentQuality: qualitySlot,
@@ -1003,7 +980,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     );
 
     try {
-      Song currentSongToPlay = initialSong;
+      Song currentSongToPlay = song;
       String? urlToPlay = song.sourceUrl;
       var resolvedUrlCandidates = <PluginMusicUrlResult>[];
 
@@ -1082,7 +1059,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
                 : result.quality,
             clearSourceHeaders: result.headers.isEmpty,
             clearSourceQuality: false,
-            // 内置源的歌曲由插件解析地址，这里把音源标记成实际提供地址的插件，
+            // 歌曲由插件解析地址，这里把音源标记成实际提供地址的插件，
             // 播放详情页显示的就是真正正在使用的音源。
             source: result.source ?? currentSongToPlay.source,
           );
@@ -1220,7 +1197,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
       if (pendingCoverFuture != null && _currentPlayRequestId == requestId) {
         unawaited(
           _applyResolvedCover(
-            song: initialSong,
+            song: song,
             index: index,
             requestId: requestId,
             coverFuture: pendingCoverFuture,
@@ -1746,13 +1723,8 @@ class PlaybackController extends StateNotifier<PlaybackState> {
       );
       if (currentBaseId != songBaseId) return;
 
-      // 强制刷新只针对「内置酷我」歌曲（缩略图提升高清）；插件酷我歌曲
-      // 的封面已经可用，有封面就不动，避免被坏结果替换。
-      final shouldRefreshKuwoCover =
-          currentSong.source == 'kw' &&
-          (currentSong.preferredSource?.trim().isEmpty ?? true);
-      if (!shouldRefreshKuwoCover &&
-          (currentSong.coverUrl?.isNotEmpty ?? false)) {
+      // 已有封面就不动，避免把列表里可用的封面换成解析结果里的坏地址。
+      if (currentSong.coverUrl?.isNotEmpty ?? false) {
         return;
       }
       if (currentSong.coverUrl == coverUrl) return;
@@ -1775,9 +1747,9 @@ class PlaybackController extends StateNotifier<PlaybackState> {
 
   /// 播放失败时的提示语。
   ///
-  /// * **内置/插件平台音源**：平台上一个已启用的插件都没有时，提示用户去
-  ///   安装对应平台的音源；装了插件但解析失败（如接口 412 风控、大会员
-  ///   专享），则显示「解析失败」并带上接口返回的具体错误；
+  /// * **平台音源**：平台上一个已启用的插件都没有时，提示用户去安装对应
+  ///   平台的音源；装了插件但解析失败（如接口 412 风控、大会员专享），
+  ///   则显示「解析失败」并带上接口返回的具体错误；
   /// * **插件绑定音源**（`平台@插件`）：直接说明当前音源播放失败，
   ///   并尽量附上接口返回的具体错误。
   String _playbackFailureReason(Song song) {
@@ -1807,14 +1779,13 @@ class PlaybackController extends StateNotifier<PlaybackState> {
             _getSourceName(source, _musicSourceManager);
         return withDetail(tr('$name音源解析失败'));
       }
-      return _builtInSourceMissingMessage(source);
+      return _missingSourceMessage(source);
     }
     return withDetail(tr('当前音源播放失败'));
   }
 
-  /// 内置音源缺少第三方音源时的提示。
-  String _builtInSourceMissingMessage(String source) {
-    // 用平台名（不带「-内置」后缀），提示语读起来更自然。
+  /// 平台没有已安装的插件音源时的提示。
+  String _missingSourceMessage(String source) {
     final (baseId, _) = MusicSourceManager.splitSourceId(source);
     final name =
         _sourceIdToChineseName[baseId] ??

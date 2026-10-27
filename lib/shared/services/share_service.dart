@@ -78,10 +78,7 @@ class ShareService {
     );
     await file.writeAsString(content);
 
-    await Share.shareXFiles(
-      [XFile(file.path)],
-      text: text,
-    );
+    await Share.shareXFiles([XFile(file.path)], text: text);
   }
 
   static Future<void> shareText(String text) async {
@@ -101,19 +98,20 @@ class ShareService {
       case 'kg':
         id = song.id.startsWith('kg_') ? song.id.substring(3) : song.id;
         return 'https://www.kugou.com/song/#hash=$id';
-      case 'kw': {
-        if (song.id.startsWith('kw_')) {
-          id = song.id.substring(3);
-          // kw_digest-{d}__{rid} → extract part after __
-          final doubleUnderscore = id.indexOf('__');
-          if (doubleUnderscore != -1) {
-            id = id.substring(doubleUnderscore + 2);
+      case 'kw':
+        {
+          if (song.id.startsWith('kw_')) {
+            id = song.id.substring(3);
+            // kw_digest-{d}__{rid} → extract part after __
+            final doubleUnderscore = id.indexOf('__');
+            if (doubleUnderscore != -1) {
+              id = id.substring(doubleUnderscore + 2);
+            }
+          } else {
+            id = song.id;
           }
-        } else {
-          id = song.id;
+          return 'https://www.kuwo.cn/play_detail/$id';
         }
-        return 'https://www.kuwo.cn/play_detail/$id';
-      }
       case 'mg':
         id = song.id.startsWith('mg_') ? song.id.substring(3) : song.id;
         return 'https://music.migu.cn/v3/music/song/$id';
@@ -155,10 +153,12 @@ class ShareService {
   static Future<Uint8List?> downloadCover(String url) async {
     try {
       final needsReferer = url.contains('music.126.net');
-      final dio = Dio(BaseOptions(
-        connectTimeout: const Duration(seconds: 8),
-        receiveTimeout: const Duration(seconds: 8),
-      ));
+      final dio = Dio(
+        BaseOptions(
+          connectTimeout: const Duration(seconds: 8),
+          receiveTimeout: const Duration(seconds: 8),
+        ),
+      );
       if (needsReferer) {
         dio.options.headers['Referer'] = 'https://music.163.com';
         dio.options.headers['User-Agent'] =

@@ -1,3 +1,5 @@
+import 'source_id_mapping.dart';
+
 class PluginSourceInfo {
   /// 插件声明的音源 id（宿主解析出的键，例如 'wy' / 'qs'）。
   final String? id;
@@ -27,7 +29,7 @@ class PluginSourceInfo {
 
 /// 插件测试用：插件宿主声明的一个音源。
 ///
-/// [id] 为规范化后的音源标识（内置五源映射为 wy/kg/kw/tx/mg，
+/// [id] 为规范化后的音源标识（已知平台映射为 wy/kg/kw/tx/mg，
 /// 其余音源沿用插件声明名），供搜索与链接解析使用。
 class PluginSourceSpec {
   final String id;
@@ -115,7 +117,7 @@ class MusicInfoForPlugin {
   final Map<String, dynamic>? typeMap;
   final Map<String, dynamic>? typeUrl;
 
-  /// 插件自定义的附加数据（原样透传，不参与内置源的字段映射）。
+  /// 插件自定义的附加数据（原样透传，不做平台字段映射）。
   ///
   /// MusicFree 插件依赖原始 `musicItem`（`extra.musicItem`）解析播放地址与
   /// 歌词，因此搜索结果会把它塞进这里并经由 [Song.lx] 往返。
@@ -262,8 +264,8 @@ class PluginMusicUrlResult {
 
   /// 实际提供这个地址的音源 id（`平台id@插件id`）。
   ///
-  /// 内置源的歌曲最终也是由插件解析地址（内置源没有地址接口），带上这个
-  /// 字段就能在界面上显示真正正在使用的音源。
+  /// 平台歌曲最终也是由插件解析地址，带上这个字段就能在界面上显示真正
+  /// 正在使用的音源。
   final String? source;
 
   const PluginMusicUrlResult({
@@ -298,27 +300,14 @@ class SourceInfo {
   /// 取出音源 id 中的平台部分。
   ///
   /// 同名同平台的不同插件（不同作者）会得到 `平台id@插件id` 这样的唯一
-  /// id，展示图标 / 内置源匹配时仍然使用平台部分。
+  /// id，展示图标时仍然使用平台部分。
   static String baseIdOf(String id) {
     final index = id.indexOf('@');
     if (index <= 0 || index >= id.length - 1) return id;
     return id.substring(0, index);
   }
 
-  static const List<SourceInfo> builtInSources = [
-    SourceInfo(id: 'wy', name: '网易云音乐'),
-    SourceInfo(id: 'kg', name: '酷狗音乐'),
-    SourceInfo(id: 'kw', name: '酷我音乐'),
-    SourceInfo(id: 'tx', name: 'QQ音乐'),
-    SourceInfo(id: 'mg', name: '咪咕音乐'),
-  ];
-
   static String getNameById(String id) {
-    return builtInSources
-        .firstWhere(
-          (s) => s.id == id,
-          orElse: () => const SourceInfo(id: '', name: '未知音源'),
-        )
-        .name;
+    return SourceIdMapping.idToName[baseIdOf(id)] ?? '未知音源';
   }
 }

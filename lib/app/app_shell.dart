@@ -120,7 +120,10 @@ class _AppShellState extends ConsumerState<AppShell> {
 
   @override
   Widget build(BuildContext context) {
-    ref.listen<DownloadNotification?>(downloadNotificationProvider, (prev, next) {
+    ref.listen<DownloadNotification?>(downloadNotificationProvider, (
+      prev,
+      next,
+    ) {
       if (next != null && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -151,16 +154,12 @@ class _AppShellState extends ConsumerState<AppShell> {
       backgroundColor: colors.background,
       body: Stack(
         children: [
-          RepaintBoundary(
-            child: widget.navigationShell,
-          ),
+          RepaintBoundary(child: widget.navigationShell),
           Positioned(
             left: 0,
             right: 0,
             bottom: 5,
-            child: RepaintBoundary(
-              child: const MiniPlayer(),
-            ),
+            child: RepaintBoundary(child: const MiniPlayer()),
           ),
         ],
       ),
@@ -213,9 +212,7 @@ class _AppShellState extends ConsumerState<AppShell> {
   Widget _buildWideLayout(ThemeColors colors) {
     return Scaffold(
       backgroundColor: colors.background,
-      body: RepaintBoundary(
-        child: widget.navigationShell,
-      ),
+      body: RepaintBoundary(child: widget.navigationShell),
     );
   }
 }

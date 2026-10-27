@@ -755,7 +755,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
   }
 
   /// 点专辑：能拿到专辑 id 就直接打开专辑详情页（播放的是这张专辑时用来源
-  /// 里记的 id，内置源歌曲从插件元数据里取），否则按专辑名到「专辑」分类搜。
+  /// 里记的 id，否则从插件元数据里取），否则按专辑名到「专辑」分类搜。
   void _openAlbum() {
     final album = _albumName;
     if (album == null) return;

@@ -46,10 +46,12 @@ final filteredLocalSongsProvider = Provider<List<Song>>((ref) {
       } else {
         final q = query.toLowerCase();
         result = songs
-            .where((s) =>
-                s.title.toLowerCase().contains(q) ||
-                s.artist.toLowerCase().contains(q) ||
-                s.album.toLowerCase().contains(q))
+            .where(
+              (s) =>
+                  s.title.toLowerCase().contains(q) ||
+                  s.artist.toLowerCase().contains(q) ||
+                  s.album.toLowerCase().contains(q),
+            )
             .toList();
       }
       // 按歌手名称的第一个字排序，同名歌手再按歌名排。
@@ -118,7 +120,8 @@ class LocalMusicNotifier extends StateNotifier<AsyncValue<List<Song>>> {
         // 临时数据库被删除 / 本地歌曲为空，但设置里仍保存着扫描目录时，
         // 第一次进入「本地」分类自动补扫一次。没有扫描目录就不自动扫描，
         // 避免在桌面上无意间遍历整个系统音乐目录。
-        final shouldAutoScan = songs.isEmpty &&
+        final shouldAutoScan =
+            songs.isEmpty &&
             !_autoScanAttempted &&
             repo.getScannedDirectories().isNotEmpty;
         if (shouldAutoScan) {
@@ -147,15 +150,17 @@ class LocalMusicNotifier extends StateNotifier<AsyncValue<List<Song>>> {
   void _preloadCovers(List<Song> songs) {
     if (songs.isEmpty) return;
     final cache = _ref.read(coverCacheServiceProvider);
-    unawaited(cache.preloadBatch(
-      songs,
-      concurrency: 10,
-      onProgress: (completed, total) {
-        if (completed % 20 == 0 || completed == total) {
-          debugPrint('[LocalMusic] 封面预加载进度: $completed/$total');
-        }
-      },
-    ));
+    unawaited(
+      cache.preloadBatch(
+        songs,
+        concurrency: 10,
+        onProgress: (completed, total) {
+          if (completed % 20 == 0 || completed == total) {
+            debugPrint('[LocalMusic] 封面预加载进度: $completed/$total');
+          }
+        },
+      ),
+    );
   }
 
   Future<bool> requestPermissionAndScan() async {
@@ -164,13 +169,18 @@ class LocalMusicNotifier extends StateNotifier<AsyncValue<List<Song>>> {
       final alreadyGranted = await repo.checkPermission();
       if (!alreadyGranted) {
         final granted = await repo.requestPermission();
-        _ref.read(localPermissionProvider.notifier).state = AsyncValue.data(granted);
+        _ref.read(localPermissionProvider.notifier).state = AsyncValue.data(
+          granted,
+        );
         if (!granted) return false;
       }
       await scanAll();
       return true;
     } catch (e, st) {
-      _ref.read(localPermissionProvider.notifier).state = AsyncValue.error(e, st);
+      _ref.read(localPermissionProvider.notifier).state = AsyncValue.error(
+        e,
+        st,
+      );
       return false;
     }
   }
@@ -292,5 +302,5 @@ class LocalMusicNotifier extends StateNotifier<AsyncValue<List<Song>>> {
 
 final localMusicNotifierProvider =
     StateNotifierProvider<LocalMusicNotifier, AsyncValue<List<Song>>>((ref) {
-  return LocalMusicNotifier(ref);
-});
+      return LocalMusicNotifier(ref);
+    });

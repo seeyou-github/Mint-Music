@@ -64,9 +64,10 @@ class TaskbarThumbnailService {
 }
 
 /// 任务栏缩略图工具栏服务（仅 Windows 生效，其它平台为空实现）。
-final taskbarThumbnailServiceProvider =
-    Provider<TaskbarThumbnailService>((ref) {
-      final service = TaskbarThumbnailService(ref);
-      ref.onDispose(service.dispose);
-      return service;
-    });
+final taskbarThumbnailServiceProvider = Provider<TaskbarThumbnailService>((
+  ref,
+) {
+  final service = TaskbarThumbnailService(ref);
+  ref.onDispose(service.dispose);
+  return service;
+});

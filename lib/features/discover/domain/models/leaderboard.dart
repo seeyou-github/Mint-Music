@@ -21,11 +21,7 @@ class PlaylistTag {
   final String name;
   final String source;
 
-  const PlaylistTag({
-    required this.id,
-    required this.name,
-    this.source = 'wy',
-  });
+  const PlaylistTag({required this.id, required this.name, this.source = 'wy'});
 
   /// 置顶分类的 id 前缀。
   ///
@@ -41,8 +37,5 @@ class PlaylistTagGroup {
   final String name;
   final List<PlaylistTag> tags;
 
-  const PlaylistTagGroup({
-    required this.name,
-    required this.tags,
-  });
+  const PlaylistTagGroup({required this.name, required this.tags});
 }

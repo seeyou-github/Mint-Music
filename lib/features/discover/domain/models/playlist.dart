@@ -23,10 +23,7 @@ class Playlist {
     this.source = 'wy',
   });
 
-  Playlist copyWith({
-    int? songCount,
-    String? playCount,
-  }) {
+  Playlist copyWith({int? songCount, String? playCount}) {
     return Playlist(
       id: id,
       title: title,

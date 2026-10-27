@@ -46,8 +46,16 @@ class BackupService {
   /// 生成一个备份压缩包（只含 config 与 plugin 两个目录）。
   static Future<Uint8List> createBackup() async {
     final archive = Archive();
-    await _addDirectory(archive, await AppPaths.configDirectory(), configDirEntry);
-    await _addDirectory(archive, await AppPaths.pluginDirectory(), pluginDirEntry);
+    await _addDirectory(
+      archive,
+      await AppPaths.configDirectory(),
+      configDirEntry,
+    );
+    await _addDirectory(
+      archive,
+      await AppPaths.pluginDirectory(),
+      pluginDirEntry,
+    );
     final zipped = ZipEncoder().encode(archive);
     return Uint8List.fromList(zipped);
   }
@@ -62,10 +70,10 @@ class BackupService {
     await for (final entity in dir.list(recursive: true, followLinks: false)) {
       if (entity is! File) continue;
       final bytes = await entity.readAsBytes();
-      final relative = p.relative(entity.path, from: dir.path).replaceAll('\\', '/');
-      archive.addFile(
-        ArchiveFile('$entryName/$relative', bytes.length, bytes),
-      );
+      final relative = p
+          .relative(entity.path, from: dir.path)
+          .replaceAll('\\', '/');
+      archive.addFile(ArchiveFile('$entryName/$relative', bytes.length, bytes));
     }
   }
 
@@ -80,8 +88,16 @@ class BackupService {
     final archive = ZipDecoder().decodeBytes(bytes);
 
     // 1) config / plugin 目录：覆盖还原
-    await _restoreDirectory(archive, configDirEntry, await AppPaths.configDirectory());
-    await _restoreDirectory(archive, pluginDirEntry, await AppPaths.pluginDirectory());
+    await _restoreDirectory(
+      archive,
+      configDirEntry,
+      await AppPaths.configDirectory(),
+    );
+    await _restoreDirectory(
+      archive,
+      pluginDirEntry,
+      await AppPaths.pluginDirectory(),
+    );
 
     // 2) 清空 temp 目录：本地歌曲索引等在这里，下次进入「本地」分类会
     //    按配置里的扫描目录重新扫描。数据库文件被占用删不掉时，把表也清了。

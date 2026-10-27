@@ -75,14 +75,14 @@ Future<void> showUpdateDialog(BuildContext context, UpdateInfo info) async {
         TextButton(
           onPressed: () {
             Navigator.pop(ctx);
-            openExternalUrl(
-              ctx,
-              info.apkUrl ?? info.htmlUrl,
-            );
+            openExternalUrl(ctx, info.apkUrl ?? info.htmlUrl);
           },
           child: Text(
             ctx.tr('立即更新'),
-            style: TextStyle(color: colors.primary, fontWeight: FontWeight.w600),
+            style: TextStyle(
+              color: colors.primary,
+              fontWeight: FontWeight.w600,
+            ),
           ),
         ),
       ],

@@ -120,7 +120,9 @@ class PlaybackSessionStore {
       final queue = session.queue.map(_sanitize).toList(growable: false);
       final data = jsonEncode({
         'song': _sanitize(session.song).toPersistJson(),
-        'queue': queue.map((song) => song.toPersistJson()).toList(growable: false),
+        'queue': queue
+            .map((song) => song.toPersistJson())
+            .toList(growable: false),
         'index': session.index,
         'quality': session.quality,
       });

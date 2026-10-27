@@ -9,7 +9,8 @@ class MusicApiService {
   static const int _maxRetries = 2;
 
   MusicApiService()
-      : _dio = Dio(BaseOptions(
+    : _dio = Dio(
+        BaseOptions(
           connectTimeout: const Duration(seconds: 15),
           receiveTimeout: const Duration(seconds: 30),
           sendTimeout: const Duration(seconds: 15),
@@ -18,7 +19,8 @@ class MusicApiService {
             'User-Agent':
                 'Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36',
           },
-        )) {
+        ),
+      ) {
     _setupBadCertificate();
   }
 
@@ -27,16 +29,18 @@ class MusicApiService {
   static MusicApiService? _instance;
   static MusicApiService get shared {
     if (_instance == null) {
-      final dio = Dio(BaseOptions(
-        connectTimeout: const Duration(seconds: 15),
-        receiveTimeout: const Duration(seconds: 30),
-        sendTimeout: const Duration(seconds: 15),
-        validateStatus: (_) => true,
-        headers: {
-          'User-Agent':
-              'Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36',
-        },
-      ));
+      final dio = Dio(
+        BaseOptions(
+          connectTimeout: const Duration(seconds: 15),
+          receiveTimeout: const Duration(seconds: 30),
+          sendTimeout: const Duration(seconds: 15),
+          validateStatus: (_) => true,
+          headers: {
+            'User-Agent':
+                'Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36',
+          },
+        ),
+      );
       _instance = MusicApiService._shared(dio);
       _instance!._setupBadCertificate();
     }
@@ -60,8 +64,8 @@ class MusicApiService {
 
   void _setupBadCertificate() {
     _dio.httpClientAdapter = IOHttpClientAdapter(
-      createHttpClient: () => HttpClient()
-        ..badCertificateCallback = (_, _, _) => true,
+      createHttpClient: () =>
+          HttpClient()..badCertificateCallback = (_, _, _) => true,
     );
   }
 

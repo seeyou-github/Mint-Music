@@ -1012,8 +1012,7 @@ JSON.stringify((function() {
 
   /// 热门歌单标签（可选）；返回 `[{id,name}]`。
   ///
-  /// 内置源对应 `/api/playlist/hottags`（热门 / 华语 / 流行 …）。插件没实现时
-  /// 返回 null，调用方退回用推荐分类的前几个标签。
+  /// 插件没实现时返回 null，调用方退回用推荐分类的前几个标签。
   Future<String?> getHotPlaylistTags() =>
       _callBrowseMethod('getHotPlaylistTags', '');
 

@@ -39,9 +39,7 @@ class _PlaylistSyncButtonState extends ConsumerState<PlaylistSyncButton> {
     final config = ref.read(webDavConfigProvider);
     try {
       if (!config.isConfigured) {
-        throw const WebDavException(
-          '未配置 WebDAV：请先在「设置 → 备份还原」中填写 WebDAV 地址',
-        );
+        throw const WebDavException('未配置 WebDAV：请先在「设置 → 备份还原」中填写 WebDAV 地址');
       }
       // 确保本地歌单（含「我的收藏」）已就绪，再与远端合并。
       await ref.read(playlistsProvider.future);
@@ -66,10 +64,7 @@ class _PlaylistSyncButtonState extends ConsumerState<PlaylistSyncButton> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: colors.surface,
-        title: Text(
-          tr('歌单同步失败'),
-          style: TextStyle(color: colors.textPrimary),
-        ),
+        title: Text(tr('歌单同步失败'), style: TextStyle(color: colors.textPrimary)),
         content: SingleChildScrollView(
           child: Text(
             tr('同步失败原因：\n$reason'),
@@ -111,9 +106,7 @@ class _PlaylistSyncButtonState extends ConsumerState<PlaylistSyncButton> {
           color: success
               ? colors.success.withValues(alpha: 0.08)
               : Colors.transparent,
-          border: Border.all(
-            color: success ? colors.success : colors.divider,
-          ),
+          border: Border.all(color: success ? colors.success : colors.divider),
           borderRadius: BorderRadius.circular(AppRadius.full),
         ),
         child: Row(
@@ -139,8 +132,8 @@ class _PlaylistSyncButtonState extends ConsumerState<PlaylistSyncButton> {
               success
                   ? context.tr('已同步')
                   : syncing
-                      ? context.tr('同步中')
-                      : context.tr('同步'),
+                  ? context.tr('同步中')
+                  : context.tr('同步'),
               style: TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w500,

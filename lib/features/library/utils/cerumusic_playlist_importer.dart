@@ -30,7 +30,9 @@ class CeruMusicPlaylistImporter {
     }
   }
 
-  static Future<List<Map<String, dynamic>>> importFromFileAsync(String filePath) async {
+  static Future<List<Map<String, dynamic>>> importFromFileAsync(
+    String filePath,
+  ) async {
     final file = File(filePath);
     if (!await file.exists()) {
       throw Exception('文件不存在');
@@ -75,7 +77,14 @@ class CeruMusicPlaylistImporter {
   }
 
   static bool _validateSongItem(Map<String, dynamic> song) {
-    final requiredFields = ['songmid', 'name', 'singer', 'img', 'interval', 'source'];
+    final requiredFields = [
+      'songmid',
+      'name',
+      'singer',
+      'img',
+      'interval',
+      'source',
+    ];
     for (final field in requiredFields) {
       if (!song.containsKey(field)) return false;
     }
@@ -199,7 +208,12 @@ class _PKCS7PaddedBlockCipher {
     _cipher.init(forEncryption, params);
   }
 
-  int processBlock(Uint8List input, int inputOffset, Uint8List output, int outputOffset) {
+  int processBlock(
+    Uint8List input,
+    int inputOffset,
+    Uint8List output,
+    int outputOffset,
+  ) {
     return _cipher.processBlock(input, inputOffset, output, outputOffset);
   }
 

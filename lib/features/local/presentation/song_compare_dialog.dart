@@ -128,7 +128,8 @@ class _SongCompareDialogState extends ConsumerState<_SongCompareDialog> {
     final original = widget.original;
     final candidate = widget.candidate;
     final candidateLyric = _candidateLyric;
-    final hasCandidateLyric = candidateLyric != null && candidateLyric.isNotEmpty;
+    final hasCandidateLyric =
+        candidateLyric != null && candidateLyric.isNotEmpty;
     final originalLyric = _originalLyricText;
 
     final year = _useCandidateInfo
@@ -614,7 +615,11 @@ class _LyricBox extends ConsumerWidget {
           )
         : Text(
             text!,
-            style: TextStyle(fontSize: 12, color: colors.textSecondary, height: 1.5),
+            style: TextStyle(
+              fontSize: 12,
+              color: colors.textSecondary,
+              height: 1.5,
+            ),
           );
     // 固定高度：左右两张歌词卡片高度一致（外层用 IntrinsicHeight 对齐）。
     return SizedBox(

@@ -16,10 +16,8 @@ Widget _buildList(ScrollController controller, {double viewportHeight = 600}) {
           controller: controller,
           itemCount: _itemCount,
           itemExtent: _itemExtent,
-          itemBuilder: (context, index) => SizedBox(
-            height: _itemExtent,
-            child: Text('song-$index'),
-          ),
+          itemBuilder: (context, index) =>
+              SizedBox(height: _itemExtent, child: Text('song-$index')),
         ),
       ),
     ),
@@ -44,13 +42,19 @@ void main() {
     final viewport = controller.position.viewportDimension; // 600
     // 目标应落在可视区内，而不是被推出屏幕
     expect(itemTop - controller.offset, greaterThanOrEqualTo(0.0));
-    expect(itemTop + _itemExtent - controller.offset, lessThanOrEqualTo(viewport));
+    expect(
+      itemTop + _itemExtent - controller.offset,
+      lessThanOrEqualTo(viewport),
+    );
 
     // 具体落点：alignment = 0.25
     final expected = itemTop - (viewport - _itemExtent) * 0.25;
     expect(controller.offset, closeTo(expected, 1.0));
     // 未超出可滚动范围
-    expect(controller.offset, lessThanOrEqualTo(controller.position.maxScrollExtent));
+    expect(
+      controller.offset,
+      lessThanOrEqualTo(controller.position.maxScrollExtent),
+    );
   });
 
   testWidgets('目标接近末尾时偏移被正确夹紧', (tester) async {
@@ -111,7 +115,9 @@ void main() {
     await tester.pumpAndSettle();
 
     built.clear();
-    unawaited(scrollToItemIndex(controller, index: 85, itemExtent: _itemExtent));
+    unawaited(
+      scrollToItemIndex(controller, index: 85, itemExtent: _itemExtent),
+    );
     await tester.pumpAndSettle();
 
     // 若逐帧走完整段距离，这里会有上千次构建；两段式（先 jumpTo 再短动画）

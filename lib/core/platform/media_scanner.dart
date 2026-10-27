@@ -10,7 +10,9 @@ Future<void> scanFileInMediaStore(String filePath) async {
 
 Future<bool> openManageStorageSettings() async {
   try {
-    final result = await _channel.invokeMethod<bool>('openManageStorageSettings');
+    final result = await _channel.invokeMethod<bool>(
+      'openManageStorageSettings',
+    );
     return result ?? false;
   } catch (_) {
     return false;

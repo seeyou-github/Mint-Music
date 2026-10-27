@@ -6,10 +6,14 @@ class Complex {
 
   const Complex(this.real, this.imag);
 
-  Complex operator +(Complex other) => Complex(real + other.real, imag + other.imag);
-  Complex operator -(Complex other) => Complex(real - other.real, imag - other.imag);
-  Complex operator *(Complex other) =>
-      Complex(real * other.real - imag * other.imag, real * other.imag + imag * other.real);
+  Complex operator +(Complex other) =>
+      Complex(real + other.real, imag + other.imag);
+  Complex operator -(Complex other) =>
+      Complex(real - other.real, imag - other.imag);
+  Complex operator *(Complex other) => Complex(
+    real * other.real - imag * other.imag,
+    real * other.imag + imag * other.real,
+  );
 
   double get magnitude => sqrt(real * real + imag * imag);
 }
@@ -33,7 +37,9 @@ class FFT {
 
   static int _nextPowerOfTwo(int n) {
     var p = 1;
-    while (p < n) { p <<= 1; }
+    while (p < n) {
+      p <<= 1;
+    }
     return p;
   }
 

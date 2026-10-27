@@ -231,8 +231,9 @@ class _SidebarNavItem extends StatelessWidget {
               vertical: 12,
             ),
             child: Row(
-              mainAxisAlignment:
-                  isExpanded ? MainAxisAlignment.start : MainAxisAlignment.center,
+              mainAxisAlignment: isExpanded
+                  ? MainAxisAlignment.start
+                  : MainAxisAlignment.center,
               children: [
                 Icon(
                   isActive ? item.activeIcon : item.icon,
@@ -246,7 +247,9 @@ class _SidebarNavItem extends StatelessWidget {
                       context.tr(item.label),
                       style: TextStyle(
                         fontSize: 14,
-                        fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
+                        fontWeight: isActive
+                            ? FontWeight.w600
+                            : FontWeight.w400,
                         color: isActive ? colors.primary : colors.textSecondary,
                       ),
                     ),

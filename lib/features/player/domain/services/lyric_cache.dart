@@ -73,10 +73,10 @@ class LyricCache {
 
   /// 缓存键：平台 + 歌曲 id 的 md5。
   ///
-  /// 音源 id 里可能带 `@插件id`（插件音源；或者内置源的地址被插件解析后，
-  /// 队列里歌曲的 source 被标记成了插件变体 id）。这里只取平台部分：
-  /// 同一首歌在「内置源」和「插件源」下的歌词缓存要能对上，否则歌曲在
-  /// 两种来源之间切换时缓存全部失效（每次都要重新联网取词）。
+  /// 音源 id 里可能带 `@插件id`（插件音源；或者地址被插件解析后，队列里
+  /// 歌曲的 source 被标记成了插件变体 id）。这里只取平台部分：同一首歌在
+  /// 「裸平台 id」和「插件变体」下的歌词缓存要能对上，否则歌曲在两种来源
+  /// 之间切换时缓存全部失效（每次都要重新联网取词）。
   static String keyFor(Song song) {
     final source = (song.source ?? '').split('@').first;
     final raw = '${source}_${song.id}';
@@ -124,19 +124,15 @@ class LyricCache {
     try {
       await _ensureMigrated();
       final db = await AppDatabase.cacheDatabase();
-      await db.insert(
-        'lyrics',
-        {
-          'cache_key': keyFor(song),
-          'lrc': entry.lrc,
-          'crlyric': entry.crlyric,
-          'tlyric': entry.tlyric,
-          'rlyric': entry.rlyric,
-          'ttml': entry.ttml,
-          'updated_at': DateTime.now().millisecondsSinceEpoch,
-        },
-        conflictAlgorithm: ConflictAlgorithm.replace,
-      );
+      await db.insert('lyrics', {
+        'cache_key': keyFor(song),
+        'lrc': entry.lrc,
+        'crlyric': entry.crlyric,
+        'tlyric': entry.tlyric,
+        'rlyric': entry.rlyric,
+        'ttml': entry.ttml,
+        'updated_at': DateTime.now().millisecondsSinceEpoch,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
       await _trimIfNeeded(db);
     } catch (e) {
       debugPrint('[LyricCache] 写入缓存失败: $e');
@@ -226,19 +222,15 @@ class LyricCache {
           if (raw.trim().isEmpty) continue;
           final decoded = jsonDecode(raw);
           if (decoded is! Map) continue;
-          batch.insert(
-            'lyrics',
-            {
-              'cache_key': p.basenameWithoutExtension(name),
-              'lrc': decoded['lrc'] as String?,
-              'crlyric': decoded['crlyric'] as String?,
-              'tlyric': decoded['tlyric'] as String?,
-              'rlyric': decoded['rlyric'] as String?,
-              'ttml': decoded['ttml'] as String?,
-              'updated_at': DateTime.now().millisecondsSinceEpoch,
-            },
-            conflictAlgorithm: ConflictAlgorithm.ignore,
-          );
+          batch.insert('lyrics', {
+            'cache_key': p.basenameWithoutExtension(name),
+            'lrc': decoded['lrc'] as String?,
+            'crlyric': decoded['crlyric'] as String?,
+            'tlyric': decoded['tlyric'] as String?,
+            'rlyric': decoded['rlyric'] as String?,
+            'ttml': decoded['ttml'] as String?,
+            'updated_at': DateTime.now().millisecondsSinceEpoch,
+          }, conflictAlgorithm: ConflictAlgorithm.ignore);
           migrated++;
         } catch (_) {
           // 单个文件损坏就跳过

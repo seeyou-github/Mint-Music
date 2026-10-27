@@ -157,8 +157,8 @@ class RecentlyPlayedItem {
   factory RecentlyPlayedItem.fromJson(Map<String, dynamic> json) {
     return RecentlyPlayedItem(
       song: Song.fromJson(json['song'] as Map<String, dynamic>),
-      playedAt: DateTime.tryParse('${json['playedAt'] ?? ''}') ??
-          DateTime.now(),
+      playedAt:
+          DateTime.tryParse('${json['playedAt'] ?? ''}') ?? DateTime.now(),
       playCount: (json['playCount'] as num?)?.toInt() ?? 1,
       sourceType: PlaybackSourceTypeX.fromId(json['sourceType'] as String?),
       sourceId: json['sourceId'] as String?,
@@ -248,9 +248,7 @@ class RecentlyPlayedPlaylist {
   };
 
   factory RecentlyPlayedPlaylist.fromJson(Map<String, dynamic> json) {
-    final type = PlaybackSourceTypeX.fromId(
-      json['collectionType'] as String?,
-    );
+    final type = PlaybackSourceTypeX.fromId(json['collectionType'] as String?);
     return RecentlyPlayedPlaylist(
       id: '${json['id'] ?? ''}',
       name: '${json['name'] ?? ''}',
@@ -260,8 +258,7 @@ class RecentlyPlayedPlaylist {
       coverUrl: '${json['coverUrl'] ?? ''}',
       songCount: (json['songCount'] as num?)?.toInt() ?? 0,
       source: '${json['source'] ?? ''}',
-      collectionType:
-          type == PlaybackSourceType.unknown ? null : type,
+      collectionType: type == PlaybackSourceType.unknown ? null : type,
     );
   }
 }

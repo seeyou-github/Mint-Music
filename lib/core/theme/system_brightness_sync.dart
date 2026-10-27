@@ -39,7 +39,8 @@ class _SystemBrightnessSyncState extends ConsumerState<SystemBrightnessSync>
     // 比直接用 PlatformDispatcher.instance 更贴近实际渲染到的窗口。
     final dispatcher = View.maybeOf(context)?.platformDispatcher;
     ref.read(platformBrightnessProvider.notifier).state =
-        dispatcher?.platformBrightness ?? PlatformDispatcher.instance.platformBrightness;
+        dispatcher?.platformBrightness ??
+        PlatformDispatcher.instance.platformBrightness;
   }
 
   @override

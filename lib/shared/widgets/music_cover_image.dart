@@ -284,8 +284,7 @@ class _MusicCoverImageState extends State<MusicCoverImage> {
     _fetchFromCoverCache(songId, mediaStoreId);
   }
 
-  Future<void> _fetchFromCoverCache(
-      String songId, int? mediaStoreId) async {
+  Future<void> _fetchFromCoverCache(String songId, int? mediaStoreId) async {
     try {
       final cache = CoverCacheService();
       final bytes = await cache.getArtwork(songId, mediaStoreId: mediaStoreId);
@@ -364,10 +363,7 @@ class _MusicCoverImageState extends State<MusicCoverImage> {
         options.headers = {'Referer': 'https://music.163.com'};
       }
 
-      final response = await dio.get<List<int>>(
-        imageUrl,
-        options: options,
-      );
+      final response = await dio.get<List<int>>(imageUrl, options: options);
 
       if (response.data == null) {
         _onError(cacheKey);
@@ -392,7 +388,8 @@ class _MusicCoverImageState extends State<MusicCoverImage> {
 
       if (bytes.length < 100) {
         debugPrint(
-            '[MusicCoverImage] 响应过小 (${bytes.length} bytes)，可能不是图片: $imageUrl');
+          '[MusicCoverImage] 响应过小 (${bytes.length} bytes)，可能不是图片: $imageUrl',
+        );
         _onError(cacheKey);
         return;
       }

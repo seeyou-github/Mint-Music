@@ -89,7 +89,10 @@ class _LocalPageState extends ConsumerState<LocalPage> {
       barrierDismissible: false,
       builder: (context) => AlertDialog(
         backgroundColor: colors.surface,
-        title: Text(context.tr('需要存储权限'), style: TextStyle(color: colors.textPrimary)),
+        title: Text(
+          context.tr('需要存储权限'),
+          style: TextStyle(color: colors.textPrimary),
+        ),
         content: Text(
           context.tr('为了扫描本地音乐，薄荷音乐需要访问您设备上的音频文件。请授予权限后继续。'),
           style: TextStyle(color: colors.textSecondary),
@@ -97,19 +100,30 @@ class _LocalPageState extends ConsumerState<LocalPage> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: Text(context.tr('取消'), style: TextStyle(color: colors.textHint)),
+            child: Text(
+              context.tr('取消'),
+              style: TextStyle(color: colors.textHint),
+            ),
           ),
           TextButton(
             onPressed: () async {
               Navigator.pop(context);
-              final granted = await ref.read(localMusicNotifierProvider.notifier).requestPermissionAndScan();
+              final granted = await ref
+                  .read(localMusicNotifierProvider.notifier)
+                  .requestPermissionAndScan();
               if (!granted && mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text(context.tr('权限被拒绝，无法扫描本地音乐')), duration: const Duration(seconds: 3)),
+                  SnackBar(
+                    content: Text(context.tr('权限被拒绝，无法扫描本地音乐')),
+                    duration: const Duration(seconds: 3),
+                  ),
                 );
               }
             },
-            child: Text(context.tr('授权'), style: TextStyle(color: colors.primary)),
+            child: Text(
+              context.tr('授权'),
+              style: TextStyle(color: colors.primary),
+            ),
           ),
         ],
       ),
@@ -141,8 +155,8 @@ class _LocalPageState extends ConsumerState<LocalPage> {
     final allSongs = ref.watch(filteredLocalSongsProvider);
     final songsAsync = ref.watch(localMusicNotifierProvider);
     final scanProgress = ref.watch(scanProgressProvider);
-    final scannedDirs = ref.watch(scannedDirectoriesProvider).valueOrNull ??
-        const <String>[];
+    final scannedDirs =
+        ref.watch(scannedDirectoriesProvider).valueOrNull ?? const <String>[];
 
     // 选中的文件夹被移除后回到「全部」
     if (_selectedFolder != null && !scannedDirs.contains(_selectedFolder)) {
@@ -154,14 +168,15 @@ class _LocalPageState extends ConsumerState<LocalPage> {
     // 按当前选中的文件夹过滤（顶部文件夹栏切换）。
     final songs = _selectedFolder == null
         ? allSongs
-        : allSongs
-            .where((s) => _isInFolder(s, _selectedFolder!))
-            .toList();
+        : allSongs.where((s) => _isInFolder(s, _selectedFolder!)).toList();
 
     // 在 build 中直接计算按钮可见性，避免滚动事件初值问题导致按钮永远不显示。
     // 仅当正在播放本地歌曲且该歌曲在当前筛选列表中时显示。
-    final currentSong = ref.watch(playbackControllerProvider.select((s) => s.currentSong));
-    final showLocateBtn = currentSong != null &&
+    final currentSong = ref.watch(
+      playbackControllerProvider.select((s) => s.currentSong),
+    );
+    final showLocateBtn =
+        currentSong != null &&
         currentSong.source == 'local' &&
         songs.indexWhere((s) => s.id == currentSong.id) >= 0;
 
@@ -200,7 +215,8 @@ class _LocalPageState extends ConsumerState<LocalPage> {
                       ],
                       Expanded(
                         child: songsAsync.when(
-                          data: (_) => _buildSongList(colors, songs, showLocateBtn),
+                          data: (_) =>
+                              _buildSongList(colors, songs, showLocateBtn),
                           loading: () =>
                               const Center(child: CircularProgressIndicator()),
                           error: (e, _) =>
@@ -342,8 +358,8 @@ class _LocalPageState extends ConsumerState<LocalPage> {
     List<Song> songs,
     ScanProgress scanProgress,
   ) {
-    final dirs = ref.watch(scannedDirectoriesProvider).valueOrNull ??
-        const <String>[];
+    final dirs =
+        ref.watch(scannedDirectoriesProvider).valueOrNull ?? const <String>[];
     if (dirs.isEmpty) return const SizedBox.shrink();
     return SizedBox(
       height: 44,
@@ -520,7 +536,11 @@ class _LocalPageState extends ConsumerState<LocalPage> {
     );
   }
 
-  Widget _buildSongList(ThemeColors colors, List<Song> songs, bool showLocateBtn) {
+  Widget _buildSongList(
+    ThemeColors colors,
+    List<Song> songs,
+    bool showLocateBtn,
+  ) {
     if (songs.isEmpty) {
       return _buildEmptyState(colors);
     }
@@ -535,7 +555,8 @@ class _LocalPageState extends ConsumerState<LocalPage> {
             right: AppSpacing.lg,
             // 底部多留出空间，避免最后一项被悬浮的迷你播放器遮挡；
             // 多选模式下还要再避开底部批量操作栏。
-            bottom: AppSpacing.xxxl +
+            bottom:
+                AppSpacing.xxxl +
                 AppSpacing.huge +
                 (selecting ? SongBatchActionBar.height : 0),
           ),
@@ -598,12 +619,20 @@ class _LocalPageState extends ConsumerState<LocalPage> {
               color: colors.primary.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(20),
             ),
-            child: Icon(Icons.library_music, size: 40, color: colors.primary.withValues(alpha: 0.5)),
+            child: Icon(
+              Icons.library_music,
+              size: 40,
+              color: colors.primary.withValues(alpha: 0.5),
+            ),
           ),
           const SizedBox(height: AppSpacing.lg),
           Text(
             context.tr('暂无本地音乐'),
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500, color: colors.textPrimary),
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w500,
+              color: colors.textPrimary,
+            ),
           ),
           const SizedBox(height: AppSpacing.sm),
           Text(
@@ -613,10 +642,15 @@ class _LocalPageState extends ConsumerState<LocalPage> {
           const SizedBox(height: AppSpacing.lg),
           GestureDetector(
             onTap: () async {
-              final granted = await ref.read(localMusicNotifierProvider.notifier).requestPermissionAndScan();
+              final granted = await ref
+                  .read(localMusicNotifierProvider.notifier)
+                  .requestPermissionAndScan();
               if (!granted && mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text(context.tr('权限被拒绝，无法扫描本地音乐')), duration: const Duration(seconds: 3)),
+                  SnackBar(
+                    content: Text(context.tr('权限被拒绝，无法扫描本地音乐')),
+                    duration: const Duration(seconds: 3),
+                  ),
                 );
               }
             },
@@ -628,7 +662,11 @@ class _LocalPageState extends ConsumerState<LocalPage> {
               ),
               child: Text(
                 context.tr('扫描本地音乐'),
-                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: colors.textOnPrimary),
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  color: colors.textOnPrimary,
+                ),
               ),
             ),
           ),
@@ -658,8 +696,12 @@ class _LocalPageState extends ConsumerState<LocalPage> {
           ),
           const SizedBox(height: AppSpacing.sm),
           TextButton(
-            onPressed: () => ref.read(localMusicNotifierProvider.notifier).refresh(),
-            child: Text(context.tr('重试'), style: TextStyle(color: colors.primary)),
+            onPressed: () =>
+                ref.read(localMusicNotifierProvider.notifier).refresh(),
+            child: Text(
+              context.tr('重试'),
+              style: TextStyle(color: colors.primary),
+            ),
           ),
         ],
       ),
@@ -675,10 +717,15 @@ class _LocalPageState extends ConsumerState<LocalPage> {
   }
 
   Future<void> _scanLibrary() async {
-    await ref.read(localMusicNotifierProvider.notifier).requestPermissionAndScan();
+    await ref
+        .read(localMusicNotifierProvider.notifier)
+        .requestPermissionAndScan();
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(context.tr('扫描完成')), duration: const Duration(seconds: 2)),
+        SnackBar(
+          content: Text(context.tr('扫描完成')),
+          duration: const Duration(seconds: 2),
+        ),
       );
     }
   }
@@ -810,7 +857,10 @@ class _LocalPageState extends ConsumerState<LocalPage> {
       useRootNavigator: true,
       builder: (context) => AlertDialog(
         backgroundColor: colors.surface,
-        title: Text(context.tr('删除歌曲'), style: TextStyle(color: colors.textPrimary)),
+        title: Text(
+          context.tr('删除歌曲'),
+          style: TextStyle(color: colors.textPrimary),
+        ),
         content: Text(
           context.tr('确定要删除「${song.title}」吗？\n此操作将从本地音乐库移除该歌曲。'),
           style: TextStyle(color: colors.textSecondary),
@@ -818,11 +868,17 @@ class _LocalPageState extends ConsumerState<LocalPage> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: Text(context.tr('取消'), style: TextStyle(color: colors.textHint)),
+            child: Text(
+              context.tr('取消'),
+              style: TextStyle(color: colors.textHint),
+            ),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: Text(context.tr('删除'), style: TextStyle(color: colors.error)),
+            child: Text(
+              context.tr('删除'),
+              style: TextStyle(color: colors.error),
+            ),
           ),
         ],
       ),
@@ -835,18 +891,28 @@ class _LocalPageState extends ConsumerState<LocalPage> {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(ok ? context.tr('已删除「${song.title}」') : context.tr('删除失败')),
+        content: Text(
+          ok ? context.tr('已删除「${song.title}」') : context.tr('删除失败'),
+        ),
         duration: const Duration(seconds: 2),
         backgroundColor: ok ? null : Colors.red,
       ),
     );
   }
 
-  Widget _contextMenuItem(ThemeColors colors, IconData icon, String label, VoidCallback onTap) {
+  Widget _contextMenuItem(
+    ThemeColors colors,
+    IconData icon,
+    String label,
+    VoidCallback onTap,
+  ) {
     return InkWell(
       onTap: onTap,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg, vertical: AppSpacing.md),
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.lg,
+          vertical: AppSpacing.md,
+        ),
         child: Row(
           children: [
             Icon(icon, size: 22, color: colors.textSecondary),
@@ -921,69 +987,88 @@ class _LocalPageState extends ConsumerState<LocalPage> {
             child: Padding(
               padding: EdgeInsets.only(bottom: bottomPadding + 72),
               child: DraggableScrollableSheet(
-              initialChildSize: 0.6,
-              minChildSize: 0.3,
-              maxChildSize: 0.9,
-              expand: false,
-              builder: (context, scrollController) {
-              return Column(
-                children: [
-                  const SizedBox(height: AppSpacing.md),
-                  Container(
-                    width: 40,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: colors.divider,
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                  const SizedBox(height: AppSpacing.md),
-                  Text(
-                    context.tr('精准匹配'),
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: colors.textPrimary),
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
-                    child: Text(
-                      '${song.title} - ${song.artist}',
-                      style: TextStyle(fontSize: 13, color: colors.textHint),
-                      textAlign: TextAlign.center,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  const SizedBox(height: AppSpacing.md),
-                  Expanded(
-                    child: FutureBuilder<List<Song>>(
-                      future: _searchOnlineForMatch(_matchKeywordFor(song)),
-                      builder: (context, snapshot) {
-                        if (snapshot.connectionState == ConnectionState.waiting) {
-                          return const Center(child: CircularProgressIndicator());
-                        }
-                        final results = snapshot.data ?? [];
-                        if (results.isEmpty) {
-                          return Center(
-                            child: Text(context.tr('未找到匹配结果'), style: TextStyle(color: colors.textHint)),
-                          );
-                        }
-                        return ListView.builder(
-                          controller: scrollController,
-                          itemCount: results.length,
-                          addAutomaticKeepAlives: false,
-                          addRepaintBoundaries: true,
-                          itemBuilder: (context, index) {
-                            final candidate = results[index];
-                            return _buildMatchCandidate(colors, song, candidate);
+                initialChildSize: 0.6,
+                minChildSize: 0.3,
+                maxChildSize: 0.9,
+                expand: false,
+                builder: (context, scrollController) {
+                  return Column(
+                    children: [
+                      const SizedBox(height: AppSpacing.md),
+                      Container(
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: colors.divider,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                      const SizedBox(height: AppSpacing.md),
+                      Text(
+                        context.tr('精准匹配'),
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: colors.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: AppSpacing.sm),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: AppSpacing.lg,
+                        ),
+                        child: Text(
+                          '${song.title} - ${song.artist}',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: colors.textHint,
+                          ),
+                          textAlign: TextAlign.center,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(height: AppSpacing.md),
+                      Expanded(
+                        child: FutureBuilder<List<Song>>(
+                          future: _searchOnlineForMatch(_matchKeywordFor(song)),
+                          builder: (context, snapshot) {
+                            if (snapshot.connectionState ==
+                                ConnectionState.waiting) {
+                              return const Center(
+                                child: CircularProgressIndicator(),
+                              );
+                            }
+                            final results = snapshot.data ?? [];
+                            if (results.isEmpty) {
+                              return Center(
+                                child: Text(
+                                  context.tr('未找到匹配结果'),
+                                  style: TextStyle(color: colors.textHint),
+                                ),
+                              );
+                            }
+                            return ListView.builder(
+                              controller: scrollController,
+                              itemCount: results.length,
+                              addAutomaticKeepAlives: false,
+                              addRepaintBoundaries: true,
+                              itemBuilder: (context, index) {
+                                final candidate = results[index];
+                                return _buildMatchCandidate(
+                                  colors,
+                                  song,
+                                  candidate,
+                                );
+                              },
+                            );
                           },
-                        );
-                      },
-                    ),
-                  ),
-                ],
-              );
-            },
-          ),
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
             ),
           ),
         );
@@ -991,9 +1076,16 @@ class _LocalPageState extends ConsumerState<LocalPage> {
     );
   }
 
-  Widget _buildMatchCandidate(ThemeColors colors, Song original, Song candidate) {
+  Widget _buildMatchCandidate(
+    ThemeColors colors,
+    Song original,
+    Song candidate,
+  ) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg, vertical: AppSpacing.xs),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.lg,
+        vertical: AppSpacing.xs,
+      ),
       child: Container(
         padding: const EdgeInsets.all(AppSpacing.md),
         decoration: BoxDecoration(
@@ -1010,7 +1102,10 @@ class _LocalPageState extends ConsumerState<LocalPage> {
                 color: colors.surface,
                 borderRadius: BorderRadius.circular(AppRadius.sm),
                 image: candidate.coverUrl != null
-                    ? DecorationImage(image: NetworkImage(candidate.coverUrl!), fit: BoxFit.cover)
+                    ? DecorationImage(
+                        image: NetworkImage(candidate.coverUrl!),
+                        fit: BoxFit.cover,
+                      )
                     : null,
               ),
               child: candidate.coverUrl == null
@@ -1024,7 +1119,11 @@ class _LocalPageState extends ConsumerState<LocalPage> {
                 children: [
                   Text(
                     candidate.title,
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: colors.textPrimary),
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color: colors.textPrimary,
+                    ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -1032,21 +1131,32 @@ class _LocalPageState extends ConsumerState<LocalPage> {
                     children: [
                       if (candidate.source != null)
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 4,
+                            vertical: 1,
+                          ),
                           margin: const EdgeInsets.only(right: 4),
                           decoration: BoxDecoration(
                             color: colors.primary.withValues(alpha: 0.1),
                             borderRadius: BorderRadius.circular(4),
                           ),
                           child: Text(
-                            _sourceDisplayNames[candidate.source] ?? candidate.source!,
-                            style: TextStyle(fontSize: 10, color: colors.primary, fontWeight: FontWeight.w500),
+                            _sourceDisplayNames[candidate.source] ??
+                                candidate.source!,
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: colors.primary,
+                              fontWeight: FontWeight.w500,
+                            ),
                           ),
                         ),
                       Expanded(
                         child: Text(
                           '${candidate.artist} · ${candidate.album}',
-                          style: TextStyle(fontSize: 12, color: colors.textHint),
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: colors.textHint,
+                          ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -1071,14 +1181,21 @@ class _LocalPageState extends ConsumerState<LocalPage> {
                 await _applyMatchedSong(merged);
               },
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
                 decoration: BoxDecoration(
                   color: colors.primary,
                   borderRadius: BorderRadius.circular(AppRadius.full),
                 ),
                 child: Text(
                   context.tr('使用'),
-                  style: TextStyle(fontSize: 12, color: colors.textOnPrimary, fontWeight: FontWeight.w500),
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: colors.textOnPrimary,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
               ),
             ),
@@ -1116,7 +1233,11 @@ class _LocalPageState extends ConsumerState<LocalPage> {
     }
   }
 
-  void _showAddToPlaylistSheet(ThemeColors colors, Song song, AsyncValue playlistsAsync) {
+  void _showAddToPlaylistSheet(
+    ThemeColors colors,
+    Song song,
+    AsyncValue playlistsAsync,
+  ) {
     final bottomPadding = MediaQuery.of(context).padding.bottom;
     playlistsAsync.when(
       data: (playlists) {
@@ -1128,7 +1249,9 @@ class _LocalPageState extends ConsumerState<LocalPage> {
             return Container(
               decoration: BoxDecoration(
                 color: colors.surface,
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(16),
+                ),
               ),
               child: SafeArea(
                 top: false,
@@ -1150,33 +1273,55 @@ class _LocalPageState extends ConsumerState<LocalPage> {
                         const SizedBox(height: AppSpacing.md),
                         Text(
                           context.tr('添加到歌单'),
-                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: colors.textPrimary),
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: colors.textPrimary,
+                          ),
                         ),
                         const SizedBox(height: AppSpacing.md),
                         if (playlists.isEmpty)
                           Padding(
                             padding: const EdgeInsets.all(AppSpacing.xl),
-                            child: Text(context.tr('暂无歌单'), style: TextStyle(color: colors.textHint)),
+                            child: Text(
+                              context.tr('暂无歌单'),
+                              style: TextStyle(color: colors.textHint),
+                            ),
                           )
                         else
-                          ...playlists.map<Widget>((playlist) => ListTile(
-                                leading: Icon(Icons.queue_music, color: colors.textSecondary),
-                                title: Text(playlist.name, style: TextStyle(color: colors.textPrimary)),
-                                trailing: Text(
-                                  context.tr('${playlist.songCount}首'),
-                                  style: TextStyle(fontSize: 12, color: colors.textHint),
+                          ...playlists.map<Widget>(
+                            (playlist) => ListTile(
+                              leading: Icon(
+                                Icons.queue_music,
+                                color: colors.textSecondary,
+                              ),
+                              title: Text(
+                                playlist.name,
+                                style: TextStyle(color: colors.textPrimary),
+                              ),
+                              trailing: Text(
+                                context.tr('${playlist.songCount}首'),
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: colors.textHint,
                                 ),
-                                onTap: () {
-                                  Navigator.pop(context);
-                                  ref.read(playlistsProvider.notifier).addSongToPlaylist(playlist.id, song);
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Text(context.tr('已添加到"${playlist.name}"')),
-                                      duration: const Duration(seconds: 2),
+                              ),
+                              onTap: () {
+                                Navigator.pop(context);
+                                ref
+                                    .read(playlistsProvider.notifier)
+                                    .addSongToPlaylist(playlist.id, song);
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      context.tr('已添加到"${playlist.name}"'),
                                     ),
-                                  );
-                                },
-                              )),
+                                    duration: const Duration(seconds: 2),
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
                         const SizedBox(height: AppSpacing.lg),
                       ],
                     ),
@@ -1188,17 +1333,25 @@ class _LocalPageState extends ConsumerState<LocalPage> {
         );
       },
       loading: () => ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(context.tr('加载歌单中...')), duration: const Duration(seconds: 1)),
+        SnackBar(
+          content: Text(context.tr('加载歌单中...')),
+          duration: const Duration(seconds: 1),
+        ),
       ),
       error: (_, __) => ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(context.tr('加载歌单失败')), duration: const Duration(seconds: 2)),
+        SnackBar(
+          content: Text(context.tr('加载歌单失败')),
+          duration: const Duration(seconds: 2),
+        ),
       ),
     );
   }
 
   Future<void> _showDirModal(ThemeColors colors) async {
     // 从持久化加载真实目录（FutureProvider 首次 init 后走缓存）。
-    final dirs = List<String>.from(await ref.read(scannedDirectoriesProvider.future));
+    final dirs = List<String>.from(
+      await ref.read(scannedDirectoriesProvider.future),
+    );
     if (!mounted) return;
     final bottomPadding = MediaQuery.of(context).padding.bottom;
 
@@ -1213,54 +1366,72 @@ class _LocalPageState extends ConsumerState<LocalPage> {
             return Container(
               decoration: BoxDecoration(
                 color: colors.surface,
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(16),
+                ),
               ),
               child: SafeArea(
                 top: false,
                 child: Padding(
-                padding: EdgeInsets.only(
-                  bottom: MediaQuery.of(context).viewInsets.bottom + bottomPadding + 72,
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const SizedBox(height: AppSpacing.md),
-                    Container(
-                      width: 40,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: colors.divider,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                    const SizedBox(height: AppSpacing.md),
-                    Text(
-                      context.tr('扫描目录设置'),
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: colors.textPrimary),
-                    ),
-                    const SizedBox(height: AppSpacing.xs),
-                    Text(
-                      context.tr(
-                        dirs.isEmpty
-                            ? '未设置目录时将扫描设备全部音乐'
-                            : '设置目录后仅扫描指定目录下的音乐',
-                      ),
-                      style: TextStyle(fontSize: 12, color: colors.textHint),
-                    ),
-                    const SizedBox(height: AppSpacing.md),
-                    if (dirs.isEmpty)
-                      Padding(
-                        padding: const EdgeInsets.all(AppSpacing.lg),
-                        child: Column(
-                          children: [
-                            Icon(Icons.all_inclusive, size: 32, color: colors.primary.withValues(alpha: 0.5)),
-                            const SizedBox(height: AppSpacing.sm),
-                            Text(context.tr('当前：扫描全部音乐'), style: TextStyle(color: colors.textSecondary, fontSize: 13)),
-                          ],
+                  padding: EdgeInsets.only(
+                    bottom:
+                        MediaQuery.of(context).viewInsets.bottom +
+                        bottomPadding +
+                        72,
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const SizedBox(height: AppSpacing.md),
+                      Container(
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: colors.divider,
+                          borderRadius: BorderRadius.circular(2),
                         ),
-                      )
-                    else
-                      ...dirs.map((d) => Padding(
+                      ),
+                      const SizedBox(height: AppSpacing.md),
+                      Text(
+                        context.tr('扫描目录设置'),
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: colors.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: AppSpacing.xs),
+                      Text(
+                        context.tr(
+                          dirs.isEmpty ? '未设置目录时将扫描设备全部音乐' : '设置目录后仅扫描指定目录下的音乐',
+                        ),
+                        style: TextStyle(fontSize: 12, color: colors.textHint),
+                      ),
+                      const SizedBox(height: AppSpacing.md),
+                      if (dirs.isEmpty)
+                        Padding(
+                          padding: const EdgeInsets.all(AppSpacing.lg),
+                          child: Column(
+                            children: [
+                              Icon(
+                                Icons.all_inclusive,
+                                size: 32,
+                                color: colors.primary.withValues(alpha: 0.5),
+                              ),
+                              const SizedBox(height: AppSpacing.sm),
+                              Text(
+                                context.tr('当前：扫描全部音乐'),
+                                style: TextStyle(
+                                  color: colors.textSecondary,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ],
+                          ),
+                        )
+                      else
+                        ...dirs.map(
+                          (d) => Padding(
                             padding: const EdgeInsets.symmetric(
                               horizontal: AppSpacing.lg,
                               vertical: AppSpacing.xs,
@@ -1272,16 +1443,25 @@ class _LocalPageState extends ConsumerState<LocalPage> {
                               ),
                               decoration: BoxDecoration(
                                 color: colors.surfaceVariant,
-                                borderRadius: BorderRadius.circular(AppRadius.md),
+                                borderRadius: BorderRadius.circular(
+                                  AppRadius.md,
+                                ),
                               ),
                               child: Row(
                                 children: [
-                                  Icon(Icons.folder, size: 18, color: colors.textSecondary),
+                                  Icon(
+                                    Icons.folder,
+                                    size: 18,
+                                    color: colors.textSecondary,
+                                  ),
                                   const SizedBox(width: AppSpacing.sm),
                                   Expanded(
                                     child: Text(
                                       d,
-                                      style: TextStyle(fontSize: 13, color: colors.textPrimary),
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        color: colors.textPrimary,
+                                      ),
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
                                     ),
@@ -1293,126 +1473,160 @@ class _LocalPageState extends ConsumerState<LocalPage> {
                                       // 立即持久化，避免不点确认直接关闭弹窗后丢失
                                       unawaited(
                                         ref
-                                            .read(localMusicNotifierProvider.notifier)
+                                            .read(
+                                              localMusicNotifierProvider
+                                                  .notifier,
+                                            )
                                             .setDirectories(dirs),
                                       );
                                     },
-                                    child: Icon(Icons.close, size: 16, color: colors.textHint),
+                                    child: Icon(
+                                      Icons.close,
+                                      size: 16,
+                                      color: colors.textHint,
+                                    ),
                                   ),
                                 ],
                               ),
                             ),
-                          )),
-                    const SizedBox(height: AppSpacing.lg),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: GestureDetector(
-                              onTap: () {
-                                dirs.clear();
-                                setModalState(() {});
-                                unawaited(
-                                  ref
-                                      .read(localMusicNotifierProvider.notifier)
-                                      .setDirectories(dirs),
-                                );
-                              },
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(vertical: 12),
-                                decoration: BoxDecoration(
-                                  color: colors.surfaceVariant,
-                                  borderRadius: BorderRadius.circular(AppRadius.full),
-                                  border: Border.all(color: colors.divider),
-                                ),
-                                child: Text(
-                                  context.tr('扫描全部'),
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w500,
-                                    color: colors.textPrimary,
-                                  ),
-                                ),
-                              ),
-                            ),
                           ),
-                          const SizedBox(width: AppSpacing.md),
-                          Expanded(
-                            child: GestureDetector(
-                              onTap: () async {
-                                final result = await _pickDirectory();
-                                if (result != null && !dirs.contains(result)) {
-                                  dirs.add(result);
+                        ),
+                      const SizedBox(height: AppSpacing.lg),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: AppSpacing.lg,
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: GestureDetector(
+                                onTap: () {
+                                  dirs.clear();
                                   setModalState(() {});
                                   unawaited(
                                     ref
-                                        .read(localMusicNotifierProvider.notifier)
+                                        .read(
+                                          localMusicNotifierProvider.notifier,
+                                        )
                                         .setDirectories(dirs),
                                   );
-                                }
-                              },
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(vertical: 12),
-                                decoration: BoxDecoration(
-                                  color: colors.surfaceVariant,
-                                  borderRadius: BorderRadius.circular(AppRadius.full),
-                                  border: Border.all(color: colors.divider),
-                                ),
-                                child: Text(
-                                  context.tr('添加文件夹'),
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w500,
-                                    color: colors.textPrimary,
+                                },
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 12,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: colors.surfaceVariant,
+                                    borderRadius: BorderRadius.circular(
+                                      AppRadius.full,
+                                    ),
+                                    border: Border.all(color: colors.divider),
+                                  ),
+                                  child: Text(
+                                    context.tr('扫描全部'),
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w500,
+                                      color: colors.textPrimary,
+                                    ),
                                   ),
                                 ),
                               ),
                             ),
-                          ),
-                        ],
+                            const SizedBox(width: AppSpacing.md),
+                            Expanded(
+                              child: GestureDetector(
+                                onTap: () async {
+                                  final result = await _pickDirectory();
+                                  if (result != null &&
+                                      !dirs.contains(result)) {
+                                    dirs.add(result);
+                                    setModalState(() {});
+                                    unawaited(
+                                      ref
+                                          .read(
+                                            localMusicNotifierProvider.notifier,
+                                          )
+                                          .setDirectories(dirs),
+                                    );
+                                  }
+                                },
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 12,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: colors.surfaceVariant,
+                                    borderRadius: BorderRadius.circular(
+                                      AppRadius.full,
+                                    ),
+                                    border: Border.all(color: colors.divider),
+                                  ),
+                                  child: Text(
+                                    context.tr('添加文件夹'),
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w500,
+                                      color: colors.textPrimary,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: AppSpacing.sm),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
-                      child: GestureDetector(
-                        onTap: () async {
-                          await ref.read(localMusicNotifierProvider.notifier).setDirectories(dirs);
-                          await ref.read(localMusicNotifierProvider.notifier).scanAll();
-                          if (context.mounted) {
-                            Navigator.pop(context);
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text(context.tr('目录已保存并重新扫描')), duration: const Duration(seconds: 2)),
-                            );
-                          }
-                        },
-                        child: Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          decoration: BoxDecoration(
-                            color: colors.primary,
-                            borderRadius: BorderRadius.circular(AppRadius.full),
-                          ),
-                          child: Text(
-                            context.tr('确认并重新扫描'),
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w500,
-                              color: colors.textOnPrimary,
+                      const SizedBox(height: AppSpacing.sm),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: AppSpacing.lg,
+                        ),
+                        child: GestureDetector(
+                          onTap: () async {
+                            await ref
+                                .read(localMusicNotifierProvider.notifier)
+                                .setDirectories(dirs);
+                            await ref
+                                .read(localMusicNotifierProvider.notifier)
+                                .scanAll();
+                            if (context.mounted) {
+                              Navigator.pop(context);
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(context.tr('目录已保存并重新扫描')),
+                                  duration: const Duration(seconds: 2),
+                                ),
+                              );
+                            }
+                          },
+                          child: Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            decoration: BoxDecoration(
+                              color: colors.primary,
+                              borderRadius: BorderRadius.circular(
+                                AppRadius.full,
+                              ),
+                            ),
+                            child: Text(
+                              context.tr('确认并重新扫描'),
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                                color: colors.textOnPrimary,
+                              ),
                             ),
                           ),
                         ),
                       ),
-                    ),
-                    const SizedBox(height: AppSpacing.lg),
-                  ],
+                      const SizedBox(height: AppSpacing.lg),
+                    ],
+                  ),
                 ),
               ),
-            ),
             );
           },
         );
@@ -1467,141 +1681,154 @@ class _LocalSongItem extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final colors = ref.watch(themeColorsProvider);
-    final playingId = ref.watch(playbackControllerProvider.select((s) => s.currentSong?.id));
+    final playingId = ref.watch(
+      playbackControllerProvider.select((s) => s.currentSong?.id),
+    );
     final isPlaying = playingId == song.id;
 
     return SizedBox(
       // 固定行高，保证 itemExtent 与实际布局一致
       height: itemExtent,
       child: GestureDetector(
-      onTap: selectionMode ? () => onSelectionToggle?.call(song) : () => onPlay(song),
-      onLongPress: selectionMode ? null : onLongPress,
-      child: Container(
-        padding: const EdgeInsets.all(AppSpacing.sm),
-        decoration: BoxDecoration(
-          color: selected
-              ? colors.primary.withValues(alpha: 0.10)
-              : (isPlaying ? colors.primary.withValues(alpha: 0.08) : Colors.transparent),
-          borderRadius: BorderRadius.circular(AppRadius.md),
-        ),
-        child: Row(
-          children: [
-            // 序号 / 勾选框
-            SizedBox(
-              width: 28,
-              child: selectionMode
-                  ? IgnorePointer(
-                      // 只做展示：整行点击由外层 GestureDetector 处理
-                      child: Checkbox(
-                        value: selected,
-                        onChanged: (_) {},
-                        activeColor: colors.primary,
-                        visualDensity: VisualDensity.compact,
-                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      ),
-                    )
-                  : (isPlaying
-                        ? Icon(Icons.play_arrow, size: 18, color: colors.primary)
-                        : Text(
-                            '${index + 1}',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: colors.textHint,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          )),
-            ),
-            const SizedBox(width: AppSpacing.sm),
-            Container(
-              width: 48,
-              height: 48,
-              decoration: BoxDecoration(
-                color: colors.surface,
-                borderRadius: BorderRadius.circular(AppRadius.sm),
+        onTap: selectionMode
+            ? () => onSelectionToggle?.call(song)
+            : () => onPlay(song),
+        onLongPress: selectionMode ? null : onLongPress,
+        child: Container(
+          padding: const EdgeInsets.all(AppSpacing.sm),
+          decoration: BoxDecoration(
+            color: selected
+                ? colors.primary.withValues(alpha: 0.10)
+                : (isPlaying
+                      ? colors.primary.withValues(alpha: 0.08)
+                      : Colors.transparent),
+            borderRadius: BorderRadius.circular(AppRadius.md),
+          ),
+          child: Row(
+            children: [
+              // 序号 / 勾选框
+              SizedBox(
+                width: 28,
+                child: selectionMode
+                    ? IgnorePointer(
+                        // 只做展示：整行点击由外层 GestureDetector 处理
+                        child: Checkbox(
+                          value: selected,
+                          onChanged: (_) {},
+                          activeColor: colors.primary,
+                          visualDensity: VisualDensity.compact,
+                          materialTapTargetSize:
+                              MaterialTapTargetSize.shrinkWrap,
+                        ),
+                      )
+                    : (isPlaying
+                          ? Icon(
+                              Icons.play_arrow,
+                              size: 18,
+                              color: colors.primary,
+                            )
+                          : Text(
+                              '${index + 1}',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: colors.textHint,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            )),
               ),
-              // 优先使用 coverUrl（精准匹配后的在线封面），再回退到设备本地封面
-              child: song.coverUrl != null && song.coverUrl!.isNotEmpty
-                  ? ClipRRect(
-                      borderRadius: BorderRadius.circular(AppRadius.sm),
-                      child: MusicCoverImage(
-                        key: ValueKey('local_cover_${song.id}'),
-                        url: song.coverUrl,
-                        fit: BoxFit.cover,
-                        width: 48,
-                        height: 48,
-                        errorWidget: Icon(
-                          isPlaying ? Icons.equalizer : Icons.music_note,
-                          size: 22,
-                          color: isPlaying ? colors.primary : colors.textHint,
+              const SizedBox(width: AppSpacing.sm),
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: colors.surface,
+                  borderRadius: BorderRadius.circular(AppRadius.sm),
+                ),
+                // 优先使用 coverUrl（精准匹配后的在线封面），再回退到设备本地封面
+                child: song.coverUrl != null && song.coverUrl!.isNotEmpty
+                    ? ClipRRect(
+                        borderRadius: BorderRadius.circular(AppRadius.sm),
+                        child: MusicCoverImage(
+                          key: ValueKey('local_cover_${song.id}'),
+                          url: song.coverUrl,
+                          fit: BoxFit.cover,
+                          width: 48,
+                          height: 48,
+                          errorWidget: Icon(
+                            isPlaying ? Icons.equalizer : Icons.music_note,
+                            size: 22,
+                            color: isPlaying ? colors.primary : colors.textHint,
+                          ),
+                        ),
+                      )
+                    : ClipRRect(
+                        borderRadius: BorderRadius.circular(AppRadius.sm),
+                        child: MusicCoverImage(
+                          key: ValueKey('local_cover_${song.id}'),
+                          songId: song.id,
+                          // 桌面端没有 MediaStore，封面来自扫描时写入的封面缓存
+                          mediaStoreId: song.mediaStoreId,
+                          fit: BoxFit.cover,
+                          width: 48,
+                          height: 48,
+                          errorWidget: Icon(
+                            isPlaying ? Icons.equalizer : Icons.music_note,
+                            size: 22,
+                            color: isPlaying ? colors.primary : colors.textHint,
+                          ),
                         ),
                       ),
-                    )
-                  : ClipRRect(
-                      borderRadius: BorderRadius.circular(AppRadius.sm),
-                      child: MusicCoverImage(
-                        key: ValueKey('local_cover_${song.id}'),
-                        songId: song.id,
-                        // 桌面端没有 MediaStore，封面来自扫描时写入的封面缓存
-                        mediaStoreId: song.mediaStoreId,
-                        fit: BoxFit.cover,
-                        width: 48,
-                        height: 48,
-                        errorWidget: Icon(
-                          isPlaying ? Icons.equalizer : Icons.music_note,
-                          size: 22,
-                          color:
-                              isPlaying ? colors.primary : colors.textHint,
-                        ),
+              ),
+              const SizedBox(width: AppSpacing.md),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      song.title,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: isPlaying ? colors.primary : colors.textPrimary,
                       ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
-            ),
-            const SizedBox(width: AppSpacing.md),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    song.title,
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                      color: isPlaying ? colors.primary : colors.textPrimary,
+                    const SizedBox(height: 2),
+                    Text(
+                      song.artist,
+                      style: TextStyle(fontSize: 12, color: colors.textHint),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    song.artist,
-                    style: TextStyle(fontSize: 12, color: colors.textHint),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
-              ),
-            ),
-            if (song.duration > 0)
-              Text(
-                song.displayDuration,
-                style: TextStyle(fontSize: 12, color: colors.textHint),
-              ),
-            // 多选模式下隐藏「更多」按钮，避免与选择手势冲突
-            if (!selectionMode) ...[
-              const SizedBox(width: AppSpacing.xs),
-              GestureDetector(
-                onTap: () => onContextMenu(colors, song),
-                child: Padding(
-                  padding: const EdgeInsets.all(4),
-                  child: Icon(Icons.more_vert, size: 18, color: colors.textHint),
+                  ],
                 ),
               ),
+              if (song.duration > 0)
+                Text(
+                  song.displayDuration,
+                  style: TextStyle(fontSize: 12, color: colors.textHint),
+                ),
+              // 多选模式下隐藏「更多」按钮，避免与选择手势冲突
+              if (!selectionMode) ...[
+                const SizedBox(width: AppSpacing.xs),
+                GestureDetector(
+                  onTap: () => onContextMenu(colors, song),
+                  child: Padding(
+                    padding: const EdgeInsets.all(4),
+                    child: Icon(
+                      Icons.more_vert,
+                      size: 18,
+                      color: colors.textHint,
+                    ),
+                  ),
+                ),
+              ],
             ],
-          ],
+          ),
         ),
-      ),
       ),
     );
   }
 }
-

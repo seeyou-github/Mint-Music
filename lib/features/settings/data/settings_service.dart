@@ -392,7 +392,7 @@ class SettingsService {
   Future<void> setLyricFontColor(String v) =>
       _prefs.setString('lyric_font_color', v);
 
-  // -- 内置音源的优先音源（JSON 对象：平台 id → 音源 id） --
+  // -- 平台歌曲的优先插件音源（JSON 对象：平台 id → 音源 id） --
   String getPreferredSourceMap() => _prefs.getString('preferred_sources') ?? '';
   Future<void> setPreferredSourceMap(String v) =>
       _prefs.setString('preferred_sources', v);

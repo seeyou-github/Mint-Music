@@ -119,8 +119,8 @@ class PlaylistStore {
         final millis = value is int
             ? value
             : value is num
-                ? value.toInt()
-                : int.tryParse('$value');
+            ? value.toInt()
+            : int.tryParse('$value');
         if (id.isNotEmpty && millis != null) result[id] = millis;
       });
       return result;

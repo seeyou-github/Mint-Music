@@ -492,9 +492,7 @@ class MusicAudioHandler extends BaseAudioHandler
             : null;
 
         if (cachedFile != null) {
-          debugPrint(
-            'MusicAudioHandler: 命中音频缓存 -> ${cachedFile.path}',
-          );
+          debugPrint('MusicAudioHandler: 命中音频缓存 -> ${cachedFile.path}');
           await _player.setAudioSource(
             ConcatenatingAudioSource(
               children: [

@@ -18,7 +18,11 @@ class ScanProgress {
   final int total;
   final bool running;
 
-  const ScanProgress({this.processed = 0, this.total = 0, this.running = false});
+  const ScanProgress({
+    this.processed = 0,
+    this.total = 0,
+    this.running = false,
+  });
 
   ScanProgress copyWith({int? processed, int? total, bool? running}) {
     return ScanProgress(
@@ -135,10 +139,12 @@ class LocalMusicRepository {
     if (query.isEmpty) return getLocalSongs();
     final q = query.toLowerCase();
     return _songsMap.values
-        .where((s) =>
-            s.title.toLowerCase().contains(q) ||
-            s.artist.toLowerCase().contains(q) ||
-            s.album.toLowerCase().contains(q))
+        .where(
+          (s) =>
+              s.title.toLowerCase().contains(q) ||
+              s.artist.toLowerCase().contains(q) ||
+              s.album.toLowerCase().contains(q),
+        )
         .toList();
   }
 
@@ -153,7 +159,10 @@ class LocalMusicRepository {
 
   String _genCoverKey(String filePath) {
     final normalized = filePath.replaceAll('\\', '/');
-    return md5.convert(utf8.encode('cover_$normalized')).toString().substring(0, 16);
+    return md5
+        .convert(utf8.encode('cover_$normalized'))
+        .toString()
+        .substring(0, 16);
   }
 
   /// 根据文件扩展名推断音频比特率（用于本地音乐音质显示）
@@ -247,11 +256,17 @@ class LocalMusicRepository {
           orderType: OrderType.ASC_OR_SMALLER,
         );
 
-        final musicSongs = songs.where((s) => s.isMusic == true || s.isMusic == null).toList();
+        final musicSongs = songs
+            .where((s) => s.isMusic == true || s.isMusic == null)
+            .toList();
 
         final total = musicSongs.length;
-        onScanProgress?.call(ScanProgress(processed: 0, total: total, running: true));
-        onProgress?.call(ScanProgress(processed: 0, total: total, running: true));
+        onScanProgress?.call(
+          ScanProgress(processed: 0, total: total, running: true),
+        );
+        onProgress?.call(
+          ScanProgress(processed: 0, total: total, running: true),
+        );
 
         final newSongsMap = <String, Song>{};
         int processed = 0;
@@ -277,7 +292,9 @@ class LocalMusicRepository {
           }
 
           final id = _genId(filePath);
-          final title = audio.title.isNotEmpty ? audio.title : p.basenameWithoutExtension(filePath);
+          final title = audio.title.isNotEmpty
+              ? audio.title
+              : p.basenameWithoutExtension(filePath);
           final artist = audio.artist ?? '未知艺术家';
           final album = audio.album ?? '未知专辑';
           final duration = (audio.duration ?? 0) ~/ 1000;
@@ -306,7 +323,11 @@ class LocalMusicRepository {
 
           processed++;
           if (processed % 20 == 0 || processed == total) {
-            final progress = ScanProgress(processed: processed, total: total, running: true);
+            final progress = ScanProgress(
+              processed: processed,
+              total: total,
+              running: true,
+            );
             onScanProgress?.call(progress);
             onProgress?.call(progress);
           }
@@ -316,11 +337,19 @@ class LocalMusicRepository {
         _songsMap.addAll(newSongsMap);
         await _flushIndex();
 
-        final doneProgress = ScanProgress(processed: total, total: total, running: false);
+        final doneProgress = ScanProgress(
+          processed: total,
+          total: total,
+          running: false,
+        );
         onScanProgress?.call(doneProgress);
         onProgress?.call(doneProgress);
       } catch (e) {
-        final errorProgress = ScanProgress(processed: 0, total: 0, running: false);
+        final errorProgress = ScanProgress(
+          processed: 0,
+          total: 0,
+          running: false,
+        );
         onScanProgress?.call(errorProgress);
         onProgress?.call(errorProgress);
       }
@@ -349,7 +378,9 @@ class LocalMusicRepository {
       }
 
       final total = files.length;
-      onScanProgress?.call(ScanProgress(processed: 0, total: total, running: true));
+      onScanProgress?.call(
+        ScanProgress(processed: 0, total: total, running: true),
+      );
       onProgress?.call(ScanProgress(processed: 0, total: total, running: true));
 
       final newSongsMap = <String, Song>{};
@@ -422,7 +453,11 @@ class LocalMusicRepository {
       onProgress?.call(doneProgress);
     } catch (e) {
       debugPrint('[LocalMusic] 桌面端扫描失败: $e');
-      final errorProgress = ScanProgress(processed: 0, total: 0, running: false);
+      final errorProgress = ScanProgress(
+        processed: 0,
+        total: 0,
+        running: false,
+      );
       onScanProgress?.call(errorProgress);
       onProgress?.call(errorProgress);
     }
@@ -430,7 +465,8 @@ class LocalMusicRepository {
 
   /// 系统默认音乐目录（未设置扫描目录时使用）。
   Future<List<String>> _defaultMusicDirectories() async {
-    final home = Platform.environment['USERPROFILE'] ??
+    final home =
+        Platform.environment['USERPROFILE'] ??
         Platform.environment['HOME'] ??
         '';
     if (home.isEmpty) return const [];
@@ -454,8 +490,10 @@ class LocalMusicRepository {
     try {
       final directory = Directory(dir);
       if (!await directory.exists()) return result;
-      await for (final entity
-          in directory.list(recursive: true, followLinks: false)) {
+      await for (final entity in directory.list(
+        recursive: true,
+        followLinks: false,
+      )) {
         if (entity is! File) continue;
         final path = entity.path;
         if (!LocalMetadataReader.isAudioFile(path)) continue;
@@ -560,8 +598,18 @@ class LocalMusicRepository {
 
   Song _mergePreferFilled(Song a, Song b) {
     String pick(String? x, String? y, [String fallback = '']) {
-      if (x != null && x.isNotEmpty && x != '未知艺术家' && x != '未知曲目' && x != '未知专辑') return x;
-      if (y != null && y.isNotEmpty && y != '未知艺术家' && y != '未知曲目' && y != '未知专辑') return y;
+      if (x != null &&
+          x.isNotEmpty &&
+          x != '未知艺术家' &&
+          x != '未知曲目' &&
+          x != '未知专辑')
+        return x;
+      if (y != null &&
+          y.isNotEmpty &&
+          y != '未知艺术家' &&
+          y != '未知曲目' &&
+          y != '未知专辑')
+        return y;
       return fallback;
     }
 
@@ -620,7 +668,7 @@ class LocalMusicRepository {
     final songs = _songsMap.values.toList();
     final now = DateTime.now().millisecondsSinceEpoch;
 
-      await db.transaction((txn) async {
+    await db.transaction((txn) async {
       await txn.delete('local_songs');
       final batch = txn.batch();
       for (final song in songs) {

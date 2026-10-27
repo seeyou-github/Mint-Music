@@ -115,6 +115,7 @@ class AppPaths {
     final docs = await getApplicationDocumentsDirectory();
     return _ensureDirectory(Directory(p.join(docs.path, 'MintMusic')));
   }
+
   /// 默认临时目录（Windows 为 `AppData\temp`）。
   static Future<Directory> tempDirectory() async {
     if (Platform.isWindows) {

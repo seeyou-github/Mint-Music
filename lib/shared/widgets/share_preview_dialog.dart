@@ -198,7 +198,11 @@ class _SharePreviewDialogState extends State<SharePreviewDialog> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.broken_image_outlined, color: AppColors.textHint, size: 40),
+              const Icon(
+                Icons.broken_image_outlined,
+                color: AppColors.textHint,
+                size: 40,
+              ),
               const SizedBox(height: 8),
               Text(
                 context.tr('海报生成失败'),
@@ -211,11 +215,7 @@ class _SharePreviewDialogState extends State<SharePreviewDialog> {
     }
     return ClipRRect(
       borderRadius: BorderRadius.circular(16),
-      child: Image.memory(
-        _posterBytes!,
-        height: 260,
-        fit: BoxFit.contain,
-      ),
+      child: Image.memory(_posterBytes!, height: 260, fit: BoxFit.contain),
     );
   }
 
@@ -243,7 +243,9 @@ class _SharePreviewDialogState extends State<SharePreviewDialog> {
               child: Text(
                 context.tr(_templateLabel(t)),
                 style: TextStyle(
-                  color: selected ? AppColors.textOnPrimary : AppColors.textSecondary,
+                  color: selected
+                      ? AppColors.textOnPrimary
+                      : AppColors.textSecondary,
                   fontSize: 13,
                   fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
                 ),

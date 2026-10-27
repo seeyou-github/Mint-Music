@@ -65,7 +65,9 @@ class MiniPlayer extends ConsumerWidget {
         },
         child: Container(
           height: height,
-          margin: EdgeInsets.symmetric(horizontal: isTablet ? 12 : AppSpacing.sm),
+          margin: EdgeInsets.symmetric(
+            horizontal: isTablet ? 12 : AppSpacing.sm,
+          ),
           decoration: BoxDecoration(
             color: colors.surface,
             borderRadius: BorderRadius.circular(height / 2),
@@ -108,7 +110,10 @@ class MiniPlayer extends ConsumerWidget {
                     const SizedBox(height: 1),
                     Text(
                       song.artist,
-                      style: TextStyle(fontSize: subtitleFontSize, color: colors.textHint),
+                      style: TextStyle(
+                        fontSize: subtitleFontSize,
+                        color: colors.textHint,
+                      ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -156,7 +161,9 @@ class MiniPlayer extends ConsumerWidget {
                 ),
                 // 遵循 CeruMusic/Sollin-Music：加载期间禁用按钮，
                 // 避免用户在 URL 获取 / 换源过程中连点导致状态错乱。
-                onPressed: isLoading ? null : () => controller.togglePlayPause(),
+                onPressed: isLoading
+                    ? null
+                    : () => controller.togglePlayPause(),
               ),
               IconButton(
                 visualDensity: VisualDensity.compact,

@@ -91,7 +91,11 @@ class UpdateService {
     final remote = parseVersion(remoteVersion);
     final current = parseVersion(currentVersion);
 
-    for (int i = 0; i < (remote.length > current.length ? remote.length : current.length); i++) {
+    for (
+      int i = 0;
+      i < (remote.length > current.length ? remote.length : current.length);
+      i++
+    ) {
       final r = i < remote.length ? remote[i] : 0;
       final c = i < current.length ? current[i] : 0;
       if (r > c) return true;

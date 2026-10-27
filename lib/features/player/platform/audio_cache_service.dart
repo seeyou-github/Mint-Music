@@ -24,7 +24,8 @@ class AudioCacheService {
   static const String subDirectoryName = 'audio_cache';
 
   /// 缓存文件名：`歌手 - 歌名 [音质-音源标签].扩展名`，
-  /// 音源标签见 [sourceLabelFor]（内置 `平台-内置`，插件 `平台-插件-插件id`）。
+  /// 音源标签见 [sourceLabelFor]（裸平台 id 用平台名，插件用
+  /// `平台-插件-插件id`）。
   ///
   /// 缓存目录里的音频文件用「歌手 - 歌名」命名，方便直接识别；
   /// 歌手 / 歌名缺失时回退为 `歌曲id [音质-音源].扩展名`。
@@ -58,7 +59,7 @@ class AudioCacheService {
 
   /// 音源 id → 文件名里的音源标签。
   ///
-  /// * 内置音源是裸平台 id（wy / kg / …）→「网易云音乐-内置」；
+  /// * 裸平台 id（wy / kg / …）→平台名，如「网易云音乐」；
   /// * 插件音源带 `@插件id` 后缀（如 `wy@1a16f66000f`）→
   ///   「网易云音乐-插件-1a16f66000f」。
   ///
@@ -75,7 +76,7 @@ class AudioCacheService {
     final base = (at == -1 ? raw : raw.substring(0, at)).trim();
     if (base.isEmpty) return '未知音源';
     final name = SourceIdMapping.idToName[base] ?? base;
-    if (at == -1) return '$name-内置';
+    if (at == -1) return name;
     final pluginId = raw.substring(at + 1).trim();
     if (pluginId.isEmpty) return '$name-插件';
     return '$name-插件-$pluginId';
@@ -113,7 +114,7 @@ class AudioCacheService {
 
   /// 查找已缓存的完整音频文件。
   ///
-  /// 文件名按「当前歌曲的音源」推导：同一首歌换了音源（内置 ↔ 插件 /
+  /// 文件名按「当前歌曲的音源」推导：同一首歌换了音源（不同插件 /
   /// 不同平台）后不会命中别的源缓存的文件。
   static Future<File?> findCachedFile({
     required String songId,

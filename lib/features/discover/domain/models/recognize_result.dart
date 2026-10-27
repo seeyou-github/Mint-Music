@@ -61,24 +61,26 @@ class RecognizeResult {
       startTime: (json['startTime'] as num?)?.toDouble() ?? 0,
       lrc: json['lrc']?.toString(),
       types: json['types'] is List
-          ? (json['types'] as List).map((e) => Map<String, String>.from(e as Map)).toList()
+          ? (json['types'] as List)
+                .map((e) => Map<String, String>.from(e as Map))
+                .toList()
           : [],
     );
   }
 
   Map<String, dynamic> toJson() => {
-        'songmid': songmid,
-        'name': name,
-        'singer': singer,
-        'albumName': albumName,
-        'albumId': albumId,
-        'source': source,
-        'interval': interval,
-        'img': img,
-        'startTime': startTime,
-        'lrc': lrc,
-        'types': types,
-      };
+    'songmid': songmid,
+    'name': name,
+    'singer': singer,
+    'albumName': albumName,
+    'albumId': albumId,
+    'source': source,
+    'interval': interval,
+    'img': img,
+    'startTime': startTime,
+    'lrc': lrc,
+    'types': types,
+  };
 }
 
 class RecognizeAudioQuality {

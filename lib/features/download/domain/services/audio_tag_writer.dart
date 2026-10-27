@@ -326,10 +326,14 @@ class AudioTagWriter {
       isLast = (headerByte & 0x80) != 0;
       final type = headerByte & 0x7F;
       final length =
-          (bytes[offset + 1] << 16) | (bytes[offset + 2] << 8) | bytes[offset + 3];
+          (bytes[offset + 1] << 16) |
+          (bytes[offset + 2] << 8) |
+          bytes[offset + 3];
       final dataStart = offset + 4;
       if (dataStart + length > bytes.length) return false;
-      blocks.add(_FlacBlock(type, bytes.sublist(dataStart, dataStart + length)));
+      blocks.add(
+        _FlacBlock(type, bytes.sublist(dataStart, dataStart + length)),
+      );
       offset = dataStart + length;
     }
     final audioStart = offset;
@@ -459,7 +463,8 @@ class AudioTagWriter {
           continue;
         }
         final segLength = (data[i + 2] << 8) | data[i + 3];
-        final isSof = marker >= 0xC0 &&
+        final isSof =
+            marker >= 0xC0 &&
             marker <= 0xCF &&
             marker != 0xC4 &&
             marker != 0xC8 &&

@@ -20,7 +20,9 @@ class SharePosterGenerator {
     PosterTemplate template = PosterTemplate.classic,
     String? qrContent,
   }) async {
-    final coverImage = coverBytes != null ? await _decodeImage(coverBytes) : null;
+    final coverImage = coverBytes != null
+        ? await _decodeImage(coverBytes)
+        : null;
     final qr = qrContent ?? '【薄荷音乐】${song.title} - ${song.artist}';
 
     final recorder = ui.PictureRecorder();
@@ -32,7 +34,9 @@ class SharePosterGenerator {
           canvas: canvas,
           coverImage: coverImage,
           title: song.title,
-          subtitle: song.artist.isNotEmpty ? song.artist : (song.album.isNotEmpty ? song.album : ''),
+          subtitle: song.artist.isNotEmpty
+              ? song.artist
+              : (song.album.isNotEmpty ? song.album : ''),
           qrContent: qr,
         );
       case PosterTemplate.minimal:
@@ -153,15 +157,17 @@ class SharePosterGenerator {
       final shadowPaint = Paint()
         ..color = Colors.black.withValues(alpha: 0.4)
         ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 20);
-      canvas.drawRRect(
-        coverRect.shift(const Offset(0, 8)),
-        shadowPaint,
-      );
+      canvas.drawRRect(coverRect.shift(const Offset(0, 8)), shadowPaint);
       canvas.save();
       canvas.clipRRect(coverRect);
       canvas.drawImageRect(
         coverImage,
-        Rect.fromLTWH(0, 0, coverImage.width.toDouble(), coverImage.height.toDouble()),
+        Rect.fromLTWH(
+          0,
+          0,
+          coverImage.width.toDouble(),
+          coverImage.height.toDouble(),
+        ),
         Rect.fromLTWH(coverLeft, coverTop, coverSize, coverSize),
         Paint(),
       );
@@ -185,7 +191,10 @@ class SharePosterGenerator {
       ellipsis: '...',
     );
     titlePainter.layout(maxWidth: _width - 80);
-    titlePainter.paint(canvas, Offset((_width - titlePainter.width) / 2, coverImage != null ? 500 : 200));
+    titlePainter.paint(
+      canvas,
+      Offset((_width - titlePainter.width) / 2, coverImage != null ? 500 : 200),
+    );
 
     final subY = titlePainter.height + (coverImage != null ? 510 : 210);
     final subPainter = TextPainter(
@@ -239,7 +248,12 @@ class SharePosterGenerator {
       canvas.clipRRect(coverRect);
       canvas.drawImageRect(
         coverImage,
-        Rect.fromLTWH(0, 0, coverImage.width.toDouble(), coverImage.height.toDouble()),
+        Rect.fromLTWH(
+          0,
+          0,
+          coverImage.width.toDouble(),
+          coverImage.height.toDouble(),
+        ),
         Rect.fromLTWH(coverLeft, coverTop, coverSize, coverSize),
         Paint(),
       );
@@ -263,7 +277,10 @@ class SharePosterGenerator {
       ellipsis: '...',
     );
     titlePainter.layout(maxWidth: _width - 120);
-    titlePainter.paint(canvas, Offset((_width - titlePainter.width) / 2, coverImage != null ? 440 : 200));
+    titlePainter.paint(
+      canvas,
+      Offset((_width - titlePainter.width) / 2, coverImage != null ? 440 : 200),
+    );
 
     final subY = titlePainter.height + (coverImage != null ? 450 : 210);
     _drawCenteredText(canvas, subtitle, subStyle, subY);
@@ -273,7 +290,11 @@ class SharePosterGenerator {
     _drawCenteredText(
       canvas,
       '薄荷音乐',
-      TextStyle(color: Colors.white.withValues(alpha: 0.2), fontSize: 13, letterSpacing: 3),
+      TextStyle(
+        color: Colors.white.withValues(alpha: 0.2),
+        fontSize: 13,
+        letterSpacing: 3,
+      ),
       _height - 50,
     );
   }
@@ -316,14 +337,20 @@ class SharePosterGenerator {
       canvas.clipRRect(coverRect);
       canvas.drawImageRect(
         coverImage,
-        Rect.fromLTWH(0, 0, coverImage.width.toDouble(), coverImage.height.toDouble()),
+        Rect.fromLTWH(
+          0,
+          0,
+          coverImage.width.toDouble(),
+          coverImage.height.toDouble(),
+        ),
         Rect.fromLTWH(coverLeft, coverTop2, coverSize, coverSize),
         Paint(),
       );
       canvas.restore();
     }
 
-    final textStartY = (cardTop + 20 + (coverImage != null ? cardWidth - 40 : 0) + 24);
+    final textStartY =
+        (cardTop + 20 + (coverImage != null ? cardWidth - 40 : 0) + 24);
     final titleStyle = TextStyle(
       color: const Color(0xFF2D2D3A),
       fontSize: 26,
@@ -336,15 +363,19 @@ class SharePosterGenerator {
       ellipsis: '...',
     );
     titlePainter.layout(maxWidth: cardWidth - 40);
-    titlePainter.paint(canvas, Offset((_width - titlePainter.width) / 2, textStartY));
-
-    final subStyle = TextStyle(
-      color: const Color(0xFF888899),
-      fontSize: 18,
+    titlePainter.paint(
+      canvas,
+      Offset((_width - titlePainter.width) / 2, textStartY),
     );
+
+    final subStyle = TextStyle(color: const Color(0xFF888899), fontSize: 18);
     _drawCenteredText(canvas, subtitle, subStyle, textStartY + 40);
 
-    _drawQrCode(canvas, qrContent, 100, textStartY + 80,
+    _drawQrCode(
+      canvas,
+      qrContent,
+      100,
+      textStartY + 80,
       qrColor: const Color(0xFF2D2D3A),
     );
 
@@ -388,7 +419,12 @@ class SharePosterGenerator {
     canvas.restore();
   }
 
-  static void _drawCenteredText(Canvas canvas, String text, TextStyle style, double y) {
+  static void _drawCenteredText(
+    Canvas canvas,
+    String text,
+    TextStyle style,
+    double y,
+  ) {
     final painter = TextPainter(
       text: TextSpan(text: text, style: style),
       textDirection: TextDirection.ltr,

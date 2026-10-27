@@ -3,7 +3,7 @@ import 'package:mintmusic/features/player/platform/audio_cache_service.dart';
 
 /// 回归：同一平台装了多个插件时，音频缓存文件名必须能区分插件。
 ///
-/// 旧实现只按「平台名-内置/插件」命名，两个网易插件（星海、可下高音质）
+/// 旧实现只按「平台名-插件」命名，两个网易插件（星海、可下高音质）
 /// 都会落到 `歌手 - 歌名 [128k-网易云音乐-插件].mp3` 这一个文件上，
 /// 后播的那个直接命中前一个插件缓存下来的音频。
 void main() {
@@ -11,9 +11,9 @@ void main() {
   const gaoYinZhi = 'wy@1a16f6600ab';
 
   group('AudioCacheService.sourceLabelFor', () {
-    test('内置音源标为「平台-内置」', () {
-      expect(AudioCacheService.sourceLabelFor('wy'), '网易云音乐-内置');
-      expect(AudioCacheService.sourceLabelFor('kw'), '酷我音乐-内置');
+    test('裸平台 id 用平台名', () {
+      expect(AudioCacheService.sourceLabelFor('wy'), '网易云音乐');
+      expect(AudioCacheService.sourceLabelFor('kw'), '酷我音乐');
     });
 
     test('插件音源带上插件 id', () {
@@ -45,7 +45,7 @@ void main() {
     });
 
     test('未知平台回退成平台 id', () {
-      expect(AudioCacheService.sourceLabelFor('xyz'), 'xyz-内置');
+      expect(AudioCacheService.sourceLabelFor('xyz'), 'xyz');
       expect(AudioCacheService.sourceLabelFor('xyz@p1'), 'xyz-插件-p1');
     });
   });
@@ -62,10 +62,13 @@ void main() {
 
     test('两个插件不会落到同一个文件', () {
       expect(name(xinghai), isNot(name(gaoYinZhi)));
-      expect(name(xinghai), 'Whitney Houston - Call You Tonight [128k-网易云音乐-插件-1a16f66000f].mp3');
+      expect(
+        name(xinghai),
+        'Whitney Houston - Call You Tonight [128k-网易云音乐-插件-1a16f66000f].mp3',
+      );
     });
 
-    test('内置与插件也不会互相命中', () {
+    test('裸平台 id 与插件也不会互相命中', () {
       expect(name('wy'), isNot(name(xinghai)));
     });
 

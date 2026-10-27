@@ -181,17 +181,19 @@ class CoverCacheService {
         completed++;
         continue;
       }
-      futures.add(semaphore.enter(() async {
-        try {
-          await getArtwork(song.id, mediaStoreId: song.mediaStoreId);
-        } catch (_) {
-          // 忽略单首歌曲的错误
-        } finally {
-          completed++;
-          onProgress?.call(completed, total);
-          semaphore.leave();
-        }
-      }));
+      futures.add(
+        semaphore.enter(() async {
+          try {
+            await getArtwork(song.id, mediaStoreId: song.mediaStoreId);
+          } catch (_) {
+            // 忽略单首歌曲的错误
+          } finally {
+            completed++;
+            onProgress?.call(completed, total);
+            semaphore.leave();
+          }
+        }),
+      );
     }
 
     await Future.wait(futures);

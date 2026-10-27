@@ -95,8 +95,8 @@ class PluginTestReport {
 /// 1. 优先通过该插件宿主搜索（与启用后实际播放路径一致，保留完整 LX
 ///    元数据供 musicUrl 解析），按相似度取前几条候选曲目；
 /// 2. 对每个音质走与真实播放**完全一致**的解析路径
-///    （`getMusicUrlResultCandidates`：kw 源优先内置解析并带提示音/时长
-///    过滤，其它源由被测插件解析），逐个候选 URL 探测；
+///    （`getMusicUrlResultCandidates`：带提示音/时长过滤，由被测插件解析），
+///    逐个候选 URL 探测；
 /// 3. 用临时 just_audio 播放器加载链接验证实际可播放（kw 源与真实播放
 ///    共用同一套时长校验，其它源仅拦截明显试听提示音）；
 /// 4. 候选曲目按相似度依次尝试，失败自动重试并递增退避，吸收 CDN 限流、
@@ -113,7 +113,7 @@ class PluginTestService {
   }) : _manager = manager,
        _pluginService = pluginService;
 
-  /// 搜索兜底超时（宿主 search 内层为 45s，内置源搜索也由此兜底）。
+  /// 搜索超时（宿主 search 内层为 45s）。
   static const _searchTimeout = Duration(seconds: 50);
 
   /// 链接解析超时：放宽以容纳插件冷启动与其内部多接口重试。
@@ -134,7 +134,6 @@ class PluginTestService {
   static const _maxMatchCandidates = 3;
 
   AudioPlayer? _probePlayer;
-  final Map<String, List<Song>> _referenceSearchCache = {};
 
   /// 准备测试报告：加载插件运行时并按宿主声明构建音源×音质骨架。
   ///
@@ -185,7 +184,6 @@ class PluginTestService {
     report.finished = false;
     report.cancelled = false;
     report.fatalError = null;
-    _referenceSearchCache.clear();
     onChanged?.call();
 
     final parsed = _parseKeyword(keyword);
@@ -232,7 +230,6 @@ class PluginTestService {
     onChanged?.call();
 
     List<Song> matches = const [];
-    var usedReferenceSearch = false;
     try {
       final songs = await _manager
           .searchViaHost(host, searchKeyword, sourceId: source.sourceId)
@@ -264,39 +261,9 @@ class PluginTestService {
     }
 
     // Long-running/resolver-only LX sources may not implement search at all,
-    // or may return an envelope that has no exact text match. Use a reliable
-    // built-in source only to obtain the test song metadata, then rebase it to
-    // the target source and send it through the target plugin's musicUrl
-    // resolver. This mirrors real playback, where search and URL resolving
-    // are separate capabilities.
-    if (matches.isEmpty) {
-      matches = await _findReferenceMatches(
-        searchKeyword,
-        parsed,
-        sourceId: source.sourceId,
-      );
-      usedReferenceSearch = matches.isNotEmpty;
-    }
-
-    // 如果当前音源的参考搜索也失败，尝试使用其他可用的内置源作为参考。
-    // 某些 LX 插件（如长青、念心等）可能不实现 search，但通过插件宿主
-    // 的 searchWithHandler 仍能返回结果。若插件搜索也为空，尝试用 wy 等
-    // 稳定内置源获取测试歌曲元数据，然后通过插件的 musicUrl 解析器验证。
-    if (matches.isEmpty) {
-      const fallbackSources = ['wy', 'kw', 'kg', 'tx', 'mg'];
-      for (final fbId in fallbackSources) {
-        if (fbId == source.sourceId) continue;
-        matches = await _findReferenceMatches(
-          searchKeyword,
-          parsed,
-          sourceId: fbId,
-        );
-        if (matches.isNotEmpty) {
-          usedReferenceSearch = true;
-          break;
-        }
-      }
-    }
+    // or may return an envelope that has no exact text match. In that case the
+    // source cannot be exercised from the test dialog: report the search
+    // failure instead of borrowing a song from another source.
 
     if (matches.isEmpty) {
       final reason = source.searchError ?? tr('未找到匹配曲目');
@@ -311,9 +278,7 @@ class PluginTestService {
     }
 
     source.searchError = null;
-    source.matchText =
-        tr('${usedReferenceSearch ? '参考：' : ''}'
-        '${matches.first.title} - ${matches.first.artist}');
+    source.matchText = tr('${matches.first.title} - ${matches.first.artist}');
     source.status = PluginTestSourceStatus.testing;
     onChanged?.call();
 
@@ -348,9 +313,9 @@ class PluginTestService {
       quality.note = attempt > 1 ? tr('重试中…') : null;
       onChanged?.call();
 
-      // 与真实播放完全一致的解析路径：kw 源优先内置解析（含随机账号重试
-      // 与提示音/时长过滤），其它源由被测插件解析；候选 URL 逐个探测。
-      // 候选曲目按相似度依次尝试，换歌可吸收搜索排序抖动导致的选曲差异。
+      // 与真实播放完全一致的解析路径（含提示音/时长过滤），由被测插件解析；
+      // 候选 URL 逐个探测。候选曲目按相似度依次尝试，换歌可吸收搜索排序抖动
+      // 导致的选曲差异。
       for (final match in matches) {
         if (_isCancelled(isCancelled)) return;
 
@@ -463,39 +428,6 @@ class PluginTestService {
         .take(_maxMatchCandidates)
         .map((song) => song.copyWith(source: sourceId))
         .toList();
-  }
-
-  Future<List<Song>> _findReferenceMatches(
-    String searchKeyword,
-    ({String title, String artist}) parsed, {
-    required String sourceId,
-  }) async {
-    final cacheKey = '$sourceId:${searchKeyword.trim().toLowerCase()}';
-    final cachedSongs = _referenceSearchCache[cacheKey];
-    late final List<Song> referenceSongs;
-    if (cachedSongs != null) {
-      referenceSongs = cachedSongs;
-    } else {
-      var fetchedSongs = <Song>[];
-      try {
-        fetchedSongs = await _manager
-            .searchBuiltIn(searchKeyword, sourceId: sourceId, limit: 15)
-            .timeout(const Duration(seconds: 12));
-      } catch (e) {
-        print('[PluginTest] 同平台参考搜索失败 source=$sourceId: $e');
-      }
-      referenceSongs = fetchedSongs;
-      _referenceSearchCache[cacheKey] = fetchedSongs;
-    }
-
-    final matches = _pickBestMatches(
-      referenceSongs,
-      parsed.title,
-      parsed.artist,
-      sourceId: sourceId,
-      allowLooseMatch: true,
-    );
-    return matches;
   }
 
   /// 用共享播放器加载 URL 验证可播放性。

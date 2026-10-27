@@ -13,7 +13,9 @@ class DiscoverRepository {
     return _manager.getHotPlaylists(sourceId: sourceId);
   }
 
-  Future<List<PlaylistTagGroup>> getPlaylistTags({String sourceId = 'wy'}) async {
+  Future<List<PlaylistTagGroup>> getPlaylistTags({
+    String sourceId = 'wy',
+  }) async {
     return _manager.getPlaylistTags(sourceId: sourceId);
   }
 
@@ -41,8 +43,16 @@ class DiscoverRepository {
     return _manager.getLeaderboards(sourceId: sourceId);
   }
 
-  Future<Playlist?> getLeaderboardDetail(String boardId, {int page = 1, String sourceId = 'wy'}) async {
-    return _manager.getLeaderboardDetail(boardId, page: page, sourceId: sourceId);
+  Future<Playlist?> getLeaderboardDetail(
+    String boardId, {
+    int page = 1,
+    String sourceId = 'wy',
+  }) async {
+    return _manager.getLeaderboardDetail(
+      boardId,
+      page: page,
+      sourceId: sourceId,
+    );
   }
 
   Future<List<Song>> search(String query) async {
@@ -62,7 +72,7 @@ class DiscoverRepository {
     return _manager.getPlaylistDetail(playlistId);
   }
 
-  /// 歌单 / 榜单详情分页（插件源支持翻页，内置源一次返回全部）。
+  /// 歌单 / 榜单详情分页（插件源支持翻页）。
   Future<PlaylistPage> getPlaylistDetailPage(
     String playlistId, {
     int page = 1,

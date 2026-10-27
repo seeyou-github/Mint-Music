@@ -70,7 +70,8 @@ class ResponsiveLayout {
   static LayoutMode getLayoutMode(BuildContext context) {
     final size = MediaQuery.sizeOf(context);
     final width = size.width;
-    final isLandscape = MediaQuery.orientationOf(context) == Orientation.landscape;
+    final isLandscape =
+        MediaQuery.orientationOf(context) == Orientation.landscape;
 
     if (isLandscape && width >= desktopMaxWidth) return LayoutMode.threeColumn;
     if (isLandscape && width >= tabletMaxWidth) return LayoutMode.twoColumn;
@@ -100,8 +101,11 @@ class ResponsiveLayout {
     double minItemWidth = 160,
   }) {
     final width = MediaQuery.sizeOf(context).width;
-    final isLandscape = MediaQuery.orientationOf(context) == Orientation.landscape;
-    final availableWidth = shouldShowSidebar(context) ? width - sidebarWidth : width;
+    final isLandscape =
+        MediaQuery.orientationOf(context) == Orientation.landscape;
+    final availableWidth = shouldShowSidebar(context)
+        ? width - sidebarWidth
+        : width;
 
     if (availableWidth >= 1100) return isLandscape ? 5 : 4;
     if (availableWidth >= 800) return isLandscape ? 4 : 3;
@@ -118,8 +122,11 @@ class ResponsiveLayout {
     double? crossAxisSpacing,
   }) {
     final width = MediaQuery.sizeOf(context).width;
-    final isLandscape = MediaQuery.orientationOf(context) == Orientation.landscape;
-    final availableWidth = shouldShowSidebar(context) ? width - sidebarWidth : width;
+    final isLandscape =
+        MediaQuery.orientationOf(context) == Orientation.landscape;
+    final availableWidth = shouldShowSidebar(context)
+        ? width - sidebarWidth
+        : width;
 
     final spacing = mainAxisSpacing ?? (isTablet(context) ? 16.0 : 12.0);
     final cSpacing = crossAxisSpacing ?? (isTablet(context) ? 16.0 : 12.0);
@@ -201,7 +208,8 @@ class ResponsiveWrapper extends InheritedWidget {
   });
 
   static ResponsiveWrapper of(BuildContext context) {
-    final wrapper = context.dependOnInheritedWidgetOfExactType<ResponsiveWrapper>();
+    final wrapper = context
+        .dependOnInheritedWidgetOfExactType<ResponsiveWrapper>();
     assert(wrapper != null, 'No ResponsiveWrapper found in context');
     return wrapper!;
   }

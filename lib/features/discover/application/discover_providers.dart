@@ -5,7 +5,6 @@ import '../domain/models/playlist_page.dart';
 import '../domain/models/leaderboard.dart';
 import '../../player/domain/models/song.dart';
 import '../../plugin/application/plugin_providers.dart';
-import '../../plugin/application/music_source_manager.dart';
 import '../../plugin/domain/plugin_types.dart';
 import '../../settings/application/settings_providers.dart';
 
@@ -19,9 +18,8 @@ final discoverSourceIdProvider = StateProvider<String>(
 );
 
 final discoverSupportedSourcesProvider = Provider<List<SourceInfo>>((ref) {
-  // 插件初始化 + 内置音源启用/卸载状态 + 插件自带音源开关都会影响这里的列表。
+  // 插件初始化 + 插件自带音源开关都会影响这里的列表。
   ref.watch(pluginInitializedProvider);
-  ref.watch(builtInSourceStateProvider);
   ref.watch(pluginSourceStateProvider);
 
   final manager = ref.watch(musicSourceManagerProvider);
@@ -60,7 +58,7 @@ final playlistTagsProvider = FutureProvider<List<PlaylistTagGroup>>((
   ref,
 ) async {
   // 插件接管平台时，分类由插件提供（插件可能带「置顶分类」）；必须等插件加载
-  // 完成再取，否则重启后只能拿到内置源的分类。
+  // 完成再取，否则重启后分类可能为空。
   await ref.watch(pluginInitializedProvider.future);
   final repo = ref.watch(discoverRepositoryProvider);
   final sourceId = ref.watch(discoverSourceIdProvider);

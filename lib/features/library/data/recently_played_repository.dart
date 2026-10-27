@@ -198,13 +198,19 @@ class RecentlyPlayedRepository {
     switch (granularity) {
       case PlaybackStatsGranularity.day:
         for (var i = 6; i >= 0; i--) {
-          final d = DateTime(now.year, now.month, now.day)
-              .subtract(Duration(days: i));
+          final d = DateTime(
+            now.year,
+            now.month,
+            now.day,
+          ).subtract(Duration(days: i));
           addKey('${d.year}-${d.month}-${d.day}', '${d.month}/${d.day}');
         }
       case PlaybackStatsGranularity.week:
-        final thisMonday = DateTime(now.year, now.month, now.day)
-            .subtract(Duration(days: now.weekday - 1));
+        final thisMonday = DateTime(
+          now.year,
+          now.month,
+          now.day,
+        ).subtract(Duration(days: now.weekday - 1));
         for (var i = 7; i >= 0; i--) {
           final d = thisMonday.subtract(Duration(days: i * 7));
           addKey('${d.year}-${d.month}-${d.day}', '${d.month}/${d.day}');
@@ -408,9 +414,7 @@ class RecentlyPlayedRepository {
   Future<void> _flushPending() async {
     if (_pendingCount == 0) return;
     final songs = List<RecentlyPlayedItem>.of(_pendingSongs.values);
-    final playlists = List<RecentlyPlayedPlaylist>.of(
-      _pendingPlaylists.values,
-    );
+    final playlists = List<RecentlyPlayedPlaylist>.of(_pendingPlaylists.values);
     final events = List<Map<String, Object?>>.of(_pendingEvents);
     _pendingSongs.clear();
     _pendingPlaylists.clear();
@@ -428,15 +432,19 @@ class RecentlyPlayedRepository {
           }, conflictAlgorithm: ConflictAlgorithm.replace);
         }
         for (final item in playlists) {
-          await txn.insert('recently_played_playlists', {
-            'id': item.id,
-            'name': item.name,
-            'cover_url': item.coverUrl,
-            'song_count': item.songCount,
-            'source': item.source,
-            'opened_at': item.openedAt.millisecondsSinceEpoch,
-            'data': jsonEncode(item.toJson()),
-          }, conflictAlgorithm: ConflictAlgorithm.replace);
+          await txn.insert(
+            'recently_played_playlists',
+            {
+              'id': item.id,
+              'name': item.name,
+              'cover_url': item.coverUrl,
+              'song_count': item.songCount,
+              'source': item.source,
+              'opened_at': item.openedAt.millisecondsSinceEpoch,
+              'data': jsonEncode(item.toJson()),
+            },
+            conflictAlgorithm: ConflictAlgorithm.replace,
+          );
         }
         for (final event in events) {
           await txn.insert('play_events', event);

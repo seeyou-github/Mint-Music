@@ -36,7 +36,9 @@ class _AppState extends ConsumerState<App> {
   void initState() {
     super.initState();
     // 开启「歌单实时同步」时，进入应用先与远端同步一次歌单。
-    WidgetsBinding.instance.addPostFrameCallback((_) => _syncPlaylistsOnStartup());
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _syncPlaylistsOnStartup(),
+    );
   }
 
   /// 启动时从 WebDAV 同步歌单；失败时弹框提示原因并提供「重新同步」。
@@ -73,10 +75,7 @@ class _AppState extends ConsumerState<App> {
       context: dialogContext,
       builder: (ctx) => AlertDialog(
         backgroundColor: colors.surface,
-        title: Text(
-          tr('歌单同步失败'),
-          style: TextStyle(color: colors.textPrimary),
-        ),
+        title: Text(tr('歌单同步失败'), style: TextStyle(color: colors.textPrimary)),
         content: SingleChildScrollView(
           child: Text(
             tr('同步远端歌单失败：$reason'),
@@ -90,10 +89,7 @@ class _AppState extends ConsumerState<App> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: Text(
-              tr('重新同步'),
-              style: TextStyle(color: colors.primary),
-            ),
+            child: Text(tr('重新同步'), style: TextStyle(color: colors.primary)),
           ),
         ],
       ),
@@ -141,53 +137,53 @@ class _AppState extends ConsumerState<App> {
           darkTheme: _applyAppFont(AppTheme.dark, appFontFamily),
           themeMode: themeMode,
           routerConfig: appRouter,
-        builder: (context, child) {
-          final deviceType = ResponsiveLayout.getDeviceType(context);
-          final layoutMode = ResponsiveLayout.getLayoutMode(context);
-          final isLandscape = ResponsiveLayout.isLandscape(context);
-          final isTablet = ResponsiveLayout.isTablet(context);
-          // 桌面歌词层与路由内容同级,因此会悬浮在所有页面/弹窗之上。
-          // StackFit.passthrough 保证 Navigator 依旧拿到铺满屏幕的紧约束。
-          return Listener(
-            // 鼠标侧键「后退」(Windows 上的 XButton1) 触发的指针事件。
-            // 放在路由之上，因此所有一级/二级页面都能响应。
-            behavior: HitTestBehavior.translucent,
-            onPointerDown: _handleMouseBack,
-            child: Stack(
-              fit: StackFit.passthrough,
-              children: [
-                ResponsiveWrapper(
-                  deviceType: deviceType,
-                  layoutMode: layoutMode,
-                  isLandscape: isLandscape,
-                  isTablet: isTablet,
-                  child: MediaQuery(
-                    data: MediaQuery.of(context).copyWith(
-                      textScaler: MediaQuery.of(context).textScaler,
-                    ),
-                    // 宽屏下左侧导航栏渲染在路由之外，二级页面不会再遮挡它。
-                    child: AppDesktopShell(
-                      child: child ?? const SizedBox.shrink(),
+          builder: (context, child) {
+            final deviceType = ResponsiveLayout.getDeviceType(context);
+            final layoutMode = ResponsiveLayout.getLayoutMode(context);
+            final isLandscape = ResponsiveLayout.isLandscape(context);
+            final isTablet = ResponsiveLayout.isTablet(context);
+            // 桌面歌词层与路由内容同级,因此会悬浮在所有页面/弹窗之上。
+            // StackFit.passthrough 保证 Navigator 依旧拿到铺满屏幕的紧约束。
+            return Listener(
+              // 鼠标侧键「后退」(Windows 上的 XButton1) 触发的指针事件。
+              // 放在路由之上，因此所有一级/二级页面都能响应。
+              behavior: HitTestBehavior.translucent,
+              onPointerDown: _handleMouseBack,
+              child: Stack(
+                fit: StackFit.passthrough,
+                children: [
+                  ResponsiveWrapper(
+                    deviceType: deviceType,
+                    layoutMode: layoutMode,
+                    isLandscape: isLandscape,
+                    isTablet: isTablet,
+                    child: MediaQuery(
+                      data: MediaQuery.of(
+                        context,
+                      ).copyWith(textScaler: MediaQuery.of(context).textScaler),
+                      // 宽屏下左侧导航栏渲染在路由之外，二级页面不会再遮挡它。
+                      child: AppDesktopShell(
+                        child: child ?? const SizedBox.shrink(),
+                      ),
                     ),
                   ),
-                ),
-                // 歌单自动同步提示：浮在窗口底部（迷你播放器 / 底部导航之上），
-                // 只在收藏页增删改、开启实时同步开关触发的同步时出现。
-                Positioned(
-                  left: 0,
-                  right: 0,
-                  bottom:
-                      (ResponsiveLayout.shouldShowSidebar(context)
-                          ? 88.0
-                          : 132.0) +
-                      MediaQuery.paddingOf(context).bottom,
-                  child: const PlaylistSyncIndicator(),
-                ),
-                const DesktopLyricLayer(),
-              ],
-            ),
-          );
-        },
+                  // 歌单自动同步提示：浮在窗口底部（迷你播放器 / 底部导航之上），
+                  // 只在收藏页增删改、开启实时同步开关触发的同步时出现。
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom:
+                        (ResponsiveLayout.shouldShowSidebar(context)
+                            ? 88.0
+                            : 132.0) +
+                        MediaQuery.paddingOf(context).bottom,
+                    child: const PlaylistSyncIndicator(),
+                  ),
+                  const DesktopLyricLayer(),
+                ],
+              ),
+            );
+          },
         ),
       ),
     );
@@ -243,16 +239,18 @@ class _AppState extends ConsumerState<App> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: colors.surface,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Row(
           children: [
             const Icon(Icons.system_update, color: Color(0xFF4CAF50), size: 24),
             const SizedBox(width: 8),
             Text(
               '插件更新',
-              style: TextStyle(color: colors.textPrimary, fontSize: 18, fontWeight: FontWeight.w600),
+              style: TextStyle(
+                color: colors.textPrimary,
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ],
         ),
@@ -266,44 +264,47 @@ class _AppState extends ConsumerState<App> {
                 style: TextStyle(color: colors.textSecondary, fontSize: 14),
               ),
               const SizedBox(height: 12),
-              ...updates.map((result) => Container(
-                margin: const EdgeInsets.only(bottom: 8),
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: colors.surfaceVariant,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.extension, color: colors.primary, size: 20),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            result.plugin.name,
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w500,
-                              color: colors.textPrimary,
+              ...updates.map(
+                (result) => Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: colors.surfaceVariant,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.extension, color: colors.primary, size: 20),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              result.plugin.name,
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                                color: colors.textPrimary,
+                              ),
                             ),
-                          ),
-                          Text(
-                            result.remoteVersion != null && result.remoteVersion != 'latest'
-                                ? 'v${result.plugin.version} → v${result.remoteVersion}'
-                                : 'v${result.plugin.version} → 可更新',
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: Color(0xFF4CAF50),
+                            Text(
+                              result.remoteVersion != null &&
+                                      result.remoteVersion != 'latest'
+                                  ? 'v${result.plugin.version} → v${result.remoteVersion}'
+                                  : 'v${result.plugin.version} → 可更新',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Color(0xFF4CAF50),
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              )),
+              ),
               const SizedBox(height: 4),
               Text(
                 '前往 插件管理 页面可进行更新操作。',

@@ -88,7 +88,8 @@ class Playlist {
       source: json['source'] ?? 'local',
       createTime: DateTime.tryParse(json['createTime'] ?? '') ?? DateTime.now(),
       updateTime: DateTime.tryParse(json['updateTime'] ?? '') ?? DateTime.now(),
-      songs: (json['songs'] as List<dynamic>?)
+      songs:
+          (json['songs'] as List<dynamic>?)
               ?.map((s) => Song.fromJson(s as Map<String, dynamic>))
               .toList() ??
           [],

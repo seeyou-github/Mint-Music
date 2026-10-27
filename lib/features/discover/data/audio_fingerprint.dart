@@ -78,7 +78,11 @@ class AudioFingerprint {
 
     for (var i = 0; i < peaks.length; i++) {
       final anchor = peaks[i];
-      for (var j = i + anchorThreshold; j < min(i + maxDeltaFrames, peaks.length); j++) {
+      for (
+        var j = i + anchorThreshold;
+        j < min(i + maxDeltaFrames, peaks.length);
+        j++
+      ) {
         final target = peaks[j];
         final deltaTime = target.time - anchor.time;
         if (deltaTime < 1 || deltaTime > maxDeltaFrames) continue;

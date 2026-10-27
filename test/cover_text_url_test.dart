@@ -15,24 +15,23 @@ void main() {
 
   group('MusicCoverImage.extractImageUrlFromBody', () {
     test('纯文本的图片地址能取出来', () {
-      const body = 'http://img1.kwcdn.kuwo.cn/star/albumcover/700/s4s81/95/2497366108.jpg';
-      expect(
-        MusicCoverImage.extractImageUrlFromBody(bytesOf(body)),
-        body,
-      );
+      const body =
+          'http://img1.kwcdn.kuwo.cn/star/albumcover/700/s4s81/95/2497366108.jpg';
+      expect(MusicCoverImage.extractImageUrlFromBody(bytesOf(body)), body);
     });
 
     test('https 地址同样支持', () {
-      const body = 'https://img4.kuwo.cn/star/albumcover/1080/s3s94/93/211513640.jpg';
-      expect(
-        MusicCoverImage.extractImageUrlFromBody(bytesOf(body)),
-        body,
-      );
+      const body =
+          'https://img4.kuwo.cn/star/albumcover/1080/s3s94/93/211513640.jpg';
+      expect(MusicCoverImage.extractImageUrlFromBody(bytesOf(body)), body);
     });
 
     test('前后有换行 / 空格也能取出来', () {
       const body = '\r\n  http://a.b/c.jpg  \n';
-      expect(MusicCoverImage.extractImageUrlFromBody(bytesOf(body)), 'http://a.b/c.jpg');
+      expect(
+        MusicCoverImage.extractImageUrlFromBody(bytesOf(body)),
+        'http://a.b/c.jpg',
+      );
     });
 
     test('HTML 错误页不会被当成地址', () {
@@ -47,7 +46,20 @@ void main() {
 
     test('二进制图片字节不会被误判', () {
       // JPEG 头 + 随机字节
-      final jpeg = Uint8List.fromList([0xFF, 0xD8, 0xFF, 0xE0, 0, 16, 74, 70, 73, 70, 0, 1]);
+      final jpeg = Uint8List.fromList([
+        0xFF,
+        0xD8,
+        0xFF,
+        0xE0,
+        0,
+        16,
+        74,
+        70,
+        73,
+        70,
+        0,
+        1,
+      ]);
       expect(MusicCoverImage.extractImageUrlFromBody(jpeg), isNull);
     });
 

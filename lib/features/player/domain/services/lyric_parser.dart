@@ -42,9 +42,7 @@ List<LyricWord>? _parseInterleavedWords(String content, int lineStartMs) {
       final endMs = i < matches.length - 1
           ? _parseInterleavedTagMs(matches[i + 1])
           : tagMs + 500;
-      words.add(
-        LyricWord(word: text, startTimeMs: startMs, endTimeMs: endMs),
-      );
+      words.add(LyricWord(word: text, startTimeMs: startMs, endTimeMs: endMs));
     }
     pos = m.end;
   }
@@ -56,7 +54,11 @@ List<LyricWord>? _parseInterleavedWords(String content, int lineStartMs) {
     if (words.isNotEmpty) {
       final lastTagMs = _parseInterleavedTagMs(matches.last);
       words.add(
-        LyricWord(word: tail, startTimeMs: lastTagMs, endTimeMs: lastTagMs + 500),
+        LyricWord(
+          word: tail,
+          startTimeMs: lastTagMs,
+          endTimeMs: lastTagMs + 500,
+        ),
       );
     } else {
       words.add(
@@ -210,7 +212,11 @@ class _RawLrcLine {
   final int timestampMs;
   final String text;
   final List<LyricWord>? words;
-  const _RawLrcLine({required this.timestampMs, required this.text, this.words});
+  const _RawLrcLine({
+    required this.timestampMs,
+    required this.text,
+    this.words,
+  });
 }
 
 /// Remove timed word tags like `(37196,207)` or `（37196，207）`
@@ -218,8 +224,7 @@ class _RawLrcLine {
 String _stripTimedWordTags(String text) {
   // ASCII parentheses: (ms,dur) or (ms,dur,extra)
   // Chinese full-width: （ms，dur） or （ms，dur，extra）
-  return text
-      .replaceAll(RegExp(r'[(（]\d+[,，]\d+(?:[,，]\d+)?[)）]'), '');
+  return text.replaceAll(RegExp(r'[(（]\d+[,，]\d+(?:[,，]\d+)?[)）]'), '');
 }
 
 Map<int, String> _parseTranslationLrc(String? lrcText) {

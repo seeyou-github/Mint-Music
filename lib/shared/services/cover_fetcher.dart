@@ -58,8 +58,7 @@ class CoverFetcher {
   );
 
   /// 下载封面；失败返回 null。
-  static Future<Uint8List?> fetch(String rawUrl) =>
-      fetchAny(<String?>[rawUrl]);
+  static Future<Uint8List?> fetch(String rawUrl) => fetchAny(<String?>[rawUrl]);
 
   /// 只查本地图片缓存，不发起任何网络请求。
   ///

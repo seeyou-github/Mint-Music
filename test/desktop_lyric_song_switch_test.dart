@@ -54,7 +54,10 @@ void main() {
         currentSongId: 'a',
         currentSongSource: 'wy',
       );
-      expect(areLyricsReadyForSong(_song('a', source: 'local'), lyric), isFalse);
+      expect(
+        areLyricsReadyForSong(_song('a', source: 'local'), lyric),
+        isFalse,
+      );
     });
 
     test('已加载完成且属于当前歌曲时可用', () {

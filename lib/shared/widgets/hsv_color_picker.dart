@@ -40,8 +40,7 @@ class _HsvColorPickerState extends State<HsvColorPicker> {
     _value = hsv.value;
   }
 
-  Color get _color =>
-      HSVColor.fromAHSV(1, _hue, _saturation, _value).toColor();
+  Color get _color => HSVColor.fromAHSV(1, _hue, _saturation, _value).toColor();
 
   String get _hex => _toHex(_color);
 
@@ -59,7 +58,12 @@ class _HsvColorPickerState extends State<HsvColorPicker> {
     });
   }
 
-  void _updateSaturationValue(double dx, double dy, double width, double height) {
+  void _updateSaturationValue(
+    double dx,
+    double dy,
+    double width,
+    double height,
+  ) {
     if (width <= 0 || height <= 0) return;
     setState(() {
       _saturation = (dx / width).clamp(0.0, 1.0);
@@ -148,7 +152,8 @@ class _HsvColorPickerState extends State<HsvColorPicker> {
           builder: (context, constraints) {
             final width = math.min(constraints.maxWidth, 260.0);
             return GestureDetector(
-              onPanDown: (details) => _updateHue(details.localPosition.dx, width),
+              onPanDown: (details) =>
+                  _updateHue(details.localPosition.dx, width),
               onPanUpdate: (details) =>
                   _updateHue(details.localPosition.dx, width),
               child: SizedBox(
@@ -224,10 +229,7 @@ class _HsvColorPickerState extends State<HsvColorPicker> {
         Row(
           mainAxisAlignment: MainAxisAlignment.end,
           children: [
-            TextButton(
-              onPressed: widget.onCancel,
-              child: const Text('取消'),
-            ),
+            TextButton(onPressed: widget.onCancel, child: const Text('取消')),
             const SizedBox(width: 8),
             FilledButton(
               onPressed: () => widget.onSave(_color),

@@ -28,7 +28,9 @@ class TagWriteService {
     if (!await file.exists()) return true;
     if (!_isAudioFile(songPath)) return true;
 
-    debugPrint('[TagWriteService] processSongFiles: path=$songPath, basicInfo=$basicInfo, cover=$cover, lyrics=$lyrics, downloadLyrics=$downloadLyrics, lyricFormat=$lyricFormat');
+    debugPrint(
+      '[TagWriteService] processSongFiles: path=$songPath, basicInfo=$basicInfo, cover=$cover, lyrics=$lyrics, downloadLyrics=$downloadLyrics, lyricFormat=$lyricFormat',
+    );
 
     final baseName = _baseNameWithoutExt(songPath);
     final dirName = file.parent.path;
@@ -76,8 +78,10 @@ class TagWriteService {
 
         if (coverBytes != null && coverBytes.isNotEmpty) {
           try {
-            final coverExt =
-                _coverExtFromBytes(coverBytes!, songInfo.coverUrl ?? '');
+            final coverExt = _coverExtFromBytes(
+              coverBytes!,
+              songInfo.coverUrl ?? '',
+            );
             coverPath = '$dirName${Platform.pathSeparator}$baseName$coverExt';
             await File(coverPath).writeAsBytes(coverBytes!);
             debugPrint(
@@ -132,7 +136,9 @@ class TagWriteService {
           : null;
 
       if (useArtwork) {
-        debugPrint('[TagWriteService] 写入标签+封面: title=$titleStr, artist=$artistStr, album=$albumStr, hasLyrics=${lrcToEmbed != null}, artworkSize=${coverBytes?.length}');
+        debugPrint(
+          '[TagWriteService] 写入标签+封面: title=$titleStr, artist=$artistStr, album=$albumStr, hasLyrics=${lrcToEmbed != null}, artworkSize=${coverBytes?.length}',
+        );
         embedded = await _writeTagsAndArtwork(
           songPath,
           title: titleStr,
@@ -143,7 +149,9 @@ class TagWriteService {
           artwork: coverBytes!,
         );
       } else if (useBasicInfo || lrcToEmbed != null) {
-        debugPrint('[TagWriteService] 写入标签: title=$titleStr, artist=$artistStr, album=$albumStr, hasLyrics=${lrcToEmbed != null}');
+        debugPrint(
+          '[TagWriteService] 写入标签: title=$titleStr, artist=$artistStr, album=$albumStr, hasLyrics=${lrcToEmbed != null}',
+        );
         embedded = await _writeTags(
           songPath,
           title: titleStr,
@@ -235,7 +243,9 @@ class TagWriteService {
       debugPrint('[TagWriteService] _writeTags 成功');
       return true;
     } on PlatformException catch (e) {
-      debugPrint('[TagWriteService] writeTags PlatformException: ${e.code} - ${e.message}');
+      debugPrint(
+        '[TagWriteService] writeTags PlatformException: ${e.code} - ${e.message}',
+      );
     } on MissingPluginException catch (e) {
       debugPrint('[TagWriteService] writeTags 无原生实现: $e');
     }
@@ -251,14 +261,18 @@ class TagWriteService {
 
   Future<void> _writeArtwork(String filePath, Uint8List artwork) async {
     try {
-      debugPrint('[TagWriteService] _writeArtwork: path=$filePath, size=${artwork.length}');
+      debugPrint(
+        '[TagWriteService] _writeArtwork: path=$filePath, size=${artwork.length}',
+      );
       await _channel.invokeMethod<bool>('writeArtwork', {
         'filePath': filePath,
         'artwork': artwork,
       });
       debugPrint('[TagWriteService] _writeArtwork 成功');
     } on PlatformException catch (e) {
-      debugPrint('[TagWriteService] writeArtwork PlatformException: ${e.code} - ${e.message}');
+      debugPrint(
+        '[TagWriteService] writeArtwork PlatformException: ${e.code} - ${e.message}',
+      );
       rethrow;
     }
   }
@@ -286,12 +300,16 @@ class TagWriteService {
         if (lyrics != null) 'lyrics': lyrics,
         if (artwork != null) 'artwork': artwork,
       };
-      debugPrint('[TagWriteService] _writeTagsAndArtwork args: filePath=$filePath, title=$title, artist=$artist, album=$album, albumArtist=$albumArtist, hasLyrics=${lyrics != null}, hasArtwork=${artwork != null}');
+      debugPrint(
+        '[TagWriteService] _writeTagsAndArtwork args: filePath=$filePath, title=$title, artist=$artist, album=$album, albumArtist=$albumArtist, hasLyrics=${lyrics != null}, hasArtwork=${artwork != null}',
+      );
       await _channel.invokeMethod<bool>('writeTagsAndArtwork', args);
       debugPrint('[TagWriteService] _writeTagsAndArtwork 成功');
       return true;
     } on PlatformException catch (e) {
-      debugPrint('[TagWriteService] writeTagsAndArtwork PlatformException: ${e.code} - ${e.message}');
+      debugPrint(
+        '[TagWriteService] writeTagsAndArtwork PlatformException: ${e.code} - ${e.message}',
+      );
     } on MissingPluginException catch (e) {
       debugPrint('[TagWriteService] writeTagsAndArtwork 无原生实现: $e');
     }
@@ -338,7 +356,15 @@ class TagWriteService {
 
   bool _isAudioFile(String filePath) {
     final ext = filePath.substring(filePath.lastIndexOf('.')).toLowerCase();
-    return ['.mp3', '.flac', '.wav', '.aac', '.m4a', '.ogg', '.wma'].contains(ext);
+    return [
+      '.mp3',
+      '.flac',
+      '.wav',
+      '.aac',
+      '.m4a',
+      '.ogg',
+      '.wma',
+    ].contains(ext);
   }
 
   String _baseNameWithoutExt(String filePath) {
@@ -372,7 +398,9 @@ class TagWriteService {
     if (contentType != null) {
       if (contentType.contains('image/png')) return '.png';
       if (contentType.contains('image/webp')) return '.webp';
-      if (contentType.contains('image/jpeg') || contentType.contains('image/jpg')) return '.jpg';
+      if (contentType.contains('image/jpeg') ||
+          contentType.contains('image/jpg'))
+        return '.jpg';
       if (contentType.contains('image/bmp')) return '.bmp';
     }
 
@@ -428,7 +456,9 @@ class TagWriteService {
 
       // 处理第一个标签之前的文本（QRC格式的第一个字在第一个标签之前）
       if (tagMatches.first.start > 0) {
-        final firstWordText = content.substring(0, tagMatches.first.start).trim();
+        final firstWordText = content
+            .substring(0, tagMatches.first.start)
+            .trim();
         if (firstWordText.isNotEmpty) {
           // 使用行开始时间作为第一个字的时间
           words.add(MapEntry(lineStartMs, firstWordText));
@@ -441,7 +471,9 @@ class TagWriteService {
 
         // 词文本在当前标签之后，下一个标签之前
         final textStart = tagMatch.end;
-        final textEnd = i + 1 < tagMatches.length ? tagMatches[i + 1].start : content.length;
+        final textEnd = i + 1 < tagMatches.length
+            ? tagMatches[i + 1].start
+            : content.length;
         final wordText = content.substring(textStart, textEnd).trim();
 
         if (wordText.isNotEmpty) {

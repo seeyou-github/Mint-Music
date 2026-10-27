@@ -67,7 +67,7 @@ class AudioEffectService {
     _pending = _pending.then((_) async {
       if (kIsWeb ||
           (defaultTargetPlatform != TargetPlatform.android &&
-           defaultTargetPlatform != TargetPlatform.iOS)) {
+              defaultTargetPlatform != TargetPlatform.iOS)) {
         return;
       }
       try {

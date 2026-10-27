@@ -1,4 +1,4 @@
-/// 插件音源名称与内置音源 id 之间的归一化映射。
+/// 插件音源名称与平台 id 之间的归一化映射。
 ///
 /// 澜音（cr）/ 洛雪（lx）插件直接声明 `sourceId`，而 MusicFree 插件只声明一个
 /// `platform` 名称（例如「网易128k」「bilibili」）。为了让「搜索源选择器」拿到
@@ -72,7 +72,7 @@ class SourceIdMapping {
 
   /// 名称 → 已知音源 id；无法识别时返回 null。
   ///
-  /// [name] 既可能是内置源的规范名称（如「网易云音乐」），也可能是插件声明的
+  /// [name] 既可能是平台的规范名称（如「网易云音乐」），也可能是插件声明的
   /// platform（如「网易128k」「MiguMusic」）。
   static String? knownId(String name) {
     final lower = name.trim().toLowerCase();

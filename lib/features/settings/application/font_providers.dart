@@ -6,10 +6,11 @@ import '../../../core/theme/app_font_manager.dart';
 import '../../../core/theme/app_typography.dart';
 
 /// 已导入的字体列表。
-final appFontsProvider =
-    StateNotifierProvider<AppFontsNotifier, List<AppFont>>((ref) {
-  return AppFontsNotifier(ref);
-});
+final appFontsProvider = StateNotifierProvider<AppFontsNotifier, List<AppFont>>(
+  (ref) {
+    return AppFontsNotifier(ref);
+  },
+);
 
 /// 当前选中的字体族名（null = 使用默认字体）。
 final appFontSelectedProvider = StateProvider<String?>((ref) => null);
@@ -62,9 +63,8 @@ class AppFontsNotifier extends StateNotifier<List<AppFont>> {
 
   /// 把选中的字体应用到全局排版。
   static void _applyFontFamily(String? family) {
-    AppTypography.fontFamily =
-        (family == null || family.isEmpty)
-            ? AppTypography.defaultFontFamily
-            : family;
+    AppTypography.fontFamily = (family == null || family.isEmpty)
+        ? AppTypography.defaultFontFamily
+        : family;
   }
 }

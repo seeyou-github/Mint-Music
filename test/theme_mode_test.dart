@@ -120,13 +120,15 @@ void main() {
     );
 
     // 模拟系统切到深色并派发变化事件
-    tester.view.platformDispatcher.platformBrightnessTestValue = Brightness.dark;
+    tester.view.platformDispatcher.platformBrightnessTestValue =
+        Brightness.dark;
     tester.binding.handlePlatformBrightnessChanged();
     await tester.pump();
     expect(container.read(platformBrightnessProvider), Brightness.dark);
 
     // 再切回浅色
-    tester.view.platformDispatcher.platformBrightnessTestValue = Brightness.light;
+    tester.view.platformDispatcher.platformBrightnessTestValue =
+        Brightness.light;
     tester.binding.handlePlatformBrightnessChanged();
     await tester.pump();
     expect(container.read(platformBrightnessProvider), Brightness.light);

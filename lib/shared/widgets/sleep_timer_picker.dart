@@ -84,7 +84,8 @@ class _SleepTimerPickerSheet extends ConsumerStatefulWidget {
       _SleepTimerPickerSheetState();
 }
 
-class _SleepTimerPickerSheetState extends ConsumerState<_SleepTimerPickerSheet> {
+class _SleepTimerPickerSheetState
+    extends ConsumerState<_SleepTimerPickerSheet> {
   final _hourCtrl = TextEditingController();
   final _minCtrl = TextEditingController();
   String? _errorText;
@@ -109,7 +110,9 @@ class _SleepTimerPickerSheetState extends ConsumerState<_SleepTimerPickerSheet> 
         color: AppColors.surface,
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.of(context).viewInsets.bottom,
+      ),
       child: SafeArea(
         child: ConstrainedBox(
           constraints: BoxConstraints(
@@ -119,146 +122,179 @@ class _SleepTimerPickerSheetState extends ConsumerState<_SleepTimerPickerSheet> 
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-            const SizedBox(height: 8),
-            Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: AppColors.divider,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              context.tr('定时关闭'),
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: AppColors.textPrimary,
-              ),
-            ),
-            // 已设定时：实时显示剩余倒计时
-            if (sleep.active) ...[
-              const SizedBox(height: 8),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(
-                    Icons.timer,
-                    size: 16,
-                    color: AppColors.primary,
+                const SizedBox(height: 8),
+                Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: AppColors.divider,
+                    borderRadius: BorderRadius.circular(2),
                   ),
-                  const SizedBox(width: 4),
-                  Text(
-                    context.tr(
-                      '剩余 ${formatSleepTimerRemaining(sleep.remaining)} 后自动暂停',
-                    ),
-                    style: const TextStyle(
-                      fontSize: 13,
-                      color: AppColors.primary,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-            const SizedBox(height: 12),
-            _timerOption(ctx: context, label: context.tr('15分钟'), duration: const Duration(minutes: 15)),
-            _timerOption(ctx: context, label: context.tr('30分钟'), duration: const Duration(minutes: 30)),
-            _timerOption(ctx: context, label: context.tr('60分钟'), duration: const Duration(minutes: 60)),
-            _timerOption(ctx: context, label: context.tr('90分钟'), duration: const Duration(minutes: 90)),
-            _timerOption(ctx: context, label: context.tr('关闭'), duration: Duration.zero),
-            const Divider(height: 1, indent: 16, endIndent: 16),
-            // 自定义输入
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              child: Row(
-                children: [
-                  const Icon(Icons.edit, size: 20, color: AppColors.textSecondary),
-                  const SizedBox(width: 12),
-                  SizedBox(
-                    width: 60,
-                    child: TextField(
-                      controller: _hourCtrl,
-                      keyboardType: TextInputType.number,
-                      inputFormatters: [
-                        FilteringTextInputFormatter.digitsOnly,
-                        LengthLimitingTextInputFormatter(2),
-                      ],
-                      onChanged: (_) {
-                        if (_errorText != null) setState(() => _errorText = null);
-                      },
-                      decoration: InputDecoration(
-                        hintText: '0',
-                        labelText: context.tr('时'),
-                        isDense: true,
-                        border: const OutlineInputBorder(),
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 8,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  SizedBox(
-                    width: 60,
-                    child: TextField(
-                      controller: _minCtrl,
-                      keyboardType: TextInputType.number,
-                      inputFormatters: [
-                        FilteringTextInputFormatter.digitsOnly,
-                        LengthLimitingTextInputFormatter(2),
-                      ],
-                      onChanged: (_) {
-                        if (_errorText != null) setState(() => _errorText = null);
-                      },
-                      decoration: InputDecoration(
-                        hintText: '30',
-                        labelText: context.tr('分'),
-                        isDense: true,
-                        border: const OutlineInputBorder(),
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 8,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  TextButton(
-                    onPressed: () {
-                      final h = int.tryParse(_hourCtrl.text) ?? 0;
-                      final m = int.tryParse(_minCtrl.text) ?? 0;
-                      final total = h * 60 + m;
-                      if (total > _maxMinutes) {
-                        setState(() {
-                          _errorText = context.tr(
-                            '自定义时长不能超过${_maxMinutes ~/ 60}小时',
-                          );
-                        });
-                        return;
-                      }
-                      if (total > 0) {
-                        notifier.start(Duration(minutes: total));
-                        Navigator.pop(context);
-                      }
-                    },
-                    child: Text(context.tr('确定')),
-                  ),
-                ],
-              ),
-            ),
-            if (_errorText != null)
-              Padding(
-                padding: const EdgeInsets.only(left: 16, right: 16, bottom: 4),
-                child: Text(
-                  _errorText!,
-                  style: const TextStyle(fontSize: 12, color: Colors.red),
                 ),
-              ),
-            const SizedBox(height: 12),
-          ],
-          ),
+                const SizedBox(height: 16),
+                Text(
+                  context.tr('定时关闭'),
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                // 已设定时：实时显示剩余倒计时
+                if (sleep.active) ...[
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(
+                        Icons.timer,
+                        size: 16,
+                        color: AppColors.primary,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        context.tr(
+                          '剩余 ${formatSleepTimerRemaining(sleep.remaining)} 后自动暂停',
+                        ),
+                        style: const TextStyle(
+                          fontSize: 13,
+                          color: AppColors.primary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+                const SizedBox(height: 12),
+                _timerOption(
+                  ctx: context,
+                  label: context.tr('15分钟'),
+                  duration: const Duration(minutes: 15),
+                ),
+                _timerOption(
+                  ctx: context,
+                  label: context.tr('30分钟'),
+                  duration: const Duration(minutes: 30),
+                ),
+                _timerOption(
+                  ctx: context,
+                  label: context.tr('60分钟'),
+                  duration: const Duration(minutes: 60),
+                ),
+                _timerOption(
+                  ctx: context,
+                  label: context.tr('90分钟'),
+                  duration: const Duration(minutes: 90),
+                ),
+                _timerOption(
+                  ctx: context,
+                  label: context.tr('关闭'),
+                  duration: Duration.zero,
+                ),
+                const Divider(height: 1, indent: 16, endIndent: 16),
+                // 自定义输入
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.edit,
+                        size: 20,
+                        color: AppColors.textSecondary,
+                      ),
+                      const SizedBox(width: 12),
+                      SizedBox(
+                        width: 60,
+                        child: TextField(
+                          controller: _hourCtrl,
+                          keyboardType: TextInputType.number,
+                          inputFormatters: [
+                            FilteringTextInputFormatter.digitsOnly,
+                            LengthLimitingTextInputFormatter(2),
+                          ],
+                          onChanged: (_) {
+                            if (_errorText != null)
+                              setState(() => _errorText = null);
+                          },
+                          decoration: InputDecoration(
+                            hintText: '0',
+                            labelText: context.tr('时'),
+                            isDense: true,
+                            border: const OutlineInputBorder(),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 8,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      SizedBox(
+                        width: 60,
+                        child: TextField(
+                          controller: _minCtrl,
+                          keyboardType: TextInputType.number,
+                          inputFormatters: [
+                            FilteringTextInputFormatter.digitsOnly,
+                            LengthLimitingTextInputFormatter(2),
+                          ],
+                          onChanged: (_) {
+                            if (_errorText != null)
+                              setState(() => _errorText = null);
+                          },
+                          decoration: InputDecoration(
+                            hintText: '30',
+                            labelText: context.tr('分'),
+                            isDense: true,
+                            border: const OutlineInputBorder(),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 8,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      TextButton(
+                        onPressed: () {
+                          final h = int.tryParse(_hourCtrl.text) ?? 0;
+                          final m = int.tryParse(_minCtrl.text) ?? 0;
+                          final total = h * 60 + m;
+                          if (total > _maxMinutes) {
+                            setState(() {
+                              _errorText = context.tr(
+                                '自定义时长不能超过${_maxMinutes ~/ 60}小时',
+                              );
+                            });
+                            return;
+                          }
+                          if (total > 0) {
+                            notifier.start(Duration(minutes: total));
+                            Navigator.pop(context);
+                          }
+                        },
+                        child: Text(context.tr('确定')),
+                      ),
+                    ],
+                  ),
+                ),
+                if (_errorText != null)
+                  Padding(
+                    padding: const EdgeInsets.only(
+                      left: 16,
+                      right: 16,
+                      bottom: 4,
+                    ),
+                    child: Text(
+                      _errorText!,
+                      style: const TextStyle(fontSize: 12, color: Colors.red),
+                    ),
+                  ),
+                const SizedBox(height: 12),
+              ],
+            ),
           ),
         ),
       ),

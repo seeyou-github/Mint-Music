@@ -60,16 +60,16 @@ class AppFontManager {
   /// [asset] 是相对 `flutter_assets` 的资源路径，Windows 端桌面歌词需要
   /// 用它把字体注册进原生侧。
   static const List<({String family, String label, String asset})>
-      bundledFonts = [
+  bundledFonts = [
     (
       family: 'SourceHanSerif',
       label: '思源宋体',
-      asset: 'assets/fonts/SourceHanSerif.otf'
+      asset: 'assets/fonts/SourceHanSerif.otf',
     ),
     (
       family: 'FZLantingHei',
       label: '方正兰亭黑',
-      asset: 'assets/fonts/FZLantingHei.ttf'
+      asset: 'assets/fonts/FZLantingHei.ttf',
     ),
   ];
 
@@ -254,11 +254,7 @@ class AppFontManager {
     try {
       final bytes = await file.readAsBytes();
       final loader = FontLoader(font.family)
-        ..addFont(
-          Future<ByteData>.value(
-            ByteData.sublistView(bytes),
-          ),
-        );
+        ..addFont(Future<ByteData>.value(ByteData.sublistView(bytes)));
       await loader.load();
     } catch (e) {
       debugPrint('[AppFontManager] 注册字体失败 (${font.family}): $e');

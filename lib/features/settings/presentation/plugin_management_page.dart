@@ -9,11 +9,8 @@ import '../../../../core/constants/app_routes.dart';
 import '../../../../core/l10n/l10n.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/theme_provider.dart';
-import '../../plugin/application/music_source_manager.dart';
 import '../../plugin/data/plugin_service.dart';
-import '../../plugin/domain/builtin_source_states.dart';
 import '../../plugin/domain/plugin_source_states.dart';
-import '../../plugin/domain/plugin_types.dart';
 import '../../plugin/domain/source_id_mapping.dart';
 import '../application/plugin_providers.dart';
 import '../application/settings_providers.dart';
@@ -81,7 +78,9 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
 
   void _subscribeToUpdateNotices() {
     final pluginService = ref.read(pluginServiceProvider);
-    _updateNoticeSubscription = pluginService.updateNoticeStream.listen((notice) {
+    _updateNoticeSubscription = pluginService.updateNoticeStream.listen((
+      notice,
+    ) {
       if (!mounted) return;
       final pluginName = notice['pluginName'] as String? ?? tr('未知插件');
       final pluginVersion = notice['pluginVersion'] as String? ?? '';
@@ -243,7 +242,9 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
     final pluginService = ref.read(pluginServiceProvider);
     final pending = pluginService.getBufferedUpdateNotices();
     if (pending.isEmpty) return;
-    debugPrint('[PluginManagementPage] Showing ${pending.length} buffered update notices');
+    debugPrint(
+      '[PluginManagementPage] Showing ${pending.length} buffered update notices',
+    );
     // Clear buffer immediately to prevent re-showing on subsequent visits.
     pluginService.clearAllBufferedUpdateNotices();
     // Show dialogs sequentially with a small delay between each.
@@ -285,7 +286,8 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
     for (final notice in scriptNotices) {
       final pluginId = notice['pluginId'] as String? ?? '';
       // Skip if already detected by the manual check.
-      if (mergedResults.any((r) => r.plugin.id == pluginId && r.available)) continue;
+      if (mergedResults.any((r) => r.plugin.id == pluginId && r.available))
+        continue;
       final pluginName = notice['pluginName'] as String? ?? '';
       final pluginVersion = notice['pluginVersion'] as String? ?? '';
       final data = notice['data'];
@@ -307,28 +309,30 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
             ? updateUrl
             : pluginInfo.updateUrl;
         if (effectiveUpdateUrl != null && effectiveUpdateUrl.isNotEmpty) {
-          mergedResults.add(PluginUpdateResult(
-            plugin: pluginInfo,
-            available: true,
-            remoteVersion: pluginVersion.isNotEmpty ? pluginVersion : 'latest',
-            remoteCode: log,
-            updateUrl: effectiveUpdateUrl,
-          ));
+          mergedResults.add(
+            PluginUpdateResult(
+              plugin: pluginInfo,
+              available: true,
+              remoteVersion: pluginVersion.isNotEmpty
+                  ? pluginVersion
+                  : 'latest',
+              remoteCode: log,
+              updateUrl: effectiveUpdateUrl,
+            ),
+          );
         }
       }
     }
 
     final content = pluginsAsync.when(
       data: (plugins) {
-        // 数据源插件单独成组（内置源下方），普通插件列表里不再重复出现。
+        // 数据源插件单独成组，普通插件列表里不再重复出现。
         final dataSources = plugins.where((p) => p.isDataSource).toList();
         final normalPlugins = plugins.where((p) => !p.isDataSource).toList();
         return ListView(
           padding: const EdgeInsets.all(AppSpacing.lg),
           children: [
             _buildAutoUpdateSection(colors),
-            const SizedBox(height: AppSpacing.lg),
-            _buildBuiltInSourcesSection(colors),
             const SizedBox(height: AppSpacing.lg),
             _buildDataSourceSection(colors, dataSources, mergedResults),
             const SizedBox(height: AppSpacing.lg),
@@ -357,7 +361,10 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
             const SizedBox(height: AppSpacing.sm),
             TextButton(
               onPressed: () => ref.invalidate(pluginsProvider),
-              child: Text(context.tr('重试'), style: TextStyle(color: colors.primary)),
+              child: Text(
+                context.tr('重试'),
+                style: TextStyle(color: colors.primary),
+              ),
             ),
           ],
         ),
@@ -508,118 +515,6 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
     );
   }
 
-  /* ---------------------------------------------------------------- *
-   * 内置音源（网易云 / 酷狗 / 酷我 / QQ / 咪咕）
-   * ---------------------------------------------------------------- */
-
-  Widget _buildBuiltInSourcesSection(ThemeColors colors) {
-    final states = ref.watch(builtInSourceStateProvider);
-    final all = MusicSourceManager.allBuiltInSourceInfos;
-    final visible = all.where((info) => !states.isRemoved(info.id)).toList();
-    final removedCount = all.length - visible.length;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                context.tr('内置音源'),
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                  color: colors.textPrimary,
-                ),
-              ),
-            ),
-            if (removedCount > 0)
-              TextButton.icon(
-                onPressed: _restoreBuiltInSources,
-                icon: const Icon(Icons.restore, size: 16),
-                label: Text(context.tr('恢复内置音源')),
-                style: TextButton.styleFrom(
-                  foregroundColor: colors.primary,
-                  visualDensity: VisualDensity.compact,
-                ),
-              ),
-          ],
-        ),
-        const SizedBox(height: AppSpacing.md),
-        ...visible.map((info) => _buildBuiltInSourceCard(colors, info, states)),
-        if (removedCount > 0)
-          Padding(
-            padding: const EdgeInsets.only(top: AppSpacing.xs),
-            child: Text(
-              context.tr('已卸载 $removedCount 个内置音源'),
-              style: TextStyle(fontSize: 12, color: colors.textHint),
-            ),
-          ),
-      ],
-    );
-  }
-
-  Widget _buildBuiltInSourceCard(
-    ThemeColors colors,
-    SourceInfo info,
-    BuiltInSourceStates states,
-  ) {
-    final enabled = !states.isDisabled(info.id);
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: AppSpacing.md),
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.md,
-        vertical: AppSpacing.sm,
-      ),
-      decoration: BoxDecoration(
-        color: colors.surface,
-        borderRadius: BorderRadius.circular(AppRadius.lg),
-        border: Border.all(
-          color: colors.primary.withValues(alpha: enabled ? 0.25 : 0.08),
-        ),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              color: colors.primary.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(AppRadius.md),
-            ),
-            child: Icon(Icons.library_music, size: 20, color: colors.primary),
-          ),
-          const SizedBox(width: AppSpacing.md),
-          Expanded(
-            child: Text(
-              info.name,
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w500,
-                color: colors.textPrimary,
-              ),
-            ),
-          ),
-          IconButton(
-            tooltip: context.tr('卸载'),
-            icon: Icon(
-              Icons.delete_outline,
-              size: 20,
-              color: colors.textHint,
-            ),
-            onPressed: () => _removeBuiltInSource(info),
-          ),
-          Switch(
-            value: enabled,
-            activeThumbColor: colors.primary,
-            onChanged: (value) => _setBuiltInSourceEnabled(info, value),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildPluginSourceRow(
     PluginInfo plugin,
     PluginSource source,
@@ -687,49 +582,6 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
         color: colors.textPrimary,
       ),
     );
-  }
-
-  Future<void> _setBuiltInSourceEnabled(SourceInfo info, bool enabled) async {
-    // 开关本身就是反馈，不再弹提示。
-    await ref
-        .read(builtInSourceStateProvider.notifier)
-        .setEnabled(info.id, enabled);
-  }
-
-  Future<void> _removeBuiltInSource(SourceInfo info) async {
-    final colors = ref.read(themeColorsProvider);
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: colors.surface,
-        title: Text(
-          ctx.tr('卸载内置音源'),
-          style: TextStyle(color: colors.textPrimary, fontSize: 16),
-        ),
-        content: Text(
-          ctx.tr('卸载「${info.name}」后它会从音源列表中移除，相关搜索与发现页数据不再可用。可通过「恢复内置音源」找回。'),
-          style: TextStyle(color: colors.textSecondary, fontSize: 13),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: Text(ctx.tr('取消')),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: Text(ctx.tr('卸载')),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-
-    // 卸载结果在列表里直接可见，不再弹提示。
-    await ref.read(builtInSourceStateProvider.notifier).remove(info.id);
-  }
-
-  Future<void> _restoreBuiltInSources() async {
-    await ref.read(builtInSourceStateProvider.notifier).restoreAll();
   }
 
   /* ---------------------------------------------------------------- *
@@ -875,11 +727,7 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
                       ),
                     ),
                   ),
-                  Icon(
-                    Icons.arrow_drop_down,
-                    size: 18,
-                    color: colors.textHint,
-                  ),
+                  Icon(Icons.arrow_drop_down, size: 18, color: colors.textHint),
                 ],
               ),
             ),
@@ -1127,8 +975,8 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
           color: updateResult != null
               ? const Color(0xFF4CAF50).withValues(alpha: 0.5)
               : plugin.isEnabled
-                  ? colors.primary.withValues(alpha: 0.2)
-                  : colors.divider,
+              ? colors.primary.withValues(alpha: 0.2)
+              : colors.divider,
           width: updateResult != null ? 1.5 : (plugin.isEnabled ? 1 : 0.5),
         ),
       ),
@@ -1209,11 +1057,15 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
                                 vertical: 2,
                               ),
                               decoration: BoxDecoration(
-                                color: const Color(0xFF4CAF50).withValues(alpha: 0.15),
+                                color: const Color(
+                                  0xFF4CAF50,
+                                ).withValues(alpha: 0.15),
                                 borderRadius: BorderRadius.circular(4),
                               ),
                               child: Text(
-                                context.tr('可更新 v${updateResult.remoteVersion}'),
+                                context.tr(
+                                  '可更新 v${updateResult.remoteVersion}',
+                                ),
                                 style: const TextStyle(
                                   fontSize: 10,
                                   fontWeight: FontWeight.w500,
@@ -1595,7 +1447,8 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
                           ),
                         ),
                         Text(
-                          result.remoteVersion != null && result.remoteVersion != 'latest'
+                          result.remoteVersion != null &&
+                                  result.remoteVersion != 'latest'
                               ? 'v${result.plugin.version} → v${result.remoteVersion}'
                               : ctx.tr('v${result.plugin.version} → 可更新'),
                           style: TextStyle(
@@ -1622,10 +1475,7 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
                 ),
                 child: Text(
                   result.remoteCode!,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: colors.textHint,
-                  ),
+                  style: TextStyle(fontSize: 12, color: colors.textHint),
                 ),
               ),
             ],
@@ -1677,7 +1527,9 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
 
     try {
       // Uninstall old plugin
-      await ref.read(pluginsProvider.notifier).uninstallPlugin(result.plugin.id);
+      await ref
+          .read(pluginsProvider.notifier)
+          .uninstallPlugin(result.plugin.id);
 
       // Determine plugin type from the updateUrl or the existing plugin
       final type = result.plugin.type;
@@ -1701,7 +1553,9 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
 
       // Clear buffered update notice for this plugin so it doesn't
       // show again after the page is reopened.
-      ref.read(pluginServiceProvider).clearBufferedUpdateNotice(result.plugin.id);
+      ref
+          .read(pluginServiceProvider)
+          .clearBufferedUpdateNotice(result.plugin.id);
 
       // Also clear the script-initiated update notice so the UI
       // stops showing the update badge after the plugin is updated.
@@ -1709,7 +1563,8 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
       final updatedNotices = currentNotices
           .where((n) => n['pluginId'] != result.plugin.id)
           .toList();
-      ref.read(pluginScriptUpdateNoticesProvider.notifier).state = updatedNotices;
+      ref.read(pluginScriptUpdateNoticesProvider.notifier).state =
+          updatedNotices;
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1986,9 +1841,7 @@ class _AddPluginSheetState extends State<_AddPluginSheet> {
           ),
           const SizedBox(height: AppSpacing.sm),
           Text(
-            context.tr(
-              '支持 HTTP/HTTPS 链接和 GitHub 仓库链接，将自动下载并校验插件格式',
-            ),
+            context.tr('支持 HTTP/HTTPS 链接和 GitHub 仓库链接，将自动下载并校验插件格式'),
             style: TextStyle(fontSize: 11, color: colors.textHint),
           ),
           const SizedBox(height: AppSpacing.md),
@@ -2088,9 +1941,7 @@ class _AddPluginSheetState extends State<_AddPluginSheet> {
 
     setState(() => _isLoading = true);
     try {
-      await widget.ref
-          .read(pluginsProvider.notifier)
-          .downloadAndAddPlugin(url);
+      await widget.ref.read(pluginsProvider.notifier).downloadAndAddPlugin(url);
       if (mounted) {
         // 安装成功不再弹提示（插件卡片上就能看到）。
         Navigator.pop(context);

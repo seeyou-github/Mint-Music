@@ -17,10 +17,8 @@ import '../../../shared/widgets/playlist_sync_button.dart';
 import '../application/playlist_providers.dart';
 import '../../player/application/playback_context.dart';
 import '../../player/application/playback_controller.dart';
-import '../../plugin/application/plugin_providers.dart';
 import '../domain/models/playlist.dart' as local_playlist;
 import '../domain/models/recently_played.dart';
-import '../../discover/domain/models/playlist.dart' as discover_playlist;
 import '../utils/cerumusic_playlist_importer.dart';
 import '../utils/favorite_playlist.dart';
 
@@ -47,7 +45,10 @@ class LibraryPage extends ConsumerWidget {
                     : _buildPlaylistGrid(context, colors, playlists, ref),
                 loading: () => const Center(child: CircularProgressIndicator()),
                 error: (e, _) => Center(
-                  child: Text(context.tr('加载失败'), style: TextStyle(color: colors.textHint)),
+                  child: Text(
+                    context.tr('加载失败'),
+                    style: TextStyle(color: colors.textHint),
+                  ),
                 ),
               ),
             ),
@@ -57,11 +58,7 @@ class LibraryPage extends ConsumerWidget {
     );
   }
 
-  Widget _buildHeader(
-    BuildContext context,
-    ThemeColors colors,
-    WidgetRef ref,
-  ) {
+  Widget _buildHeader(BuildContext context, ThemeColors colors, WidgetRef ref) {
     final isTablet = ResponsiveLayout.isTablet(context);
     return Padding(
       padding: EdgeInsets.symmetric(
@@ -175,7 +172,10 @@ class LibraryPage extends ConsumerWidget {
             color: colors.textHint.withValues(alpha: 0.3),
           ),
           const SizedBox(height: AppSpacing.md),
-          Text(context.tr('还没有歌单'), style: TextStyle(fontSize: 16, color: colors.textHint)),
+          Text(
+            context.tr('还没有歌单'),
+            style: TextStyle(fontSize: 16, color: colors.textHint),
+          ),
           const SizedBox(height: AppSpacing.sm),
           Text(
             context.tr('点击上方"新建歌单"开始创建'),
@@ -235,9 +235,8 @@ class LibraryPage extends ConsumerWidget {
       // 歌单 id 可能带 `/`、`?`（插件来源的榜单是 `mf:board:<源>:<原始 id>`，
       // 例如 bilibili 的 `popular/series/one?number=396`），不编码会让
       // go_router 把 id 切成多段，报 no routes for location。
-      onTap: () => context.push(
-        '/library/playlist/${Uri.encodeComponent(playlist.id)}',
-      ),
+      onTap: () =>
+          context.push('/library/playlist/${Uri.encodeComponent(playlist.id)}'),
       child: Container(
         decoration: BoxDecoration(
           color: colors.surface,
@@ -442,7 +441,10 @@ class LibraryPage extends ConsumerWidget {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: colors.surface,
-        title: Text(context.tr('新建歌单'), style: TextStyle(color: colors.textPrimary)),
+        title: Text(
+          context.tr('新建歌单'),
+          style: TextStyle(color: colors.textPrimary),
+        ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -481,7 +483,10 @@ class LibraryPage extends ConsumerWidget {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: Text(context.tr('取消'), style: TextStyle(color: colors.textHint)),
+            child: Text(
+              context.tr('取消'),
+              style: TextStyle(color: colors.textHint),
+            ),
           ),
           TextButton(
             onPressed: () {
@@ -496,7 +501,10 @@ class LibraryPage extends ConsumerWidget {
                 Navigator.pop(ctx);
               }
             },
-            child: Text(context.tr('创建'), style: TextStyle(color: colors.primary)),
+            child: Text(
+              context.tr('创建'),
+              style: TextStyle(color: colors.primary),
+            ),
           ),
         ],
       ),
@@ -515,7 +523,10 @@ class LibraryPage extends ConsumerWidget {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: colors.surface,
-        title: Text(context.tr('编辑歌单'), style: TextStyle(color: colors.textPrimary)),
+        title: Text(
+          context.tr('编辑歌单'),
+          style: TextStyle(color: colors.textPrimary),
+        ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -554,7 +565,10 @@ class LibraryPage extends ConsumerWidget {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: Text(context.tr('取消'), style: TextStyle(color: colors.textHint)),
+            child: Text(
+              context.tr('取消'),
+              style: TextStyle(color: colors.textHint),
+            ),
           ),
           TextButton(
             onPressed: () {
@@ -571,7 +585,10 @@ class LibraryPage extends ConsumerWidget {
                 Navigator.pop(ctx);
               }
             },
-            child: Text(context.tr('保存'), style: TextStyle(color: colors.primary)),
+            child: Text(
+              context.tr('保存'),
+              style: TextStyle(color: colors.primary),
+            ),
           ),
         ],
       ),
@@ -588,7 +605,10 @@ class LibraryPage extends ConsumerWidget {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: colors.surface,
-        title: Text(context.tr('删除歌单'), style: TextStyle(color: colors.textPrimary)),
+        title: Text(
+          context.tr('删除歌单'),
+          style: TextStyle(color: colors.textPrimary),
+        ),
         content: Text(
           context.tr('确定要删除"${playlist.name}"吗？此操作不可撤销。'),
           style: TextStyle(color: colors.textSecondary),
@@ -596,14 +616,20 @@ class LibraryPage extends ConsumerWidget {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: Text(context.tr('取消'), style: TextStyle(color: colors.textHint)),
+            child: Text(
+              context.tr('取消'),
+              style: TextStyle(color: colors.textHint),
+            ),
           ),
           TextButton(
             onPressed: () {
               ref.read(playlistsProvider.notifier).deletePlaylist(playlist.id);
               Navigator.pop(ctx);
             },
-            child: Text(context.tr('删除'), style: TextStyle(color: colors.error)),
+            child: Text(
+              context.tr('删除'),
+              style: TextStyle(color: colors.error),
+            ),
           ),
         ],
       ),
@@ -658,24 +684,15 @@ class LibraryPage extends ConsumerWidget {
                   _importFromLocalFile(context, colors, ref);
                 },
               ),
-              const SizedBox(height: AppSpacing.sm),
-              _buildImportOption(
-                colors,
-                Icons.language,
-                context.tr('从网络歌单'),
-                context.tr('导入网易云音乐、QQ音乐等平台歌单'),
-                subtitle: context.tr('实验性功能'),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _showNetworkImportDialog(context, colors, ref);
-                },
-              ),
               const SizedBox(height: AppSpacing.lg),
               Align(
                 alignment: Alignment.centerRight,
                 child: TextButton(
                   onPressed: () => Navigator.pop(ctx),
-                  child: Text(context.tr('取消'), style: TextStyle(color: colors.textHint)),
+                  child: Text(
+                    context.tr('取消'),
+                    style: TextStyle(color: colors.textHint),
+                  ),
                 ),
               ),
             ],
@@ -690,7 +707,6 @@ class LibraryPage extends ConsumerWidget {
     IconData icon,
     String title,
     String description, {
-    String? subtitle,
     required VoidCallback onTap,
   }) {
     return InkWell(
@@ -718,37 +734,13 @@ class LibraryPage extends ConsumerWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    children: [
-                      Text(
-                        title,
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                          color: colors.textPrimary,
-                        ),
-                      ),
-                      if (subtitle != null) ...[
-                        const SizedBox(width: AppSpacing.xs),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: colors.warning.withValues(alpha: 0.15),
-                            borderRadius: BorderRadius.circular(AppRadius.xs),
-                          ),
-                          child: Text(
-                            subtitle,
-                            style: TextStyle(
-                              fontSize: 10,
-                              color: colors.warning,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ],
+                  Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color: colors.textPrimary,
+                    ),
                   ),
                   const SizedBox(height: 2),
                   Text(
@@ -841,7 +833,10 @@ class LibraryPage extends ConsumerWidget {
                 children: [
                   TextButton(
                     onPressed: () => Navigator.pop(ctx),
-                    child: Text(context.tr('取消'), style: TextStyle(color: colors.textHint)),
+                    child: Text(
+                      context.tr('取消'),
+                      style: TextStyle(color: colors.textHint),
+                    ),
                   ),
                   const SizedBox(width: AppSpacing.sm),
                   TextButton(
@@ -874,7 +869,10 @@ class LibraryPage extends ConsumerWidget {
                         ),
                       );
                     },
-                    child: Text(context.tr('导入'), style: TextStyle(color: colors.primary)),
+                    child: Text(
+                      context.tr('导入'),
+                      style: TextStyle(color: colors.primary),
+                    ),
                   ),
                 ],
               ),
@@ -928,7 +926,8 @@ class LibraryPage extends ConsumerWidget {
         final content = utf8.decode(fileBytes);
         playlistData = _parseJsonPlaylist(content);
         playlistName =
-            _playlistNameFromJson(content) ?? _playlistNameFromFilePath(file.path!);
+            _playlistNameFromJson(content) ??
+            _playlistNameFromFilePath(file.path!);
       }
 
       final songs = _convertCeruMusicPlaylistToSongs(playlistData);
@@ -938,8 +937,7 @@ class LibraryPage extends ConsumerWidget {
       }
 
       final name =
-          playlistName ??
-          '导入歌单 ${DateTime.now().toString().substring(0, 10)}';
+          playlistName ?? '导入歌单 ${DateTime.now().toString().substring(0, 10)}';
 
       await ref
           .read(playlistsProvider.notifier)
@@ -1058,494 +1056,6 @@ class LibraryPage extends ConsumerWidget {
       return 0;
     } catch (_) {
       return 0;
-    }
-  }
-
-  void _showNetworkImportDialog(
-    BuildContext context,
-    ThemeColors colors,
-    WidgetRef ref,
-  ) {
-    String selectedPlatform = 'wy';
-    final urlController = TextEditingController();
-
-    showDialog(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setState) {
-          String placeholderText;
-          switch (selectedPlatform) {
-            case 'wy':
-              placeholderText =
-                  context.tr('支持链接或ID：https://music.163.com/playlist?id=123456789 或 123456789');
-              break;
-            case 'tx':
-              placeholderText =
-                  context.tr('支持链接或ID：https://y.qq.com/n/ryqq/playlist/123456789 或 123456789');
-              break;
-            case 'kw':
-              placeholderText =
-                  context.tr('支持链接或ID：http://www.kuwo.cn/playlist_detail/123456789 或 123456789');
-              break;
-            case 'kg':
-              placeholderText =
-                  context.tr('支持链接或酷狗码：https://www.kugou.com/yy/special/single/123456789、m.kugou.com/songlist/gcid_xxx 或 酷狗码 123456789');
-              break;
-            case 'mg':
-              placeholderText =
-                  context.tr('支持链接或ID：https://music.migu.cn/v3/music/playlist/123456789 或 123456789');
-              break;
-            default:
-              placeholderText = context.tr('请输入歌单链接或ID');
-          }
-
-          return Dialog(
-            backgroundColor: colors.surface,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(AppRadius.lg),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(AppSpacing.lg),
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      context.tr('导入网络歌单'),
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w600,
-                        color: colors.textPrimary,
-                      ),
-                    ),
-                    const SizedBox(height: AppSpacing.lg),
-                    Text(
-                      context.tr('选择导入平台'),
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: colors.textSecondary,
-                      ),
-                    ),
-                    const SizedBox(height: AppSpacing.sm),
-                    Wrap(
-                      spacing: AppSpacing.sm,
-                      runSpacing: AppSpacing.sm,
-                      children: [
-                        _buildPlatformChip(
-                          colors,
-                          context.tr('网易云音乐'),
-                          'wy',
-                          selectedPlatform,
-                          () {
-                            setState(() => selectedPlatform = 'wy');
-                          },
-                        ),
-                        _buildPlatformChip(
-                          colors,
-                          context.tr('QQ音乐'),
-                          'tx',
-                          selectedPlatform,
-                          () {
-                            setState(() => selectedPlatform = 'tx');
-                          },
-                        ),
-                        _buildPlatformChip(
-                          colors,
-                          context.tr('酷我音乐'),
-                          'kw',
-                          selectedPlatform,
-                          () {
-                            setState(() => selectedPlatform = 'kw');
-                          },
-                        ),
-                        _buildPlatformChip(
-                          colors,
-                          context.tr('酷狗音乐'),
-                          'kg',
-                          selectedPlatform,
-                          () {
-                            setState(() => selectedPlatform = 'kg');
-                          },
-                        ),
-                        _buildPlatformChip(
-                          colors,
-                          context.tr('咪咕音乐'),
-                          'mg',
-                          selectedPlatform,
-                          () {
-                            setState(() => selectedPlatform = 'mg');
-                          },
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: AppSpacing.lg),
-                    Text(
-                      selectedPlatform == 'kg'
-                          ? context.tr('请输入酷狗音乐歌单链接、手机版链接或酷狗码，系统将自动识别格式并导入歌单中的所有歌曲到本地歌单。')
-                          : context.tr('请输入${_getPlatformName(selectedPlatform)}歌单链接或歌单ID，系统将自动识别格式并导入歌单中的所有歌曲到本地歌单。'),
-                      style: TextStyle(fontSize: 12, color: colors.textHint),
-                    ),
-                    const SizedBox(height: AppSpacing.sm),
-                    TextField(
-                      controller: urlController,
-                      autofocus: true,
-                      decoration: InputDecoration(
-                        hintText: placeholderText,
-                        hintStyle: TextStyle(
-                          color: colors.textHint,
-                          fontSize: 12,
-                        ),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(AppRadius.md),
-                          borderSide: BorderSide(color: colors.divider),
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(AppRadius.md),
-                          borderSide: BorderSide(color: colors.divider),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(AppRadius.md),
-                          borderSide: BorderSide(color: colors.primary),
-                        ),
-                      ),
-                      style: TextStyle(color: colors.textPrimary, fontSize: 13),
-                    ),
-                    const SizedBox(height: AppSpacing.lg),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        GestureDetector(
-                          onTap: () => Navigator.pop(ctx),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 8,
-                            ),
-                            child: Text(
-                              context.tr('取消'),
-                              style: TextStyle(
-                                color: colors.textSecondary,
-                                fontSize: 14,
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: AppSpacing.sm),
-                        TextButton(
-                          onPressed: () async {
-                            final url = urlController.text.trim();
-                            if (url.isEmpty) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                    context.tr('请输入有效的歌单链接'),
-                                    style: TextStyle(
-                                      color: colors.textOnPrimary,
-                                    ),
-                                  ),
-                                  backgroundColor: colors.error,
-                                ),
-                              );
-                              return;
-                            }
-                            // 先关闭对话框，然后执行导入
-                            if (context.mounted) {
-                              Navigator.of(ctx).pop();
-                              // 等待一帧确保对话框完全关闭
-                              await Future.delayed(
-                                const Duration(milliseconds: 50),
-                              );
-                              if (context.mounted) {
-                                await _handleNetworkImport(
-                                  context,
-                                  colors,
-                                  ref,
-                                  selectedPlatform,
-                                  url,
-                                );
-                              }
-                            }
-                          },
-                          child: Text(
-                            context.tr('开始导入'),
-                            style: TextStyle(color: colors.primary),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildPlatformChip(
-    ThemeColors colors,
-    String label,
-    String value,
-    String selected,
-    VoidCallback onTap,
-  ) {
-    final isSelected = value == selected;
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-        decoration: BoxDecoration(
-          color: isSelected ? colors.primary : colors.surfaceVariant,
-          borderRadius: BorderRadius.circular(AppRadius.full),
-          border: Border.all(
-            color: isSelected ? colors.primary : colors.divider,
-          ),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w500,
-            color: isSelected ? colors.textOnPrimary : colors.textSecondary,
-          ),
-        ),
-      ),
-    );
-  }
-
-  String _getPlatformName(String platform) {
-    switch (platform) {
-      case 'wy':
-        return '网易云音乐';
-      case 'tx':
-        return 'QQ音乐';
-      case 'kw':
-        return '酷我音乐';
-      case 'kg':
-        return '酷狗音乐';
-      case 'mg':
-        return '咪咕音乐';
-      default:
-        return '音乐平台';
-    }
-  }
-
-  Future<void> _handleNetworkImport(
-    BuildContext context,
-    ThemeColors colors,
-    WidgetRef ref,
-    String platform,
-    String input,
-  ) async {
-    final playlistId = _parsePlaylistId(platform, input);
-    if (playlistId == null) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              context.tr('无法识别的${_getPlatformName(platform)}歌单链接'),
-              style: TextStyle(color: colors.textOnPrimary),
-            ),
-            backgroundColor: colors.error,
-          ),
-        );
-      }
-      return;
-    }
-
-    if (!context.mounted) return;
-
-    discover_playlist.Playlist? discoverPlaylist;
-    String? errorMessage;
-
-    try {
-      final manager = ref.read(musicSourceManagerProvider);
-      discoverPlaylist = await manager.getPlaylistDetail(
-        '${platform}_$playlistId',
-        sourceId: platform,
-      );
-    } catch (e) {
-      errorMessage = e.toString();
-      print('[导入歌单] 错误: $e');
-    }
-
-    if (!context.mounted) return;
-
-    if (errorMessage != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            context.tr('导入失败：$errorMessage'),
-            style: TextStyle(color: colors.textOnPrimary),
-          ),
-          backgroundColor: colors.error,
-        ),
-      );
-      return;
-    }
-
-    if (discoverPlaylist == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            context.tr('获取歌单失败，请检查链接是否正确'),
-            style: TextStyle(color: colors.textOnPrimary),
-          ),
-          backgroundColor: colors.error,
-        ),
-      );
-      return;
-    }
-
-    final songs = discoverPlaylist.songs;
-    if (songs.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            context.tr('歌单中没有歌曲'),
-            style: TextStyle(color: colors.textOnPrimary),
-          ),
-          backgroundColor: colors.warning,
-        ),
-      );
-      return;
-    }
-
-    final platformName = _getPlatformName(platform);
-    final localPlaylist = local_playlist.Playlist(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
-      name: '${discoverPlaylist.title} (导入)',
-      description: discoverPlaylist.description.isNotEmpty
-          ? discoverPlaylist.description
-          : '从$platformName导入 - 原歌单：${discoverPlaylist.title}',
-      coverImgUrl: discoverPlaylist.coverUrl ?? '',
-      source: platform,
-      createTime: DateTime.now(),
-      updateTime: DateTime.now(),
-      songs: songs,
-      meta: {'discoverId': '${platform}_$playlistId', 'importSource': platform},
-    );
-
-    await ref
-        .read(playlistsProvider.notifier)
-        .createPlaylistFromModel(localPlaylist);
-
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            context.tr('从$platformName导入完成！成功导入 ${songs.length} 首歌曲'),
-            style: TextStyle(color: colors.textOnPrimary),
-          ),
-          backgroundColor: colors.primary,
-        ),
-      );
-    }
-  }
-
-  String? _parsePlaylistId(String platform, String input) {
-    final trimmed = input.trim();
-    if (trimmed.isEmpty) return null;
-
-    switch (platform) {
-      case 'wy':
-        final wyMatch = RegExp(
-          r'(?:music\.163\.com\/.*[?&]id=|playlist\?id=|playlist\/|id=)(\d+)',
-          caseSensitive: false,
-        ).firstMatch(trimmed);
-        if (wyMatch != null) return wyMatch.group(1);
-        if (RegExp(r'^\d+$').hasMatch(trimmed)) return trimmed;
-        return null;
-
-      case 'tx':
-        final txRegexes = [
-          RegExp(
-            r'(?:y\.qq\.com\/n\/ryqq\/playlist\/|music\.qq\.com\/.*[?&]id=|playlist[?&]id=)(\d+)',
-            caseSensitive: false,
-          ),
-          RegExp(
-            r'(?:i\.y\.qq\.com\/n2\/m\/share\/details\/taoge\.html.*[?&]id=)(\d+)',
-            caseSensitive: false,
-          ),
-          RegExp(
-            r'(?:i\.y\.qq\.com\/v8\/playsquare\/playlist\.html.*[?&]id=)(\d+)',
-            caseSensitive: false,
-          ),
-          RegExp(r'(?:y\.qq\.com.*[?&]disstid=)(\d+)', caseSensitive: false),
-          RegExp(r'[?&]id=(\d+)', caseSensitive: false),
-          RegExp(r'[?&]disstid=(\d+)', caseSensitive: false),
-          RegExp(r'playlist\/(\d+)', caseSensitive: false),
-        ];
-        for (final regex in txRegexes) {
-          final match = regex.firstMatch(trimmed);
-          if (match != null) return match.group(1);
-        }
-        if (RegExp(r'^\d+$').hasMatch(trimmed)) return trimmed;
-        return null;
-
-      case 'kw':
-        final kwRegexes = [
-          RegExp(
-            r'(?:kuwo\.cn\/playlist_detail\/|kuwo\.cn\/.*[?&]pid=)(\d+)',
-            caseSensitive: false,
-          ),
-          RegExp(
-            r'(?:m\.kuwo\.cn\/h5app\/playlist\/|kuwo\.cn\/.*[?&]id=)(\d+)',
-            caseSensitive: false,
-          ),
-          RegExp(
-            r'm\.kuwo\.cn\/newh5app\/playlist_detail\/(\d+)',
-            caseSensitive: false,
-          ),
-          RegExp(r'[?&](?:pid|id)=(\d+)', caseSensitive: false),
-        ];
-        for (final regex in kwRegexes) {
-          final match = regex.firstMatch(trimmed);
-          if (match != null) return match.group(1);
-        }
-        if (RegExp(r'^\d+$').hasMatch(trimmed)) return trimmed;
-        return null;
-
-      case 'kg':
-        final kgRegexes = [
-          RegExp(
-            r'kugou\.com\/yy\/special\/single\/(\d+)',
-            caseSensitive: false,
-          ),
-          RegExp(
-            r'm\.kugou\.com\/songlist\/gcid_([a-zA-Z0-9]+)',
-            caseSensitive: false,
-          ),
-          RegExp(r'[?&](?:specialid|id)=(\d+)', caseSensitive: false),
-        ];
-        for (final regex in kgRegexes) {
-          final match = regex.firstMatch(trimmed);
-          if (match != null) return match.group(1);
-        }
-        if (RegExp(r'^\d+$').hasMatch(trimmed)) return trimmed;
-        return null;
-
-      case 'mg':
-        final mgRegexes = [
-          RegExp(
-            r'(?:music\.migu\.cn\/v3\/music\/playlist\/)(\d+)',
-            caseSensitive: false,
-          ),
-          RegExp(r'(?:music\.migu\.cn\/.*[?&]id=)(\d+)', caseSensitive: false),
-          RegExp(r'[?&]id=(\d+)', caseSensitive: false),
-        ];
-        for (final regex in mgRegexes) {
-          final match = regex.firstMatch(trimmed);
-          if (match != null) return match.group(1);
-        }
-        if (RegExp(r'^\d+$').hasMatch(trimmed)) return trimmed;
-        return null;
-
-      default:
-        if (RegExp(r'^\d+$').hasMatch(trimmed)) return trimmed;
-        return null;
     }
   }
 }

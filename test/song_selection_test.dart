@@ -2,13 +2,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mintmusic/features/player/domain/models/song.dart';
 import 'package:mintmusic/shared/widgets/song_selection.dart';
 
-Song _song(String id, String title) => Song(
-  id: id,
-  title: title,
-  artist: 'artist',
-  album: 'album',
-  duration: 100,
-);
+Song _song(String id, String title) =>
+    Song(id: id, title: title, artist: 'artist', album: 'album', duration: 100);
 
 void main() {
   group('SongSelectionController', () {

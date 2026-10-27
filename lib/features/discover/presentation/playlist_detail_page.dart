@@ -62,7 +62,7 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
   /// 当前已加载到的页码。
   int _page = 1;
 
-  /// 是否已到末页（内置源一次给全，恒为 true）。
+  /// 是否已到末页。
   bool _isEnd = true;
   bool _loadingMore = false;
 

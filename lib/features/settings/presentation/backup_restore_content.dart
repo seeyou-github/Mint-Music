@@ -81,7 +81,10 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
     ref.read(webDavConfigProvider.notifier).state = next;
     final container = ProviderScope.containerOf(context);
     unawaited(
-      _persist(container, (s) => s.setWebDavConfigJson(jsonEncode(next.toJson()))),
+      _persist(
+        container,
+        (s) => s.setWebDavConfigJson(jsonEncode(next.toJson())),
+      ),
     );
   }
 
@@ -282,16 +285,15 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
-      builder: (ctx) => _RemoteBackupSheet(
-        files: files,
-        service: WebDavService(_config),
-      ),
+      builder: (ctx) =>
+          _RemoteBackupSheet(files: files, service: WebDavService(_config)),
     );
   }
 
   // ---------------------------------------------------------------- 辅助 UI
 
-  ScaffoldFeatureController<SnackBar, SnackBarClosedReason>? _progressController;
+  ScaffoldFeatureController<SnackBar, SnackBarClosedReason>?
+  _progressController;
 
   /// 显示一个不会自动消失的进度提示（上传 / 下载过程中用）。
   void _showProgress(String message) {

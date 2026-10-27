@@ -19,7 +19,8 @@ class AudioProcessor {
   int _sourceSampleRate = 16000;
 
   /// 切片通知控制器
-  final StreamController<void> _sliceController = StreamController<void>.broadcast();
+  final StreamController<void> _sliceController =
+      StreamController<void>.broadcast();
   Timer? _sliceTimer;
 
   bool get isRecording => _isRecording;
@@ -118,7 +119,10 @@ class AudioProcessor {
   }
 
   /// 从文件加载并重采样为 8kHz 单声道 Float64 PCM（用于文件上传识别）
-  Future<Float64List> loadAndResampleFromFile(String wavPath, {int targetRate = 8000}) async {
+  Future<Float64List> loadAndResampleFromFile(
+    String wavPath, {
+    int targetRate = 8000,
+  }) async {
     final file = File(wavPath);
     if (!await file.exists()) {
       debugPrint('[AudioProcessor] WAV file not found: $wavPath');
@@ -135,7 +139,10 @@ class AudioProcessor {
   }
 
   /// 解码 WAV 字节为单声道 Float64 PCM 并重采样
-  static Float64List decodeWavToMonoFloat(Uint8List wavBytes, {int targetRate = 8000}) {
+  static Float64List decodeWavToMonoFloat(
+    Uint8List wavBytes, {
+    int targetRate = 8000,
+  }) {
     if (wavBytes.length < 44) return Float64List(0);
 
     // 查找 "data" chunk（WAV 文件可能有额外的 chunk）
@@ -144,7 +151,9 @@ class AudioProcessor {
     int fmtOffset = -1;
 
     while (dataOffset < wavBytes.length - 8) {
-      final chunkId = String.fromCharCodes(wavBytes.sublist(dataOffset, dataOffset + 4));
+      final chunkId = String.fromCharCodes(
+        wavBytes.sublist(dataOffset, dataOffset + 4),
+      );
       final chunkSize = _readLeUint32(wavBytes, dataOffset + 4);
 
       if (chunkId == 'fmt ') {
@@ -173,7 +182,9 @@ class AudioProcessor {
     if (bytesPerSample <= 0) return Float64List(0);
 
     final fileDataSize = wavBytes.length - dataOffset;
-    final actualDataSize = dataSize > 0 ? min(dataSize, fileDataSize) : fileDataSize;
+    final actualDataSize = dataSize > 0
+        ? min(dataSize, fileDataSize)
+        : fileDataSize;
     if (actualDataSize <= 0) return Float64List(0);
 
     final totalSamples = actualDataSize ~/ (bytesPerSample * numChannels);
@@ -213,7 +224,9 @@ class AudioProcessor {
 
     final dataSize = _readLeUint32(wavBytes, 40);
     final fileDataSize = wavBytes.length - 44;
-    final actualDataSize = dataSize > 0 ? min(dataSize, fileDataSize) : fileDataSize;
+    final actualDataSize = dataSize > 0
+        ? min(dataSize, fileDataSize)
+        : fileDataSize;
     if (actualDataSize <= 0) return Float64List(0);
 
     final totalSamples = actualDataSize ~/ (bytesPerSample * numChannels);
@@ -277,7 +290,8 @@ class AudioProcessor {
   }
 
   static int _readLeInt24(Uint8List bytes, int offset) {
-    final val = bytes[offset] | (bytes[offset + 1] << 8) | (bytes[offset + 2] << 16);
+    final val =
+        bytes[offset] | (bytes[offset + 1] << 8) | (bytes[offset + 2] << 16);
     if (val >= 8388608) return val - 16777216;
     return val;
   }

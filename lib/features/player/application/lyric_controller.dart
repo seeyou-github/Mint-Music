@@ -221,9 +221,9 @@ class LyricController extends StateNotifier<LyricState> {
           ttmlLines = lines.isEmpty ? null : lines;
         }
       } else {
-        // 歌曲的 source 可能带 `@插件id`（插件音源；或者内置源的地址被插件
-        // 解析后，队列里歌曲的 source 被标记成了插件变体 id）。TTML 词库只
-        // 按平台提供，这里要取平台部分，否则切歌回来就取不到逐字歌词了。
+        // 歌曲的 source 可能带 `@插件id`（插件音源；或者地址被插件解析后，
+        // 队列里歌曲的 source 被标记成了插件变体 id）。TTML 词库只按平台
+        // 提供，这里要取平台部分，否则切歌回来就取不到逐字歌词了。
         final baseSource = _baseSourceOf(song.source) ?? '';
         final sourceSupportsWordLyric =
             baseSource == 'tx' ||

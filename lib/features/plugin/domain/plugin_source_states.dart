@@ -5,7 +5,7 @@
 ///
 /// 关闭某个音源后：
 /// * 该音源不再出现在发现页 / 搜索页的音源切换列表里；
-/// * 插件不再为该平台解析播放地址（改由内置源负责）。
+/// * 插件不再为该平台解析播放地址（没有其它可用音源时播放会失败）。
 class PluginSourceStates {
   const PluginSourceStates({this.disabled = const <String>{}});
 

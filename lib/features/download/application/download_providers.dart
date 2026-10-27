@@ -15,7 +15,9 @@ class DownloadNotification {
   DownloadNotification({required this.message, this.backgroundColor});
 }
 
-final downloadNotificationProvider = StateProvider<DownloadNotification?>((ref) => null);
+final downloadNotificationProvider = StateProvider<DownloadNotification?>(
+  (ref) => null,
+);
 
 final downloadRepositoryProvider = Provider<DownloadRepository>((ref) {
   final repo = DownloadRepository();
@@ -53,7 +55,7 @@ final downloadRepositoryProvider = Provider<DownloadRepository>((ref) {
   // 设置 URL 获取器
   final musicSourceManager = ref.read(musicSourceManagerProvider);
   repo.setUrlFetcher((task) async {
-    // 内置源没有地址接口：由同名插件解析，失败再换其它已安装的插件，
+    // 平台歌曲没有地址接口：由插件解析，失败再换其它已安装的插件，
     // 实际使用的音源会写进下载任务里（下载列表里显示出来源）。
     final resolved = await musicSourceManager.getMusicUrlForDownload(
       task.song,
@@ -108,17 +110,17 @@ final downloadRepositoryProvider = Provider<DownloadRepository>((ref) {
 
   // 下载通知回调
   repo.onTaskStarted = (task, {backgroundColor}) {
-    ref.read(downloadNotificationProvider.notifier).state = DownloadNotification(
-      message: tr('开始下载 ${task.song.title}'),
-    );
+    ref.read(downloadNotificationProvider.notifier).state =
+        DownloadNotification(message: tr('开始下载 ${task.song.title}'));
   };
   repo.onTaskCompleted = (task, {backgroundColor}) {
-    ref.read(downloadNotificationProvider.notifier).state = DownloadNotification(
-      message: tr('${task.song.title} 下载完成'),
-    );
+    ref.read(downloadNotificationProvider.notifier).state =
+        DownloadNotification(message: tr('${task.song.title} 下载完成'));
   };
   repo.onTaskError = (task, error, {backgroundColor}) {
-    ref.read(downloadNotificationProvider.notifier).state = DownloadNotification(
+    ref
+        .read(downloadNotificationProvider.notifier)
+        .state = DownloadNotification(
       message: tr('${task.song.title} 下载失败'),
       backgroundColor: backgroundColor ?? Colors.red,
     );
@@ -150,9 +152,11 @@ final filteredDownloadTasksProvider = Provider<List<DownloadTask>>((ref) {
     data: (tasks) {
       if (query.isEmpty) return tasks;
       return tasks
-          .where((t) =>
-              t.song.title.toLowerCase().contains(query.toLowerCase()) ||
-              t.song.artist.toLowerCase().contains(query.toLowerCase()))
+          .where(
+            (t) =>
+                t.song.title.toLowerCase().contains(query.toLowerCase()) ||
+                t.song.artist.toLowerCase().contains(query.toLowerCase()),
+          )
           .toList();
     },
     loading: () => [],
@@ -160,26 +164,37 @@ final filteredDownloadTasksProvider = Provider<List<DownloadTask>>((ref) {
   );
 });
 
-final downloadStatsProvider = Provider<({
-  int total,
-  int downloading,
-  int completed,
-  int failed,
-})>((ref) {
-  final tasksAsync = ref.watch(downloadTasksProvider);
-  return tasksAsync.when(
-    data: (tasks) {
-      final downloading = tasks.where((t) =>
-          t.status == DownloadStatus.downloading ||
-          t.status == DownloadStatus.queued).length;
-      final completed = tasks.where((t) => t.status == DownloadStatus.completed).length;
-      final failed = tasks.where((t) =>
-          t.status == DownloadStatus.error ||
-          t.status == DownloadStatus.cancelled ||
-          t.status == DownloadStatus.fileMissing).length;
-      return (total: tasks.length, downloading: downloading, completed: completed, failed: failed);
-    },
-    loading: () => (total: 0, downloading: 0, completed: 0, failed: 0),
-    error: (_, __) => (total: 0, downloading: 0, completed: 0, failed: 0),
-  );
-});
+final downloadStatsProvider =
+    Provider<({int total, int downloading, int completed, int failed})>((ref) {
+      final tasksAsync = ref.watch(downloadTasksProvider);
+      return tasksAsync.when(
+        data: (tasks) {
+          final downloading = tasks
+              .where(
+                (t) =>
+                    t.status == DownloadStatus.downloading ||
+                    t.status == DownloadStatus.queued,
+              )
+              .length;
+          final completed = tasks
+              .where((t) => t.status == DownloadStatus.completed)
+              .length;
+          final failed = tasks
+              .where(
+                (t) =>
+                    t.status == DownloadStatus.error ||
+                    t.status == DownloadStatus.cancelled ||
+                    t.status == DownloadStatus.fileMissing,
+              )
+              .length;
+          return (
+            total: tasks.length,
+            downloading: downloading,
+            completed: completed,
+            failed: failed,
+          );
+        },
+        loading: () => (total: 0, downloading: 0, completed: 0, failed: 0),
+        error: (_, __) => (total: 0, downloading: 0, completed: 0, failed: 0),
+      );
+    });

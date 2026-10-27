@@ -438,9 +438,7 @@ class _ControlButton extends StatelessWidget {
       child: IconButton(
         onPressed: onPressed,
         icon: Icon(icon, size: size),
-        color: Colors.white.withValues(
-          alpha: onPressed == null ? 0.28 : 0.7,
-        ),
+        color: Colors.white.withValues(alpha: onPressed == null ? 0.28 : 0.7),
         padding: EdgeInsets.zero,
         style: IconButton.styleFrom(
           hoverColor: Colors.white.withValues(alpha: 0.1),

@@ -4,7 +4,6 @@
 // eslint-ignore
 // ignore_for_file: constant_identifier_names
 
-
 /// 简体 -> 繁体 单字映射(OpenCC STCharacters)。
 const kSTCharacters = <String, String>{
   "㐷": "傌",

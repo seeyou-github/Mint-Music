@@ -108,7 +108,7 @@ Playlist withCoverSourceMeta(Playlist playlist, {Playlist? stored}) {
 /// 把收藏专辑 / 作者时写进描述的标记音源换成具体插件。
 ///
 /// 描述里的 `mintmusic:album:<source>:<id>` 是「从收藏播放时优先用哪个音源」的
-/// 依据；收藏时如果只拿到平台 id（内置源），这里补成具体插件。
+/// 依据；收藏时如果只拿到平台 id，这里补成具体插件。
 /// 不是收藏标记的描述原样返回。
 String upgradeFavoriteMarkerSource(String description, String? source) {
   final target = source?.trim() ?? '';
@@ -130,8 +130,8 @@ String upgradeFavoriteMarkerSource(String description, String? source) {
 /// 先用这个插件解析地址——比设置里的「优先音源」更具体；插件不
 /// 可用时仍按原规则回退，所以这里不改写歌曲的平台音源（[Song.source]）。
 ///
-/// 原来是「直接把 song.source 改成插件变体」，但那样会让内置平台失去兜底
-/// 解析时这首歌就算失败，所以改成歌曲级优先插件。
+/// 原来是「直接把 song.source 改成插件变体」，但那样会让这首歌失去按平台
+/// 回退解析的机会，所以改成歌曲级优先插件。
 List<Song> applyFavoriteSource(List<Song> songs, String? source) {
   final target = source?.trim();
   if (target == null || target.isEmpty || target == 'local') return songs;

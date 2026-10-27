@@ -13,8 +13,7 @@ const String _androidMusicDir = '/storage/emulated/0/Music';
 ///
 /// 在 Windows 上以 `/` 开头属于「当前盘符」的相对路径，会被解析成
 /// `<当前盘符>:\storage\emulated\0\Music\MintMusic`。仅用于识别/迁移旧数据。
-const String legacyAndroidDownloadDir =
-    '/storage/emulated/0/Music/MintMusic';
+const String legacyAndroidDownloadDir = '/storage/emulated/0/Music/MintMusic';
 
 /// 同步可用的默认下载目录。
 ///
@@ -28,15 +27,11 @@ String defaultDownloadDirSync() {
     // Windows：默认下载目录放在应用自己的 AppData\music 下。
     final base = AppPaths.executableDirectory;
     if (base != null && base.isNotEmpty) {
-      return p.join(
-        base,
-        AppPaths.rootFolderName,
-        AppPaths.musicFolderName,
-      );
+      return p.join(base, AppPaths.rootFolderName, AppPaths.musicFolderName);
     }
   }
-  final home = Platform.environment['USERPROFILE'] ??
-      Platform.environment['HOME'];
+  final home =
+      Platform.environment['USERPROFILE'] ?? Platform.environment['HOME'];
   if (home != null && home.isNotEmpty) {
     return p.join(home, 'Downloads', AppConstants.downloadDirName);
   }
