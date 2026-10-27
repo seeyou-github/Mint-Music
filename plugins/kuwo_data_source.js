@@ -294,6 +294,54 @@ function fetchSheetDetail(pid) {
   return getJson(url);
 }
 
+/**
+ * 有些接口（榜单、个别歌单）不返回封面字段，用 artistpicserver 逐首补。
+ * 内置源也是这么补的：返回体是一行纯文本的图片地址。
+ */
+function fetchCoverText(rid) {
+  var url =
+    'http://artistpicserver.kuwo.cn/pic.web?corp=kuwo&type=rid_pic' +
+    '&pictype=500&size=500&rid=' +
+    rid;
+  return cerumusic
+    .request(url, {
+      method: 'GET',
+      headers: { 'User-Agent': UA },
+      timeout: 12000
+    })
+    .then(function (res) {
+      var text = res && res.body ? String(res.body).trim() : '';
+      return text.indexOf('http') === 0 ? text : '';
+    })
+    .catch(function () {
+      return '';
+    });
+}
+
+/** 给没有封面的歌曲补图（每批 10 首，避免一次打太多请求）。 */
+function enrichCovers(songs) {
+  var indexes = [];
+  for (var i = 0; i < songs.length; i++) {
+    if (!songs[i].artwork) indexes.push(i);
+  }
+  if (!indexes.length) return Promise.resolve(songs);
+
+  var cursor = 0;
+  function nextBatch() {
+    if (cursor >= indexes.length) return Promise.resolve(songs);
+    var batch = indexes.slice(cursor, cursor + 10);
+    cursor += 10;
+    return Promise.all(
+      batch.map(function (index) {
+        return fetchCoverText(songs[index].id).then(function (url) {
+          if (url) songs[index].artwork = url;
+        });
+      })
+    ).then(nextBatch);
+  }
+  return nextBatch();
+}
+
 function fetchLyric(rid) {
   var url = MOBILE + '/newh5/singles/songinfoandlrc?musicId=' + rid;
   return getJson(url, {
@@ -502,15 +550,18 @@ module.exports = {
       var list =
         body.musiclist || (body.bang && body.bang.musiclist) || [];
       var songs = songsOf(list);
-      return JSON.stringify({
-        isEnd: true,
-        sheet: {
-          title: decodeName(body.title || body.name || '排行榜'),
-          coverUrl: String(body.pic || ''),
-          description: String(body.info || ''),
-          author: String(body.uname || '')
-        },
-        songs: songs
+      // 榜单接口不返回任何封面字段，逐首补图
+      return enrichCovers(songs).then(function () {
+        return JSON.stringify({
+          isEnd: true,
+          sheet: {
+            title: decodeName(body.title || body.name || '排行榜'),
+            coverUrl: String(body.pic || ''),
+            description: String(body.info || ''),
+            author: String(body.uname || '')
+          },
+          songs: songs
+        });
       });
     });
   },
@@ -524,15 +575,18 @@ module.exports = {
     if (parts.length === 2) pid = parts[1];
     return fetchSheetDetail(pid).then(function (body) {
       var songs = songsOf(body.musiclist || []);
-      return JSON.stringify({
-        isEnd: true,
-        sheet: {
-          title: decodeName(body.title || body.name || ''),
-          coverUrl: normalizeCover(body.pic),
-          description: String(body.info || ''),
-          author: String(body.uname || '')
-        },
-        songs: songs
+      // 个别歌曲没有 albumpic，补一次封面（歌单详情整列占位图就是它导致的）
+      return enrichCovers(songs).then(function () {
+        return JSON.stringify({
+          isEnd: true,
+          sheet: {
+            title: decodeName(body.title || body.name || ''),
+            coverUrl: normalizeCover(body.pic),
+            description: String(body.info || ''),
+            author: String(body.uname || '')
+          },
+          songs: songs
+        });
       });
     });
   },
@@ -561,7 +615,12 @@ module.exports = {
 
   /* --------------------------------------------------------------- 封面 */
   getPic: function (source, musicInfo) {
-    // 封面在搜索 / 歌单结果里已经带上，这里不需要再查。
-    return Promise.resolve('');
+    // 兜底：歌曲没带封面时按 rid 查一次 artistpicserver
+    var rid = String(
+      (musicInfo && (musicInfo.songmid || musicInfo.songId || musicInfo.id)) ||
+        ''
+    ).replace(/^MUSIC_/i, '');
+    if (!rid) return Promise.resolve('');
+    return fetchCoverText(rid);
   }
 };

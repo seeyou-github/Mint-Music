@@ -27,7 +27,6 @@ var CDNBJ = 'http://mobilecdnbj.kugou.com';
 var YUEKU = 'http://www2.kugou.kugou.com';
 var KRCS = 'https://krcs.kugou.com';
 var LYRICS = 'http://lyrics.kugou.com';
-var MKG = 'http://m.kugou.com';
 
 /* ---------------------------------------------------------------- 基础工具 */
 
@@ -166,6 +165,8 @@ function songOf(item) {
     id: String(hash),
     songId: String(hash),
     songmid: String(hash),
+    // 带上专辑 id：封面补全失败时 getPic 还能按专辑再查一次
+    albumId: item.album_id ? String(item.album_id) : '',
     // 没有 songname 时用 filename（「歌手 - 歌名」），去掉歌手前缀
     name: (function () {
       var name = item.SongName || item.songname;
@@ -266,10 +267,103 @@ function fetchSpecialInfo(specialId) {
 }
 
 /** 歌单详情（整张歌单）：members 里带 album_img，歌曲封面从这里来。 */
-function fetchPlistDetail(specialId) {
-  return getJson(MKG + '/plist/list/' + specialId + '?json=true', {
-    Referer: 'http://m.kugou.com/'
-  });
+/**
+ * 歌单歌曲接口（special/song）不返回专辑信息，封面 / 歌名 / 歌手都得另外补。
+ * 用内置源同款的 album_audio 接口批量查（一次 100 首）。
+ *
+ * 注：以前试过 m.kugou.com/plist/list（members 里带 album_img），但该地址现在
+ * 直接 301 到 HTML 页面，拿不到 JSON，所以统一走 album_audio 补全。
+ */
+function fetchAlbumAudio(hashes) {
+  return cerumusic
+    .request('http://gateway.kugou.com/v2/album_audio/audio', {
+      method: 'POST',
+      headers: {
+        'User-Agent':
+          'Android712-AndroidPhone-11451-376-0-FeeCacheUpdate-wifi',
+        'KG-THash': '13a3164',
+        'KG-RC': '1',
+        'KG-Fake': '0',
+        'KG-RF': '00869891',
+        'x-router': 'kmr.service.kugou.com',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        area_code: '1',
+        show_privilege: 1,
+        show_album_info: '1',
+        is_publish: '',
+        appid: 1005,
+        clientver: 11451,
+        mid: '1',
+        dfid: '-',
+        clienttime: Date.now(),
+        key: 'OIlwieks28dk2k092lksi2UIkp',
+        fields: 'album_info,author_name,audio_info,ori_audio_name,base,songname',
+        data: hashes.map(function (hash) {
+          return { hash: hash };
+        })
+      }),
+      timeout: 20000
+    })
+    .then(decodeBody)
+    .then(function (body) {
+      return body.data || [];
+    });
+}
+
+/** 给缺封面 / 歌名 / 歌手的歌曲补全信息（按 hash 匹配，一次 100 首）。 */
+function hydrateSongs(songs) {
+  var missing = [];
+  for (var i = 0; i < songs.length; i++) {
+    if (!songs[i].artwork || !songs[i].name || !songs[i].singer) {
+      missing.push(songs[i].id);
+    }
+  }
+  if (!missing.length) return Promise.resolve(songs);
+
+  var chunks = [];
+  for (var start = 0; start < missing.length; start += 100) {
+    chunks.push(missing.slice(start, start + 100));
+  }
+
+  var index = 0;
+  function nextChunk() {
+    if (index >= chunks.length) return Promise.resolve(songs);
+    var chunk = chunks[index++];
+    return fetchAlbumAudio(chunk)
+      .then(function (rows) {
+        var byHash = {};
+        for (var r = 0; r < rows.length; r++) {
+          var row = rows[r];
+          if (Array.isArray(row)) row = row[0];
+          if (!row || !row.audio_info) continue;
+          var hash = row.audio_info.hash;
+          if (hash) byHash[String(hash).toUpperCase()] = row;
+        }
+        for (var s = 0; s < songs.length; s++) {
+          var info = byHash[String(songs[s].id).toUpperCase()];
+          if (!info) continue;
+          if (!songs[s].artwork) {
+            songs[s].artwork = normalizeImage(
+              info.album_info && info.album_info.sizable_cover,
+              '800'
+            );
+          }
+          if (!songs[s].name && info.songname) {
+            songs[s].name = decodeName(info.songname);
+          }
+          if (!songs[s].singer && info.author_name) {
+            songs[s].singer = decodeName(info.author_name);
+          }
+        }
+      })
+      .catch(function () {
+        /* 补全失败不影响歌曲列表本身 */
+      })
+      .then(nextChunk);
+  }
+  return nextChunk();
 }
 
 function fetchSpecialSongs(specialId, page) {
@@ -568,48 +662,30 @@ module.exports = {
   getMusicSheetInfo: function (sheetId, page) {
     var specialId = String(sheetId || '').replace(/^kg_/, '');
     var currentPage = page || 1;
-    // 优先走 m.kugou.com 的整张歌单接口：members 里带 album_img（歌曲封面）。
-    return fetchPlistDetail(specialId)
-      .catch(function () { return null; })
-      .then(function (plistBody) {
-        var plistInfo = plistBody && plistBody.list ? plistBody.list.info : null;
-        var members = plistInfo ? plistInfo.members || [] : [];
-        if (!members.length) return null;
+    return Promise.all([
+      fetchSpecialSongs(specialId, currentPage),
+      currentPage === 1 ? fetchSpecialInfo(specialId) : Promise.resolve(null)
+    ]).then(function (results) {
+      var body = results[0] || {};
+      var info = results[1] || {};
+      var data = body.data || {};
+      var songs = songsOf(data.info || data.list || []);
+      var total = Number(info.songcount || data.total || songs.length);
+      // special/song 不返回专辑信息：封面 / 歌名 / 歌手用 album_audio 批量补，
+      // 否则歌单详情页的歌曲列表整列都是灰底音符占位图。
+      return hydrateSongs(songs).then(function () {
         return JSON.stringify({
-          isEnd: true,
+          isEnd: songs.length >= total || songs.length < 1000,
           sheet: {
-            title: decodeName(plistInfo.specialname || ''),
-            coverUrl: normalizeImage(plistInfo.imgurl || '', '400'),
-            description: decodeName(plistInfo.intro || ''),
-            author: String(plistInfo.nickname || '')
+            title: decodeName(info.specialname || data.specialname || ''),
+            coverUrl: normalizeImage(info.imgurl || data.imgurl || '', '400'),
+            description: decodeName(info.intro || ''),
+            author: String(info.nickname || '')
           },
-          songs: songsOf(members)
-        });
-      })
-      .then(function (detail) {
-        if (detail) return detail;
-        // 整张歌单接口拿不到时回退到原来的分页接口（歌曲封面可能为空）。
-        return Promise.all([
-          fetchSpecialSongs(specialId, currentPage),
-          currentPage === 1 ? fetchSpecialInfo(specialId) : Promise.resolve(null)
-        ]).then(function (results) {
-          var body = results[0] || {};
-          var info = results[1] || {};
-          var data = body.data || {};
-          var songs = songsOf(data.info || data.list || []);
-          var total = Number(info.songcount || data.total || songs.length);
-          return JSON.stringify({
-            isEnd: songs.length >= total || songs.length < 100,
-            sheet: {
-              title: decodeName(info.specialname || data.specialname || ''),
-              coverUrl: normalizeImage(info.imgurl || data.imgurl || '', '400'),
-              description: decodeName(info.intro || ''),
-              author: String(info.nickname || '')
-            },
-            songs: songs
-          });
+          songs: songs
         });
       });
+    });
   },
 
   /* --------------------------------------------------------------- 歌词 */
@@ -626,7 +702,19 @@ module.exports = {
 
   /* --------------------------------------------------------------- 封面 */
   getPic: function (source, musicInfo) {
-    // 封面在搜索 / 歌单结果里已经带上，这里不需要再查。
-    return Promise.resolve('');
+    // 兜底：歌曲没带封面时按专辑 id 再查一次（歌单详情里个别老歌会走到这里）
+    var albumId =
+      musicInfo && (musicInfo.albumId || musicInfo.albumid || '');
+    if (!albumId) return Promise.resolve('');
+    return getJson(
+      CDN + '/api/v3/album/info?albumid=' + albumId + '&version=9108'
+    )
+      .then(function (body) {
+        var info = body.data || {};
+        return normalizeImage(info.imgurl, '800');
+      })
+      .catch(function () {
+        return '';
+      });
   }
 };

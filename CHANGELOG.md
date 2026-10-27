@@ -496,6 +496,14 @@
   下方），用系统文件管理器打开该歌曲所在目录
 - 我的页面：版本号移到标题栏右上角（与标题顶部对齐）
 ### 修改
+- 数据源插件：歌单详情页的歌曲列表补回封面
+  - 酷狗 `special/song` 接口不返回专辑信息（封面 / 歌名 / 歌手都没有），
+    改回内置源用的 `gateway.kugou.com/v2/album_audio/audio` 批量补全（一次 100 首）；
+    之前试的 `m.kugou.com/plist/list` 现在 301 到 HTML，拿不到数据
+  - 酷我榜单接口完全没有封面字段，用 `artistpicserver.kuwo.cn/pic.web` 逐首补；
+    歌单里个别缺封面的歌也一起补
+  - 两个插件的 `getPic` 不再直接返回空：酷狗按专辑 id 查 `album/info`，
+    酷我按 rid 查 `artistpicserver`，列表里逐张懒加载时也能兜住
 - 插件榜单卡片补齐播放量与更新时间
   - `getTopLists` 返回的 `playCount` / `updateFrequency` 现在会带到榜单卡片上
     （之前只读了名字和封面，卡片上的「65.2亿」「每周四更新」一直空着）
