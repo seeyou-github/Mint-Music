@@ -15,6 +15,7 @@ import '../../radio/presentation/radio_panel.dart';
 import '../../../shared/pagination/page_slicer.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../../../shared/widgets/page_bar.dart';
+import '../../../shared/widgets/load_more_footer.dart';
 import '../../../shared/widgets/source_icon.dart';
 import '../application/discover_providers.dart';
 import '../domain/models/playlist.dart';
@@ -56,9 +57,12 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
   /// 歌单列表分页：每页 10 行（每行多少列 × 10 就是每页条数）。
   static const int _playlistPageRows = 10;
   final PageSlicer _playlistPager = PageSlicer(pageSize: _playlistPageRows);
+  final PageSlicer _leaderboardPager = PageSlicer(pageSize: _playlistPageRows);
+  final ScrollController _leaderboardScrollController = ScrollController();
 
   /// 正在为某一页补数据。
   bool _pagingLoading = false;
+  int _pagingGeneration = 0;
 
   @override
   void initState() {
@@ -69,12 +73,13 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
   @override
   void dispose() {
     _scrollController.dispose();
+    _leaderboardScrollController.dispose();
     super.dispose();
   }
 
   /// 切到第 [page] 页；数据不够时继续向接口取。
   Future<void> _goToPlaylistPage(int page) async {
-    if (page < 1) return;
+    if (page < 1 || _pagingLoading) return;
     setState(() => _playlistPager.jumpTo(page));
     if (_scrollController.hasClients) _scrollController.jumpTo(0);
     await _ensurePlaylistPage();
@@ -83,17 +88,17 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
   /// 补当前页数据：接口一次给的比一页少时继续取，多给的留着下次用。
   Future<void> _ensurePlaylistPage() async {
     if (_pagingLoading) return;
-    _pagingLoading = true;
+    final generation = _pagingGeneration;
+    setState(() => _pagingLoading = true);
     final notifier = ref.read(categoryPlaylistsProvider.notifier);
     try {
-      var guard = 0;
-      while (mounted && guard++ < 20) {
+      while (mounted && generation == _pagingGeneration) {
         final loaded =
             ref.read(categoryPlaylistsProvider).valueOrNull?.length ?? 0;
         if (_playlistPager.missing(loaded, hasMore: !notifier.noMore) == 0) {
           break;
         }
-        if (notifier.loadingMore) break;
+        if (notifier.loadingMore || notifier.loadMoreError != null) break;
         final before = loaded;
         await notifier.fetchPlaylists(
           sortId: 'hot',
@@ -106,13 +111,17 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
         if (after == before) break;
       }
     } finally {
-      _pagingLoading = false;
-      if (mounted) {
+      if (mounted && generation == _pagingGeneration) {
         final loaded =
             ref.read(categoryPlaylistsProvider).valueOrNull?.length ?? 0;
-        setState(
-          () => _playlistPager.clampTo(loaded, hasMore: !notifier.noMore),
-        );
+        setState(() {
+          _pagingLoading = false;
+          _playlistPager.clampTo(
+            loaded,
+            hasMore: !notifier.noMore,
+            total: notifier.total,
+          );
+        });
       }
     }
   }
@@ -145,6 +154,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
     // 监听源切换，自动重新加载歌单
     ref.listen<String>(discoverSourceIdProvider, (previous, next) {
       if (previous != null && previous != next) {
+        _leaderboardPager.reset();
         WidgetsBinding.instance.addPostFrameCallback((_) {
           unawaited(_reloadAfterSourceChange(next));
         });
@@ -188,6 +198,8 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
   /// 「暂无歌单数据」。这里先等插件系统就绪再请求，若仍为空再补一次重试，
   /// 避免用户必须手动点「重试」才能看到内容。
   Future<void> _loadPlaylists() async {
+    _pagingGeneration++;
+    _pagingLoading = false;
     _playlistPager.reset();
     await _waitForPlugins();
     if (!mounted) return;
@@ -724,6 +736,8 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
   /// 切换音源后重新加载歌单。
   Future<void> _reloadAfterSourceChange(String sourceId) async {
     if (!mounted) return;
+    _pagingGeneration++;
+    _pagingLoading = false;
     _playlistPager.reset();
     ref.read(activeTagIdProvider.notifier).state = '';
     ref.read(activeCategoryNameProvider.notifier).state = '热门';
@@ -766,6 +780,8 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
   }
 
   void _onSelectTag(String tagId, String name) {
+    _pagingGeneration++;
+    _pagingLoading = false;
     _playlistPager.reset();
     ref.read(activeTagIdProvider.notifier).state = tagId;
     ref.read(activeCategoryNameProvider.notifier).state = name;
@@ -787,14 +803,21 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
 
     // 每页 10 行：每行 crossAxisCount 个，所以每页 10 × 列数 个。
     _playlistPager.updatePageSize(_playlistPageRows * crossAxisCount);
+    _playlistPager.clampTo(
+      playlists.length,
+      hasMore: !notifier.noMore,
+      total: notifier.total,
+    );
     final visible = _playlistPager.slice(playlists);
     final pageCount = _playlistPager.pageCount(
       playlists.length,
       hasMore: !notifier.noMore,
+      total: notifier.total,
     );
     if (_playlistPager.missing(playlists.length, hasMore: !notifier.noMore) >
             0 &&
-        !notifier.loadingMore) {
+        !notifier.loadingMore &&
+        notifier.loadMoreError == null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) unawaited(_ensurePlaylistPage());
       });
@@ -839,9 +862,24 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   ),
                 ),
+              if (notifier.loadMoreError != null)
+                LoadMoreFooter(
+                  status: LoadMoreStatus.error,
+                  colors: colors,
+                  message: notifier.loadMoreError,
+                  onRetry: () async {
+                    await notifier.fetchPlaylists(
+                      sortId: 'hot',
+                      tagId: ref.read(activeTagIdProvider),
+                      sourceId: ref.read(discoverSourceIdProvider),
+                    );
+                    if (mounted) await _ensurePlaylistPage();
+                  },
+                ),
               PageBar(
                 currentPage: _playlistPager.page,
                 pageCount: pageCount,
+                totalKnown: notifier.total != null || notifier.noMore,
                 loading: notifier.loadingMore || _pagingLoading,
                 onChanged: (page) => unawaited(_goToPlaylistPage(page)),
               ),
@@ -992,26 +1030,53 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
     final crossAxisCount = ResponsiveLayout.gridCrossAxisCount(context);
     final isTablet = ResponsiveLayout.isTablet(context);
 
-    return GridView.builder(
-      padding: EdgeInsets.only(
-        left: ResponsiveLayout.horizontalPadding(context),
-        right: ResponsiveLayout.horizontalPadding(context),
-        bottom: AppSpacing.xxxl,
-      ),
+    _leaderboardPager.updatePageSize(_playlistPageRows * crossAxisCount);
+    _leaderboardPager.clampTo(leaderboards.length, hasMore: false);
+    final visible = _leaderboardPager.slice(leaderboards);
+    return CustomScrollView(
+      controller: _leaderboardScrollController,
       cacheExtent: 360,
-      addAutomaticKeepAlives: false,
-      addRepaintBoundaries: true,
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: crossAxisCount,
-        mainAxisSpacing: isTablet ? 16 : AppSpacing.md,
-        crossAxisSpacing: isTablet ? 16 : AppSpacing.md,
-        childAspectRatio: isTablet ? 0.88 : 0.82,
-      ),
-      itemCount: leaderboards.length,
-      itemBuilder: (context, index) {
-        final board = leaderboards[index];
-        return _buildLeaderboardCard(colors, board, index);
-      },
+      slivers: [
+        SliverPadding(
+          padding: EdgeInsets.only(
+            left: ResponsiveLayout.horizontalPadding(context),
+            right: ResponsiveLayout.horizontalPadding(context),
+            bottom: AppSpacing.lg,
+          ),
+          sliver: SliverGrid(
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: crossAxisCount,
+              mainAxisSpacing: isTablet ? 16 : AppSpacing.md,
+              crossAxisSpacing: isTablet ? 16 : AppSpacing.md,
+              childAspectRatio: isTablet ? 0.88 : 0.82,
+            ),
+            delegate: SliverChildBuilderDelegate(
+              (context, index) =>
+                  _buildLeaderboardCard(colors, visible[index], index),
+              childCount: visible.length,
+              addAutomaticKeepAlives: false,
+            ),
+          ),
+        ),
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: AppSpacing.xxxl),
+            child: PageBar(
+              currentPage: _leaderboardPager.page,
+              pageCount: _leaderboardPager.pageCount(
+                leaderboards.length,
+                hasMore: false,
+              ),
+              onChanged: (page) {
+                setState(() => _leaderboardPager.jumpTo(page));
+                if (_leaderboardScrollController.hasClients) {
+                  _leaderboardScrollController.jumpTo(0);
+                }
+              },
+            ),
+          ),
+        ),
+      ],
     );
   }
 

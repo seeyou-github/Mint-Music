@@ -52,17 +52,23 @@ class PageSlicer {
 
   /// 已知数据下能翻到第几页。
   ///
-  /// 总数未知时，只要还有更多数据就多留一个页码入口，点它才去接口取。
-  int pageCount(int loaded, {required bool hasMore}) {
+  /// [total] 为正数且还有更多数据时，允许直达尚未缓存的已知页。
+  /// 空、零或负总数视为未知：多留一个页码入口，点它才去接口取。
+  /// 加载结束后以 [loaded] 为准，校正上游总数不准或去重造成的差异。
+  int pageCount(int loaded, {required bool hasMore, int? total}) {
+    if (hasMore && total != null && total > 0) {
+      final count = total > loaded ? total : loaded;
+      return (count + pageSize - 1) ~/ pageSize;
+    }
     if (loaded <= 0) return 1;
     var pages = (loaded + pageSize - 1) ~/ pageSize;
     if (hasMore) pages += 1;
     return pages < 1 ? 1 : pages;
   }
 
-  /// 数据变少时（例如切音源 / 搜索词变化）把页码收回有效范围。
-  void clampTo(int loaded, {required bool hasMore}) {
-    final pages = pageCount(loaded, hasMore: hasMore);
+  /// 数据变少时把页码收回有效范围；传入 [total] 可保留正在加载的远页。
+  void clampTo(int loaded, {required bool hasMore, int? total}) {
+    final pages = pageCount(loaded, hasMore: hasMore, total: total);
     if (_page > pages) _page = pages;
     if (_page < 1) _page = 1;
   }

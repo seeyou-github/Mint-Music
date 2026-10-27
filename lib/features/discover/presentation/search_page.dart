@@ -64,6 +64,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
 
   /// 正在为某一页补数据（防止重复触发）。
   bool _pagingLoading = false;
+  int _pagingGeneration = 0;
 
   /// 批量选择控制器（长按搜索结果进入多选模式）。
   final SongSelectionController _selection = SongSelectionController();
@@ -269,6 +270,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
 
   /// 新一轮搜索：所有列表回到第 1 页。
   void _resetPagers() {
+    _pagingGeneration++;
+    _pagingLoading = false;
     _songPageSize = null;
     _songPager.updatePageSize(30);
     _songPager.reset();
@@ -286,7 +289,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   }
 
   Future<void> _goToSongPage(int page) async {
-    if (page < 1) return;
+    if (page < 1 || _pagingLoading) return;
     setState(() => _songPager.jumpTo(page));
     if (_resultsScrollController.hasClients) {
       _resultsScrollController.jumpTo(0);
@@ -298,10 +301,10 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   /// 当缓冲，下一页接着用，不会重复请求。
   Future<void> _ensureSongPage() async {
     if (_pagingLoading) return;
-    _pagingLoading = true;
+    final generation = _pagingGeneration;
+    setState(() => _pagingLoading = true);
     try {
-      var guard = 0;
-      while (mounted && guard++ < 20) {
+      while (mounted && generation == _pagingGeneration) {
         final state = ref.read(searchResultsControllerProvider);
         if (_songPager.missing(state.songs.length, hasMore: state.hasMore) ==
             0) {
@@ -316,18 +319,22 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         }
       }
     } finally {
-      _pagingLoading = false;
-      if (mounted) {
+      if (mounted && generation == _pagingGeneration) {
         final state = ref.read(searchResultsControllerProvider);
-        setState(
-          () => _songPager.clampTo(state.songs.length, hasMore: state.hasMore),
-        );
+        setState(() {
+          _pagingLoading = false;
+          _songPager.clampTo(
+            state.songs.length,
+            hasMore: state.hasMore,
+            total: state.total,
+          );
+        });
       }
     }
   }
 
   Future<void> _goToPlaylistPage(int page) async {
-    if (page < 1) return;
+    if (page < 1 || _pagingLoading) return;
     setState(() => _playlistPager.jumpTo(page));
     if (_gridScrollController.hasClients) _gridScrollController.jumpTo(0);
     await _ensurePlaylistPage();
@@ -335,10 +342,10 @@ class _SearchPageState extends ConsumerState<SearchPage> {
 
   Future<void> _ensurePlaylistPage() async {
     if (_pagingLoading) return;
-    _pagingLoading = true;
+    final generation = _pagingGeneration;
+    setState(() => _pagingLoading = true);
     try {
-      var guard = 0;
-      while (mounted && guard++ < 20) {
+      while (mounted && generation == _pagingGeneration) {
         final state = ref.read(playlistSearchControllerProvider);
         if (_playlistPager.missing(
               state.playlists.length,
@@ -357,21 +364,22 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         }
       }
     } finally {
-      _pagingLoading = false;
-      if (mounted) {
+      if (mounted && generation == _pagingGeneration) {
         final state = ref.read(playlistSearchControllerProvider);
-        setState(
-          () => _playlistPager.clampTo(
+        setState(() {
+          _pagingLoading = false;
+          _playlistPager.clampTo(
             state.playlists.length,
             hasMore: state.hasMore,
-          ),
-        );
+            total: state.total,
+          );
+        });
       }
     }
   }
 
   Future<void> _goToCollectionPage(CollectionType type, int page) async {
-    if (page < 1) return;
+    if (page < 1 || _pagingLoading) return;
     final pager = _collectionPager(type);
     setState(() => pager.jumpTo(page));
     if (_gridScrollController.hasClients) _gridScrollController.jumpTo(0);
@@ -381,10 +389,10 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   Future<void> _ensureCollectionPage(CollectionType type) async {
     if (_pagingLoading) return;
     final pager = _collectionPager(type);
-    _pagingLoading = true;
+    final generation = _pagingGeneration;
+    setState(() => _pagingLoading = true);
     try {
-      var guard = 0;
-      while (mounted && guard++ < 20) {
+      while (mounted && generation == _pagingGeneration) {
         final state = ref.read(collectionSearchProvider);
         if (pager.missing(state.results.length, hasMore: state.hasMore) == 0) {
           break;
@@ -396,12 +404,16 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         if (ref.read(collectionSearchProvider).results.length == before) break;
       }
     } finally {
-      _pagingLoading = false;
-      if (mounted) {
+      if (mounted && generation == _pagingGeneration) {
         final state = ref.read(collectionSearchProvider);
-        setState(
-          () => pager.clampTo(state.results.length, hasMore: state.hasMore),
-        );
+        setState(() {
+          _pagingLoading = false;
+          pager.clampTo(
+            state.results.length,
+            hasMore: state.hasMore,
+            total: state.total,
+          );
+        });
       }
     }
   }
@@ -412,6 +424,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     required PageSlicer pager,
     required int loaded,
     required bool hasMore,
+    required int? total,
     required bool loading,
     required String? error,
     required VoidCallback onRetry,
@@ -431,7 +444,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           ),
         PageBar(
           currentPage: pager.page,
-          pageCount: pager.pageCount(loaded, hasMore: hasMore),
+          pageCount: pager.pageCount(loaded, hasMore: hasMore, total: total),
+          totalKnown: total != null || !hasMore,
           loading: loading || _pagingLoading,
           onChanged: onPage,
         ),
@@ -1190,6 +1204,11 @@ class _SearchPageState extends ConsumerState<SearchPage> {
 
     _syncSongPageSize(state.songs.length);
     final songs = state.songs;
+    _songPager.clampTo(
+      songs.length,
+      hasMore: state.hasMore,
+      total: state.total,
+    );
     // 只渲染当前页（每页按接口首页返回量，25~50 首）。
     final visible = _songPager.slice(songs);
     if (_songPager.missing(songs.length, hasMore: state.hasMore) > 0 &&
@@ -1204,6 +1223,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       pager: _songPager,
       loaded: songs.length,
       hasMore: state.hasMore,
+      total: state.total,
       loading: state.isLoadingMore,
       error: state.loadMoreError,
       onRetry: () => unawaited(
@@ -1449,6 +1469,11 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     final pager = _collectionPager(type);
     // 每页 10 行：每页条数 = 10 × 列数。
     pager.updatePageSize(_resultPageRows * columns);
+    pager.clampTo(
+      state.results.length,
+      hasMore: state.hasMore,
+      total: state.total,
+    );
     final visible = pager.slice(state.results);
     if (pager.missing(state.results.length, hasMore: state.hasMore) > 0 &&
         !state.loadingMore &&
@@ -1483,6 +1508,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         pager: pager,
         loaded: state.results.length,
         hasMore: state.hasMore,
+        total: state.total,
         loading: state.loadingMore,
         error: state.loadMoreError,
         onRetry: () => unawaited(
@@ -1607,6 +1633,11 @@ class _SearchPageState extends ConsumerState<SearchPage> {
 
     // 每页 10 行：每页条数 = 10 × 列数。
     _playlistPager.updatePageSize(_resultPageRows * crossAxisCount);
+    _playlistPager.clampTo(
+      state.playlists.length,
+      hasMore: state.hasMore,
+      total: state.total,
+    );
     final visible = _playlistPager.slice(state.playlists);
     if (_playlistPager.missing(state.playlists.length, hasMore: state.hasMore) >
             0 &&
@@ -1641,6 +1672,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         pager: _playlistPager,
         loaded: state.playlists.length,
         hasMore: state.hasMore,
+        total: state.total,
         loading: state.isLoadingMore,
         error: state.loadMoreError,
         onRetry: () => unawaited(

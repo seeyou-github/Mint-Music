@@ -64,6 +64,7 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
 
   /// 是否已到末页。
   bool _isEnd = true;
+  int? _total;
   bool _loadingMore = false;
 
   /// 加载下一页失败的原因（显示「加载失败，点击重试」，不再当成没有更多）。
@@ -133,6 +134,7 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
     _extraSongs.clear();
     _page = 1;
     _isEnd = page.isEnd;
+    _total = page.total;
     _pager.reset();
     _scheduleEnsurePage();
   }
@@ -147,7 +149,7 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
 
   /// 切到第 [page] 页并补齐数据。
   Future<void> _goToPage(int page) async {
-    if (page < 1) return;
+    if (page < 1 || _pagingLoading) return;
     setState(() => _pager.jumpTo(page));
     if (_scrollController.hasClients) _scrollController.jumpTo(0);
     await _ensurePageLoaded();
@@ -158,10 +160,9 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
   /// 接口一次可能给得比一页少：继续取下一页，直到够了 / 到末页 / 出错。
   Future<void> _ensurePageLoaded() async {
     if (_pagingLoading) return;
-    _pagingLoading = true;
+    setState(() => _pagingLoading = true);
     try {
-      var guard = 0;
-      while (mounted && guard++ < 30) {
+      while (mounted) {
         final missing = _pager.missing(_songs.length, hasMore: !_isEnd);
         if (missing == 0) break;
         if (_loadMoreError != null) break;
@@ -172,10 +173,11 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
       }
     } finally {
       if (mounted) {
-        // 数据不够时把页码收回有效范围，避免停在空白页。
-        setState(() => _pager.clampTo(_songs.length, hasMore: !_isEnd));
+        setState(() {
+          _pagingLoading = false;
+          _pager.clampTo(_songs.length, hasMore: !_isEnd, total: _total);
+        });
       }
-      _pagingLoading = false;
     }
   }
 
@@ -219,7 +221,8 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
           setState(() {
             _page = page;
             _extraSongs.addAll(appended);
-            _isEnd = isEnd;
+            _total = result.total ?? _total;
+            _isEnd = isEnd || (_total != null && _songs.length >= _total!);
             _loadMoreError = null;
           });
           return;
@@ -256,7 +259,7 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
   Future<void> _retryLoadMore() async {
     if (!mounted) return;
     setState(() => _loadMoreError = null);
-    await _loadMore();
+    await _ensurePageLoaded();
   }
 
   void _checkIfFavorited() {
@@ -690,8 +693,13 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
         ? AppSpacing.miniPlayerHeight + AppSpacing.lg
         : AppSpacing.lg;
     // 只渲染当前页（每页 100 首）；播放 / 队列仍用完整列表。
+    _pager.clampTo(songs.length, hasMore: !_isEnd, total: _total);
     final visible = _pager.slice(songs);
-    final pageCount = _pager.pageCount(songs.length, hasMore: !_isEnd);
+    final pageCount = _pager.pageCount(
+      songs.length,
+      hasMore: !_isEnd,
+      total: _total,
+    );
     final list = ListView.builder(
       controller: _scrollController,
       // 预留迷你播放器高度（56px + 底部 20px 间距），保证最后一首歌曲
@@ -765,6 +773,7 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
           PageBar(
             currentPage: _pager.page,
             pageCount: pageCount,
+            totalKnown: _total != null || _isEnd,
             loading: _loadingMore || _pagingLoading,
             onChanged: (page) => unawaited(_goToPage(page)),
           ),

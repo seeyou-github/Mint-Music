@@ -107,6 +107,21 @@ function chain(steps) {
   return Promise.resolve().then(next);
 }
 
+function totalOf(value) {
+  if (typeof value !== 'number' && typeof value !== 'string') return null;
+  if (typeof value === 'string' && !value.trim()) return null;
+  var total = Number(value);
+  return isFinite(total) && total >= 0 && Math.floor(total) === total &&
+    total <= 9007199254740991 ? total : null;
+}
+
+function isPageEnd(total, offset, count, limit, body) {
+  if (total !== null) return offset + count >= total;
+  if (typeof body.more === 'boolean') return !body.more;
+  if (typeof body.hasMore === 'boolean') return !body.hasMore;
+  return count < limit;
+}
+
 /* ---------------------------------------------------------------- 字段映射 */
 
 /** 封面地址规范化（与内置源 _normalizeCoverUrl 一致：https + 400x400）。 */
@@ -359,30 +374,17 @@ function fetchAlbum(id) {
 }
 
 function fetchArtistSongs(id, limit, offset) {
+  var params = { id: id, order: 'hot', limit: limit, offset: offset };
+  // 热门 50 首接口不支持翻页，不能作为全部作品的回退。
   return chain([
     function () {
-      return getJson(
-        HOST +
-          '/api/artist/top/song?' +
-          encodeQuery({ id: id, limit: limit, offset: offset })
-      );
+      return getJson(HOST + '/api/v1/artist/songs?' + encodeQuery(params));
     },
     function () {
-      return getJson(
-        PROXIES[0] +
-          '/artist/top/song?' +
-          encodeQuery({ id: id, limit: limit, offset: offset })
-      );
+      return getJson(PROXIES[0] + '/artist/songs?' + encodeQuery(params));
     },
     function () {
-      return getJson(PROXIES[0] + '/artists?' + encodeQuery({ id: id }));
-    },
-    function () {
-      return getJson(
-        PROXIES[1] +
-          '/artist/top/song?' +
-          encodeQuery({ id: id, limit: limit, offset: offset })
-      );
+      return getJson(PROXIES[1] + '/artist/songs?' + encodeQuery(params));
     }
   ]);
 }
@@ -402,19 +404,30 @@ function fetchLyric(id) {
   ]);
 }
 
-function fetchSongDetail(id) {
+function fetchSongDetails(ids) {
+  function checked(url) {
+    return getJson(url).then(function (body) {
+      if (!Array.isArray(body.songs)) throw new Error('歌曲详情缺少 songs');
+      return body;
+    });
+  }
   return chain([
     function () {
-      return getJson(
-        HOST + '/api/song/detail?' + encodeQuery({ ids: '[' + id + ']' })
+      return checked(
+        HOST + '/api/song/detail?' + encodeQuery({ ids: '[' + ids.join(',') + ']' })
       );
     },
     function () {
-      return getJson(
-        PROXIES[0] + '/song/detail?' + encodeQuery({ ids: '[' + id + ']' })
-      );
+      return checked(PROXIES[0] + '/song/detail?' + encodeQuery({ ids: ids.join(',') }));
+    },
+    function () {
+      return checked(PROXIES[1] + '/song/detail?' + encodeQuery({ ids: ids.join(',') }));
     }
   ]);
+}
+
+function fetchSongDetail(id) {
+  return fetchSongDetails([id]);
 }
 
 /* ---------------------------------------------------------------- 解析工具 */
@@ -428,36 +441,72 @@ function songsFromSearch(body) {
 
 function playlistDetailOf(body, fallbackId) {
   var playlist = body.playlist || body.result || {};
-  var tracks = playlist.tracks || [];
-  var songs = songsOf(tracks);
-  if (!songs.length && playlist.trackIds && playlist.trackIds.length) {
-    // 只拿到 trackIds 时至少保证歌曲数量对得上，具体信息由播放源补。
-    for (var i = 0; i < playlist.trackIds.length; i++) {
-      var id = playlist.trackIds[i] && playlist.trackIds[i].id;
-      if (!id) continue;
-      songs.push({
-        id: String(id),
-        songId: String(id),
-        songmid: String(id),
-        name: '',
-        singer: '',
-        albumName: '',
-        artwork: '',
-        duration: 0,
-        source: 'wy'
-      });
+  var total = totalOf(playlist.trackCount);
+  var tracks = songsOf(playlist.tracks || []).filter(function (song) {
+    return String(song.name).trim();
+  });
+  var byId = Object.create(null);
+  var orderedIds = [];
+  var seen = Object.create(null);
+  var trackIds = playlist.trackIds || [];
+  for (var i = 0; i < trackIds.length; i++) {
+    var item = trackIds[i];
+    var id = item && typeof item === 'object' ? item.id : item;
+    if (id === undefined || id === null || String(id) === '') continue;
+    id = String(id);
+    orderedIds.push(id);
+    seen[id] = true;
+  }
+  for (var j = 0; j < tracks.length; j++) {
+    var song = tracks[j];
+    byId[song.id] = song;
+    if (!seen[song.id]) {
+      orderedIds.push(song.id);
+      seen[song.id] = true;
     }
   }
-  var creator = playlist.creator || {};
-  return {
-    id: String(playlist.id || fallbackId || ''),
-    title: playlist.name || '',
-    description: playlist.description || '',
-    coverUrl: normalizeCover(playlist.coverImgUrl),
-    author: creator.nickname ? String(creator.nickname) : '',
-    songCount: Number(playlist.trackCount || songs.length),
-    songs: songs
-  };
+  if (!trackIds.length && total !== null && tracks.length < total) {
+    throw new Error('歌单详情不完整，缺少可补齐的 trackIds');
+  }
+  var missing = [];
+  var requested = Object.create(null);
+  for (var k = 0; k < orderedIds.length; k++) {
+    var missingId = orderedIds[k];
+    if (!byId[missingId] && !requested[missingId]) {
+      missing.push(missingId);
+      requested[missingId] = true;
+    }
+  }
+  var cursor = 0;
+  function fillNextBatch() {
+    if (cursor >= missing.length) return Promise.resolve();
+    var batch = missing.slice(cursor, cursor + 200);
+    cursor += batch.length;
+    // n 不能保证完整；串行补齐，成功响应中仍缺失的歌曲才视为不可用。
+    return fetchSongDetails(batch).then(function (detail) {
+      var songs = songsOf(detail.songs);
+      for (var i = 0; i < songs.length; i++) {
+        if (String(songs[i].name).trim()) byId[songs[i].id] = songs[i];
+      }
+      return fillNextBatch();
+    });
+  }
+  return fillNextBatch().then(function () {
+    var songs = [];
+    for (var i = 0; i < orderedIds.length; i++) {
+      if (byId[orderedIds[i]]) songs.push(byId[orderedIds[i]]);
+    }
+    var creator = playlist.creator || {};
+    return {
+      id: String(playlist.id || fallbackId || ''),
+      title: playlist.name || '',
+      description: playlist.description || '',
+      coverUrl: normalizeCover(playlist.coverImgUrl),
+      author: creator.nickname ? String(creator.nickname) : '',
+      songCount: total,
+      songs: songs
+    };
+  });
 }
 
 function textOf(block) {
@@ -471,8 +520,8 @@ function textOf(block) {
 
 module.exports = {
   pluginInfo: {
-    name: '网易云音乐数据源',
-    version: '1.1.0',
+    name: '数据源-网易',
+    version: '1.1.1',
     author: 'MintMusic',
     description:
       '只提供搜索、歌单分类、榜单、歌单 / 专辑 / 作者详情的网易云数据源；' +
@@ -554,8 +603,17 @@ module.exports = {
     var size = limit || 30;
     var offset = (page || 1) > 1 ? size * ((page || 1) - 1) : 0;
     return fetchSearch(keyword, 1, size, offset).then(function (body) {
+      var result = (body && body.result) || {};
       var songs = songsFromSearch(body);
-      return JSON.stringify({ list: songs, page: page || 1, limit: size });
+      var total = totalOf(result.songCount);
+      return JSON.stringify({
+        list: songs,
+        page: page || 1,
+        total: total,
+        limit: size,
+        offset: offset,
+        isEnd: isPageEnd(total, offset, songs.length, size, result)
+      });
     });
   },
 
@@ -565,10 +623,14 @@ module.exports = {
     var offset = (page || 1) > 1 ? size * ((page || 1) - 1) : 0;
     return fetchSearch(keyword, 1000, size, offset).then(function (body) {
       var result = (body && body.result) || {};
-      var list = result.playlists || [];
+      var playlists = playlistsOf(result.playlists || []);
+      var total = totalOf(result.playlistCount);
       return JSON.stringify({
-        isEnd: list.length < size,
-        playlists: playlistsOf(list)
+        total: total,
+        limit: size,
+        offset: offset,
+        isEnd: isPageEnd(total, offset, playlists.length, size, result),
+        playlists: playlists
       });
     });
   },
@@ -582,6 +644,11 @@ module.exports = {
     return fetchSearch(keyword, searchType, size, offset).then(function (body) {
       var result = (body && body.result) || {};
       var list = isAlbum ? result.albums || [] : result.artists || [];
+      var total = totalOf(isAlbum ? result.albumCount : result.artistCount);
+      // 部分专辑搜索接口忽略分页；仅确认返回全量时才按全局 offset 切片。
+      if (isAlbum && list.length > size && list.length === total) {
+        list = list.slice(offset, offset + size);
+      }
       var items = [];
       for (var i = 0; i < list.length; i++) {
         var item = list[i] || {};
@@ -620,7 +687,13 @@ module.exports = {
           });
         }
       }
-      return JSON.stringify({ list: items, isEnd: list.length < size });
+      return JSON.stringify({
+        list: items,
+        total: total,
+        limit: size,
+        offset: offset,
+        isEnd: isPageEnd(total, offset, items.length, size, result)
+      });
     });
   },
 
@@ -633,14 +706,17 @@ module.exports = {
       // 直连老接口把歌曲放在 album.songs 里，代理接口放在顶层 songs。
       var songs = songsOf(body.songs || album.songs || []);
       var artist = album.artist || {};
+      var total = totalOf(album.size);
+      if (total === null) total = songs.length;
       return JSON.stringify({
         isEnd: true,
+        total: total,
         albumItem: {
           id: String(album.id || id),
           title: album.name || (albumItem && albumItem.title) || raw.name || '',
           coverUrl: normalizeCover(album.picUrl),
           artist: artist.name ? String(artist.name) : '',
-          worksNum: Number(album.size || songs.length),
+          worksNum: total,
           date: album.publishTime ? formatDate(album.publishTime) : '',
           description: album.description || ''
         },
@@ -656,15 +732,18 @@ module.exports = {
     var size = 50;
     var offset = (page || 1) > 1 ? size * ((page || 1) - 1) : 0;
     return fetchArtistSongs(id, size, offset).then(function (body) {
-      var list = body.songs || body.hotSongs || [];
-      var songs = songsOf(list);
+      var songs = songsOf(body.songs || []);
+      var total = totalOf(body.total);
       return JSON.stringify({
-        isEnd: list.length < size,
+        total: total,
+        limit: size,
+        offset: offset,
+        isEnd: isPageEnd(total, offset, songs.length, size, body),
         artistItem: {
           id: String(id),
           title: (artistItem && artistItem.title) || raw.name || '',
           coverUrl: (artistItem && artistItem.coverUrl) || '',
-          worksNum: songs.length
+          worksNum: total
         },
         musicList: songs
       });
@@ -706,11 +785,14 @@ module.exports = {
     var offset = currentPage > 1 ? size * (currentPage - 1) : 0;
     var cat = tagId ? tagId : '全部';
     return fetchPlaylistList(cat, 'hot', size, offset).then(function (body) {
-      var list = body.playlists || [];
+      var playlists = playlistsOf(body.playlists || []);
+      var total = totalOf(body.total);
       return JSON.stringify({
-        // 网易云按 offset 翻页：不足一页即到底
-        isEnd: list.length < size,
-        playlists: playlistsOf(list)
+        total: total,
+        limit: size,
+        offset: offset,
+        isEnd: isPageEnd(total, offset, playlists.length, size, body),
+        playlists: playlists
       });
     });
   },
@@ -755,14 +837,17 @@ module.exports = {
   /* ------------------------------------------------------------- 榜单详情 */
   getTopListDetail: function (id, page) {
     return fetchPlaylistDetail(id).then(function (body) {
-      var detail = playlistDetailOf(body, id);
+      return playlistDetailOf(body, id);
+    }).then(function (detail) {
       return JSON.stringify({
         isEnd: true,
+        total: detail.songCount,
         sheet: {
           title: detail.title,
           coverUrl: detail.coverUrl,
           description: detail.description,
-          author: detail.author
+          author: detail.author,
+          songCount: detail.songCount
         },
         songs: detail.songs
       });
@@ -775,14 +860,17 @@ module.exports = {
     // 兼容 `wy_xxx` / `wy:xxx` 形式的 id
     raw = raw.replace(/^wy[_:]/, '');
     return fetchPlaylistDetail(raw).then(function (body) {
-      var detail = playlistDetailOf(body, raw);
+      return playlistDetailOf(body, raw);
+    }).then(function (detail) {
       return JSON.stringify({
         isEnd: true,
+        total: detail.songCount,
         sheet: {
           title: detail.title,
           coverUrl: detail.coverUrl,
           description: detail.description,
-          author: detail.author
+          author: detail.author,
+          songCount: detail.songCount
         },
         songs: detail.songs
       });

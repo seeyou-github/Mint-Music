@@ -255,14 +255,14 @@ class RadioEngine {
     return _randomPagePlaylists(
       cacheKey: 'tag:$sourceId:$tagId',
       fetch: (page) async {
-        final (playlists, _) = await manager.getCategoryPlaylists(
+        final result = await manager.getCategoryPlaylists(
           sortId: 'hot',
           tagId: tagId,
           page: page,
           limit: 30,
           sourceId: sourceId,
         );
-        return playlists;
+        return result.items;
       },
     );
   }

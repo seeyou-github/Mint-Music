@@ -96,6 +96,8 @@ class CategoryPlaylistsNotifier
   int _page = 1;
   bool _noMore = false;
   bool _loadingMore = false;
+  int? _total;
+  String? _loadMoreError;
 
   /// 请求序号：切歌 / 切分类时会同时有多个请求在飞，只认最后一次的结果，
   /// 否则慢的旧请求会把新内容覆盖掉。
@@ -103,6 +105,8 @@ class CategoryPlaylistsNotifier
 
   bool get noMore => _noMore;
   bool get loadingMore => _loadingMore;
+  int? get total => _total;
+  String? get loadMoreError => _loadMoreError;
 
   Future<void> fetchPlaylists({
     required String sortId,
@@ -112,52 +116,54 @@ class CategoryPlaylistsNotifier
   }) async {
     // 有请求在飞时，只有「重置」类请求（切歌 / 切分类）可以顶掉旧的继续发，
     // 否则旧请求回来会把新内容覆盖掉。
-    if (_loadingMore && !reset) return;
+    if ((_loadingMore || _noMore) && !reset) return;
 
     final requestId = ++_requestId;
+    _loadMoreError = null;
 
     if (reset) {
       _page = 1;
       _noMore = false;
+      _total = null;
       state = const AsyncValue.loading();
     }
 
     _loadingMore = true;
     try {
-      final (playlists, isEnd) = await _repo.getCategoryPlaylists(
+      final result = await _repo.getCategoryPlaylists(
         sortId: sortId,
         tagId: tagId,
         page: _page,
         limit: 30,
         sourceId: sourceId ?? 'wy',
       );
-      if (requestId != _requestId) return;
+      if (!mounted || requestId != _requestId) return;
 
       final current = state.valueOrNull ?? [];
-      // 去重：部分插件脚本的分页接口并不支持翻页（例如“推荐歌单”接口不接收
-      // offset），会反复返回同一批歌单；重复项不再追加，避免一直刷出
-      // 和第一页相同的内容。
       final merged = <String, Playlist>{
-        for (final playlist in [...current, ...playlists])
+        for (final playlist in [...current, ...result.items])
           playlist.id: playlist,
       }.values.toList();
-
-      if (merged.length == current.length) {
-        // 没有新歌单 → 已经到底。
-        _noMore = true;
-        state = AsyncValue.data(current);
-      } else {
-        state = AsyncValue.data(merged);
-      }
-
-      if (isEnd || playlists.length < 30) {
-        _noMore = true;
+      _total = result.total ?? _total;
+      _noMore =
+          result.isEnd == true ||
+          merged.length == current.length ||
+          (_total != null && merged.length >= _total!);
+      if (_noMore) {
+        _total = merged.length;
       } else {
         _page++;
       }
+      state = AsyncValue.data(merged);
     } catch (e, st) {
-      if (requestId != _requestId) return;
-      state = AsyncValue.error(e, st);
+      if (!mounted || requestId != _requestId) return;
+      final current = state.valueOrNull;
+      if (current != null && current.isNotEmpty) {
+        _loadMoreError = e.toString().replaceFirst('Exception: ', '');
+        state = AsyncValue.data(current);
+      } else {
+        state = AsyncValue.error(e, st);
+      }
     } finally {
       if (requestId == _requestId) {
         _loadingMore = false;

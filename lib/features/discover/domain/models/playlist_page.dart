@@ -9,6 +9,7 @@ import 'playlist.dart';
 class PlaylistPage {
   final Playlist? playlist;
   final bool isEnd;
+  final int? total;
 
-  const PlaylistPage({this.playlist, this.isEnd = true});
+  const PlaylistPage({this.playlist, this.isEnd = true, this.total});
 }

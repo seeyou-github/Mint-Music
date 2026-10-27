@@ -402,7 +402,7 @@ function lrcFromList(list) {
 
 module.exports = {
   pluginInfo: {
-    name: '酷我音乐数据源',
+    name: '数据源-酷我',
     version: '1.1.0',
     author: 'MintMusic',
     description:

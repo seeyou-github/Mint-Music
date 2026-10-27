@@ -50,6 +50,7 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
   /// 已成功加载到的页码（0 表示还没加载过）。
   int _page = 0;
   bool _isEnd = false;
+  int? _total;
   bool _loading = true;
   bool _loadingMore = false;
 
@@ -93,7 +94,7 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
 
   /// 切到第 [page] 页并补齐数据。
   Future<void> _goToPage(int page) async {
-    if (page < 1) return;
+    if (page < 1 || _pagingLoading) return;
     setState(() => _pager.jumpTo(page));
     if (_scrollController.hasClients) _scrollController.jumpTo(0);
     await _ensurePageLoaded();
@@ -101,10 +102,9 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
 
   Future<void> _ensurePageLoaded() async {
     if (_pagingLoading) return;
-    _pagingLoading = true;
+    setState(() => _pagingLoading = true);
     try {
-      var guard = 0;
-      while (mounted && guard++ < 30) {
+      while (mounted) {
         final missing = _pager.missing(_songs.length, hasMore: !_isEnd);
         if (missing == 0) break;
         if (_loadMoreError != null) break;
@@ -115,9 +115,11 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
       }
     } finally {
       if (mounted) {
-        setState(() => _pager.clampTo(_songs.length, hasMore: !_isEnd));
+        setState(() {
+          _pagingLoading = false;
+          _pager.clampTo(_songs.length, hasMore: !_isEnd, total: _total);
+        });
       }
-      _pagingLoading = false;
     }
   }
 
@@ -137,6 +139,7 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
           ..addAll(detail.songs);
         _page = 1;
         _isEnd = detail.isEnd;
+        _total = detail.total;
         _loading = false;
       });
       _pager.reset();
@@ -161,11 +164,14 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
       setState(() {
         _songs.addAll(appended);
         _page += 1;
-        _isEnd = detail.isEnd;
+        _total = detail.total ?? _total;
+        _isEnd =
+            detail.isEnd ||
+            appended.isEmpty ||
+            (_total != null && _songs.length >= _total!);
         _loadingMore = false;
         _loadMoreError = null;
       });
-      // 一页全被去重（插件重复返回同一批）时由 _ensurePageLoaded 的循环继续往后翻。
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -178,7 +184,7 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
   /// 底部「加载失败，点击重试」。
   Future<void> _retryLoadMore() async {
     setState(() => _loadMoreError = null);
-    await _loadMore();
+    await _ensurePageLoaded();
   }
 
   Future<CollectionDetail> _fetch(int page) {
@@ -508,8 +514,13 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
       playbackControllerProvider.select((s) => s.currentSong?.id),
     );
     // 只渲染当前页（每页 100 首）；播放用的是完整列表。
+    _pager.clampTo(songs.length, hasMore: !_isEnd, total: _total);
     final visible = _pager.slice(songs);
-    final pageCount = _pager.pageCount(songs.length, hasMore: !_isEnd);
+    final pageCount = _pager.pageCount(
+      songs.length,
+      hasMore: !_isEnd,
+      total: _total,
+    );
     return ListView.builder(
       controller: _scrollController,
       padding: const EdgeInsets.fromLTRB(
@@ -558,6 +569,7 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
         PageBar(
           currentPage: _pager.page,
           pageCount: pageCount,
+          totalKnown: _total != null || _isEnd,
           loading: _loadingMore || _pagingLoading,
           onChanged: (page) => unawaited(_goToPage(page)),
         ),

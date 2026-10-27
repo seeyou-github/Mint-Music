@@ -354,6 +354,19 @@ function __mfMapMusicItem(item, sourceId) {
   return mapped;
 }
 
+function __mfNonNegativeInt(value) {
+  return typeof value === 'number' && isFinite(value) && value >= 0 && Math.floor(value) === value
+    ? value
+    : null;
+}
+
+function __mfValidatePageResponse(response) {
+  if (!response || typeof response !== 'object') {
+    throw new Error('插件返回了无效分页数据');
+  }
+  if (response.error) throw new Error(__mfErrorMessage(response.error));
+}
+
 /* ------------------------------------------------------------------ *
  * 契约实现
  * ------------------------------------------------------------------ */
@@ -365,16 +378,17 @@ function __mfSearch(source, keyword, page, limit) {
       if (!__mfSupportsMusicSearch(plugin)) {
         return {
           list: [],
-          total: 0,
+          total: null,
           isEnd: true,
           source: source,
-          error: __mfErrorMessage(error),
+          unsupported: true,
         };
       }
       var keywordText = __mfText(keyword, '');
       var pageNumber = typeof page === 'number' && page > 0 ? page : 1;
       var result = plugin.search(keywordText, pageNumber, 'music');
       return Promise.resolve(result).then(function (response) {
+        __mfValidatePageResponse(response);
         var rawList = [];
         if (Array.isArray(response)) rawList = response;
         else if (response && Array.isArray(response.data)) rawList = response.data;
@@ -387,13 +401,13 @@ function __mfSearch(source, keyword, page, limit) {
           if (mapped) list.push(mapped);
         }
 
-        var isEnd = true;
-        if (response && typeof response === 'object' && response.isEnd === false) {
-          isEnd = false;
-        } else if (typeof limit === 'number' && limit > 0 && list.length >= limit) {
-          isEnd = false;
-        }
-        return { list: list, total: list.length, isEnd: isEnd, source: source };
+        var isEnd = typeof response.isEnd === 'boolean' ? response.isEnd : null;
+        return {
+          list: list,
+          total: __mfNonNegativeInt(response.total),
+          isEnd: isEnd,
+          source: source,
+        };
       });
     })
     .then(
@@ -406,7 +420,7 @@ function __mfSearch(source, keyword, page, limit) {
         }
         return {
           list: [],
-          total: 0,
+          total: null,
           isEnd: true,
           source: source,
           error: __mfErrorMessage(error),
@@ -486,6 +500,7 @@ function __mfSearchTyped(source, keyword, page, limit, type) {
       var pageNumber = typeof page === 'number' && page > 0 ? page : 1;
       var result = plugin.search(keywordText, pageNumber, wanted);
       return Promise.resolve(result).then(function (response) {
+        __mfValidatePageResponse(response);
         var rawList = [];
         if (Array.isArray(response)) rawList = response;
         else if (response && Array.isArray(response.data)) rawList = response.data;
@@ -496,7 +511,12 @@ function __mfSearchTyped(source, keyword, page, limit, type) {
           if (mapped) list.push(mapped);
         }
         var isEnd = !(response && response.isEnd === false);
-        return { list: list, isEnd: isEnd, source: sourceId };
+        return {
+          list: list,
+          isEnd: isEnd,
+          total: __mfNonNegativeInt(response.total),
+          source: sourceId,
+        };
       });
     })
     .then(
@@ -527,6 +547,7 @@ function __mfGetAlbumInfo(source, albumItem, page) {
         plugin.getAlbumInfo(albumItem || {}, pageNumber)
       ).then(
         function (res) {
+          __mfValidatePageResponse(res);
           var sourceId = __mfSourceId();
           var raw = [];
           if (res && Array.isArray(res.musicList)) raw = res.musicList;
@@ -544,6 +565,7 @@ function __mfGetAlbumInfo(source, albumItem, page) {
             ),
             list: list,
             isEnd: !(res && res.isEnd === false),
+            total: __mfNonNegativeInt(res.total),
           };
         }
       );
@@ -576,6 +598,7 @@ function __mfGetArtistWorks(source, artistItem, page, type) {
       return Promise.resolve(
         plugin.getArtistWorks(artistItem || {}, pageNumber, wanted)
       ).then(function (res) {
+        __mfValidatePageResponse(res);
         var sourceId = __mfSourceId();
         var raw = [];
         if (res && Array.isArray(res.data)) raw = res.data;
@@ -596,6 +619,7 @@ function __mfGetArtistWorks(source, artistItem, page, type) {
           ),
           list: list,
           isEnd: !(res && res.isEnd === false),
+          total: __mfNonNegativeInt(res.total),
         };
       });
     })
@@ -944,6 +968,7 @@ function __mfIdOf(item) {
 
 /** 把 MusicFree 的分页结果（{isEnd, musicList}）展平成本项目可用的歌曲页。 */
 function __mfNormalizeSongPage(response) {
+  __mfValidatePageResponse(response);
   var list = [];
   if (Array.isArray(response)) {
     list = response;
@@ -966,7 +991,11 @@ function __mfNormalizeSongPage(response) {
   if (response && typeof response === 'object' && response.isEnd === false) {
     isEnd = false;
   }
-  return { isEnd: isEnd, songs: songs };
+  return {
+    isEnd: isEnd,
+    songs: songs,
+    total: __mfNonNegativeInt(response.total),
+  };
 }
 
 /** 榜单 / 歌单条目的元信息，供宿主渲染详情页头部。 */
@@ -977,6 +1006,9 @@ function __mfSheetMeta(item) {
     title: __mfText(item.title || item.name, ''),
     coverUrl: __mfCoverOf(item),
     description: __mfText(item.description, ''),
+    songCount: __mfNonNegativeInt(item.songCount) !== null
+      ? __mfNonNegativeInt(item.songCount)
+      : __mfNonNegativeInt(item.trackCount),
     author: __mfText(
       item.artist || item.author || item.creator || item.nickName || item.nickname,
       ''
@@ -1141,7 +1173,7 @@ function __mfTopListDetail(id, page) {
               (error && error.message ? error.message : error)
           );
         }
-        return { isEnd: true, songs: [] };
+        return { isEnd: true, songs: [], error: __mfErrorMessage(error) };
       });
   });
 }
@@ -1168,10 +1200,9 @@ function __mfSheetFromRaw(sheet) {
         sheet.nickname,
       ''
     ),
-    songCount:
-      typeof sheet.musicList === 'object' && sheet.musicList
-        ? __mfFirstArray([sheet.musicList]).length
-        : 0,
+    songCount: __mfNonNegativeInt(sheet.songCount) !== null
+      ? __mfNonNegativeInt(sheet.songCount)
+      : __mfNonNegativeInt(sheet.trackCount),
   };
 }
 
@@ -1200,6 +1231,7 @@ function __mfSearchPlaylists(keyword, page) {
       return Promise.resolve(
         plugin.search(keywordText, pageNumber, 'sheet')
       ).then(function (response) {
+        __mfValidatePageResponse(response);
         var list = [];
         if (Array.isArray(response)) list = response;
         else if (response && typeof response === 'object') {
@@ -1215,7 +1247,11 @@ function __mfSearchPlaylists(keyword, page) {
           typeof response === 'object' &&
           response.isEnd === false
         );
-        return { isEnd: isEnd, playlists: playlists };
+        return {
+          isEnd: isEnd,
+          playlists: playlists,
+          total: __mfNonNegativeInt(response.total),
+        };
       });
     })
     .then(null, function (error) {
@@ -1225,7 +1261,7 @@ function __mfSearchPlaylists(keyword, page) {
             (error && error.message ? error.message : error)
         );
       }
-      return { isEnd: true, playlists: [] };
+      return { isEnd: true, playlists: [], error: __mfErrorMessage(error) };
     });
 }
 
@@ -1244,6 +1280,7 @@ function __mfRecommendSheetsByTag(tagId, page) {
     var pageNumber = typeof page === 'number' && page > 0 ? page : 1;
     return Promise.resolve(plugin.getRecommendSheetsByTag(tag, pageNumber))
       .then(function (response) {
+        __mfValidatePageResponse(response);
         var list = [];
         if (Array.isArray(response)) list = response;
         else if (response && typeof response === 'object') {
@@ -1260,7 +1297,11 @@ function __mfRecommendSheetsByTag(tagId, page) {
         if (response && typeof response === 'object' && response.isEnd === false) {
           isEnd = false;
         }
-        return { isEnd: isEnd, playlists: playlists };
+        return {
+          isEnd: isEnd,
+          playlists: playlists,
+          total: __mfNonNegativeInt(response.total),
+        };
       })
       .then(null, function (error) {
         if (typeof console !== 'undefined' && console.log) {
@@ -1269,7 +1310,7 @@ function __mfRecommendSheetsByTag(tagId, page) {
               (error && error.message ? error.message : error)
           );
         }
-        return { isEnd: true, playlists: [] };
+        return { isEnd: true, playlists: [], error: __mfErrorMessage(error) };
       });
   });
 }
@@ -1316,7 +1357,7 @@ function __mfMusicSheetInfo(sheetId, page) {
               (error && error.message ? error.message : error)
           );
         }
-        return { isEnd: true, songs: [] };
+        return { isEnd: true, songs: [], error: __mfErrorMessage(error) };
       });
   });
 }

@@ -69,6 +69,87 @@ void main() {
     });
   });
 
+  group('已知总数与加载完成后的校正', () {
+    test('已知总数向上取整，不额外添加下一页入口', () {
+      final pager = PageSlicer(pageSize: 10);
+      expect(pager.pageCount(0, hasMore: true, total: 1), 1);
+      expect(pager.pageCount(10, hasMore: true, total: 100), 10);
+      expect(pager.pageCount(10, hasMore: true, total: 101), 11);
+      expect(pager.pageCount(10, hasMore: true, total: 200), 20);
+      expect(pager.pageCount(10, hasMore: true, total: 201), 21);
+      // 上游低估总数时，不能丢掉已经加载的数据。
+      expect(pager.pageCount(35, hasMore: true, total: 20), 4);
+    });
+
+    test('已知但未缓存的远页不会被 clampTo 收回', () {
+      final pager = PageSlicer(pageSize: 10)..jumpTo(20);
+      pager.clampTo(10, hasMore: true, total: 201);
+      expect(pager.page, 20);
+      expect(pager.missing(10, hasMore: true), 190);
+      expect(pager.slice(List.generate(10, (i) => i)), isEmpty);
+      pager.jumpTo(99);
+      pager.clampTo(10, hasMore: true, total: 201);
+      expect(pager.page, 21);
+      pager.clampTo(0, hasMore: true, total: 201);
+      expect(pager.page, 21);
+    });
+
+    test('加载结束后按实际 loaded 校正总数及当前页', () {
+      final pager = PageSlicer(pageSize: 10)..jumpTo(20);
+      expect(pager.pageCount(35, hasMore: false, total: 201), 4);
+      pager.clampTo(35, hasMore: false, total: 201);
+      expect(pager.page, 4);
+      expect(pager.missing(35, hasMore: false), 0);
+      expect(pager.slice(List.generate(35, (i) => i)), [30, 31, 32, 33, 34]);
+      expect(pager.pageCount(35, hasMore: false, total: 1), 4);
+      expect(pager.pageCount(0, hasMore: false, total: 201), 1);
+      pager.clampTo(0, hasMore: false, total: 201);
+      expect(pager.page, 1);
+    });
+
+    test('零、负数和缺省总数按未知处理，结束时至少一页', () {
+      final pager = PageSlicer(pageSize: 10);
+      for (final total in <int?>[null, 0, -1, -100]) {
+        expect(pager.pageCount(0, hasMore: true, total: total), 1);
+        expect(pager.pageCount(25, hasMore: true, total: total), 4);
+        expect(pager.pageCount(25, hasMore: false, total: total), 3);
+        expect(pager.pageCount(0, hasMore: false, total: total), 1);
+        pager.jumpTo(20);
+        pager.clampTo(25, hasMore: true, total: total);
+        expect(pager.page, 4);
+        pager.clampTo(25, hasMore: false, total: total);
+        expect(pager.page, 3);
+      }
+    });
+
+    test('远页补齐按 missing 请求，多余接口数据仍作为缓存', () async {
+      final api = _FakeApi(total: 300, perPage: 65);
+      final pager = PageSlicer(pageSize: 30)..jumpTo(7);
+      final loaded = <int>[];
+      pager.clampTo(0, hasMore: true, total: api.total);
+      expect(pager.page, 7);
+      expect(await _loadPage(pager, api, loaded), [
+        for (var i = 181; i <= 210; i++) i,
+      ]);
+      expect(api.page, 4);
+      expect(loaded.length, 260);
+      pager.next();
+      expect(await _loadPage(pager, api, loaded), [
+        for (var i = 211; i <= 240; i++) i,
+      ]);
+      expect(api.page, 4);
+      pager.updatePageSize(20);
+      expect(
+        pager.pageCount(loaded.length, hasMore: true, total: api.total),
+        15,
+      );
+      expect(await _loadPage(pager, api, loaded), [
+        for (var i = 141; i <= 160; i++) i,
+      ]);
+      expect(api.page, 4);
+    });
+  });
+
   group('接口条数与每页条数不一致时的缓冲', () {
     test('接口一次给 65 条 / 每页 30：多出的留到下一页', () async {
       final api = _FakeApi(total: 65, perPage: 65);

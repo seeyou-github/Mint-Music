@@ -366,7 +366,7 @@ function base64Decode(text) {
 
 module.exports = {
   pluginInfo: {
-    name: 'QQ音乐数据源',
+    name: '数据源-QQ',
     version: '1.1.0',
     author: 'MintMusic',
     description:

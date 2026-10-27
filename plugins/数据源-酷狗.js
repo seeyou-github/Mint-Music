@@ -439,7 +439,7 @@ function fetchLyric(hash, duration) {
 
 module.exports = {
   pluginInfo: {
-    name: '酷狗音乐数据源',
+    name: '数据源-酷狗',
     version: '1.1.0',
     author: 'MintMusic',
     description:

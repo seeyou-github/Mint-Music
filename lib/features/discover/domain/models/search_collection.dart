@@ -116,21 +116,28 @@ class CollectionDetail {
     required this.item,
     required this.songs,
     this.isEnd = true,
+    this.total,
   });
 
   final SearchCollection item;
   final List<Song> songs;
   final bool isEnd;
+  final int? total;
 }
 
 /// 一页专辑 / 作者搜索结果。
 class CollectionSearchPage {
-  const CollectionSearchPage({this.items = const [], this.isEnd = true});
+  const CollectionSearchPage({
+    this.items = const [],
+    this.isEnd = true,
+    this.total,
+  });
 
   final List<SearchCollection> items;
 
-  /// 是否已经到最后一页（插件明确返回 isEnd 才算，默认按「还有下一页」处理）。
+  /// 插件未返回结束标记时，默认已到最后一页。
   final bool isEnd;
+  final int? total;
 }
 
 /// 专辑 / 作者详情加载失败。

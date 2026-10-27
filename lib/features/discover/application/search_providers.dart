@@ -4,6 +4,7 @@ import 'package:sqflite/sqflite.dart' show ConflictAlgorithm;
 
 import '../../../core/storage/app_database.dart';
 import '../../../core/storage/app_preferences.dart';
+import '../../../shared/pagination/page_result.dart';
 import '../../player/domain/models/song.dart';
 import '../../discover/domain/models/playlist.dart';
 import '../../discover/domain/models/search_collection.dart';
@@ -71,6 +72,7 @@ class SearchResultsState {
   final bool isLoading;
   final bool isLoadingMore;
   final bool hasMore;
+  final int? total;
 
   /// 首屏加载失败的原因。
   final String? error;
@@ -89,6 +91,7 @@ class SearchResultsState {
     this.isLoading = false,
     this.isLoadingMore = false,
     this.hasMore = false,
+    this.total,
     this.error,
     this.loadMoreError,
   });
@@ -101,6 +104,7 @@ class SearchResultsState {
     bool? isLoading,
     bool? isLoadingMore,
     bool? hasMore,
+    int? total,
     String? error,
     String? loadMoreError,
     bool clearError = false,
@@ -114,6 +118,7 @@ class SearchResultsState {
       isLoading: isLoading ?? this.isLoading,
       isLoadingMore: isLoadingMore ?? this.isLoadingMore,
       hasMore: hasMore ?? this.hasMore,
+      total: total ?? this.total,
       error: clearError ? null : (error ?? this.error),
       loadMoreError: clearLoadMoreError
           ? null
@@ -199,28 +204,32 @@ class SearchResultsNotifier extends StateNotifier<SearchResultsState> {
     );
 
     try {
-      final pageSongs = await _loadSingleSourcePage(
+      final result = await _loadSingleSourcePage(
         state.sourceId,
         state.query,
         page,
       );
-      if (requestId != _requestId) return;
+      if (!mounted || requestId != _requestId) return;
 
+      final pageSongs = result.items;
       final merged = replace
           ? pageSongs
           : _appendUnique(state.songs, pageSongs);
+      final total = result.total ?? state.total;
       final appendedAny = merged.length > state.songs.length;
-      // Different source endpoints do not consistently honor the requested
-      // page size. In particular, QQ may return a partial non-final page.
-      // Continue until the source actually returns no new songs, rather
-      // than treating a page shorter than 30 as the final page.
-      final hasMore = pageSongs.isNotEmpty && (replace || appendedAny);
+      // 部分音源的非末页也不足请求条数，不能只按短页停止。
+      final hasMore =
+          result.isEnd != true &&
+          pageSongs.isNotEmpty &&
+          (replace || appendedAny) &&
+          (total == null || merged.length < total);
       state = state.copyWith(
         songs: merged,
         page: page,
         isLoading: false,
         isLoadingMore: false,
         hasMore: hasMore,
+        total: hasMore ? total : merged.length,
         clearError: true,
       );
     } catch (error) {
@@ -245,12 +254,12 @@ class SearchResultsNotifier extends StateNotifier<SearchResultsState> {
     }
   }
 
-  Future<List<Song>> _loadSingleSourcePage(
+  Future<PageResult<Song>> _loadSingleSourcePage(
     String sourceId,
     String query,
     int page,
   ) async {
-    return _manager.search(
+    return _manager.searchPage(
       query,
       sourceId: sourceId,
       page: page,
@@ -443,6 +452,7 @@ class PlaylistSearchState {
     this.isLoading = false,
     this.isLoadingMore = false,
     this.hasMore = false,
+    this.total,
     this.error,
     this.loadMoreError,
   });
@@ -453,6 +463,7 @@ class PlaylistSearchState {
   final bool isLoading;
   final bool isLoadingMore;
   final bool hasMore;
+  final int? total;
 
   /// 首屏加载失败原因。
   final String? error;
@@ -467,6 +478,7 @@ class PlaylistSearchState {
     bool? isLoading,
     bool? isLoadingMore,
     bool? hasMore,
+    int? total,
     String? error,
     String? loadMoreError,
     bool clearError = false,
@@ -479,6 +491,7 @@ class PlaylistSearchState {
       isLoading: isLoading ?? this.isLoading,
       isLoadingMore: isLoadingMore ?? this.isLoadingMore,
       hasMore: hasMore ?? this.hasMore,
+      total: total ?? this.total,
       error: clearError ? null : (error ?? this.error),
       loadMoreError: clearLoadMoreError
           ? null
@@ -552,27 +565,32 @@ class PlaylistSearchNotifier extends StateNotifier<PlaylistSearchState> {
       state = state.copyWith(isLoadingMore: true, clearLoadMoreError: true);
     }
     try {
-      final playlists = await _manager.searchPlaylists(
+      final result = await _manager.searchPlaylistsPage(
         query,
         sourceId: sourceId,
         page: page,
         limit: _pageSize,
       );
       if (!mounted || requestId != _requestId) return;
+      final playlists = result.items;
       final merged = replace
           ? playlists
           : _appendUniquePlaylists(state.playlists, playlists);
+      final total = result.total ?? state.total;
       final appended = merged.length > state.playlists.length;
+      final hasMore =
+          result.isEnd != true &&
+          playlists.isNotEmpty &&
+          (replace || appended) &&
+          (total == null || merged.length < total);
       state = state.copyWith(
         query: query,
         playlists: merged,
         page: page,
         isLoading: false,
         isLoadingMore: false,
-        // 接口没有 isEnd：只要这一页拿到了新数据就还可能下一页（哪怕不足
-        // 请求条数，例如接口每页只给 20 条）；真到末页时下一页返回空 /
-        // 全是重复项，这里自然变 false。
-        hasMore: playlists.isNotEmpty && (replace || appended),
+        hasMore: hasMore,
+        total: hasMore ? total : merged.length,
         clearError: true,
         clearLoadMoreError: true,
       );
@@ -629,6 +647,7 @@ class CollectionSearchState {
     this.page = 0,
     this.loadingMore = false,
     this.hasMore = false,
+    this.total,
     this.error,
     this.loadMoreError,
   });
@@ -643,6 +662,7 @@ class CollectionSearchState {
   final int page;
   final bool loadingMore;
   final bool hasMore;
+  final int? total;
 
   /// 首屏加载失败原因。
   final String? error;
@@ -658,6 +678,7 @@ class CollectionSearchState {
     int? page,
     bool? loadingMore,
     bool? hasMore,
+    int? total,
     String? error,
     String? loadMoreError,
     bool clearError = false,
@@ -671,6 +692,7 @@ class CollectionSearchState {
       page: page ?? this.page,
       loadingMore: loadingMore ?? this.loadingMore,
       hasMore: hasMore ?? this.hasMore,
+      total: total ?? this.total,
       error: clearError ? null : (error ?? this.error),
       loadMoreError: clearLoadMoreError
           ? null
@@ -775,13 +797,20 @@ class CollectionSearchController extends StateNotifier<CollectionSearchState> {
       final merged = replace
           ? result.items
           : _appendUniqueCollections(state.results, result.items);
+      final total = result.total ?? state.total;
+      final hasMore =
+          !result.isEnd &&
+          result.items.isNotEmpty &&
+          (replace || merged.length > state.results.length) &&
+          (total == null || merged.length < total);
       state = state.copyWith(
         query: keyword,
         results: merged,
         page: page,
         loading: false,
         loadingMore: false,
-        hasMore: !result.isEnd,
+        hasMore: hasMore,
+        total: hasMore ? total : merged.length,
         clearError: true,
         clearLoadMoreError: true,
       );

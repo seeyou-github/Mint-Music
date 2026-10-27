@@ -1,4 +1,5 @@
 import 'dart:convert';
+import '../../../shared/pagination/page_result.dart';
 import '../../player/domain/models/song.dart';
 import '../../player/domain/models/lyric_line.dart';
 import '../../discover/domain/models/playlist.dart';
@@ -28,7 +29,7 @@ class MusicSourceManager {
   final Map<String, _CacheEntry<List<Playlist>>> _hotPlaylistsCache = {};
   final Map<String, _CacheEntry<Playlist?>> _playlistDetailCache = {};
   final Map<String, _CacheEntry<List<String>>> _searchSuggestionsCache = {};
-  final Map<String, _CacheEntry<List<Song>>> _searchPageCache = {};
+  final Map<String, _CacheEntry<PageResult<Song>>> _searchPageCache = {};
   final Map<String, _CacheEntry<String?>> _coverCache = {};
   final Map<String, _CacheEntry<Map<String, List<Song>>>> _searchResultsCache =
       {};
@@ -45,6 +46,7 @@ class MusicSourceManager {
 
   void clearSearchCache() {
     _searchPageCache.clear();
+    _playlistSearchCache = null;
     _coverCache.clear();
     _searchResultsCache.clear();
   }
@@ -54,6 +56,7 @@ class MusicSourceManager {
     _playlistDetailCache.clear();
     _searchSuggestionsCache.clear();
     _searchPageCache.clear();
+    _playlistSearchCache = null;
     _coverCache.clear();
     _searchResultsCache.clear();
   }
@@ -821,7 +824,21 @@ class MusicSourceManager {
     int page = 1,
     int limit = 30,
   }) async {
-    if (query.isEmpty) return [];
+    return (await searchPage(
+      query,
+      sourceId: sourceId,
+      page: page,
+      limit: limit,
+    )).items;
+  }
+
+  Future<PageResult<Song>> searchPage(
+    String query, {
+    String sourceId = 'wy',
+    int page = 1,
+    int limit = 30,
+  }) async {
+    if (query.isEmpty) return const PageResult(total: 0, isEnd: true);
 
     // 记录最后一次失败原因：全部音源都失败时抛给上层，
     // 让「加载下一页」能区分「确实没有更多」和「这次请求失败了」。
@@ -849,17 +866,12 @@ class MusicSourceManager {
               page: page,
               limit: limit,
             );
-            final pluginError = _pluginErrorOf(resultJson);
-            if (pluginError != null) lastError = pluginError;
             if (resultJson != null && resultJson.isNotEmpty) {
-              print(
-                '[MusicSourceManager] 插件搜索成功: source=$sourceId, 结果长度=${resultJson.length}',
-              );
-              final results = _parsePluginSearchResult(
+              final results = _parsePluginSearchPage(
                 resultJson,
                 effectiveSourceId,
               );
-              if (results.isNotEmpty) {
+              if (results != null) {
                 _searchPageCache[cacheKey] = _CacheEntry(
                   results,
                   _searchResultsTTL,
@@ -882,14 +894,11 @@ class MusicSourceManager {
               limit: limit,
             );
             if (resultJson != null && resultJson.isNotEmpty) {
-              print(
-                '[MusicSourceManager] 插件searchWithHandler成功: source=$sourceId',
-              );
-              final results = _parsePluginSearchResult(
+              final results = _parsePluginSearchPage(
                 resultJson,
                 effectiveSourceId,
               );
-              if (results.isNotEmpty) {
+              if (results != null) {
                 _searchPageCache[cacheKey] = _CacheEntry(
                   results,
                   _searchResultsTTL,
@@ -912,23 +921,49 @@ class MusicSourceManager {
       throw lastError;
     }
     print('[MusicSourceManager] 没有找到可用的搜索源: $sourceId');
-    return [];
+    return const PageResult();
   }
 
-  /// 插件返回体里如果带 `error`（洛雪式 requestHandler 抛错时会这样返回），
-  /// 取出这条错误文案。
-  static String? _pluginErrorOf(String? raw) {
-    if (raw == null || raw.isEmpty) return null;
-    try {
-      final decoded = jsonDecode(raw);
-      if (decoded is Map) {
-        final message = decoded['error'];
-        if (message is String && message.trim().isNotEmpty) {
-          return message.trim();
-        }
-      }
-    } catch (_) {}
+  PageResult<Song>? _parsePluginSearchPage(String raw, String sourceId) {
+    final decoded = _decodePluginPage(raw);
+    final total = _pluginTotalOf(decoded);
+    final isEnd = decoded is Map && decoded['isEnd'] is bool
+        ? decoded['isEnd'] as bool
+        : null;
+    final items = _parsePluginSearchResult(raw, sourceId);
+    if (items.isEmpty && total != 0 && isEnd != true) return null;
+    return PageResult(items: items, total: total, isEnd: isEnd);
+  }
+
+  static int? _nonNegativeInt(dynamic value) {
+    if (value is num &&
+        value.isFinite &&
+        value >= 0 &&
+        value == value.truncateToDouble()) {
+      return value.toInt();
+    }
     return null;
+  }
+
+  static int? _pluginTotalOf(dynamic decoded) =>
+      decoded is Map ? _nonNegativeInt(decoded['total']) : null;
+
+  static dynamic _decodePluginPage(String? raw) {
+    if (raw == null || raw.trim().isEmpty) {
+      throw const FormatException('音源返回了空数据，请稍后重试');
+    }
+    var decoded = jsonDecode(raw);
+    if (decoded is String) decoded = jsonDecode(decoded);
+    if (decoded is! Map && decoded is! List) {
+      throw const FormatException('音源返回结构不是列表或对象');
+    }
+    if (decoded is Map) {
+      final error = decoded['error'];
+      if (error != null && error != false && '$error'.trim().isNotEmpty) {
+        throw Exception('$error');
+      }
+    }
+    return decoded;
   }
 
   Future<Map<String, List<Song>>> aggregateSearch(
@@ -2107,6 +2142,8 @@ class MusicSourceManager {
     final results = <SearchCollection>[];
     final seen = <String>{};
     var isEnd = true;
+    var successfulHosts = 0;
+    int? total;
     Object? lastError;
     for (final host in _findPluginHostsForSource(effective)) {
       if (!(wantAlbum ? host.supportsAlbumSearch : host.supportsArtistSearch)) {
@@ -2114,67 +2151,62 @@ class MusicSourceManager {
       }
       final pluginSourceId = _getSourceIdForHost(host, effective);
       if (pluginSourceId == null) continue;
-      final raw = await host.searchTyped(
-        _resolvePluginSourceId(pluginSourceId),
-        query,
-        page: page,
-        type: type.id,
-        limit: limit,
-      );
-      if (raw == null || raw.isEmpty) continue;
-      final pluginError = _pluginErrorOf(raw);
-      if (pluginError != null) {
-        lastError = CollectionDetailException(pluginError);
-        continue;
-      }
-      final resultSource = _pluginSourceAppId(host, pluginSourceId);
-      final parsed = _parseCollectionList(raw, resultSource, type);
-      if (!parsed.isEnd) isEnd = false;
-      for (final item in parsed.items) {
-        if (seen.add('${item.source}:${item.id}')) results.add(item);
+      try {
+        final raw = await host.searchTyped(
+          _resolvePluginSourceId(pluginSourceId),
+          query,
+          page: page,
+          type: type.id,
+          limit: limit,
+        );
+        final resultSource = _pluginSourceAppId(host, pluginSourceId);
+        final parsed = _parseCollectionList(raw, resultSource, type);
+        successfulHosts++;
+        total = parsed.total;
+        if (!parsed.isEnd) isEnd = false;
+        for (final item in parsed.items) {
+          if (seen.add('${item.source}:${item.id}')) results.add(item);
+        }
+      } catch (e) {
+        lastError = e;
       }
     }
-    if (results.isEmpty && lastError != null) throw lastError;
-    return CollectionSearchPage(items: results, isEnd: isEnd);
+    if (lastError != null) throw lastError;
+    return CollectionSearchPage(
+      items: results,
+      isEnd: isEnd,
+      total: successfulHosts == 1 ? total : null,
+    );
   }
 
-  /// 解析 `{list, isEnd}` 形式的专辑 / 作者搜索结果。
-  ({List<SearchCollection> items, bool isEnd}) _parseCollectionList(
-    String rawJson,
+  /// 解析 `{list, isEnd, total}` 形式的专辑 / 作者搜索结果。
+  CollectionSearchPage _parseCollectionList(
+    String? rawJson,
     String sourceId,
     CollectionType type,
   ) {
-    try {
-      var decoded = jsonDecode(rawJson);
-      if (decoded is String) {
-        try {
-          decoded = jsonDecode(decoded);
-        } catch (_) {}
-      }
-      if (decoded is! Map) {
-        return (items: const <SearchCollection>[], isEnd: true);
-      }
-      final list = decoded['list'] ?? decoded['data'];
-      final isEnd = decoded['isEnd'] != false;
-      if (list is! List) {
-        return (items: const <SearchCollection>[], isEnd: isEnd);
-      }
-      final items = <SearchCollection>[];
-      for (final entry in list) {
-        if (entry is! Map) continue;
-        final json = entry.map((k, v) => MapEntry('$k', v));
-        final item = SearchCollection.fromJson(
-          json,
-          source: sourceId,
-          type: type,
-        );
-        if (item.id.isEmpty || item.title.isEmpty) continue;
-        items.add(item);
-      }
-      return (items: items, isEnd: isEnd);
-    } catch (_) {
-      return (items: const <SearchCollection>[], isEnd: true);
+    final decoded = _decodePluginPage(rawJson);
+    final list = decoded is List ? decoded : decoded['list'] ?? decoded['data'];
+    if (list is! List) {
+      throw const FormatException('音源没有返回专辑 / 作者列表');
     }
+    final items = <SearchCollection>[];
+    for (final entry in list) {
+      if (entry is! Map) continue;
+      final json = entry.map((k, v) => MapEntry('$k', v));
+      final item = SearchCollection.fromJson(
+        json,
+        source: sourceId,
+        type: type,
+      );
+      if (item.id.isEmpty || item.title.isEmpty) continue;
+      items.add(item);
+    }
+    return CollectionSearchPage(
+      items: items,
+      isEnd: _pluginResultIsEnd(decoded),
+      total: _pluginTotalOf(decoded),
+    );
   }
 
   /// 专辑 / 作者详情（含歌曲列表），支持分页。
@@ -2278,6 +2310,7 @@ class MusicSourceManager {
       item: merged,
       songs: songs,
       isEnd: map['isEnd'] != false,
+      total: _pluginTotalOf(map),
     );
   }
 
@@ -2593,15 +2626,13 @@ class MusicSourceManager {
       final raw = isBoard
           ? await host.getTopListDetail(rawId, page: page)
           : await host.getMusicSheetInfo(rawId, page: page);
-      if (raw == null) return const PlaylistPage();
-
-      final decoded = _decodePluginJson(raw);
-      final songs = _parsePluginSearchResult(raw, sourceId);
+      final decoded = _decodePluginPage(raw);
+      final songs = _parsePluginSearchResult(raw!, sourceId);
       final sheetValue = decoded is Map ? decoded['sheet'] : null;
       final meta = sheetValue is Map ? sheetValue : const <String, dynamic>{};
-      // 插件通过 isEnd 告知是否还有下一页；字段缺失时按「已到末页」处理，
-      // 避免未知插件被无限翻页。
-      final isEnd = decoded is Map ? decoded['isEnd'] == true : true;
+      final total = _pluginTotalOf(decoded);
+      final songCount = _nonNegativeInt(meta['songCount']);
+      final isEnd = _pluginResultIsEnd(decoded);
 
       return PlaylistPage(
         playlist: Playlist(
@@ -2609,16 +2640,17 @@ class MusicSourceManager {
           title: _nonEmptyText(meta['title']) ?? '',
           description: _nonEmptyText(meta['description']) ?? '',
           coverUrl: _nonEmptyText(meta['coverUrl']),
-          songCount: songs.length,
+          songCount: songCount ?? total ?? 0,
           songs: songs,
           author: _nonEmptyText(meta['author']),
           source: sourceId,
         ),
         isEnd: isEnd,
+        total: total,
       );
     } catch (e) {
       print('[MusicSourceManager] 插件发现详情获取失败 id=$appId: $e');
-      return const PlaylistPage();
+      rethrow;
     }
   }
 
@@ -2690,36 +2722,30 @@ class MusicSourceManager {
 
   /// 分类歌单分页。
   ///
-  /// 返回 `(歌单列表, 是否已到底)`：尊重插件返回的 `isEnd`——有些脚本的
-  /// “推荐歌单”接口不接收 offset（永远返回同一批歌单），必须尊重它的结束
-  /// 标记，否则翻页会一直加载出和第一页相同的内容。
-  Future<(List<Playlist>, bool)> getCategoryPlaylists({
+  /// 保留插件的页大小和结束标记，由调用方缓冲并切分 UI 页。
+  Future<PageResult<Playlist>> getCategoryPlaylists({
     required String sortId,
     required String tagId,
     required int page,
     required int limit,
     String sourceId = 'wy',
   }) async {
-    // 插件（MusicFree）音源：按推荐歌单分类取歌单。
     final host = _findDiscoverHost(sourceId, needSheets: true);
-    if (host != null) {
-      try {
-        final decoded = _decodePluginJson(
-          await host.getRecommendSheetsByTag(tagId, page: page),
-        );
-        final playlists = _pluginPlaylistsFromJson(sourceId, decoded);
-        final isEnd = _pluginResultIsEnd(decoded);
-        if (playlists.isNotEmpty) {
-          final limited = playlists.length > limit
-              ? playlists.take(limit).toList()
-              : playlists;
-          return (limited, isEnd);
-        }
-      } catch (e) {
-        print('[MusicSourceManager] 插件分类歌单获取失败 source=$sourceId: $e');
-      }
+    if (host == null) return const PageResult(isEnd: true);
+    final raw = await host.getRecommendSheetsByTag(tagId, page: page);
+    return _parsePluginPlaylistPage(raw, sourceId);
+  }
+
+  PageResult<Playlist> _parsePluginPlaylistPage(String? raw, String sourceId) {
+    final decoded = _decodePluginPage(raw);
+    if (decoded is! List && decoded['playlists'] is! List) {
+      throw const FormatException('音源没有返回歌单列表');
     }
-    return (const <Playlist>[], true);
+    return PageResult(
+      items: _pluginPlaylistsFromJson(sourceId, decoded),
+      isEnd: _pluginResultIsEnd(decoded),
+      total: _pluginTotalOf(decoded),
+    );
   }
 
   /// 插件返回结果里的结束标记（缺省视为已到底）。
@@ -2853,32 +2879,27 @@ class MusicSourceManager {
     int page = 1,
     int limit = 30,
   }) async {
-    if (query.isEmpty) return [];
-
-    final results = <Playlist>[];
-    final seenIds = <String>{};
-
-    void addUnique(Playlist playlist) {
-      if (!seenIds.contains(playlist.id)) {
-        seenIds.add(playlist.id);
-        results.add(playlist);
-      }
-    }
-
-    final effectiveSourceId = _canonicalSourceId(sourceId);
-    // 插件音源：走 MusicFree 插件的 sheet 搜索（supportedSearchType
-    // 含 sheet）。结果 id 带 `mf:sheet:` 前缀，打开详情时会自动路由
-    // 回对应插件的 getMusicSheetInfo。
-    for (final p in await _searchPlaylistsFromPlugins(
+    return (await searchPlaylistsPage(
       query,
-      effectiveSourceId,
+      sourceId: sourceId,
       page: page,
       limit: limit,
-    )) {
-      addUnique(p);
-    }
+    )).items;
+  }
 
-    return results.take(limit).toList();
+  Future<PageResult<Playlist>> searchPlaylistsPage(
+    String query, {
+    required String sourceId,
+    int page = 1,
+    int limit = 30,
+  }) async {
+    if (query.isEmpty) return const PageResult(total: 0, isEnd: true);
+    return _searchPlaylistsFromPlugins(
+      query,
+      _canonicalSourceId(sourceId),
+      page: page,
+      limit: limit,
+    );
   }
 
   /// 插件音源的歌单搜索。
@@ -2891,7 +2912,7 @@ class MusicSourceManager {
   /// （表现为「歌单搜索只有第一页」）。这里按 (sourceId, query) 聚合插件的
   /// 多页结果，保证取满 `page * limit` 条（或插件已到底）再切片，与每页
   /// 固定条数的行为一致。
-  Future<List<Playlist>> _searchPlaylistsFromPlugins(
+  Future<PageResult<Playlist>> _searchPlaylistsFromPlugins(
     String query,
     String sourceId, {
     int page = 1,
@@ -2902,32 +2923,28 @@ class MusicSourceManager {
       _playlistSearchCache = _PluginPlaylistSearchCache(sourceId, query);
     }
     final c = _playlistSearchCache!;
+    final hosts = _findPluginHostsForSource(
+      sourceId,
+    ).where((host) => host.supportsPlaylistSearch).toList();
 
     while (!c.isEnd && c.items.length < page * limit) {
       final pageResults = <Playlist>[];
       var anyHostReportedMore = false;
-      for (final host in _findPluginHostsForSource(sourceId)) {
-        if (!host.supportsPlaylistSearch) continue;
-        final pluginSourceId = _getSourceIdForHost(host, sourceId);
-        if (pluginSourceId == null) continue;
-        try {
-          final raw = await host
-              .searchPlaylists(query, page: c.pluginPage + 1)
-              .timeout(const Duration(seconds: 20));
-          if (raw == null || raw.isEmpty) continue;
-          final decoded = _decodePluginJson(raw);
-          final appId = _pluginSourceAppId(host, pluginSourceId);
-          pageResults.addAll(_pluginPlaylistsFromJson(appId, decoded));
-          // 适配器 / 插件明确说还有下一页（isEnd == false）才算没到底。
-          if (!(decoded is Map && decoded['isEnd'] == false)) {
-            continue;
-          }
-          anyHostReportedMore = true;
-        } catch (e) {
-          print('[MusicSourceManager] 插件歌单搜索失败: source=$sourceId error=$e');
-        }
+      int? total;
+      for (final host in hosts) {
+        final pluginSourceId = _getSourceIdForHost(host, sourceId)!;
+        final raw = await host
+            .searchPlaylists(query, page: c.pluginPage + 1)
+            .timeout(const Duration(seconds: 20));
+        final appId = _pluginSourceAppId(host, pluginSourceId);
+        final result = _parsePluginPlaylistPage(raw, appId);
+        pageResults.addAll(result.items);
+        total = result.total;
+        if (result.isEnd == false) anyHostReportedMore = true;
       }
+      // 整轮成功后再推进页码，失败重试仍请求同一插件页。
       c.pluginPage++;
+      c.total = hosts.length == 1 ? total ?? c.total : null;
       final before = c.items.length;
       for (final p in pageResults) {
         c.add(p);
@@ -2940,9 +2957,12 @@ class MusicSourceManager {
     }
 
     final start = (page - 1) * limit;
-    if (start >= c.items.length) return const <Playlist>[];
     final end = c.items.length < page * limit ? c.items.length : page * limit;
-    return c.items.sublist(start, end);
+    return PageResult(
+      items: start >= c.items.length ? const [] : c.items.sublist(start, end),
+      total: c.total,
+      isEnd: c.isEnd && end >= c.items.length,
+    );
   }
 
   /// 插件歌单搜索的分页聚合缓存（只保留最近一次搜索的）。
@@ -2965,6 +2985,7 @@ class _PluginPlaylistSearchCache {
 
   /// 插件侧是否已经没有更多。
   bool isEnd = false;
+  int? total;
 
   void add(Playlist playlist) {
     if (_ids.add(playlist.id)) items.add(playlist);

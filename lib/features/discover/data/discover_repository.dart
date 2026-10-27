@@ -1,3 +1,4 @@
+import '../../../shared/pagination/page_result.dart';
 import '../domain/models/playlist.dart';
 import '../domain/models/playlist_page.dart';
 import '../domain/models/leaderboard.dart';
@@ -23,7 +24,7 @@ class DiscoverRepository {
     return _manager.getHotPlaylistTags(sourceId: sourceId);
   }
 
-  Future<(List<Playlist>, bool)> getCategoryPlaylists({
+  Future<PageResult<Playlist>> getCategoryPlaylists({
     required String sortId,
     required String tagId,
     required int page,
