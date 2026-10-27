@@ -17,9 +17,16 @@ import '../../../shared/widgets/music_cover_image.dart';
 import '../../../shared/widgets/page_bar.dart';
 import '../../../shared/widgets/load_more_footer.dart';
 import '../../../shared/widgets/source_icon.dart';
+import '../../../shared/widgets/source_name_tag.dart';
 import '../application/discover_providers.dart';
+import '../application/hot_board_providers.dart';
+import '../domain/models/hot_board.dart';
 import '../domain/models/playlist.dart';
 import '../domain/models/leaderboard.dart';
+import '../../library/domain/models/recently_played.dart';
+import '../../player/application/playback_context.dart';
+import '../../player/application/playback_controller.dart';
+import '../../player/domain/models/song.dart';
 import '../../plugin/application/plugin_providers.dart';
 import '../../plugin/domain/plugin_types.dart';
 import '../../settings/application/settings_providers.dart';
@@ -49,10 +56,19 @@ class _CategoryScrollBehavior extends MaterialScrollBehavior {
   };
 }
 
+/// 榜单分类：热榜（自定义展示的榜单 TOP 10）/ 所有（音源榜单列表）。
+enum _LeaderboardCategory { hot, all }
+
 class _DiscoverPageState extends ConsumerState<DiscoverPage> {
   final ScrollController _scrollController = ScrollController();
   final GlobalKey _sourceButtonKey = GlobalKey();
   bool _hasInitialized = false;
+
+  /// 榜单分类，默认「热榜」；每次进入榜单页都会回到「热榜」。
+  _LeaderboardCategory _leaderboardCategory = _LeaderboardCategory.hot;
+
+  /// 正在挑选 / 获取热榜数据。
+  bool _addingHotBoard = false;
 
   /// 歌单列表分页：每页 10 行（每行多少列 × 10 就是每页条数）。
   static const int _playlistPageRows = 10;
@@ -148,6 +164,14 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
     ref.listen<String>(defaultSourceIdProvider, (previous, next) {
       if (previous != null && previous != next) {
         ref.read(discoverSourceIdProvider.notifier).state = next;
+      }
+    });
+
+    // 每次进入「榜单」都默认打开「热榜」分类。
+    ref.listen<DiscoverTab>(discoverTabProvider, (previous, next) {
+      if (next == DiscoverTab.leaderboards &&
+          previous != DiscoverTab.leaderboards) {
+        _leaderboardCategory = _LeaderboardCategory.hot;
       }
     });
 
@@ -983,6 +1007,539 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
   }
 
   Widget _buildLeaderboardsTab(ThemeColors colors) {
+    final isHot = _leaderboardCategory == _LeaderboardCategory.hot;
+    return Column(
+      children: [
+        SizedBox(
+          height: 36,
+          child: Row(
+            children: [
+              // 分类标签：数量增多时支持鼠标拖动 / 触摸左右滑动。
+              Expanded(
+                child: ScrollConfiguration(
+                  behavior: const _CategoryScrollBehavior(),
+                  child: ListView(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.only(left: AppSpacing.lg),
+                    children: [
+                      _buildTagChip(
+                        label: context.tr('热榜'),
+                        isActive: isHot,
+                        colors: colors,
+                        onTap: () => _selectLeaderboardCategory(
+                          _LeaderboardCategory.hot,
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.only(left: AppSpacing.sm),
+                        child: _buildTagChip(
+                          label: context.tr('所有'),
+                          isActive: !isHot,
+                          colors: colors,
+                          onTap: () => _selectLeaderboardCategory(
+                            _LeaderboardCategory.all,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              // 「新增热榜数据」固定在最右侧，分类再长也不会被挤出去。
+              Padding(
+                padding: const EdgeInsets.only(
+                  left: AppSpacing.sm,
+                  right: AppSpacing.lg,
+                ),
+                child: _buildAddHotBoardButton(colors),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        Expanded(
+          child: isHot
+              ? _buildHotBoardTab(colors)
+              : _buildAllLeaderboardsTab(colors),
+        ),
+      ],
+    );
+  }
+
+  void _selectLeaderboardCategory(_LeaderboardCategory category) {
+    if (_leaderboardCategory == category) return;
+    setState(() => _leaderboardCategory = category);
+  }
+
+  Widget _buildAddHotBoardButton(ThemeColors colors) {
+    return Tooltip(
+      message: context.tr('新增热榜数据'),
+      child: MouseRegion(
+        cursor: _addingHotBoard
+            ? SystemMouseCursors.basic
+            : SystemMouseCursors.click,
+        child: GestureDetector(
+          onTap: _addingHotBoard ? null : () => unawaited(_addHotBoard()),
+          child: Container(
+            width: 30,
+            height: 30,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: colors.surface,
+            ),
+            child: _addingHotBoard
+                ? Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: colors.primary,
+                    ),
+                  )
+                : Icon(Icons.add, size: 20, color: colors.textSecondary),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 「热榜」分类：没有数据时给出引导，有数据时展示榜单 TOP 10。
+  Widget _buildHotBoardTab(ThemeColors colors) {
+    return ref
+        .watch(hotBoardProvider)
+        .when(
+          loading: () => const Center(child: CircularProgressIndicator()),
+          error: (_, _) => Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.error_outline, size: 48, color: colors.textHint),
+                const SizedBox(height: AppSpacing.md),
+                Text(
+                  context.tr('热榜数据加载失败'),
+                  style: TextStyle(color: colors.textHint),
+                ),
+                const SizedBox(height: AppSpacing.md),
+                TextButton(
+                  onPressed: () => ref.invalidate(hotBoardProvider),
+                  child: Text(context.tr('重试')),
+                ),
+              ],
+            ),
+          ),
+          data: (board) {
+            if (board == null || board.songs.isEmpty) {
+              return _buildHotBoardEmpty(colors);
+            }
+            return _buildHotBoardContent(colors, board);
+          },
+        );
+  }
+
+  Widget _buildHotBoardEmpty(ThemeColors colors) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.local_fire_department_outlined,
+            size: 48,
+            color: colors.textHint,
+          ),
+          const SizedBox(height: AppSpacing.md),
+          Text(context.tr('还没有热榜数据'), style: TextStyle(color: colors.textHint)),
+          const SizedBox(height: AppSpacing.xs),
+          Text(
+            context.tr('点击右上角 + 选择要展示的榜单'),
+            style: TextStyle(fontSize: 12, color: colors.textHint),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          OutlinedButton.icon(
+            onPressed: _addingHotBoard ? null : () => unawaited(_addHotBoard()),
+            icon: const Icon(Icons.add, size: 18),
+            label: Text(context.tr('选择榜单')),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHotBoardContent(ThemeColors colors, HotBoard board) {
+    final horizontalPadding = ResponsiveLayout.horizontalPadding(context);
+    final sourceName = ref
+        .watch(musicSourceManagerProvider)
+        .sourceDisplayName(board.source);
+    return CustomScrollView(
+      cacheExtent: 360,
+      slivers: [
+        SliverPadding(
+          padding: EdgeInsets.fromLTRB(
+            horizontalPadding,
+            AppSpacing.sm,
+            horizontalPadding,
+            AppSpacing.md,
+          ),
+          sliver: SliverToBoxAdapter(
+            child: Row(
+              children: [
+                Icon(
+                  Icons.local_fire_department_rounded,
+                  size: 20,
+                  color: colors.primary,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    board.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: colors.textPrimary,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                SourceNameTag(label: sourceName, colors: colors),
+                const SizedBox(width: AppSpacing.sm),
+                Text(
+                  context.tr('前 ${board.songs.length} 首'),
+                  style: TextStyle(fontSize: 11, color: colors.textHint),
+                ),
+              ],
+            ),
+          ),
+        ),
+        SliverPadding(
+          padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+          sliver: SliverGrid(
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: _hotBoardColumns(context),
+              mainAxisExtent: 68,
+              mainAxisSpacing: AppSpacing.sm,
+              crossAxisSpacing: AppSpacing.sm,
+            ),
+            delegate: SliverChildBuilderDelegate(
+              (context, index) => _buildHotSongItem(colors, board, index),
+              childCount: board.songs.length,
+              addAutomaticKeepAlives: false,
+            ),
+          ),
+        ),
+        const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.xxxl)),
+      ],
+    );
+  }
+
+  /// 热榜列数：横屏至少 3 列；手机竖屏 1 列，平板竖屏 2 列。
+  int _hotBoardColumns(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    if (ResponsiveLayout.isLandscape(context)) {
+      if (width >= 1400) return 5;
+      if (width >= 1100) return 4;
+      return 3;
+    }
+    return width >= ResponsiveLayout.phoneMaxWidth ? 2 : 1;
+  }
+
+  Widget _buildHotSongItem(ThemeColors colors, HotBoard board, int index) {
+    final song = board.songs[index];
+    final isCurrent =
+        ref.watch(
+          playbackControllerProvider.select((state) => state.currentSong?.id),
+        ) ==
+        song.id;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => unawaited(_playHotSong(board, index)),
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.sm,
+          vertical: AppSpacing.sm,
+        ),
+        decoration: BoxDecoration(
+          color: colors.surface,
+          borderRadius: BorderRadius.circular(AppRadius.md),
+        ),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 26,
+              child: Text(
+                '${index + 1}',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: index < 3 ? colors.primary : colors.textHint,
+                ),
+              ),
+            ),
+            const SizedBox(width: AppSpacing.xs),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(AppRadius.sm),
+              child: SizedBox(
+                width: 44,
+                height: 44,
+                child: MusicCoverImage(
+                  url: song.coverUrl,
+                  songId: song.id,
+                  fit: BoxFit.cover,
+                  useDiscoveryCache: true,
+                  errorWidget: Icon(
+                    Icons.music_note,
+                    size: 20,
+                    color: colors.textHint,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: AppSpacing.sm),
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    song.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                      color: isCurrent ? colors.primary : colors.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    song.artist,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 11, color: colors.textHint),
+                  ),
+                ],
+              ),
+            ),
+            if (isCurrent) ...[
+              const SizedBox(width: AppSpacing.xs),
+              Icon(Icons.equalizer, size: 16, color: colors.primary),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _playHotSong(HotBoard board, int index) async {
+    PlaybackContext.instance.set(
+      PlaybackSourceType.rank,
+      id: board.id,
+      name: board.name,
+    );
+    await ref
+        .read(playbackControllerProvider.notifier)
+        .setQueue(board.songs, startIndex: index);
+  }
+
+  /// 选择当前音源下的一个榜单，把它的前 10 首歌存成「热榜」。
+  Future<void> _addHotBoard() async {
+    if (_addingHotBoard) return;
+    setState(() => _addingHotBoard = true);
+    final colors = ref.read(themeColorsProvider);
+    try {
+      final leaderboards = await ref.read(leaderboardsProvider.future);
+      if (!mounted) return;
+      if (leaderboards.isEmpty) {
+        _showMessage(context.tr('当前音源暂无榜单数据'));
+        return;
+      }
+      final selected = await _pickLeaderboard(colors, leaderboards);
+      if (selected == null || !mounted) return;
+
+      final page = await ref
+          .read(discoverRepositoryProvider)
+          .getLeaderboardDetail(selected.id, sourceId: selected.source);
+      if (!mounted) return;
+      final songs = (page?.songs ?? const <Song>[])
+          .take(10)
+          .toList(growable: false);
+      if (songs.isEmpty) {
+        _showMessage(context.tr('没有获取到榜单歌曲'));
+        return;
+      }
+      await ref
+          .read(hotBoardProvider.notifier)
+          .save(
+            HotBoard(
+              id: selected.id,
+              name: selected.name,
+              source: selected.source,
+              coverUrl: selected.coverUrl ?? page?.coverUrl,
+              songs: songs,
+            ),
+          );
+      if (!mounted) return;
+      setState(() => _leaderboardCategory = _LeaderboardCategory.hot);
+    } catch (e) {
+      if (mounted) {
+        _showMessage(
+          context.tr(
+            '获取榜单歌曲失败：${e.toString().replaceFirst('Exception: ', '')}',
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _addingHotBoard = false);
+    }
+  }
+
+  Future<Leaderboard?> _pickLeaderboard(
+    ThemeColors colors,
+    List<Leaderboard> boards,
+  ) {
+    final sheetHeight = MediaQuery.sizeOf(context).height * 0.7;
+    final currentId = ref.read(hotBoardProvider).valueOrNull?.id;
+    return showModalBottomSheet<Leaderboard>(
+      context: context,
+      isScrollControlled: true,
+      sheetAnimationStyle: const AnimationStyle(
+        duration: Duration(milliseconds: 220),
+        reverseDuration: Duration(milliseconds: 180),
+      ),
+      backgroundColor: colors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(AppRadius.xl)),
+      ),
+      builder: (sheetContext) {
+        return SizedBox(
+          height: sheetHeight,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.lg,
+                  AppSpacing.lg,
+                  AppSpacing.lg,
+                  AppSpacing.sm,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      context.tr('新增热榜数据'),
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: colors.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.xs),
+                    Text(
+                      context.tr('选择当前音源下要展示的榜单'),
+                      style: TextStyle(fontSize: 12, color: colors.textHint),
+                    ),
+                  ],
+                ),
+              ),
+              Divider(height: 1, color: colors.divider.withValues(alpha: 0.4)),
+              Expanded(
+                child: ListView.separated(
+                  padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+                  itemCount: boards.length,
+                  separatorBuilder: (_, _) => Divider(
+                    height: 1,
+                    indent: 72,
+                    color: colors.divider.withValues(alpha: 0.25),
+                  ),
+                  itemBuilder: (_, index) {
+                    final board = boards[index];
+                    final selected = board.id == currentId;
+                    return InkWell(
+                      onTap: () => Navigator.of(sheetContext).pop(board),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: AppSpacing.lg,
+                          vertical: AppSpacing.sm,
+                        ),
+                        child: Row(
+                          children: [
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(AppRadius.sm),
+                              child: SizedBox(
+                                width: 44,
+                                height: 44,
+                                child: MusicCoverImage(
+                                  url: board.coverUrl,
+                                  fit: BoxFit.cover,
+                                  useDiscoveryCache: true,
+                                  errorWidget: Icon(
+                                    Icons.show_chart,
+                                    size: 20,
+                                    color: colors.textHint,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: AppSpacing.md),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    board.name,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w500,
+                                      color: colors.textPrimary,
+                                    ),
+                                  ),
+                                  if (board.updateFrequency != null &&
+                                      board.updateFrequency!.isNotEmpty)
+                                    Text(
+                                      board.updateFrequency!,
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: colors.textHint,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: AppSpacing.sm),
+                            Icon(
+                              selected
+                                  ? Icons.check_circle
+                                  : Icons.chevron_right,
+                              size: 20,
+                              color: selected
+                                  ? colors.primary
+                                  : colors.textHint,
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _showMessage(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
+    );
+  }
+
+  Widget _buildAllLeaderboardsTab(ThemeColors colors) {
     final leaderboardsAsync = ref.watch(leaderboardsProvider);
 
     return leaderboardsAsync.when(
