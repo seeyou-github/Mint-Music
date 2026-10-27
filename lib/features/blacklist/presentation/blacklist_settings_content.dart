@@ -77,30 +77,24 @@ class _BlacklistSettingsContentState
               ),
             ),
             const SizedBox(height: AppSpacing.md),
-            GestureDetector(
-              onTap: _addEntry,
-              child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 9),
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: colors.primary,
-                  borderRadius: BorderRadius.circular(AppRadius.full),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.add, size: 16, color: colors.textOnPrimary),
-                    const SizedBox(width: AppSpacing.xs),
-                    Text(
-                      context.tr(_tab == _BlacklistTab.songs ? '添加歌曲' : '添加歌手'),
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                        color: colors.textOnPrimary,
-                      ),
-                    ),
-                  ],
-                ),
+            // 与设置里「选择目录」一致的胶囊描边按钮：主色细边框 + 主色文字，
+            // 不填充底色（Material 3 的 OutlinedButton 默认就是胶囊形）。
+            OutlinedButton(
+              onPressed: _addEntry,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: colors.primary,
+                side: BorderSide(color: colors.primary),
+                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.add, size: 16, color: colors.primary),
+                  const SizedBox(width: AppSpacing.xs),
+                  Text(
+                    context.tr(_tab == _BlacklistTab.songs ? '添加歌曲' : '添加歌手'),
+                  ),
+                ],
               ),
             ),
           ],
@@ -193,24 +187,20 @@ class _BlacklistSettingsContentState
       _BlacklistTab.songs => context.tr('歌曲黑名单'),
       _BlacklistTab.artists => context.tr('歌手黑名单'),
     };
-    return GestureDetector(
-      onTap: () => setState(() => _tab = tab),
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: selected ? colors.primary : colors.surfaceVariant,
-          borderRadius: BorderRadius.circular(AppRadius.full),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 13,
-            fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
-            color: selected ? colors.textOnPrimary : colors.textSecondary,
-          ),
+    // 与「添加歌曲」按钮同一套描边样式：选中用主色描边 + 主色文字，
+    // 未选中用分隔线色描边 + 次要文字色。
+    return OutlinedButton(
+      onPressed: () => setState(() => _tab = tab),
+      style: OutlinedButton.styleFrom(
+        foregroundColor: selected ? colors.primary : colors.textSecondary,
+        side: BorderSide(color: selected ? colors.primary : colors.divider),
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
+        textStyle: TextStyle(
+          fontSize: 14,
+          fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
         ),
       ),
+      child: Text(label),
     );
   }
 
