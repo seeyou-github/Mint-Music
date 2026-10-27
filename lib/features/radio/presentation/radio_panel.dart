@@ -58,7 +58,7 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
     final data = ref.watch(radioProvider);
     final categories = [RadioCategory.all, ...data.categories];
     return SizedBox(
-      height: 38,
+      height: 40,
       child: Row(
         children: [
           Expanded(
@@ -68,7 +68,7 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
                 horizontal: ResponsiveLayout.horizontalPadding(context),
               ),
               itemCount: categories.length,
-              separatorBuilder: (_, _) => const SizedBox(width: AppSpacing.sm),
+              separatorBuilder: (_, _) => const SizedBox(width: AppSpacing.md),
               itemBuilder: (context, index) {
                 final category = categories[index];
                 final selected = category.id == _categoryId;
@@ -79,23 +79,21 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
                       : () => _confirmRemoveCategory(category),
                   child: Container(
                     alignment: Alignment.center,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: AppSpacing.md,
-                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
                     decoration: BoxDecoration(
-                      color: selected ? colors.primary : colors.surface,
-                      borderRadius: BorderRadius.circular(AppRadius.full),
+                      color: selected
+                          ? colors.primary.withValues(alpha: 0.15)
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(AppRadius.sm),
                     ),
                     child: Text(
                       category.name,
                       style: TextStyle(
-                        fontSize: 13,
+                        fontSize: 14,
                         fontWeight: selected
                             ? FontWeight.w600
-                            : FontWeight.normal,
-                        color: selected
-                            ? colors.textOnPrimary
-                            : colors.textSecondary,
+                            : FontWeight.w400,
+                        color: selected ? colors.primary : colors.textSecondary,
                       ),
                     ),
                   ),
