@@ -76,8 +76,8 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
   /// 连续多少页没有新歌后放弃翻页（兜底，防止插件异常时无限请求）。
   static const int _maxConsecutiveEmptyPages = 5;
 
-  /// 歌曲列表分页：每页 100 首，只显示当前页，接口多给的留在已加载列表里。
-  final PageSlicer _pager = PageSlicer(pageSize: 100);
+  /// 歌曲列表分页：每页 50 首，只显示当前页，接口多给的留在已加载列表里。
+  final PageSlicer _pager = PageSlicer(pageSize: 50);
 
   /// 正在为某一页补齐数据（避免重复触发）。
   bool _pagingLoading = false;
@@ -142,7 +142,7 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
     _scheduleEnsurePage();
   }
 
-  /// 当前页数据不够（接口每页条数比 100 少）时继续向接口取，直到铺满这一页。
+  /// 当前页数据不够（接口每页条数比 50 少）时继续向接口取，直到铺满这一页。
   void _scheduleEnsurePage() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -709,7 +709,7 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
     final bottomInset = ResponsiveLayout.hasBottomMiniPlayer(context)
         ? AppSpacing.miniPlayerHeight + AppSpacing.lg
         : AppSpacing.lg;
-    // 只渲染当前页（每页 100 首）；播放 / 队列仍用完整列表。
+    // 只渲染当前页（每页 50 首）；播放 / 队列仍用完整列表。
     _pager.clampTo(songs.length, hasMore: !_isEnd, total: _total);
     final visible = _pager.slice(songs);
     final pageCount = _pager.pageCount(

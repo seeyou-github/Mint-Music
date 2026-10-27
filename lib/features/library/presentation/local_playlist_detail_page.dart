@@ -14,7 +14,9 @@ import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../../../core/utils/scroll_locate.dart';
+import '../../../shared/pagination/page_slicer.dart';
 import '../../../shared/services/playlist_cmpl_codec.dart';
+import '../../../shared/widgets/page_bar.dart';
 import '../../../shared/widgets/song_action_sheet.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../../../shared/widgets/source_name_tag.dart';
@@ -47,13 +49,18 @@ class _LocalPlaylistDetailPageState
     extends ConsumerState<LocalPlaylistDetailPage> {
   SongSortMode _sortMode = SongSortMode.addedTime;
   bool _sortAscending = true;
+
   /// 当前展示（已过滤会员专属 + 已排序）的歌曲，列表 / 播放 / 多选都用它。
   List<Song> _sortedSongs = [];
+
   /// 歌单里存储的完整歌曲，不因「隐藏会员专属」而丢失，写盘始终基于它。
   List<Song> _originalSongs = [];
   bool _isCustomSortMode = false;
   bool _hideVipExclusive = false;
   final ScrollController _scrollController = ScrollController();
+
+  /// 歌曲列表分页：每页 50 首（拖拽排序时展示完整列表）。
+  final PageSlicer _pager = PageSlicer(pageSize: 50);
 
   /// 批量选择控制器（长按歌曲或右上角菜单进入）。
   final SongSelectionController _selection = SongSelectionController();
@@ -289,6 +296,7 @@ class _LocalPlaylistDetailPageState
     setState(() {
       _sortMode = mode;
       _isCustomSortMode = mode == SongSortMode.custom;
+      _pager.reset();
       _rebuildSortedSongs();
     });
     Navigator.pop(context);
@@ -317,6 +325,7 @@ class _LocalPlaylistDetailPageState
     setState(() {
       _originalSongs = List<Song>.from(_sortedSongs);
       _isCustomSortMode = false;
+      _pager.reset();
       // 保存的是完整列表；退出拖拽编辑后按开关恢复会员专属过滤。
       _rebuildSortedSongs();
     });
@@ -334,6 +343,7 @@ class _LocalPlaylistDetailPageState
     setState(() {
       _isCustomSortMode = false;
       _sortMode = SongSortMode.addedTime;
+      _pager.reset();
       _rebuildSortedSongs();
     });
   }
@@ -809,6 +819,7 @@ class _LocalPlaylistDetailPageState
                               _sortAscending = !_sortAscending;
                             });
                             setState(() {
+                              _pager.reset();
                               _sortedSongs = _applySort(
                                 _isCustomSortMode
                                     ? _originalSongs
@@ -1228,6 +1239,11 @@ class _LocalPlaylistDetailPageState
     final bottomInset = ResponsiveLayout.hasBottomMiniPlayer(context)
         ? AppSpacing.miniPlayerHeight + AppSpacing.xxxl
         : AppSpacing.xxxl;
+    // 只渲染当前页（每页 50 首）；播放 / 多选 / 右滑删除仍用完整列表。
+    _pager.clampTo(_sortedSongs.length, hasMore: false);
+    final visible = _pager.slice(_sortedSongs);
+    final pageCount = _pager.pageCount(_sortedSongs.length, hasMore: false);
+    final pageStart = _pager.start;
     return Stack(
       children: [
         ListView.builder(
@@ -1237,13 +1253,16 @@ class _LocalPlaylistDetailPageState
           padding: EdgeInsets.only(
             bottom: bottomInset + (selecting ? SongBatchActionBar.height : 0),
           ),
-          itemCount: _sortedSongs.length,
-          // 与定位用的行高常量一致，避免估算误差累积
-          itemExtent: SongListItem.itemExtent,
+          itemCount: visible.length + 1,
           addAutomaticKeepAlives: false,
           addRepaintBoundaries: true,
           itemBuilder: (context, index) {
-            final song = _sortedSongs[index];
+            if (index >= visible.length) {
+              return _buildPageFooter(pageCount);
+            }
+            final song = visible[index];
+            // 序号按整体列表算，翻页后接着上一页继续编号。
+            final songIndex = pageStart + index;
             // 高亮当前正在播放的歌曲，与本地音乐页面保持一致
             final item = Builder(
               builder: (context) {
@@ -1251,7 +1270,7 @@ class _LocalPlaylistDetailPageState
                 final isPlaying = playbackState.currentSong?.id == song.id;
                 return SongListItem(
                   song: song,
-                  index: index,
+                  index: songIndex,
                   isPlaying: isPlaying,
                   showPlayedTag: true,
                   selectionMode: selecting,
@@ -1273,7 +1292,7 @@ class _LocalPlaylistDetailPageState
                         _sortedSongs,
                         playlist.favoriteSource,
                       ),
-                      startIndex: index,
+                      startIndex: songIndex,
                     );
                   },
                   onMenuTap: () => SongActionSheet.show(
@@ -1316,6 +1335,21 @@ class _LocalPlaylistDetailPageState
     );
   }
 
+  /// 列表底部分页条：本地歌单 / 收藏的歌单 / 榜单 / 专辑 / 作者共用。
+  Widget _buildPageFooter(int pageCount) {
+    return PageBar(
+      currentPage: _pager.page,
+      pageCount: pageCount,
+      onChanged: _goToPage,
+    );
+  }
+
+  void _goToPage(int page) {
+    if (page < 1 || page == _pager.page) return;
+    setState(() => _pager.jumpTo(page));
+    if (_scrollController.hasClients) _scrollController.jumpTo(0);
+  }
+
   /// 悬浮定位按钮：仅当当前播放的歌曲在本歌单中时显示，
   /// 点击将歌曲列表滚动到正在播放的那一首。
   Widget _buildLocateFab(ThemeColors colors) {
@@ -1354,12 +1388,30 @@ class _LocalPlaylistDetailPageState
     if (currentSong == null) return;
     final index = _sortedSongs.indexWhere((s) => s.id == currentSong.id);
     if (index == -1) return;
-    if (!_scrollController.hasClients) return;
 
+    // 目标歌曲不在当前页时先翻到它所在的页，再滚到页内位置。
+    final page = index ~/ _pager.pageSize + 1;
+    if (page != _pager.page) {
+      setState(() => _pager.jumpTo(page));
+      if (_scrollController.hasClients) _scrollController.jumpTo(0);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_scrollController.hasClients) return;
+        unawaited(
+          scrollToItemIndex(
+            _scrollController,
+            index: index - _pager.start,
+            itemExtent: SongListItem.itemExtent,
+          ),
+        );
+      });
+      return;
+    }
+
+    if (!_scrollController.hasClients) return;
     unawaited(
       scrollToItemIndex(
         _scrollController,
-        index: index,
+        index: index - _pager.start,
         itemExtent: SongListItem.itemExtent,
       ),
     );

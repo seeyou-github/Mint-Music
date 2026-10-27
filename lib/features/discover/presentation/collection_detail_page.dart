@@ -60,8 +60,8 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
   /// 下一页失败原因。
   String? _loadMoreError;
 
-  /// 歌曲列表分页：每页 100 首（接口多给的留在已加载列表里当缓冲）。
-  final PageSlicer _pager = PageSlicer(pageSize: 100);
+  /// 歌曲列表分页：每页 50 首（接口多给的留在已加载列表里当缓冲）。
+  final PageSlicer _pager = PageSlicer(pageSize: 50);
 
   /// 正在为某一页补齐数据。
   bool _pagingLoading = false;
@@ -87,7 +87,7 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
     super.dispose();
   }
 
-  /// 当前页数据不够时继续向接口取（接口每页条数可能比 100 少）。
+  /// 当前页数据不够时继续向接口取（接口每页条数可能比 50 少）。
   void _scheduleEnsurePage() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -599,7 +599,7 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
     final currentSongId = ref.watch(
       playbackControllerProvider.select((s) => s.currentSong?.id),
     );
-    // 只渲染当前页（每页 100 首）；播放用的是完整列表。
+    // 只渲染当前页（每页 50 首）；播放用的是完整列表。
     _pager.clampTo(songs.length, hasMore: !_isEnd, total: _total);
     final visible = _pager.slice(songs);
     final pageCount = _pager.pageCount(
