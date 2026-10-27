@@ -47,6 +47,9 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
   /// 批量选择控制器（长按歌曲或「更多」菜单进入）。
   final SongSelectionController _selection = SongSelectionController();
   bool _isFavorited = false;
+
+  /// 正在后台拉取全部歌曲并收藏：收藏按钮显示转圈动画。
+  bool _favoriting = false;
   final ScrollController _scrollController = ScrollController();
 
   // ---- 插件源歌单翻页状态 ----
@@ -640,7 +643,7 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
 
   Widget _buildFavoriteButton(ThemeColors colors, playlist) {
     return GestureDetector(
-      onTap: () => _toggleFavorite(playlist),
+      onTap: _favoriting ? null : () => _toggleFavorite(playlist),
       child: Container(
         padding: const EdgeInsets.symmetric(
           horizontal: AppSpacing.md,
@@ -658,17 +661,31 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              _isFavorited ? Icons.favorite : Icons.favorite_border,
-              size: 16,
-              color: _isFavorited ? colors.primary : colors.textSecondary,
-            ),
+            if (_favoriting)
+              SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: colors.primary,
+                ),
+              )
+            else
+              Icon(
+                _isFavorited ? Icons.favorite : Icons.favorite_border,
+                size: 16,
+                color: _isFavorited ? colors.primary : colors.textSecondary,
+              ),
             const SizedBox(width: AppSpacing.xs),
             Text(
-              context.tr(_isFavorited ? '已收藏' : '收藏'),
+              context.tr(
+                _favoriting ? '收藏中...' : (_isFavorited ? '已收藏' : '收藏'),
+              ),
               style: TextStyle(
                 fontSize: 12,
-                color: _isFavorited ? colors.primary : colors.textPrimary,
+                color: _favoriting
+                    ? colors.primary
+                    : (_isFavorited ? colors.primary : colors.textPrimary),
               ),
             ),
           ],
@@ -970,14 +987,76 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
   }
 
   void _toggleFavorite(playlist) {
+    if (_favoriting) return;
     if (_isFavorited) {
       _removeFromFavorites();
     } else {
-      _addToFavorites(playlist);
+      unawaited(_addToFavorites(playlist));
     }
   }
 
-  void _addToFavorites(playlist) async {
+  /// 收藏前把剩下的歌曲页全部取回来：收藏里存的是完整歌单 / 榜单。
+  ///
+  /// 已加载的歌曲直接用，从 [_page] 之后继续取，直到插件表示到底。
+  Future<List<Song>> _fetchAllSongsForFavorite() async {
+    final seen = <String>{};
+    final all = <Song>[];
+    for (final song in _songs) {
+      if (seen.add(song.id)) all.add(song);
+    }
+
+    var page = _page;
+    var isEnd = _isEnd;
+    var emptyStreak = 0;
+    final repository = ref.read(discoverRepositoryProvider);
+    while (!isEnd) {
+      page += 1;
+      final result = await repository.getPlaylistDetailPage(
+        widget.playlistId,
+        page: page,
+      );
+      var added = 0;
+      for (final song in result.playlist?.songs ?? const <Song>[]) {
+        if (seen.add(song.id)) {
+          all.add(song);
+          added += 1;
+        }
+      }
+      isEnd =
+          result.isEnd || (result.total != null && all.length >= result.total!);
+      if (added == 0) {
+        // 插件可能把整页不可播放的歌曲过滤成空页；连续几页没新歌就当作到底。
+        if (++emptyStreak >= _maxConsecutiveEmptyPages) break;
+      } else {
+        emptyStreak = 0;
+      }
+    }
+    return all;
+  }
+
+  static String _errorText(Object error) {
+    return error.toString().replaceFirst('Exception: ', '');
+  }
+
+  Future<void> _addToFavorites(playlist) async {
+    setState(() => _favoriting = true);
+    final List<Song> songs;
+    try {
+      songs = await _fetchAllSongsForFavorite();
+    } catch (e) {
+      debugPrint('[PlaylistDetailPage] 收藏前获取全部歌曲失败: $e');
+      if (!mounted) return;
+      setState(() => _favoriting = false);
+      _showMessage('获取歌曲失败：${_errorText(e)}');
+      return;
+    }
+    if (!mounted) return;
+    if (songs.isEmpty) {
+      setState(() => _favoriting = false);
+      _showMessage('没有获取到歌曲，无法收藏');
+      return;
+    }
+
     // 插件来源的榜单 id 形如 `mf:board:bilibili@xxx:popular/series/one?number=396`，
     // 原始 id 里带 `/` 和 `?`。落成本地歌单 id 时先编码，保证能安全地放进
     // `/library/playlist/:id` 路由（否则 go_router 匹配不到）。
@@ -990,26 +1069,28 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
       source: playlist.source,
       createTime: DateTime.now(),
       updateTime: DateTime.now(),
-      songs: _songs,
+      songs: songs,
       meta: {'discoverId': widget.playlistId, 'type': 'discover_playlist'},
     );
 
-    await ref
-        .read(playlistsProvider.notifier)
-        .createPlaylistFromModel(localPlaylist);
+    try {
+      await ref
+          .read(playlistsProvider.notifier)
+          .createPlaylistFromModel(localPlaylist);
+    } catch (e) {
+      debugPrint('[PlaylistDetailPage] 收藏失败: $e');
+      if (!mounted) return;
+      setState(() => _favoriting = false);
+      _showMessage('收藏失败：${_errorText(e)}');
+      return;
+    }
 
+    if (!mounted) return;
     setState(() {
+      _favoriting = false;
       _isFavorited = true;
     });
-
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(context.tr('已收藏到我的歌单')),
-          duration: Duration(seconds: 2),
-        ),
-      );
-    }
+    _showMessage('已收藏到我的歌单');
   }
 
   void _removeFromFavorites() async {

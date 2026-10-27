@@ -66,6 +66,9 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
   /// 正在为某一页补齐数据。
   bool _pagingLoading = false;
 
+  /// 正在后台拉取全部歌曲并收藏：收藏按钮显示转圈动画。
+  bool _favoriting = false;
+
   bool get _isArtist => widget.collection.type == CollectionType.artist;
 
   /// 作者主页信息：播放作者作品时写进「最近播放」，之后可以从记录里点回主页。
@@ -212,7 +215,8 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
         .setQueue(songs, startIndex: 0);
   }
 
-  Future<void> _toggleFavorite(List<Song> songs) async {
+  Future<void> _toggleFavorite() async {
+    if (_favoriting) return;
     final name = (_item ?? widget.collection).favoriteName;
     final playlists = ref.read(playlistsProvider).valueOrNull ?? const [];
     final existing = playlists.where((p) => p.name == name).firstOrNull;
@@ -223,21 +227,83 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
       _toast(context.tr('已取消收藏'));
       return;
     }
-    if (songs.isEmpty) return;
-    final collection = _item ?? widget.collection;
-    await notifier.createPlaylistWithSongs(
-      name,
-      songs.map((s) => s.toJson()).toList(),
-      description:
-          'mintmusic:${collection.type.id}:'
-          '${collection.source}:${collection.id}',
-      // 记录收藏时所在的音源，之后从收藏里播放优先使用它。
-      source: collection.source,
-      // 收藏页展示专辑封面 / 作者头像，而不是第一首歌的封面。
-      coverImgUrl: collection.coverUrl,
-    );
+
+    setState(() => _favoriting = true);
+    final List<Song> songs;
+    try {
+      songs = await _fetchAllSongsForFavorite();
+    } catch (e) {
+      debugPrint('[CollectionDetailPage] 收藏前获取全部歌曲失败: $e');
+      if (!mounted) return;
+      setState(() => _favoriting = false);
+      _toast(context.tr('获取歌曲失败：${_messageOf(e)}'));
+      return;
+    }
     if (!mounted) return;
+    if (songs.isEmpty) {
+      setState(() => _favoriting = false);
+      _toast(context.tr('没有获取到歌曲，无法收藏'));
+      return;
+    }
+
+    final collection = _item ?? widget.collection;
+    try {
+      await notifier.createPlaylistWithSongs(
+        name,
+        songs.map((s) => s.toJson()).toList(),
+        description:
+            'mintmusic:${collection.type.id}:'
+            '${collection.source}:${collection.id}',
+        // 记录收藏时所在的音源，之后从收藏里播放优先使用它。
+        source: collection.source,
+        // 收藏页展示专辑封面 / 作者头像，而不是第一首歌的封面。
+        coverImgUrl: collection.coverUrl,
+      );
+    } catch (e) {
+      debugPrint('[CollectionDetailPage] 收藏失败: $e');
+      if (!mounted) return;
+      setState(() => _favoriting = false);
+      _toast(context.tr('收藏失败：${_messageOf(e)}'));
+      return;
+    }
+    if (!mounted) return;
+    setState(() => _favoriting = false);
     _toast(context.tr('已收藏到「收藏」'));
+  }
+
+  /// 收藏前把剩下的歌曲页全部取回来：收藏里存的是完整专辑 / 作者作品。
+  ///
+  /// 已加载的歌曲直接用，从 [_page] 之后继续取，直到插件表示到底。
+  Future<List<Song>> _fetchAllSongsForFavorite() async {
+    final seen = <String>{};
+    final all = <Song>[];
+    for (final song in _songs) {
+      if (seen.add(song.id)) all.add(song);
+    }
+
+    var page = _page;
+    var isEnd = _isEnd;
+    var emptyStreak = 0;
+    while (!isEnd) {
+      page += 1;
+      final detail = await _fetch(page);
+      var added = 0;
+      for (final song in detail.songs) {
+        if (seen.add(song.id)) {
+          all.add(song);
+          added += 1;
+        }
+      }
+      isEnd =
+          detail.isEnd || (detail.total != null && all.length >= detail.total!);
+      if (added == 0) {
+        // 插件可能把整页不可播放的歌曲过滤成空页；连续几页没新歌就当作到底。
+        if (++emptyStreak >= 5) break;
+      } else {
+        emptyStreak = 0;
+      }
+    }
+    return all;
   }
 
   void _toast(String message) {
@@ -433,10 +499,13 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
                           icon: favorited
                               ? Icons.favorite
                               : Icons.favorite_border,
-                          label: favorited
+                          label: _favoriting
+                              ? context.tr('收藏中...')
+                              : favorited
                               ? context.tr('已收藏')
                               : context.tr('收藏'),
-                          onTap: () => _toggleFavorite(songs),
+                          loading: _favoriting,
+                          onTap: () => unawaited(_toggleFavorite()),
                         ),
                         // 「更新」按钮只在收藏页打开『作者：xxx』时出现
                         // （见 local_playlist_detail_page），这里不再提供。
@@ -483,10 +552,11 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
     required String label,
     required VoidCallback? onTap,
     bool primary = false,
+    bool loading = false,
   }) {
     final color = primary ? colors.textOnPrimary : colors.textPrimary;
     return GestureDetector(
-      onTap: onTap,
+      onTap: loading ? null : onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(
           horizontal: AppSpacing.md,
@@ -500,9 +570,25 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 14, color: color),
+            if (loading)
+              SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: colors.primary,
+                ),
+              )
+            else
+              Icon(icon, size: 14, color: color),
             const SizedBox(width: 4),
-            Text(label, style: TextStyle(fontSize: 12, color: color)),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                color: loading ? colors.primary : color,
+              ),
+            ),
           ],
         ),
       ),
