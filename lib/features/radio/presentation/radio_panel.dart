@@ -66,8 +66,9 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
           Expanded(
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
-              padding: EdgeInsets.symmetric(
-                horizontal: ResponsiveLayout.horizontalPadding(context),
+              padding: EdgeInsets.only(
+                left: AppSpacing.lg,
+                right: ResponsiveLayout.horizontalPadding(context),
               ),
               itemCount: categories.length,
               separatorBuilder: (_, _) => const SizedBox(width: AppSpacing.sm),
