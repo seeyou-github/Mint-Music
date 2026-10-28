@@ -9,8 +9,10 @@ import '../../../core/constants/app_routes.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
+import '../../../shared/pagination/page_slicer.dart';
 import '../../../shared/widgets/cover_badge.dart';
 import '../../../shared/widgets/music_cover_image.dart';
+import '../../../shared/widgets/page_bar.dart';
 import '../../../shared/widgets/source_badge.dart';
 import '../../discover/domain/models/search_collection.dart';
 import '../../player/application/playback_context.dart';
@@ -39,6 +41,20 @@ class _RecentlyPlayedPageState extends ConsumerState<RecentlyPlayedPage> {
 
   /// 卡片底部内边距（封面下方的文字离卡片下沿的距离）。
   static const double _cardBottomPadding = 6;
+
+  /// 歌曲 / 歌单卡片每页 10 行（每行多少列 × 10 就是每页条数）。
+  static const int _rowsPerPage = 10;
+  final PageSlicer _songsPager = PageSlicer(pageSize: _rowsPerPage);
+  final PageSlicer _playlistsPager = PageSlicer(pageSize: _rowsPerPage);
+  final ScrollController _songsScrollController = ScrollController();
+  final ScrollController _playlistsScrollController = ScrollController();
+
+  @override
+  void dispose() {
+    _songsScrollController.dispose();
+    _playlistsScrollController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -161,13 +177,33 @@ class _RecentlyPlayedPageState extends ConsumerState<RecentlyPlayedPage> {
             colors: colors,
           );
         }
+        final columns = _gridColumns(context);
+        // 每页 10 行：每行 columns 个，所以每页 10 × 列数 个。
+        _songsPager.updatePageSize(_rowsPerPage * columns);
+        _songsPager.clampTo(items.length, hasMore: false);
+        final start = _songsPager.start;
+        final visible = _songsPager.slice(items);
         final queue = items.map((e) => e.song).toList(growable: false);
         return _CardGrid(
-          columns: _gridColumns(context),
-          itemCount: items.length,
+          controller: _songsScrollController,
+          columns: columns,
+          itemCount: visible.length,
           extraHeight: _songExtraHeight(context),
-          itemBuilder: (context, index) =>
-              _SongCard(item: items[index], queue: queue, index: index),
+          itemBuilder: (context, index) {
+            // 队列是完整列表，序号也要用全局下标，否则从第 N 页点歌会从头播。
+            final itemIndex = start + index;
+            return _SongCard(
+              item: items[itemIndex],
+              queue: queue,
+              index: itemIndex,
+            );
+          },
+          footer: PageBar(
+            currentPage: _songsPager.page,
+            pageCount: _songsPager.pageCount(items.length, hasMore: false),
+            onChanged: (page) =>
+                _goToPage(_songsPager, _songsScrollController, page),
+          ),
         );
       },
       loading: () => const Center(child: CircularProgressIndicator()),
@@ -218,6 +254,13 @@ class _RecentlyPlayedPageState extends ConsumerState<RecentlyPlayedPage> {
     return height;
   }
 
+  /// 翻页后回到列表顶部（与歌单列表翻页行为一致）。
+  void _goToPage(PageSlicer pager, ScrollController controller, int page) {
+    if (page == pager.page) return;
+    setState(() => pager.jumpTo(page));
+    if (controller.hasClients) controller.jumpTo(0);
+  }
+
   // ---------------------------------------------------------------- 歌单
 
   Widget _buildPlaylistsTab(ThemeColors colors) {
@@ -232,12 +275,26 @@ class _RecentlyPlayedPageState extends ConsumerState<RecentlyPlayedPage> {
             colors: colors,
           );
         }
+        final columns = _gridColumns(context);
+        _playlistsPager.updatePageSize(_rowsPerPage * columns);
+        _playlistsPager.clampTo(playlists.length, hasMore: false);
+        final visible = _playlistsPager.slice(playlists);
         return _CardGrid(
-          columns: _gridColumns(context),
-          itemCount: playlists.length,
+          controller: _playlistsScrollController,
+          columns: columns,
+          itemCount: visible.length,
           extraHeight: _playlistExtraHeight(context),
           itemBuilder: (context, index) =>
-              _PlaylistCard(playlist: playlists[index]),
+              _PlaylistCard(playlist: visible[index]),
+          footer: PageBar(
+            currentPage: _playlistsPager.page,
+            pageCount: _playlistsPager.pageCount(
+              playlists.length,
+              hasMore: false,
+            ),
+            onChanged: (page) =>
+                _goToPage(_playlistsPager, _playlistsScrollController, page),
+          ),
         );
       },
       loading: () => const Center(child: CircularProgressIndicator()),
@@ -461,6 +518,8 @@ class _CardGrid extends StatelessWidget {
     required this.itemCount,
     required this.extraHeight,
     required this.itemBuilder,
+    this.controller,
+    this.footer,
   });
 
   final int columns;
@@ -470,6 +529,11 @@ class _CardGrid extends StatelessWidget {
   final double extraHeight;
 
   final Widget Function(BuildContext context, int index) itemBuilder;
+
+  final ScrollController? controller;
+
+  /// 网格下方的分页条。
+  final Widget? footer;
 
   @override
   Widget build(BuildContext context) {
@@ -483,21 +547,39 @@ class _CardGrid extends StatelessWidget {
           80.0,
           itemWidth - _RecentlyPlayedPageState._cardPadding * 2,
         );
-        return GridView.builder(
-          padding: const EdgeInsets.fromLTRB(
-            AppSpacing.lg,
-            AppSpacing.sm,
-            AppSpacing.lg,
-            AppSpacing.xxxl,
-          ),
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: columns,
-            mainAxisSpacing: spacing,
-            crossAxisSpacing: spacing,
-            mainAxisExtent: coverSize + extraHeight,
-          ),
-          itemCount: itemCount,
-          itemBuilder: itemBuilder,
+        return CustomScrollView(
+          controller: controller,
+          slivers: [
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.lg,
+                AppSpacing.sm,
+                AppSpacing.lg,
+                0,
+              ),
+              sliver: SliverGrid(
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: columns,
+                  mainAxisSpacing: spacing,
+                  crossAxisSpacing: spacing,
+                  mainAxisExtent: coverSize + extraHeight,
+                ),
+                delegate: SliverChildBuilderDelegate(
+                  itemBuilder,
+                  childCount: itemCount,
+                ),
+              ),
+            ),
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.only(
+                  top: AppSpacing.xs,
+                  bottom: AppSpacing.xxxl,
+                ),
+                child: footer ?? const SizedBox.shrink(),
+              ),
+            ),
+          ],
         );
       },
     );
