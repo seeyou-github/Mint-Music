@@ -1605,7 +1605,7 @@ class MusicSourceManager {
           'requested=$quality reported=${result.quality} host=${_urlHost(url)}',
         );
         // 拒绝酷我提示音 / 加密格式 URL
-        if (sourceId == 'kw' && _isKuwoPromptUrl(url)) {
+        if (musicInfo.source == 'kw' && _isKuwoPromptUrl(url)) {
           print('[MusicSourceManager] 拒绝酷我无效 URL: $url');
           continue;
         }
@@ -1630,14 +1630,7 @@ class MusicSourceManager {
     return results;
   }
 
-  /// 数据源歌曲：用「数据源 → 指定播放源」解析播放地址。
-  ///
-  /// 数据源只提供元数据（搜索 / 歌单 / 榜单 / 专辑 / 作者），本身没有地址接口。
-  /// 同平台时直接用数据源歌曲的 id 让播放源解析（跳过搜索），平台不同或直连
-  /// 失败时，再在用户为它指定的播放源里重新找同一首歌。
-  ///
-  /// 任何一步失败都抛 [DataSourcePlaybackException]，提示语按产品要求固定为：
-  /// `此xxx数据源指定的 xxx音源失效，错误："…" 请在插件管理中设置其他音源。`
+  // 同平台共享歌曲标识，只有跨平台才需要搜索匹配。
   Future<List<PluginMusicUrlResult>> _resolveViaDataSourcePlayback(
     Song song, {
     required String dataSourcePluginId,
@@ -1683,48 +1676,49 @@ class MusicSourceManager {
       throw DataSourcePlaybackException(message);
     }
 
-    // 0) 同平台直连：数据源和播放源是同一个平台（如网易云数据源 + 网易云
-    // 播放源）时，两边用的是同一套歌曲 id，直接把数据源的歌交给播放源解析，
-    // 不用先在播放源里搜一遍。搜索命中不了（改名 / 歌手写法不同）的歌也能播。
-    // 直连失败（插件不认这个 id、取地址超时等）时返回空，继续走搜索。
-    final direct = await _tryDirectDataSourcePlayback(
-      song,
-      playbackSourceId: playbackSourceId,
-      quality: quality,
-      excludedUrls: excludedUrls,
-    );
-    if (direct.isNotEmpty) return direct;
-
-    // 1) 在播放源里重新找同一首歌（歌名 + 歌手完全一致才算命中）。
+    final (dataBaseId, _) = splitSourceId(song.source ?? '');
+    final (playbackBaseId, _) = splitSourceId(playbackSourceId);
     Song? matched;
-    try {
-      final keyword = '${song.title} ${song.artist}'.trim();
-      final candidates = await search(
-        keyword,
-        sourceId: playbackSourceId,
-        page: 1,
-        limit: 20,
-      );
-      for (final item in candidates) {
-        if (_isSameSong(song, item)) {
-          matched = item;
-          break;
-        }
+    if (dataBaseId.isNotEmpty && dataBaseId == playbackBaseId) {
+      if (song.id.trim().isEmpty) {
+        final message = fail(playbackName, '歌曲缺少同平台解析所需的标识');
+        onResolveError?.call(message);
+        throw DataSourcePlaybackException(message);
       }
-      matched ??= _bestTitleMatch(song, candidates);
-    } catch (e) {
-      final message = fail(playbackName, e);
-      onResolveError?.call(message);
-      throw DataSourcePlaybackException(message);
+      // 清掉数据源绑定，避免递归进入数据源委托；原歌曲仍保留该绑定。
+      matched = song.copyWith(
+        source: playbackSourceId,
+        clearPreferredSource: true,
+      );
+    } else {
+      try {
+        final keyword = '${song.title} ${song.artist}'.trim();
+        final candidates = await search(
+          keyword,
+          sourceId: playbackSourceId,
+          page: 1,
+          limit: 20,
+        );
+        for (final item in candidates) {
+          if (_isSameSong(song, item)) {
+            matched = item;
+            break;
+          }
+        }
+        matched ??= _bestTitleMatch(song, candidates);
+      } catch (e) {
+        final message = fail(playbackName, e);
+        onResolveError?.call(message);
+        throw DataSourcePlaybackException(message);
+      }
+
+      if (matched == null) {
+        final message = fail(playbackName, '在$playbackName里没有搜到这首歌');
+        onResolveError?.call(message);
+        throw DataSourcePlaybackException(message);
+      }
     }
 
-    if (matched == null) {
-      final message = fail(playbackName, '在$playbackName里没有搜到这首歌');
-      onResolveError?.call(message);
-      throw DataSourcePlaybackException(message);
-    }
-
-    // 2) 由播放源解析地址。
     final resolved = <PluginMusicUrlResult>[];
     String? lastError;
     try {
@@ -1750,58 +1744,11 @@ class MusicSourceManager {
     }
 
     if (resolved.isEmpty) {
-      final message = fail(playbackName, lastError);
+      final message = fail(playbackName, lastError ?? '播放源未返回可用的播放地址');
       onResolveError?.call(message);
       throw DataSourcePlaybackException(message);
     }
     return resolved;
-  }
-
-  /// 数据源歌曲「同平台直连」：用数据源歌曲的 id 让播放源直接取地址。
-  ///
-  /// 只有平台相同（如 `wy` 数据源 + `wy` 播放源）才尝试：同一平台上歌曲 id
-  /// 是通用的，把数据源歌曲（连同它带回来的原始元数据）交给播放源即可，不用
-  /// 先搜索。平台不同时 id 对不上，直接返回空，由调用方走搜索匹配。
-  ///
-  /// 任何失败都返回空列表（不报错）：直连只是省一步，失败后仍可正常搜索。
-  Future<List<PluginMusicUrlResult>> _tryDirectDataSourcePlayback(
-    Song song, {
-    required String playbackSourceId,
-    required String quality,
-    required Set<String> excludedUrls,
-  }) async {
-    final (dataBaseId, _) = splitSourceId(song.source ?? '');
-    final (playbackBaseId, _) = splitSourceId(playbackSourceId);
-    if (dataBaseId.isEmpty || dataBaseId != playbackBaseId) {
-      return const <PluginMusicUrlResult>[];
-    }
-    if (song.id.trim().isEmpty) return const <PluginMusicUrlResult>[];
-
-    // 临时改成播放源的歌：必须清掉数据源绑定，否则解析时又会进回数据源分支。
-    final directSong = song.copyWith(
-      source: playbackSourceId,
-      clearPreferredSource: true,
-    );
-    try {
-      final results = await getMusicUrlResultCandidates(
-        directSong,
-        quality: quality,
-        excludedUrls: excludedUrls,
-      );
-      // 不写 result.source：歌曲仍归属数据源，收藏 / 队列继续绑定数据源插件。
-      return [
-        for (final result in results)
-          if (result.url.isNotEmpty)
-            PluginMusicUrlResult(
-              url: result.url,
-              quality: result.quality,
-              headers: result.headers,
-            ),
-      ];
-    } catch (e) {
-      print('[MusicSourceManager] 数据源歌曲直连解析失败，回退搜索: $e');
-      return const <PluginMusicUrlResult>[];
-    }
   }
 
   /// 歌名完全一致（忽略大小写 / 空白）的候选中取第一个；没有则返回 null。
@@ -1862,7 +1809,8 @@ class MusicSourceManager {
   }
 
   MusicInfoForPlugin _buildPluginMusicInfo(Song song, String sourceId) {
-    final cleanId = _stripSourcePrefix(song.id, sourceId);
+    final (baseSourceId, _) = splitSourceId(sourceId);
+    final cleanId = _stripSourcePrefix(song.id, baseSourceId);
     final lx = song.lx ?? const <String, dynamic>{};
 
     dynamic read(List<String> keys) {
@@ -1890,7 +1838,7 @@ class MusicSourceManager {
 
     final songId =
         read(['songId', 'songid', 'copyrightId']) ??
-        (sourceId == 'tx' ? song.lyricUrl : null);
+        (baseSourceId == 'tx' ? song.lyricUrl : null);
     final songmid = readString(['songmid', 'mid']) ?? cleanId;
     final interval = readString(['interval']) ?? _formatInterval(song.duration);
 
@@ -1907,8 +1855,8 @@ class MusicSourceManager {
       copyrightId:
           readString(['copyrightId']) ??
           // 咪咕的 copyrightId 就是歌曲 id（插件搜索结果里没有 lx 元数据）。
-          (sourceId == 'mg' ? cleanId : null),
-      source: sourceId,
+          (baseSourceId == 'mg' ? cleanId : null),
+      source: baseSourceId,
       interval: interval,
       img: readString(['img', 'pic', 'picUrl', 'cover']) ?? song.coverUrl,
       lrc: song.lrc,

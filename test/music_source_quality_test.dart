@@ -43,11 +43,22 @@ class _Host implements PluginHost {
     this.id, {
     this.isDataSource = false,
     this.qualities = const ['128k', '320k', 'flac'],
+    this.platform = 'wy',
+    this.platformName = '网易云音乐',
+    this.canSearch = true,
+    this.searchReply =
+        '{"list":[{"id":"matched","songmid":"matched","name":"song",'
+        '"singer":"artist"}],"isEnd":true}',
   });
 
   final String id;
+  final String platform;
+  final String platformName;
   final List<String> qualities;
+  final bool canSearch;
+  String searchReply;
   final calls = <(String, String, String)>[];
+  final infos = <MusicInfoForPlugin>[];
   final searchCalls = <String>[];
   PluginMusicUrlResult Function(String, MusicInfoForPlugin) reply =
       (quality, info) => PluginMusicUrlResult(url: _url, quality: quality);
@@ -60,12 +71,12 @@ class _Host implements PluginHost {
 
   @override
   List<PluginSourceInfo> get sources => [
-    PluginSourceInfo(id: 'wy', name: '网易云音乐', qualities: qualities),
+    PluginSourceInfo(id: platform, name: platformName, qualities: qualities),
   ];
 
   @override
-  Map<String, List<String>> get sourceActions => const {
-    'wy': ['musicUrl', 'musicSearch'],
+  Map<String, List<String>> get sourceActions => {
+    platform: canSearch ? ['musicUrl', 'musicSearch'] : ['musicUrl'],
   };
 
   @override
@@ -76,11 +87,12 @@ class _Host implements PluginHost {
     Duration timeout = const Duration(seconds: 30),
   }) async {
     calls.add((source, musicInfo.id, quality));
+    infos.add(musicInfo);
     return reply(quality, musicInfo);
   }
 
   @override
-  bool supportsSearch(String sourceId) => true;
+  bool supportsSearch(String sourceId) => canSearch;
 
   @override
   Future<String?> search(
@@ -90,12 +102,7 @@ class _Host implements PluginHost {
     int limit = 30,
   }) async {
     searchCalls.add(source);
-    return jsonEncode({
-      'list': [
-        {'id': 'matched', 'title': 'song', 'artist': 'artist'},
-      ],
-      'isEnd': true,
-    });
+    return searchReply;
   }
 
   @override
@@ -305,61 +312,580 @@ void main() {
     },
   );
 
-  for (final searchRequired in [false, true]) {
-    test(
-      'data-source delegation retains quality (search: $searchRequired)',
-      () async {
-        final data = _Host('data', isDataSource: true);
-        final playback = _Host('playback')
-          ..reply = (quality, info) {
-            if (searchRequired && info.id == '1') throw Exception('unknown id');
-            return PluginMusicUrlResult(
-              url: _url,
-              quality: quality,
-              headers: const {'Referer': 'playback'},
-            );
-          };
-        final manager = MusicSourceManager(_Service([data, playback]))
-          ..setDataSourcePlaybackSources({'data': 'wy@playback'});
-        final result = await manager.getMusicUrlResult(
-          _song.copyWith(source: 'wy@data', preferredSource: 'wy@data'),
-          quality: 'hires',
-        );
-        expect(result?.url, _url);
-        expect(result?.quality, 'hires');
-        expect(result?.headers, {'Referer': 'playback'});
-        expect(result?.source, isNull);
-        expect(data.calls, isEmpty);
-        expect(playback.calls, [
-          ('wy', '1', 'hires'),
-          if (searchRequired) ('wy', 'matched', 'hires'),
-        ]);
-        expect(playback.searchCalls, searchRequired ? ['wy'] : isEmpty);
-      },
-    );
+  const dataPlatforms = [
+    (base: 'wy', name: '网易云音乐', id: '10086'),
+    (base: 'kg', name: '酷狗音乐', id: 'KGHASH0123'),
+    (base: 'kw', name: '酷我音乐', id: '654321'),
+    (base: 'tx', name: 'QQ音乐', id: 'TXMID0001'),
+  ];
+
+  Song dataSong(
+    ({String base, String name, String id}) platform, {
+    required bool boundInSource,
+  }) => Song(
+    id: platform.id,
+    title: 'song',
+    artist: 'artist',
+    album: 'album',
+    duration: 180,
+    source: boundInSource ? '${platform.base}@data' : platform.base,
+    preferredSource: boundInSource ? null : '${platform.base}@data',
+  );
+
+  MusicSourceManager delegatedManager({
+    required _Host data,
+    required _Host playback,
+    _Host? other,
+    required String base,
+  }) =>
+      MusicSourceManager(_Service([data, if (other != null) other, playback]))
+        ..setDataSourcePlaybackSources({'data': '$base@playback'});
+
+  for (final platform in dataPlatforms) {
+    for (final boundInSource in [true, false]) {
+      test(
+        '${platform.base} same-platform '
+        '${boundInSource ? 'source-bound' : 'preferred-bound'} song skips search',
+        () async {
+          final data = _Host(
+            'data',
+            isDataSource: true,
+            platform: platform.base,
+            platformName: platform.name,
+          );
+          final playback =
+              _Host(
+                  'playback',
+                  platform: platform.base,
+                  platformName: platform.name,
+                )
+                ..reply = (quality, _) => PluginMusicUrlResult(
+                  url: _url,
+                  quality: quality,
+                  headers: const {'Referer': 'playback'},
+                );
+          final other = _Host(
+            'other',
+            platform: platform.base,
+            platformName: platform.name,
+          );
+          final manager = delegatedManager(
+            data: data,
+            playback: playback,
+            other: other,
+            base: platform.base,
+          );
+          final song = dataSong(platform, boundInSource: boundInSource);
+
+          final result = await manager.getMusicUrlResult(
+            song,
+            quality: 'hires',
+          );
+
+          expect(result?.url, _url);
+          expect(result?.quality, 'hires');
+          expect(result?.headers, {'Referer': 'playback'});
+          expect(result?.source, isNull);
+          expect(playback.calls, [(platform.base, platform.id, 'hires')]);
+          expect(playback.searchCalls, isEmpty);
+          expect(playback.infos.single.source, platform.base);
+          expect(playback.infos.single.songmid, platform.id);
+          expect(data.calls, isEmpty);
+          expect(other.calls, isEmpty);
+          expect(
+            song.source,
+            boundInSource ? '${platform.base}@data' : platform.base,
+          );
+          expect(
+            song.preferredSource,
+            boundInSource ? null : '${platform.base}@data',
+          );
+        },
+      );
+    }
   }
 
-  test(
-    'data-source direct and searched mismatches fail without downgrading',
-    () async {
-      final data = _Host('data', isDataSource: true);
-      final playback = _Host('playback')
-        ..reply = (_, _) =>
-            const PluginMusicUrlResult(url: _url, quality: '128k');
-      final manager = MusicSourceManager(_Service([data, playback]))
-        ..setDataSourcePlaybackSources({'data': 'wy@playback'});
+  for (final platform in dataPlatforms) {
+    for (final failure in ['throws', 'empty', 'invalid']) {
+      test('${platform.base} same-platform $failure reports the real failure '
+          'without searching', () async {
+        final data = _Host(
+          'data',
+          isDataSource: true,
+          platform: platform.base,
+          platformName: platform.name,
+        );
+        final playback = _Host(
+          'playback',
+          platform: platform.base,
+          platformName: platform.name,
+        );
+        if (failure == 'throws') {
+          playback.reply = (_, _) =>
+              throw Exception('${platform.base} endpoint unavailable');
+        } else if (failure == 'empty') {
+          playback.reply = (_, _) => const PluginMusicUrlResult(url: '');
+        } else {
+          playback.reply = (_, _) =>
+              const PluginMusicUrlResult(url: 'file:///blocked.mp3');
+        }
+        final manager = delegatedManager(
+          data: data,
+          playback: playback,
+          base: platform.base,
+        );
+        final errors = <String>[];
+
+        await expectLater(
+          manager.getMusicUrlResult(
+            dataSong(platform, boundInSource: true),
+            quality: '320k',
+            onResolveError: errors.add,
+          ),
+          throwsA(isA<DataSourcePlaybackException>()),
+        );
+
+        expect(playback.calls, [(platform.base, platform.id, '320k')]);
+        expect(playback.searchCalls, isEmpty);
+        expect(errors.single, isNot(contains('没有搜到')));
+        if (failure == 'throws') {
+          expect(
+            errors.single,
+            contains('${platform.base} endpoint unavailable'),
+          );
+        }
+      });
+    }
+  }
+
+  for (final platform in dataPlatforms) {
+    test('${platform.base} same-platform mismatch fails without searching or '
+        'downgrading', () async {
+      final data = _Host(
+        'data',
+        isDataSource: true,
+        platform: platform.base,
+        platformName: platform.name,
+      );
+      final playback =
+          _Host(
+              'playback',
+              platform: platform.base,
+              platformName: platform.name,
+            )
+            ..reply = (_, _) =>
+                const PluginMusicUrlResult(url: _url, quality: '128k');
+      final manager = delegatedManager(
+        data: data,
+        playback: playback,
+        base: platform.base,
+      );
       final errors = <String>[];
+
       await expectLater(
         manager.getMusicUrlResult(
-          _song.copyWith(source: 'wy@data'),
-          quality: '320k',
+          dataSong(platform, boundInSource: true),
+          quality: 'hires',
           onResolveError: errors.add,
         ),
         throwsA(isA<DataSourcePlaybackException>()),
       );
+
       expect(errors.single, contains('音质不匹配'));
-      expect(playback.calls, [('wy', '1', '320k'), ('wy', 'matched', '320k')]);
+      expect(playback.calls, [(platform.base, platform.id, 'hires')]);
+      expect(playback.searchCalls, isEmpty);
+      expect(data.calls, isEmpty);
+    });
+  }
+
+  test('same-platform Kuwo prompt URL is rejected without searching', () async {
+    final data = _Host(
+      'data',
+      isDataSource: true,
+      platform: 'kw',
+      platformName: '酷我音乐',
+    );
+    final playback = _Host('playback', platform: 'kw', platformName: '酷我音乐')
+      ..reply = (quality, _) => PluginMusicUrlResult(
+        url: 'https://nmobi.kuwo.cn/kw_promo/trial.mp3',
+        quality: quality,
+      );
+    final manager = delegatedManager(
+      data: data,
+      playback: playback,
+      base: 'kw',
+    );
+
+    await expectLater(
+      manager.getMusicUrlResult(
+        dataSong(dataPlatforms[2], boundInSource: true),
+        quality: '320k',
+      ),
+      throwsA(isA<DataSourcePlaybackException>()),
+    );
+    expect(playback.calls, [('kw', '654321', '320k')]);
+    expect(playback.searchCalls, isEmpty);
+  });
+
+  test('same-platform song without an identifier does not search', () async {
+    final data = _Host(
+      'data',
+      isDataSource: true,
+      platform: 'kg',
+      platformName: '酷狗音乐',
+    );
+    final playback = _Host('playback', platform: 'kg', platformName: '酷狗音乐');
+    final manager = delegatedManager(
+      data: data,
+      playback: playback,
+      base: 'kg',
+    );
+    final errors = <String>[];
+    final song = dataSong(
+      dataPlatforms[1],
+      boundInSource: true,
+    ).copyWith(id: '');
+
+    await expectLater(
+      manager.getMusicUrlResult(
+        song,
+        quality: '320k',
+        onResolveError: errors.add,
+      ),
+      throwsA(isA<DataSourcePlaybackException>()),
+    );
+    expect(errors.single, contains('标识'));
+    expect(playback.calls, isEmpty);
+    expect(playback.searchCalls, isEmpty);
+  });
+
+  test(
+    'data-source kg identifiers and raw metadata reach the playback host',
+    () async {
+      final data =
+          _Host(
+              'data',
+              isDataSource: true,
+              platform: 'kg',
+              platformName: '酷狗音乐',
+            )
+            ..searchReply = jsonEncode({
+              'list': [
+                {
+                  'id': 'KGHASH',
+                  'songId': 'KGHASH',
+                  'songmid': 'KGHASH',
+                  'albumId': 'ALB1',
+                  'name': 'song',
+                  'singer': 'artist',
+                  'albumName': 'album',
+                  'artwork': 'https://img.example/cover.jpg',
+                  'duration': 201,
+                  'types': ['128k', '320k'],
+                  '_types': {
+                    '320k': {'hash': 'HASH320'},
+                  },
+                  'typeUrl': {'320k': 'https://audio.example/320'},
+                },
+              ],
+              'isEnd': true,
+            });
+      final playback = _Host(
+        'playback',
+        platform: 'kg',
+        platformName: '酷狗音乐',
+        canSearch: false,
+      );
+      final manager = delegatedManager(
+        data: data,
+        playback: playback,
+        base: 'kg',
+      );
+
+      final songs = await manager.search('song artist', sourceId: 'kg@data');
+      expect(songs, hasLength(1));
+      final song = songs.single;
+      expect(song.source, 'kg');
+      expect(song.preferredSource, 'kg@data');
+      expect(song.id, 'KGHASH');
+
+      final result = await manager.getMusicUrlResult(song, quality: '320k');
+
+      expect(result?.url, _url);
+      expect(result?.source, isNull);
+      expect(playback.calls, [('kg', 'KGHASH', '320k')]);
+      expect(playback.searchCalls, isEmpty);
+      expect(data.calls, isEmpty);
+      final info = playback.infos.single;
+      expect(info.source, 'kg');
+      expect(info.songmid, 'KGHASH');
+      expect(info.hash, 'KGHASH');
+      expect(info.songId, 'KGHASH');
+      expect(info.albumId, 'ALB1');
+      expect(info.types, ['128k', '320k']);
+      expect(info.typeMap, {
+        '320k': {'hash': 'HASH320'},
+      });
+      expect(info.typeUrl, {'320k': 'https://audio.example/320'});
+      expect(song.source, 'kg');
+      expect(song.preferredSource, 'kg@data');
+    },
+  );
+
+  for (final platform in dataPlatforms) {
+    test(
+      '${platform.base} identifiers survive data-source search and delegation',
+      () async {
+        final data =
+            _Host(
+                'data',
+                isDataSource: true,
+                platform: platform.base,
+                platformName: platform.name,
+              )
+              ..searchReply = jsonEncode({
+                'list': [
+                  {
+                    'id': platform.id,
+                    'songId': platform.base == 'tx' ? 987654 : platform.id,
+                    'songmid': platform.id,
+                    'name': 'song',
+                    'singer': 'artist',
+                    'albumName': 'album',
+                    if (platform.base == 'tx') 'interval': 205,
+                  },
+                ],
+                'isEnd': true,
+              });
+        final playback = _Host(
+          'playback',
+          platform: platform.base,
+          platformName: platform.name,
+          canSearch: false,
+        );
+        final manager = delegatedManager(
+          data: data,
+          playback: playback,
+          base: platform.base,
+        );
+
+        final songs = await manager.search(
+          'song artist',
+          sourceId: '${platform.base}@data',
+        );
+        final song = songs.single;
+        expect(song.source, platform.base);
+        expect(song.preferredSource, '${platform.base}@data');
+        expect(song.id, platform.id);
+
+        await manager.getMusicUrlResult(song, quality: '320k');
+
+        expect(playback.searchCalls, isEmpty);
+        final info = playback.infos.single;
+        expect(info.source, platform.base);
+        expect(info.songmid, platform.id);
+        expect(info.songId, platform.base == 'tx' ? 987654 : platform.id);
+        expect(info.hash, platform.id);
+        expect(info.name, 'song');
+        expect(info.singer, 'artist');
+        if (platform.base == 'tx') expect(info.interval, '205');
+      },
+    );
+  }
+
+  test('legacy source prefixes are stripped before delegation', () async {
+    final data = _Host(
+      'data',
+      isDataSource: true,
+      platform: 'kg',
+      platformName: '酷狗音乐',
+    );
+    final playback = _Host(
+      'playback',
+      platform: 'kg',
+      platformName: '酷狗音乐',
+      canSearch: false,
+    );
+    final manager = delegatedManager(
+      data: data,
+      playback: playback,
+      base: 'kg',
+    );
+    final song = Song(
+      id: 'kg_HASH9',
+      title: 'song',
+      artist: 'artist',
+      album: 'album',
+      duration: 180,
+      source: 'kg@data',
+      preferredSource: 'kg@data',
+    );
+
+    await manager.getMusicUrlResult(song, quality: '320k');
+
+    final info = playback.infos.single;
+    expect(info.source, 'kg');
+    expect(info.songmid, 'HASH9');
+    expect(info.hash, 'HASH9');
+  });
+
+  test('QQ numeric lyric id is kept as songId without lx metadata', () async {
+    final data = _Host(
+      'data',
+      isDataSource: true,
+      platform: 'tx',
+      platformName: 'QQ音乐',
+    );
+    final playback = _Host(
+      'playback',
+      platform: 'tx',
+      platformName: 'QQ音乐',
+      canSearch: false,
+    );
+    final manager = delegatedManager(
+      data: data,
+      playback: playback,
+      base: 'tx',
+    );
+    final song = Song(
+      id: 'TXMID',
+      title: 'song',
+      artist: 'artist',
+      album: 'album',
+      duration: 180,
+      lyricUrl: '987654',
+      source: 'tx@data',
+      preferredSource: 'tx@data',
+    );
+
+    await manager.getMusicUrlResult(song, quality: '320k');
+
+    final info = playback.infos.single;
+    expect(info.source, 'tx');
+    expect(info.songmid, 'TXMID');
+    expect(info.songId, '987654');
+  });
+
+  test(
+    'cross-platform data-source song still searches the playback source',
+    () async {
+      final data = _Host(
+        'data',
+        isDataSource: true,
+        platform: 'tx',
+        platformName: 'QQ音乐',
+      );
+      final playback = _Host('playback', platform: 'wy', platformName: '网易云音乐')
+        ..reply = (quality, _) => PluginMusicUrlResult(
+          url: _url,
+          quality: quality,
+          headers: const {'Referer': 'playback'},
+        );
+      final manager = delegatedManager(
+        data: data,
+        playback: playback,
+        base: 'wy',
+      );
+      final song = Song(
+        id: 'TXMID',
+        title: 'song',
+        artist: 'artist',
+        album: 'album',
+        duration: 180,
+        source: 'tx@data',
+        preferredSource: 'tx@data',
+      );
+
+      final result = await manager.getMusicUrlResult(song, quality: 'hires');
+
+      expect(result?.url, _url);
+      expect(result?.quality, 'hires');
+      expect(result?.source, isNull);
+      expect(playback.searchCalls, ['wy']);
+      expect(playback.calls, [('wy', 'matched', 'hires')]);
       expect(data.calls, isEmpty);
     },
   );
+
+  test(
+    'cross-platform data-source song reports a missing search match',
+    () async {
+      final data = _Host(
+        'data',
+        isDataSource: true,
+        platform: 'tx',
+        platformName: 'QQ音乐',
+      );
+      final playback = _Host(
+        'playback',
+        platform: 'wy',
+        platformName: '网易云音乐',
+        searchReply: '{"list":[],"isEnd":true}',
+      );
+      final manager = delegatedManager(
+        data: data,
+        playback: playback,
+        base: 'wy',
+      );
+      final errors = <String>[];
+      final song = Song(
+        id: 'TXMID',
+        title: 'song',
+        artist: 'artist',
+        album: 'album',
+        duration: 180,
+        source: 'tx@data',
+      );
+
+      await expectLater(
+        manager.getMusicUrlResult(
+          song,
+          quality: 'hires',
+          onResolveError: errors.add,
+        ),
+        throwsA(isA<DataSourcePlaybackException>()),
+      );
+
+      expect(errors.single, contains('没有搜到'));
+      expect(playback.searchCalls, isNotEmpty);
+      expect(playback.calls, isEmpty);
+    },
+  );
+
+  test('cross-platform resolution failure keeps the playback error', () async {
+    final data = _Host(
+      'data',
+      isDataSource: true,
+      platform: 'tx',
+      platformName: 'QQ音乐',
+    );
+    final playback = _Host('playback', platform: 'wy', platformName: '网易云音乐')
+      ..reply = (_, _) => throw Exception('wy endpoint offline');
+    final manager = delegatedManager(
+      data: data,
+      playback: playback,
+      base: 'wy',
+    );
+    final errors = <String>[];
+    final song = Song(
+      id: 'TXMID',
+      title: 'song',
+      artist: 'artist',
+      album: 'album',
+      duration: 180,
+      source: 'tx@data',
+    );
+
+    await expectLater(
+      manager.getMusicUrlResult(
+        song,
+        quality: 'hires',
+        onResolveError: errors.add,
+      ),
+      throwsA(isA<DataSourcePlaybackException>()),
+    );
+
+    expect(errors.single, contains('wy endpoint offline'));
+    expect(playback.calls, [('wy', 'matched', 'hires')]);
+  });
 }
