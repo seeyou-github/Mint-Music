@@ -83,6 +83,88 @@ function postForm(url, form) {
     .then(decodeBody);
 }
 
+/** eapi 的固定密钥（AES-128-ECB，PKCS7）。 */
+var EAPI_KEY = 'e82ckenh8dichen8';
+var EAPI_UA = 'NeteaseMusicDesktop/2.10.13.201538 (Windows 10)';
+
+function utf8ToBase64(text) {
+  return cerumusic.utils.buffer.bufToString(
+    cerumusic.utils.buffer.from(text, 'utf8'),
+    'base64'
+  );
+}
+
+function base64ToHex(base64) {
+  return cerumusic.utils.buffer.bufToString(
+    cerumusic.utils.buffer.from(base64, 'base64'),
+    'hex'
+  );
+}
+
+/**
+ * eapi 加密参数：`url-36cd479b6b5-json-36cd479b6b5-md5`，AES-128-ECB 后转大写 hex。
+ * 网易云的逐字歌词（yrc）只在这个加密接口里返回。
+ */
+function eapiParams(url, payload) {
+  var text = JSON.stringify(payload);
+  var digest = cerumusic.utils.crypto.md5(
+    'nobody' + url + 'use' + text + 'md5forencrypt'
+  );
+  var data = url + '-36cd479b6b5-' + text + '-36cd479b6b5-' + digest;
+  var encrypted = cerumusic.utils.crypto.aesEncrypt(
+    utf8ToBase64(data),
+    'aes-128-ecb',
+    utf8ToBase64(EAPI_KEY),
+    ''
+  );
+  return base64ToHex(encrypted).toUpperCase();
+}
+
+/**
+ * 逐字歌词（yrc）：走 eapi 加密接口，没拿到（老歌 / 接口异常）就返回空串，
+ * 调用方继续用普通 LRC。
+ */
+function fetchYrcLyric(id) {
+  var url = '/api/song/lyric/v1';
+  var payload = {
+    id: String(id),
+    cp: false,
+    lv: -1,
+    kv: -1,
+    tv: -1,
+    rv: -1,
+    yv: -1,
+    ytv: -1,
+    yrv: -1
+  };
+  return cerumusic
+    .request('https://music.163.com/eapi/song/lyric/v1', {
+      method: 'POST',
+      headers: {
+        'User-Agent': EAPI_UA,
+        'Referer': 'https://music.163.com/',
+        'Cookie': BASE_HEADERS['Cookie']
+      },
+      form: { params: eapiParams(url, payload) },
+      timeout: 15000
+    })
+    .then(function (res) {
+      var body = res && res.body;
+      if (typeof body === 'string') {
+        try {
+          body = JSON.parse(body);
+        } catch (e) {
+          return '';
+        }
+      }
+      var yrc = body && body.yrc && body.yrc.lyric;
+      return yrc ? String(yrc) : '';
+    })
+    .catch(function () {
+      return '';
+    });
+}
+
 /**
  * 依次尝试多个请求，返回第一个成功的结果。
  * 全部失败时抛出最后一个错误（错误文案里带上每个失败原因，便于排查）。
@@ -646,7 +728,7 @@ function textOf(block) {
 module.exports = {
   pluginInfo: {
     name: '数据源-网易',
-    version: '1.3.0',
+    version: '1.4.0',
     author: 'MintMusic',
     description:
       '只提供搜索、歌单分类、榜单、歌单 / 专辑 / 作者详情的网易云数据源；' +
@@ -980,17 +1062,27 @@ module.exports = {
   getLyric: function (source, musicInfo) {
     var id = musicInfo && (musicInfo.songmid || musicInfo.songId || musicInfo.id);
     if (!id) return Promise.resolve('');
-    return fetchLyric(id).then(function (body) {
+    // 并行：普通 LRC（带翻译 / 音译） + 逐字 yrc（eapi 加密接口）
+    return Promise.all([
+      fetchLyric(id).catch(function () {
+        return null;
+      }),
+      fetchYrcLyric(id)
+    ]).then(function (results) {
+      var body = results[0] || {};
+      var yrc = results[1] || '';
       var lrc = textOf(body.lrc);
       var tlyric = textOf(body.tlyric);
       var romalrc = textOf(body.romalrc);
-      // 只返回标准 LRC：网易云的 yrc（逐字）格式与 App 的歌词解析器不兼容，
-      // 强行返回会让歌词显示错乱，这里与内置源的 lrc 通道保持一致。
+      if (!lrc && !yrc) return '';
+      // yrc 放逐字通道（App 的解析器认网易云的 JSON yrc），lrc 仍作逐行兜底
       return JSON.stringify({
-        lyric: lrc,
+        lyric: lrc || yrc,
         lrc: lrc,
         tlyric: tlyric,
-        romalrc: romalrc
+        romalrc: romalrc,
+        yrc: yrc,
+        crlyric: yrc
       });
     });
   },

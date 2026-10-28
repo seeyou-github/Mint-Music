@@ -622,8 +622,58 @@ function searchArtists(keyword, page, limit) {
     });
 }
 
+/** KRC 的异或密钥（去掉前 4 字节后按 16 字节循环异或，再 zlib 解压）。 */
+var KRC_KEY = [
+  0x40, 0x47, 0x61, 0x77, 0x5e, 0x32, 0x74, 0x47, 0x51, 0x36, 0x31, 0x2d, 0xce,
+  0xd2, 0x6e, 0x69
+];
+
+/**
+ * 酷狗的逐字歌词是 KRC：base64 → 去掉 4 字节头 → 异或 → zlib 解压 → UTF-8 文本。
+ * App 的歌词解析器能直接认 KRC（[start,dur]<rel,dur,0>词…），所以解出来原样返回。
+ */
+function decodeKrc(base64Content) {
+  if (!base64Content) return '';
+  try {
+    var raw = cerumusic.utils.buffer.from(base64Content, 'base64');
+    if (!raw || raw.length <= 4) return '';
+    var bytes = [];
+    for (var i = 4; i < raw.length; i++) {
+      bytes.push((raw[i] ^ KRC_KEY[(i - 4) % 16]) & 0xff);
+    }
+    return cerumusic.utils.zlib
+      .inflate(bytes)
+      .then(function (inflated) {
+        return cerumusic.utils.buffer.bufToString(inflated, 'utf8');
+      })
+      .catch(function () {
+        return '';
+      });
+  } catch (e) {
+    return Promise.resolve('');
+  }
+}
+
+/** 下载某首歌指定格式的歌词（krc = 逐字，lrc = 逐行）。 */
+function downloadLyric(candidate, fmt) {
+  var url =
+    LYRICS +
+    '/download?ver=1&client=pc&id=' +
+    candidate.id +
+    '&accesskey=' +
+    encodeURIComponent(candidate.accesskey) +
+    '&fmt=' +
+    fmt +
+    '&charset=utf8';
+  return getJson(url).then(function (result) {
+    if (Number(result.status) !== 200 || !result.content) return '';
+    if (fmt === 'krc') return decodeKrc(result.content);
+    return base64Decode(result.content);
+  });
+}
+
 function fetchLyric(hash, duration) {
-  // 先查歌词 id + accesskey，再下载 LRC（内容仍是 base64）
+  // 先查歌词 id + accesskey，再按「逐字（krc）→ 逐行（lrc）」的顺序下载
   var searchUrl =
     KRCS +
     '/search?ver=1&man=yes&client=mobi&keyword=&duration=' +
@@ -632,20 +682,20 @@ function fetchLyric(hash, duration) {
     hash;
   return getJson(searchUrl).then(function (body) {
     var candidates = body.candidates || [];
-    if (!candidates.length) return '';
+    if (!candidates.length) return null;
     var candidate = candidates[0];
-    if (!candidate.id || !candidate.accesskey) return '';
-    var downloadUrl =
-      LYRICS +
-      '/download?ver=1&client=pc&id=' +
-      candidate.id +
-      '&accesskey=' +
-      encodeURIComponent(candidate.accesskey) +
-      '&fmt=lrc&charset=utf8';
-    return getJson(downloadUrl).then(function (result) {
-      if (Number(result.status) !== 200) return '';
-      return base64Decode(result.content);
-    });
+    if (!candidate.id || !candidate.accesskey) return null;
+    return downloadLyric(candidate, 'krc')
+      .catch(function () {
+        return '';
+      })
+      .then(function (krc) {
+        if (krc) return { krc: krc, lrc: '' };
+        // 没有逐字歌词（或解码失败）再退回逐行，保证歌词不空
+        return downloadLyric(candidate, 'lrc').then(function (lrc) {
+          return lrc ? { krc: '', lrc: lrc } : null;
+        });
+      });
   });
 }
 
@@ -654,7 +704,7 @@ function fetchLyric(hash, duration) {
 module.exports = {
   pluginInfo: {
     name: '数据源-酷狗',
-    version: '1.5.0',
+    version: '1.6.0',
     author: 'MintMusic',
     description:
       '只提供搜索（歌曲 / 专辑 / 作者）、歌单分类、榜单、歌单 / 专辑 / 作者详情的酷狗音乐数据源；' +
@@ -1189,9 +1239,17 @@ module.exports = {
       musicInfo && (musicInfo.songmid || musicInfo.songId || musicInfo.id);
     if (!hash) return Promise.resolve('');
     // duration 只用于歌词匹配的候选排序，传 0 也能拿到第一个候选
-    return fetchLyric(hash, 0).then(function (lrc) {
-      if (!lrc) return '';
-      return JSON.stringify({ lyric: lrc, lrc: lrc });
+    return fetchLyric(hash, 0).then(function (bundle) {
+      if (!bundle) return '';
+      var text = bundle.krc || bundle.lrc || '';
+      if (!text) return '';
+      // krc 放逐字通道（crlyric），lrc 放逐行通道，App 会优先用逐字那份
+      return JSON.stringify({
+        lyric: text,
+        lrc: bundle.lrc || '',
+        krc: bundle.krc || '',
+        crlyric: bundle.krc || ''
+      });
     });
   },
 
