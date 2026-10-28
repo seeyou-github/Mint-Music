@@ -463,15 +463,325 @@ function base64Decode(text) {
   }
 }
 
+function utf8ToBase64(text) {
+  return cerumusic.utils.buffer.bufToString(
+    cerumusic.utils.buffer.from(String(text || ''), 'utf8'),
+    'base64'
+  );
+}
+
+/* --------------------------------------------------------------- 逐字歌词 */
+
+/**
+ * 逐字歌词（QRC）：GetPlayLyricInfo（qrc:1）返回 hex 密文，需要 3DES 解密
+ * 再 zlib 解压，得到 `<QrcInfos>` XML（LyricContent 属性里是逐字正文）。
+ *
+ * 注意：QQ 的 3DES 是社区流传实现（LDDC / QQMusicDecoder 同源），位序按
+ * 小端 32 位词处理，与 OpenSSL 等标准 DES **不兼容**，必须用下面这份移植。
+ */
+
+var QRC_3DES_KEY = '!@#)(*$%123ZXC!@!@#)(NHL';
+
+var QRC_SBOX = [
+  [14, 4, 13, 1, 2, 15, 11, 8, 3, 10, 6, 12, 5, 9, 0, 7, 0, 15, 7, 4, 14, 2, 13, 1, 10, 6, 12, 11, 9, 5, 3, 8, 4, 1, 14, 8, 13, 6, 2, 11, 15, 12, 9, 7, 3, 10, 5, 0, 15, 12, 8, 2, 4, 9, 1, 7, 5, 11, 3, 14, 10, 0, 6, 13],
+  [15, 1, 8, 14, 6, 11, 3, 4, 9, 7, 2, 13, 12, 0, 5, 10, 3, 13, 4, 7, 15, 2, 8, 15, 12, 0, 1, 10, 6, 9, 11, 5, 0, 14, 7, 11, 10, 4, 13, 1, 5, 8, 12, 6, 9, 3, 2, 15, 13, 8, 10, 1, 3, 15, 4, 2, 11, 6, 7, 12, 0, 5, 14, 9],
+  [10, 0, 9, 14, 6, 3, 15, 5, 1, 13, 12, 7, 11, 4, 2, 8, 13, 7, 0, 9, 3, 4, 6, 10, 2, 8, 5, 14, 12, 11, 15, 1, 13, 6, 4, 9, 8, 15, 3, 0, 11, 1, 2, 12, 5, 10, 14, 7, 1, 10, 13, 0, 6, 9, 8, 7, 4, 15, 14, 3, 11, 5, 2, 12],
+  [7, 13, 14, 3, 0, 6, 9, 10, 1, 2, 8, 5, 11, 12, 4, 15, 13, 8, 11, 5, 6, 15, 0, 3, 4, 7, 2, 12, 1, 10, 14, 9, 10, 6, 9, 0, 12, 11, 7, 13, 15, 1, 3, 14, 5, 2, 8, 4, 3, 15, 0, 6, 10, 10, 13, 8, 9, 4, 5, 11, 12, 7, 2, 14],
+  [2, 12, 4, 1, 7, 10, 11, 6, 8, 5, 3, 15, 13, 0, 14, 9, 14, 11, 2, 12, 4, 7, 13, 1, 5, 0, 15, 10, 3, 9, 8, 6, 4, 2, 1, 11, 10, 13, 7, 8, 15, 9, 12, 5, 6, 3, 0, 14, 11, 8, 12, 7, 1, 14, 2, 13, 6, 15, 0, 9, 10, 4, 5, 3],
+  [12, 1, 10, 15, 9, 2, 6, 8, 0, 13, 3, 4, 14, 7, 5, 11, 10, 15, 4, 2, 7, 12, 9, 5, 6, 1, 13, 14, 0, 11, 3, 8, 9, 14, 15, 5, 2, 8, 12, 3, 7, 0, 4, 10, 1, 13, 11, 6, 4, 3, 2, 12, 9, 5, 15, 10, 11, 14, 1, 7, 6, 0, 8, 13],
+  [4, 11, 2, 14, 15, 0, 8, 13, 3, 12, 9, 7, 5, 10, 6, 1, 13, 0, 11, 7, 4, 9, 1, 10, 14, 3, 5, 12, 2, 15, 8, 6, 1, 4, 11, 13, 12, 3, 7, 14, 10, 15, 6, 8, 0, 5, 9, 2, 6, 11, 13, 8, 1, 4, 10, 7, 9, 5, 0, 15, 14, 2, 3, 12],
+  [13, 2, 8, 4, 6, 15, 11, 1, 10, 9, 3, 14, 5, 0, 12, 7, 1, 15, 13, 8, 10, 3, 7, 4, 12, 5, 6, 11, 0, 14, 9, 2, 7, 11, 4, 1, 9, 12, 14, 2, 0, 6, 10, 13, 15, 3, 5, 8, 2, 1, 14, 7, 4, 10, 8, 13, 15, 12, 9, 0, 3, 5, 6, 11]
+];
+
+var QRC_KEY_RND_SHIFT = [1, 1, 2, 2, 2, 2, 2, 2, 1, 2, 2, 2, 2, 2, 2, 1];
+var QRC_KEY_PERM_C = [56, 48, 40, 32, 24, 16, 8, 0, 57, 49, 41, 33, 25, 17, 9, 1, 58, 50, 42, 34, 26, 18, 10, 2, 59, 51, 43, 35];
+var QRC_KEY_PERM_D = [62, 54, 46, 38, 30, 22, 14, 6, 61, 53, 45, 37, 29, 21, 13, 5, 60, 52, 44, 36, 28, 20, 12, 4, 27, 19, 11, 3];
+var QRC_KEY_COMPRESSION = [13, 16, 10, 23, 0, 4, 2, 27, 14, 5, 20, 9, 22, 18, 11, 3, 25, 7, 15, 6, 26, 19, 12, 1, 40, 51, 30, 36, 46, 54, 29, 39, 50, 44, 32, 47, 43, 48, 38, 55, 33, 52, 45, 41, 49, 35, 28, 31];
+
+/** 字节串里取第 b 位（小端 32 位词的字节序）左移 c。 */
+function qrcBitnum(bytes, b, c) {
+  return (
+    ((bytes[((b / 32) | 0) * 4 + 3 - (((b % 32) / 8) | 0)] >> (7 - (b % 8))) & 1) << c
+  );
+}
+
+function qrcBitnumIntr(a, b, c) {
+  return ((a >> (31 - b)) & 1) << c;
+}
+
+function qrcBitnumIntl(a, b, c) {
+  return ((a << b) & 0x80000000) >>> c;
+}
+
+function qrcSboxBit(a) {
+  return (a & 32) | ((a & 31) >> 1) | ((a & 1) << 4);
+}
+
+function qrcInitialPermutation(data) {
+  var l = 0;
+  var r = 0;
+  for (var i = 0; i < 32; i++) {
+    l |= qrcBitnum(data, QRC_IP_L[i], 31 - i);
+    r |= qrcBitnum(data, QRC_IP_R[i], 31 - i);
+  }
+  return [l >>> 0, r >>> 0];
+}
+
+var QRC_IP_L = [
+  57, 49, 41, 33, 25, 17, 9, 1, 59, 51, 43, 35, 27, 19, 11, 3,
+  61, 53, 45, 37, 29, 21, 13, 5, 63, 55, 47, 39, 31, 23, 15, 7
+];
+var QRC_IP_R = [
+  56, 48, 40, 32, 24, 16, 8, 0, 58, 50, 42, 34, 26, 18, 10, 2,
+  60, 52, 44, 36, 28, 20, 12, 4, 62, 54, 46, 38, 30, 22, 14, 6
+];
+
+function qrcInversePermutation(s0, s1) {
+  var data = new Array(8);
+  data[3] =
+    qrcBitnumIntr(s1, 7, 7) | qrcBitnumIntr(s0, 7, 6) | qrcBitnumIntr(s1, 15, 5) |
+    qrcBitnumIntr(s0, 15, 4) | qrcBitnumIntr(s1, 23, 3) | qrcBitnumIntr(s0, 23, 2) |
+    qrcBitnumIntr(s1, 31, 1) | qrcBitnumIntr(s0, 31, 0);
+  data[2] =
+    qrcBitnumIntr(s1, 6, 7) | qrcBitnumIntr(s0, 6, 6) | qrcBitnumIntr(s1, 14, 5) |
+    qrcBitnumIntr(s0, 14, 4) | qrcBitnumIntr(s1, 22, 3) | qrcBitnumIntr(s0, 22, 2) |
+    qrcBitnumIntr(s1, 30, 1) | qrcBitnumIntr(s0, 30, 0);
+  data[1] =
+    qrcBitnumIntr(s1, 5, 7) | qrcBitnumIntr(s0, 5, 6) | qrcBitnumIntr(s1, 13, 5) |
+    qrcBitnumIntr(s0, 13, 4) | qrcBitnumIntr(s1, 21, 3) | qrcBitnumIntr(s0, 21, 2) |
+    qrcBitnumIntr(s1, 29, 1) | qrcBitnumIntr(s0, 29, 0);
+  data[0] =
+    qrcBitnumIntr(s1, 4, 7) | qrcBitnumIntr(s0, 4, 6) | qrcBitnumIntr(s1, 12, 5) |
+    qrcBitnumIntr(s0, 12, 4) | qrcBitnumIntr(s1, 20, 3) | qrcBitnumIntr(s0, 20, 2) |
+    qrcBitnumIntr(s1, 28, 1) | qrcBitnumIntr(s0, 28, 0);
+  data[7] =
+    qrcBitnumIntr(s1, 3, 7) | qrcBitnumIntr(s0, 3, 6) | qrcBitnumIntr(s1, 11, 5) |
+    qrcBitnumIntr(s0, 11, 4) | qrcBitnumIntr(s1, 19, 3) | qrcBitnumIntr(s0, 19, 2) |
+    qrcBitnumIntr(s1, 27, 1) | qrcBitnumIntr(s0, 27, 0);
+  data[6] =
+    qrcBitnumIntr(s1, 2, 7) | qrcBitnumIntr(s0, 2, 6) | qrcBitnumIntr(s1, 10, 5) |
+    qrcBitnumIntr(s0, 10, 4) | qrcBitnumIntr(s1, 18, 3) | qrcBitnumIntr(s0, 18, 2) |
+    qrcBitnumIntr(s1, 26, 1) | qrcBitnumIntr(s0, 26, 0);
+  data[5] =
+    qrcBitnumIntr(s1, 1, 7) | qrcBitnumIntr(s0, 1, 6) | qrcBitnumIntr(s1, 9, 5) |
+    qrcBitnumIntr(s0, 9, 4) | qrcBitnumIntr(s1, 17, 3) | qrcBitnumIntr(s0, 17, 2) |
+    qrcBitnumIntr(s1, 25, 1) | qrcBitnumIntr(s0, 25, 0);
+  data[4] =
+    qrcBitnumIntr(s1, 0, 7) | qrcBitnumIntr(s0, 0, 6) | qrcBitnumIntr(s1, 8, 5) |
+    qrcBitnumIntr(s0, 8, 4) | qrcBitnumIntr(s1, 16, 3) | qrcBitnumIntr(s0, 16, 2) |
+    qrcBitnumIntr(s1, 24, 1) | qrcBitnumIntr(s0, 24, 0);
+  return data;
+}
+
+/** 单轮 Feistel 函数。 */
+function qrcFeistel(state, key) {
+  var t1 =
+    (qrcBitnumIntl(state, 31, 0) | ((state & 0xf0000000) >>> 1) | qrcBitnumIntl(state, 4, 5) |
+      qrcBitnumIntl(state, 3, 6) | ((state & 0x0f000000) >>> 3) | qrcBitnumIntl(state, 8, 11) |
+      qrcBitnumIntl(state, 7, 12) | ((state & 0x00f00000) >>> 5) | qrcBitnumIntl(state, 12, 17) |
+      qrcBitnumIntl(state, 11, 18) | ((state & 0x000f0000) >>> 7) | qrcBitnumIntl(state, 16, 23)) >>> 0;
+  var t2 =
+    (qrcBitnumIntl(state, 15, 0) | ((state & 0x0000f000) << 15) | qrcBitnumIntl(state, 20, 5) |
+      qrcBitnumIntl(state, 19, 6) | ((state & 0x00000f00) << 13) | qrcBitnumIntl(state, 24, 11) |
+      qrcBitnumIntl(state, 23, 12) | ((state & 0x000000f0) << 11) | qrcBitnumIntl(state, 28, 17) |
+      qrcBitnumIntl(state, 27, 18) | ((state & 0x0000000f) << 9) | qrcBitnumIntl(state, 0, 23)) >>> 0;
+
+  var lrgstate = [
+    (t1 >>> 24) & 0xff, (t1 >>> 16) & 0xff, (t1 >>> 8) & 0xff,
+    (t2 >>> 24) & 0xff, (t2 >>> 16) & 0xff, (t2 >>> 8) & 0xff
+  ];
+  for (var i = 0; i < 6; i++) lrgstate[i] ^= key[i];
+
+  var st =
+    ((QRC_SBOX[0][qrcSboxBit(lrgstate[0] >>> 2)] << 28) |
+      (QRC_SBOX[1][qrcSboxBit(((lrgstate[0] & 0x03) << 4) | (lrgstate[1] >>> 4))] << 24) |
+      (QRC_SBOX[2][qrcSboxBit(((lrgstate[1] & 0x0f) << 2) | (lrgstate[2] >>> 6))] << 20) |
+      (QRC_SBOX[3][qrcSboxBit(lrgstate[2] & 0x3f)] << 16) |
+      (QRC_SBOX[4][qrcSboxBit(lrgstate[3] >>> 2)] << 12) |
+      (QRC_SBOX[5][qrcSboxBit(((lrgstate[3] & 0x03) << 4) | (lrgstate[4] >>> 4))] << 8) |
+      (QRC_SBOX[6][qrcSboxBit(((lrgstate[4] & 0x0f) << 2) | (lrgstate[5] >>> 6))] << 4) |
+      QRC_SBOX[7][qrcSboxBit(lrgstate[5] & 0x3f)]) >>> 0;
+
+  return (qrcBitnumIntl(st, 15, 0) | qrcBitnumIntl(st, 6, 1) | qrcBitnumIntl(st, 19, 2) |
+    qrcBitnumIntl(st, 20, 3) | qrcBitnumIntl(st, 28, 4) | qrcBitnumIntl(st, 11, 5) |
+    qrcBitnumIntl(st, 27, 6) | qrcBitnumIntl(st, 16, 7) | qrcBitnumIntl(st, 0, 8) |
+    qrcBitnumIntl(st, 14, 9) | qrcBitnumIntl(st, 22, 10) | qrcBitnumIntl(st, 25, 11) |
+    qrcBitnumIntl(st, 4, 12) | qrcBitnumIntl(st, 17, 13) | qrcBitnumIntl(st, 30, 14) |
+    qrcBitnumIntl(st, 9, 15) | qrcBitnumIntl(st, 1, 16) | qrcBitnumIntl(st, 7, 17) |
+    qrcBitnumIntl(st, 23, 18) | qrcBitnumIntl(st, 13, 19) | qrcBitnumIntl(st, 31, 20) |
+    qrcBitnumIntl(st, 26, 21) | qrcBitnumIntl(st, 2, 22) | qrcBitnumIntl(st, 8, 23) |
+    qrcBitnumIntl(st, 18, 24) | qrcBitnumIntl(st, 12, 25) | qrcBitnumIntl(st, 29, 26) |
+    qrcBitnumIntl(st, 5, 27) | qrcBitnumIntl(st, 21, 28) | qrcBitnumIntl(st, 10, 29) |
+    qrcBitnumIntl(st, 3, 30) | qrcBitnumIntl(st, 24, 31)) >>> 0;
+}
+
+/** 解密一个 8 字节块。 */
+function qrcDesBlock(data, key) {
+  var pair = qrcInitialPermutation(data);
+  var s0 = pair[0];
+  var s1 = pair[1];
+  for (var idx = 0; idx < 15; idx++) {
+    var previousS1 = s1;
+    s1 = (qrcFeistel(s1, key[idx]) ^ s0) >>> 0;
+    s0 = previousS1;
+  }
+  s0 = (qrcFeistel(s1, key[15]) ^ s0) >>> 0;
+  return qrcInversePermutation(s0, s1);
+}
+
+function qrcKeySchedule(key, mode) {
+  var schedule = [];
+  for (var i = 0; i < 16; i++) schedule.push([0, 0, 0, 0, 0, 0]);
+  var c = 0;
+  var d = 0;
+  for (var j = 0; j < 28; j++) c |= qrcBitnum(key, QRC_KEY_PERM_C[j], 31 - j);
+  for (var k = 0; k < 28; k++) d |= qrcBitnum(key, QRC_KEY_PERM_D[k], 31 - k);
+  c >>>= 0;
+  d >>>= 0;
+  for (var n = 0; n < 16; n++) {
+    var shift = QRC_KEY_RND_SHIFT[n];
+    c = (((c << shift) | (c >>> (28 - shift))) & 0xfffffff0) >>> 0;
+    d = (((d << shift) | (d >>> (28 - shift))) & 0xfffffff0) >>> 0;
+    var togen = mode === 0 ? 15 - n : n;
+    for (var m = 0; m < 24; m++) {
+      schedule[togen][m / 8 | 0] |= qrcBitnumIntr(c, QRC_KEY_COMPRESSION[m], 7 - (m % 8));
+    }
+    for (var p = 24; p < 48; p++) {
+      schedule[togen][p / 8 | 0] |= qrcBitnumIntr(d, QRC_KEY_COMPRESSION[p] - 27, 7 - (p % 8));
+    }
+  }
+  return schedule;
+}
+
+/** 3DES 密钥编排：mode 1 = 加密，0 = 解密。 */
+function qrcTripleDesKeySetup(key, mode) {
+  if (mode === 1) {
+    return [
+      qrcKeySchedule(key, 1),
+      qrcKeySchedule(key.slice(8), 0),
+      qrcKeySchedule(key.slice(16), 1)
+    ];
+  }
+  return [
+    qrcKeySchedule(key.slice(16), 0),
+    qrcKeySchedule(key.slice(8), 1),
+    qrcKeySchedule(key, 0)
+  ];
+}
+
+function qrcTripleDesBlock(data, key) {
+  var result = data;
+  for (var i = 0; i < 3; i++) result = qrcDesBlock(result, key[i]);
+  return result;
+}
+
+/** hex 密文 → 3DES 解密后的明文字节（尾部可能带填充，交给 zlib 容忍）。 */
+function qrcDecryptHex(hex) {
+  var cipher = cerumusic.utils.buffer.from(String(hex || ''), 'hex');
+  if (!cipher || cipher.length < 16 || cipher.length % 8 !== 0) return [];
+  var key = [];
+  for (var i = 0; i < QRC_3DES_KEY.length; i++) {
+    key.push(QRC_3DES_KEY.charCodeAt(i) & 0xff);
+  }
+  var schedule = qrcTripleDesKeySetup(key, 0);
+  var out = [];
+  for (var j = 0; j + 8 <= cipher.length; j += 8) {
+    var block = qrcTripleDesBlock(cipher.slice(j), schedule);
+    for (var k = 0; k < 8; k++) out.push(block[k]);
+  }
+  return out;
+}
+
+/** 「4:29」秒数化（musicInfo.interval 是 m:ss 文案；异常返回 0）。 */
+function parseIntervalSeconds(text) {
+  var value = String(text || '');
+  if (!value) return 0;
+  if (/^\d+$/.test(value)) return Number(value) || 0;
+  var parts = value.split(':');
+  var seconds = 0;
+  for (var i = 0; i < parts.length; i++) {
+    seconds = seconds * 60 + (Number(parts[i]) || 0);
+  }
+  return seconds;
+}
+
+/**
+ * 拉取逐字歌词（QRC XML）。拿不到（无数字 songID / 无逐字 / 解密失败 /
+ * 老版本 App 缺 zlib 桥）一律返回空串，调用方回退逐行 LRC。
+ */
+function fetchQrc(songId, songInfo) {
+  if (!cerumusic.utils.zlib) return Promise.resolve('');
+  if (!/^\d+$/.test(String(songId || ''))) return Promise.resolve('');
+  var info = songInfo || {};
+  return cerumusic
+    .request(MUSICU, {
+      method: 'POST',
+      headers: {
+        'User-Agent': UA,
+        'Referer': 'https://y.qq.com/',
+        'Origin': 'https://y.qq.com',
+        'Content-Type': 'application/json'
+      },
+      body: {
+        comm: { ct: 19, cv: 2111 },
+        req_1: {
+          module: 'music.musichallSong.PlayLyricInfo',
+          method: 'GetPlayLyricInfo',
+          param: {
+            albumName: utf8ToBase64(info.albumName),
+            crypt: 1,
+            ct: 19,
+            cv: 2111,
+            interval: parseIntervalSeconds(info.interval),
+            lrc_t: 0,
+            qrc: 1,
+            qrc_t: 0,
+            roma: 1,
+            roma_t: 0,
+            singerName: utf8ToBase64(info.singer),
+            // 服务端要求数字类型，传字符串会被 10006 拒绝
+            songID: Number(songId),
+            songName: utf8ToBase64(info.name),
+            trans: 1,
+            trans_t: 0,
+            type: 0
+          }
+        }
+      },
+      timeout: 15000
+    })
+    .then(decodeBody)
+    .then(function (body) {
+      var data = body.req_1 && body.req_1.data;
+      if (!data || Number(data.qrc) !== 1) return '';
+      var lyric = data.lyric;
+      if (typeof lyric !== 'string' || !/^[0-9a-fA-F]+$/.test(lyric)) return '';
+      return qrcDecryptHex(lyric);
+    })
+    .then(function (plain) {
+      if (!plain.length) return '';
+      return cerumusic.utils.zlib.inflate(plain).then(function (inflated) {
+        return cerumusic.utils.buffer.bufToString(inflated, 'utf8');
+      });
+    })
+    .then(function (xml) {
+      return xml.indexOf('LyricContent=') >= 0 ? xml : '';
+    })
+    .catch(function () {
+      return '';
+    });
+}
+
 /* ---------------------------------------------------------------- 插件接口 */
 
 module.exports = {
   pluginInfo: {
     name: '数据源-QQ',
-    version: '1.5.0',
+    version: '1.6.0',
     author: 'MintMusic',
     description:
       '只提供搜索（歌曲 / 专辑 / 作者）、歌单分类、榜单、歌单 / 专辑 / 作者详情的 QQ音乐数据源；' +
+      '歌词支持逐字 QRC（需播放源提供数字歌曲 id）；' +
       '播放需要在「插件管理 → 数据源」里指定一个已安装的播放源。',
     // ★ 数据源标记
     // 站点图标：导入插件时下载并缓存到插件目录（音源列表 / 切换按钮用它）
@@ -921,13 +1231,39 @@ module.exports = {
     var mid =
       musicInfo && (musicInfo.songmid || musicInfo.songId || musicInfo.id);
     if (!mid) return Promise.resolve('');
-    return fetchLyric(mid).then(function (body) {
-      if (Number(body.retcode) !== 0 && Number(body.code) !== 0) {
-        return '';
-      }
-      var lrc = base64Decode(body.lyric);
-      var trans = base64Decode(body.trans);
-      return JSON.stringify({ lyric: lrc, lrc: lrc, tlyric: trans });
+    // 并行：逐行 LRC（带翻译）+ 逐字 QRC（需要数字 songID）
+    function lrcTask() {
+      return fetchLyric(mid)
+        .then(function (body) {
+          if (Number(body.retcode) !== 0 && Number(body.code) !== 0) {
+            return null;
+          }
+          var lrc = base64Decode(body.lyric);
+          var trans = base64Decode(body.trans);
+          return { lyric: lrc, lrc: lrc, tlyric: trans };
+        })
+        .catch(function () {
+          return null;
+        });
+    }
+    function qrcTask() {
+      // 数字 songID 在搜索结果里由 songId 透传（songmid 是 base62 mid，
+      // GetPlayLyricInfo 只认数字 id）
+      return fetchQrc(musicInfo && musicInfo.songId, musicInfo);
+    }
+    return Promise.all([lrcTask(), qrcTask()]).then(function (results) {
+      var base = results[0] || {};
+      var lrc = base.lrc || '';
+      var qrc = results[1] || '';
+      if (!lrc && !qrc && !base.tlyric) return '';
+      // QRC 放逐字通道（App 会优先用逐字那份），lrc 仍作逐行兜底
+      return JSON.stringify({
+        lyric: lrc || qrc,
+        lrc: lrc,
+        tlyric: base.tlyric || '',
+        qrc: qrc,
+        crlyric: qrc
+      });
     });
   },
 

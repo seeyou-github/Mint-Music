@@ -111,13 +111,13 @@ function eapiParams(url, payload) {
     'nobody' + url + 'use' + text + 'md5forencrypt'
   );
   var data = url + '-36cd479b6b5-' + text + '-36cd479b6b5-' + digest;
-  var encrypted = cerumusic.utils.crypto.aesEncrypt(
-    utf8ToBase64(data),
-    'aes-128-ecb',
-    utf8ToBase64(EAPI_KEY),
-    ''
-  );
-  return base64ToHex(encrypted).toUpperCase();
+  // aesEncrypt 是异步桥（返回 Promise），必须链式等待后再转 hex；
+  // 同步取值会把 Promise 传给 Buffer.from 得到空串，params 恒为空。
+  return cerumusic.utils.crypto
+    .aesEncrypt(utf8ToBase64(data), 'aes-128-ecb', utf8ToBase64(EAPI_KEY), '')
+    .then(function (encrypted) {
+      return base64ToHex(encrypted).toUpperCase();
+    });
 }
 
 /**
@@ -137,16 +137,18 @@ function fetchYrcLyric(id) {
     ytv: -1,
     yrv: -1
   };
-  return cerumusic
-    .request('https://music.163.com/eapi/song/lyric/v1', {
-      method: 'POST',
-      headers: {
-        'User-Agent': EAPI_UA,
-        'Referer': 'https://music.163.com/',
-        'Cookie': BASE_HEADERS['Cookie']
-      },
-      form: { params: eapiParams(url, payload) },
-      timeout: 15000
+  return eapiParams(url, payload)
+    .then(function (params) {
+      return cerumusic.request('https://music.163.com/eapi/song/lyric/v1', {
+        method: 'POST',
+        headers: {
+          'User-Agent': EAPI_UA,
+          'Referer': 'https://music.163.com/',
+          'Cookie': BASE_HEADERS['Cookie']
+        },
+        form: { params: params },
+        timeout: 15000
+      });
     })
     .then(function (res) {
       var body = res && res.body;
