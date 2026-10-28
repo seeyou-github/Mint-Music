@@ -414,6 +414,22 @@ function fetchTopLists() {
   );
 }
 
+/* 官方 rank 接口自带 classify 分类（数字 1-5），App 榜单页按它分组；
+ * 接口没给组名文字，这里映射成与其他音源一致的组名。 */
+var KUGOU_RANK_GROUPS = {
+  1: '官方榜',
+  2: '地区榜',
+  3: '特色榜',
+  4: '全球榜',
+  5: '曲风榜'
+};
+
+/** classify 数字 → 组名；未知分类返回 null（App 里只进「全部」）。 */
+function kugouRankGroup(classify) {
+  var key = classify === undefined || classify === null ? '' : String(classify);
+  return KUGOU_RANK_GROUPS[key] || null;
+}
+
 function fetchTopListDetail(rankId, page) {
   var url =
     CDNBJ +
@@ -704,10 +720,10 @@ function fetchLyric(hash, duration) {
 module.exports = {
   pluginInfo: {
     name: '数据源-酷狗',
-    version: '1.6.0',
+    version: '1.7.0',
     author: 'MintMusic',
     description:
-      '只提供搜索（歌曲 / 专辑 / 作者）、歌单分类、榜单、歌单 / 专辑 / 作者详情的酷狗音乐数据源；' +
+      '只提供搜索（歌曲 / 专辑 / 作者）、歌单分类、榜单（含分类）、歌单 / 专辑 / 作者详情的酷狗音乐数据源；' +
       '播放需要在「插件管理 → 数据源」里指定一个已安装的播放源。',
     // ★ 数据源标记
     // 站点图标：导入插件时下载并缓存到插件目录（音源列表 / 切换按钮用它）
@@ -1124,7 +1140,9 @@ module.exports = {
           // 直接显示会被误当成歌曲数。
           updateFrequency: item.update_frequency
             ? String(item.update_frequency)
-            : ''
+            : '',
+          // 官方接口自带 classify 分类（1-5），映射成组名给 App 分类栏
+          group: kugouRankGroup(item.classify)
         });
       }
       return JSON.stringify(result);
