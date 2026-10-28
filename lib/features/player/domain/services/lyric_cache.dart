@@ -73,8 +73,9 @@ class LyricCache {
   static const String _migrationModule = 'lyric_cache';
 
   /// 缓存键版本：歌词解码/解析修复后递增，让旧版存下的原文（例如酷我
-  /// GBK 歌词被按 Latin-1 解出来的乱码）失效重取。
-  static const int _cacheVersion = 2;
+  /// GBK 歌词被按 Latin-1 解出来的乱码、网易 eapi 加密修复前缓存下来的
+  /// 「无逐字」歌词）失效重取。
+  static const int _cacheVersion = 3;
 
   /// 缓存键：版本 + 音源 + 歌曲 id 的 md5。
   ///
