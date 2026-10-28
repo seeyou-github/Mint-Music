@@ -496,7 +496,9 @@ void main() {
       expect(find.text('上一頁'), findsOneWidget);
       expect(find.text('下一頁'), findsOneWidget);
       expect(find.text('共 21 頁'), findsOneWidget);
-      expect(find.text('頁碼'), findsOneWidget);
+      // 跳页框不再有「页码」浮动标签，只保留范围提示。
+      expect(find.text('頁碼'), findsNothing);
+      expect(find.text('1–21'), findsOneWidget);
       expect(find.text('確定'), findsOneWidget);
     });
   });

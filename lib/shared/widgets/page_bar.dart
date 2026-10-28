@@ -280,9 +280,7 @@ class _PageBarState extends ConsumerState<PageBar> {
             style: TextStyle(fontSize: 12, color: colors.textPrimary),
             cursorColor: colors.primary,
             decoration: InputDecoration(
-              labelText: context.tr('页码'),
               hintText: '1–$_count',
-              labelStyle: TextStyle(color: colors.textSecondary),
               hintStyle: TextStyle(color: colors.textHint),
               isDense: true,
               contentPadding: const EdgeInsets.symmetric(
