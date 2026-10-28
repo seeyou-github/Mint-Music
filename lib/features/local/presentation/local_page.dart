@@ -1708,7 +1708,8 @@ class _LocalSongItem extends ConsumerWidget {
             children: [
               // 序号 / 勾选框
               SizedBox(
-                width: 28,
+                // 四位数序号也不能折行。
+                width: 48,
                 child: selectionMode
                     ? IgnorePointer(
                         // 只做展示：整行点击由外层 GestureDetector 处理

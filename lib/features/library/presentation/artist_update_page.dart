@@ -237,7 +237,8 @@ class _ArtistUpdatePageState extends ConsumerState<ArtistUpdatePage> {
                   child: Row(
                     children: [
                       SizedBox(
-                        width: 24,
+                        // 四位数序号也不折行。
+                        width: 40,
                         child: Text(
                           '${index + 1}',
                           style: TextStyle(

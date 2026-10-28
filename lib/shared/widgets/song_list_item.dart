@@ -19,6 +19,10 @@ import 'song_action_sheet.dart';
 class SongListItem extends ConsumerWidget {
   static const double itemExtent = 60;
 
+  /// 序号列宽度：四位数（千首以上的歌单 / 队列）也不能折行。
+  /// 勾选框复用同一宽度，切换多选模式时封面位置不会跳动。
+  static const double _indexWidth = 48;
+
   final Song song;
   final int? index;
   final bool showIndex;
@@ -174,7 +178,7 @@ class SongListItem extends ConsumerWidget {
   /// 处理，避免「点勾选框触发两次切换导致状态不变」。
   Widget _buildCheckbox(ThemeColors colors) {
     return SizedBox(
-      width: 36,
+      width: _indexWidth,
       child: IgnorePointer(
         child: Checkbox(
           value: selected,
@@ -189,8 +193,9 @@ class SongListItem extends ConsumerWidget {
 
   Widget _buildIndex(ThemeColors colors) {
     return SizedBox(
-      // 三位数序号不再折行；四位数仍会折行。
-      width: 36,
+      // 四位数的序号也不能折行（大歌单 / 队列很容易上千首），
+      // 系统字体放大后仍要留出余量。
+      width: _indexWidth,
       child: isPlaying
           ? Icon(Icons.play_arrow, size: 18, color: colors.primary)
           : Text(

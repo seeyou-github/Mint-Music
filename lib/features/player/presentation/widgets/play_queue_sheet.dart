@@ -217,15 +217,15 @@ class _PlayQueueSheetContentState
                           return ListTile(
                             enabled: !blocked,
                             leading: SizedBox(
-                              // 序号最多三位数，序号列 + 间距 + 封面总宽。
-                              width: 80,
+                              // 四位数序号也不折行：序号列 + 间距 + 封面总宽。
+                              width: 92,
                               child: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   // 序号：当前播放歌曲用播放图标，其他用数字
                                   SizedBox(
-                                    // 三位数序号不换行。
-                                    width: 30,
+                                    // 四位数序号不换行。
+                                    width: 44,
                                     child: isCurrent
                                         ? Icon(
                                             Icons.play_arrow,
