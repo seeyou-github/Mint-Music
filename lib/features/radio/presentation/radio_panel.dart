@@ -428,7 +428,7 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
                     height: size,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: Colors.white.withValues(alpha: 0.8),
+                      color: Colors.white.withValues(alpha: 0.5),
                       boxShadow: [
                         BoxShadow(
                           color: Colors.black.withValues(alpha: 0.35),
