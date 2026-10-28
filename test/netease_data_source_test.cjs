@@ -301,46 +301,108 @@ test('专辑详情全量返回，size 优先且保留零，无有效 size 时使
 });
 
 const detailRoutes = [
-  { name: '歌单', invoke: plugin => plugin.getMusicSheetInfo('wy_99', 3) },
-  { name: '榜单', invoke: plugin => plugin.getTopListDetail('99', 3) }
+  { name: '歌单', call: (plugin, page) => plugin.getMusicSheetInfo('wy_99', page) },
+  { name: '榜单', call: (plugin, page) => plugin.getTopListDetail('99', page) }
 ];
 
 for (const route of detailRoutes) {
-  test(`${route.name}详情完整 tracks 保持全量，不截成 30 首且无额外请求`, async () => {
-    for (const withIds of [true, false]) {
-      const tracks = items(75);
-      const { plugin, requests } = loadPlugin(request => {
+  test(`${route.name}详情按页取歌：第 1 页 50 首，第 2 页接着取，元数据复用`, async () => {
+    const tracks = items(120);
+    const { plugin, requests } = loadPlugin((request, index) => {
+      if (index === 1) {
         assert.equal(request.url.pathname, '/api/v3/playlist/detail');
         assert.equal(request.url.searchParams.get('id'), '99');
+        assert.equal(request.url.searchParams.get('n'), '0');
         return { code: 200, playlist: {
-          id: 99, name: '完整歌单', trackCount: '75', tracks: withIds ? [...tracks].reverse() : tracks,
-          ...(withIds ? { trackIds: tracks.map(track => ({ id: track.id })) } : {})
+          id: 99, name: '完整歌单', trackCount: '120',
+          trackIds: tracks.map(track => ({ id: track.id }))
         } };
-      });
-      const result = await resultOf(route.invoke(plugin));
-      assert.equal(requests.length, 1);
-      assert.equal(result.total, 75);
-      assert.equal(result.sheet.songCount, 75);
-      assert.equal(result.sheet.title, '完整歌单');
-      assert.equal(result.isEnd, true);
-      assert.deepEqual(result.songs.map(song => song.id), tracks.map(song => String(song.id)));
-    }
+      }
+      assert.equal(request.url.pathname, '/api/song/detail');
+      const ids = JSON.parse(request.url.searchParams.get('ids'));
+      return { code: 200, songs: ids.map(song) };
+    });
+
+    const first = await resultOf(route.call(plugin, 1));
+    assert.equal(first.limit, 50);
+    assert.equal(first.offset, 0);
+    assert.equal(first.total, 120);
+    assert.equal(first.isEnd, false);
+    assert.equal(first.sheet.songCount, 120);
+    assert.equal(first.sheet.title, '完整歌单');
+    assert.deepEqual(first.songs.map(song => song.id), items(50).map(song => String(song.id)));
+
+    const second = await resultOf(route.call(plugin, 2));
+    assert.equal(second.offset, 50);
+    assert.equal(second.isEnd, false);
+    assert.deepEqual(
+      second.songs.map(song => song.id),
+      items(50, 51).map(song => String(song.id))
+    );
+
+    // 翻页复用歌单元数据，只额外请求当前页的歌曲详情
+    assert.equal(requests.length, 3);
+    assert.deepEqual(
+      requests.slice(1).map(request => JSON.parse(request.url.searchParams.get('ids'))),
+      [items(50).map(song => song.id), items(50, 51).map(song => song.id)]
+    );
   });
 
-  test(`${route.name}详情 total/songCount 保留零，未知总数不冒充零`, async () => {
-    for (const [trackCount, expected] of [[0, 0], ['0', 0], [undefined, null], [null, null], ['', null], [-1, null], ['2首', null]]) {
+  test(`${route.name}详情末页截短并标记 isEnd，越界页返回空`, async () => {
+    const tracks = items(120);
+    const { plugin, requests } = loadPlugin((request, index) => {
+      if (index === 1) return { code: 200, playlist: {
+        id: 99, name: '完整歌单', trackCount: 120,
+        trackIds: tracks.map(track => ({ id: track.id }))
+      } };
+      const ids = JSON.parse(request.url.searchParams.get('ids'));
+      return { code: 200, songs: ids.map(song) };
+    });
+
+    const last = await resultOf(route.call(plugin, 3));
+    assert.equal(last.offset, 100);
+    assert.equal(last.songs.length, 20);
+    assert.equal(last.isEnd, true);
+    assert.deepEqual(last.songs.map(song => song.id), items(20, 101).map(song => String(song.id)));
+
+    const overflow = await resultOf(route.call(plugin, 4));
+    assert.equal(overflow.songs.length, 0);
+    assert.equal(overflow.isEnd, true);
+    assert.equal(requests.length, 2);
+  });
+
+  test(`${route.name}详情以 trackIds 长度判定末页，trackCount 偏大不会出现空尾页`, async () => {
+    const tracks = items(120);
+    const { plugin } = loadPlugin((request, index) => index === 1
+      ? { code: 200, playlist: {
+        trackCount: 500, trackIds: tracks.map(track => ({ id: track.id }))
+      } }
+      : { code: 200, songs: JSON.parse(request.url.searchParams.get('ids')).map(song) });
+    const result = await resultOf(route.call(plugin, 3));
+    assert.equal(result.sheet.songCount, 500, '展示的总数仍用上游 trackCount');
+    assert.equal(result.total, 120, '页数按实际可取的 trackIds 计算');
+    assert.equal(result.songs.length, 20);
+    assert.equal(result.isEnd, true);
+  });
+
+  test(`${route.name}详情 total/songCount 保留零，未知总数时用实际可取的歌曲数`, async () => {
+    for (const [trackCount, expectedTotal, expectedCount] of [
+      [0, 0, 0], ['0', 0, 0], [undefined, null, 2], [null, null, 2],
+      ['', null, 2], [-1, null, 2], ['2首', null, 2]
+    ]) {
       const { plugin, requests } = loadPlugin(() => ({
         code: 200, result: { trackCount, tracks: items(2) }
       }));
-      const result = await resultOf(route.invoke(plugin));
-      assert.equal(result.total, expected);
-      assert.equal(result.sheet.songCount, expected);
+      const result = await resultOf(route.call(plugin, 1));
+      assert.equal(result.total, expectedTotal);
+      assert.equal(result.sheet.songCount, expectedCount);
       assert.equal(result.songs.length, 2);
+      assert.equal(result.isEnd, true);
       assert.equal(requests.length, 1);
     }
   });
 
-  test(`${route.name}详情补齐部分 trackIds、尊重 ID 顺序并排除不可用歌曲`, async () => {
+  test(`${route.name}详情补齐当前页缺失的 trackIds、尊重 ID 顺序并排除不可用歌曲`, async () => {
     const { plugin, requests } = loadPlugin((request, index) => {
       if (index === 1) return { code: 200, playlist: {
         trackCount: 6,
@@ -351,7 +413,7 @@ for (const route of detailRoutes) {
       assert.deepEqual(JSON.parse(request.url.searchParams.get('ids')), [5, 4, 2, 6]);
       return { code: 200, songs: [song(6), song(2), song(5), { id: 4, name: '' }] };
     });
-    const result = await resultOf(route.invoke(plugin));
+    const result = await resultOf(route.call(plugin, 1));
     assert.equal(requests.length, 2);
     assert.deepEqual(result.songs.map(song => song.id), ['5', '3', '1', '2', '6']);
     assert.ok(result.songs.every(song => song.name));
@@ -365,7 +427,7 @@ for (const route of detailRoutes) {
       const { plugin, requests } = loadPlugin((request, index) => index === 1
         ? { code: 200, playlist: { trackCount: 2, trackIds: [{ id: 1 }, { id: 2 }] } }
         : { code: 200, songs });
-      const result = await resultOf(route.invoke(plugin));
+      const result = await resultOf(route.call(plugin, 1));
       assert.equal(requests.length, 2);
       assert.deepEqual(result.songs.map(song => song.id), songs.map(song => String(song.id)));
       assert.equal(result.total, 2);
@@ -373,7 +435,7 @@ for (const route of detailRoutes) {
     }
   });
 
-  test(`${route.name}补齐失败必须抛错，保留直连及代理错误`, async () => {
+  test(`${route.name}当前页补齐失败必须抛错，保留直连及代理错误`, async () => {
     const { plugin, requests } = loadPlugin((request, index) => {
       if (index === 1) return { code: 200, playlist: {
         trackCount: 2, tracks: [song(1)], trackIds: [{ id: 1 }, { id: 2 }]
@@ -382,7 +444,7 @@ for (const route of detailRoutes) {
       if (index === 3) return { code: 503 };
       return { code: 200 };
     });
-    await assert.rejects(route.invoke(plugin), error => {
+    await assert.rejects(route.call(plugin, 1), error => {
       assert.match(error.message, /direct-offline/);
       assert.match(error.message, /code=503/);
       assert.match(error.message, /缺少 songs/);
@@ -392,48 +454,38 @@ for (const route of detailRoutes) {
   });
 }
 
-test('补齐超过 400 首时每批最多 200 IDs，串行执行且保持全局顺序', async () => {
-  let active = 0;
-  let maxActive = 0;
+test('500 首歌单第 10 页只请求最后一首，不重复拉前 9 页', async () => {
+  const tracks = items(500);
   const batches = [];
-  const { plugin, requests } = loadPlugin(async (request, index) => {
+  const { plugin, requests } = loadPlugin((request, index) => {
     if (index === 1) return { code: 200, playlist: {
-      trackCount: 451, tracks: [song(1)], trackIds: items(451).map(track => ({ id: track.id }))
+      trackCount: 500, trackIds: tracks.map(track => ({ id: track.id }))
     } };
     assert.equal(request.url.pathname, '/api/song/detail');
     const ids = JSON.parse(request.url.searchParams.get('ids'));
     batches.push(ids);
-    active++;
-    maxActive = Math.max(maxActive, active);
-    await new Promise(resolve => setImmediate(resolve));
-    active--;
     return { code: 200, songs: ids.map(song).reverse() };
   });
-  const result = await resultOf(plugin.getMusicSheetInfo('99', 1));
-  assert.deepEqual(batches.map(batch => batch.length), [200, 200, 50]);
-  assert.deepEqual(batches.flat(), Array.from({ length: 450 }, (_, i) => i + 2));
-  assert.equal(maxActive, 1);
-  assert.equal(requests.length, 4);
-  assert.deepEqual(result.songs.map(song => song.id), items(451).map(song => String(song.id)));
-  assert.equal(result.total, 451);
+  const result = await resultOf(plugin.getMusicSheetInfo('99', 10));
+  assert.deepEqual(batches, [[451, 452, 453, 454, 455, 456, 457, 458, 459, 460,
+    461, 462, 463, 464, 465, 466, 467, 468, 469, 470, 471, 472, 473, 474, 475,
+    476, 477, 478, 479, 480, 481, 482, 483, 484, 485, 486, 487, 488, 489, 490,
+    491, 492, 493, 494, 495, 496, 497, 498, 499, 500]]);
+  assert.equal(requests.length, 2);
+  assert.deepEqual(result.songs.map(song => song.id), batches[0].map(String));
+  assert.equal(result.total, 500);
   assert.equal(result.isEnd, true);
 });
 
-test('中途批次失败不返回部分数据，也不继续请求后续批次', async () => {
+test('当前页歌曲详情全部失败时整页报错，不回退成空页', async () => {
   const { plugin, requests } = loadPlugin((request, index) => {
     if (index === 1) return { code: 200, playlist: {
-      trackCount: 451, tracks: [song(1)], trackIds: items(451).map(track => ({ id: track.id }))
+      trackCount: 120, trackIds: items(120).map(track => ({ id: track.id }))
     } };
-    const ids = request.url.pathname === '/api/song/detail'
-      ? JSON.parse(request.url.searchParams.get('ids'))
-      : request.url.searchParams.get('ids').split(',').map(Number);
-    if (index === 2) return { code: 200, songs: ids.map(song) };
-    assert.equal(ids[0], 202);
-    assert.equal(ids.length, 200);
-    throw new Error('batch-two-offline');
+    throw new Error(`offline-${index}`);
   });
-  await assert.rejects(plugin.getMusicSheetInfo('99', 1), /batch-two-offline/);
-  assert.equal(requests.length, 5);
+  await assert.rejects(plugin.getMusicSheetInfo('99', 2), /offline-2/);
+  assert.equal(requests.length, 4);
 });
 
 test('歌曲详情代理接收逗号分隔 IDs，两个代理均可回退补齐', async () => {
@@ -466,7 +518,7 @@ test('已知 tracks 不完整却无 trackIds 时不能仅凭 n 值标记末页',
   assert.equal(requests.length, 1);
 });
 
-test('榜单列表仍是数组，插件版本为 1.2.0', async () => {
+test('榜单列表仍是数组，插件版本为 1.3.0', async () => {
   const { plugin } = loadPlugin(request => {
     assert.equal(request.url.pathname, '/api/toplist');
     return { code: 200, list: [{ id: 99, name: '榜单', updateFrequency: '每天更新' }] };
@@ -475,7 +527,7 @@ test('榜单列表仍是数组，插件版本为 1.2.0', async () => {
   assert.ok(Array.isArray(result));
   assert.equal(result.length, 1);
   assert.equal(result[0].updateFrequency, '每天更新');
-  assert.equal(plugin.pluginInfo.version, '1.2.0');
+  assert.equal(plugin.pluginInfo.version, '1.3.0');
 });
 
 test('单曲封面走代理优先的 song/detail', async () => {

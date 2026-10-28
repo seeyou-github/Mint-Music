@@ -386,15 +386,18 @@ function hydrateSongs(songs) {
   return nextChunk();
 }
 
+/** 歌单 / 榜单详情每页歌曲数（与 App 歌单详情页一致）。 */
+var SHEET_PAGE_SIZE = 50;
+
 function fetchSpecialSongs(specialId, page) {
-  // 实测 pagesize 可以给到 1000：一次取回整张歌单，详情页的「N 首歌曲」才对得上
+  // 只取当前页；总数由 special/info 的 songcount 提供
   var url =
     CDN +
     '/api/v3/special/song?' +
     encodeQuery({
       specialid: specialId,
       page: page,
-      pagesize: 1000,
+      pagesize: SHEET_PAGE_SIZE,
       version: 9108,
       plat: 0,
       area_code: 1
@@ -418,7 +421,7 @@ function fetchTopListDetail(rankId, page) {
       version: 9108,
       ranktype: 1,
       plat: 0,
-      pagesize: 100,
+      pagesize: SHEET_PAGE_SIZE,
       area_code: 1,
       page: page,
       rankid: rankId,
@@ -460,7 +463,7 @@ function fetchLyric(hash, duration) {
 module.exports = {
   pluginInfo: {
     name: '数据源-酷狗',
-    version: '1.2.0',
+    version: '1.3.0',
     author: 'MintMusic',
     description:
       '只提供搜索、歌单分类、榜单、歌单详情的酷狗音乐数据源；' +
@@ -695,7 +698,7 @@ module.exports = {
   getTopListDetail: function (id, page) {
     var rankId = String(id || '').replace(/^kg_/, '');
     var currentPage = page || 1;
-    var size = 100;
+    var size = SHEET_PAGE_SIZE;
     // 榜单歌曲接口不返回榜单名 / 封面，从榜单列表里补一次
     var metaPromise = fetchTopLists()
       .then(function (body) {
@@ -717,7 +720,7 @@ module.exports = {
       var data = (results[0] && results[0].data) || {};
       var meta = results[1] || {};
       var songs = songsOf(data.info || data.list || []);
-      // data.total 是榜单歌曲总数（可到 500），100 首一页翻页拿全
+      // data.total 是榜单歌曲总数（可到 500），按页取
       var total = totalOf(data.total);
       if (total === null) total = songs.length;
       return JSON.stringify({
@@ -753,7 +756,7 @@ module.exports = {
   getMusicSheetInfo: function (sheetId, page) {
     var specialId = String(sheetId || '').replace(/^kg_/, '');
     var currentPage = page || 1;
-    var size = 1000;
+    var size = SHEET_PAGE_SIZE;
     return Promise.all([
       fetchSpecialSongs(specialId, currentPage),
       currentPage === 1 ? fetchSpecialInfo(specialId) : Promise.resolve(null)

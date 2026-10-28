@@ -301,6 +301,9 @@ function fetchTopList() {
   );
 }
 
+/** 歌单 / 榜单详情每页歌曲数（与 App 歌单详情页一致）。 */
+var SHEET_PAGE_SIZE = 50;
+
 function fetchTopListDetail(boardId, page) {
   var url =
     KBANG +
@@ -309,7 +312,7 @@ function fetchTopListDetail(boardId, page) {
       from: 'pc',
       fmt: 'json',
       pn: page - 1,
-      rn: 100,
+      rn: SHEET_PAGE_SIZE,
       type: 'bang',
       data: 'content',
       id: boardId,
@@ -328,7 +331,7 @@ function fetchSheetDetail(pid, page, size) {
       op: 'getlistinfo',
       pid: pid,
       pn: (page || 1) - 1,
-      rn: size || 1000,
+      rn: size || SHEET_PAGE_SIZE,
       encode: 'utf8',
       keyset: 'pl2012',
       identity: 'kuwo',
@@ -423,7 +426,7 @@ function lrcFromList(list) {
 module.exports = {
   pluginInfo: {
     name: '数据源-酷我',
-    version: '1.2.0',
+    version: '1.3.0',
     author: 'MintMusic',
     description:
       '只提供搜索、歌单分类、榜单、歌单详情的酷我音乐数据源；' +
@@ -797,12 +800,12 @@ module.exports = {
   getTopListDetail: function (id, page) {
     var boardId = String(id || '').replace(/^kw_/, '');
     var currentPage = page || 1;
-    var size = 100;
+    var size = SHEET_PAGE_SIZE;
     return fetchTopListDetail(boardId, currentPage).then(function (body) {
       var list =
         body.musiclist || (body.bang && body.bang.musiclist) || [];
       var songs = songsOf(list);
-      // num 是榜单总歌曲数（榜单通常固定 300 首），按 100 首一页翻
+      // num 是榜单总歌曲数（榜单通常固定 300 首），按 SHEET_PAGE_SIZE 一页翻
       var total = totalOf(body.num);
       if (total === null) total = songs.length;
       // 榜单接口不返回任何封面字段，逐首补图
@@ -838,8 +841,8 @@ module.exports = {
     var parts = raw.split('__');
     if (parts.length === 2) pid = parts[1];
     var currentPage = page || 1;
-    var size = 1000;
-    // pn 是页号（rn 为每页条数）；歌单可能超过 1000 首，靠翻页拿全
+    var size = SHEET_PAGE_SIZE;
+    // pn 是页号（rn 为每页条数）；只取当前页，不再一次拉整张歌单
     return fetchSheetDetail(pid, currentPage, size).then(function (body) {
       var songs = songsOf(body.musiclist || []);
       var total = totalOf(body.total);

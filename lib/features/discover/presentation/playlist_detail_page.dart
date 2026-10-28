@@ -153,9 +153,56 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
   /// 切到第 [page] 页并补齐数据。
   Future<void> _goToPage(int page) async {
     if (page < 1 || _pagingLoading) return;
+    final previousPage = _pager.page;
     setState(() => _pager.jumpTo(page));
     if (_scrollController.hasClients) _scrollController.jumpTo(0);
-    await _ensurePageLoaded();
+    if (_beyondBuffer(page)) {
+      await _jumpToPageDirect(page, fallbackPage: previousPage);
+    } else {
+      await _ensurePageLoaded();
+    }
+  }
+
+  /// 目标页是否超出「缓冲区 + 下一页」的连续范围。
+  ///
+  /// 超出（或往回翻出缓冲区）时走跳页直达——只取目标页，不把中间页
+  /// 逐页拉一遍；范围内仍走追加补齐，缓冲可以继续复用。
+  bool _beyondBuffer(int page) {
+    final contiguousEnd =
+        _pager.bufferBase - 1 + (_songs.length / _pager.pageSize).ceil();
+    return page < _pager.bufferBase || page > contiguousEnd + 1;
+  }
+
+  /// 跳页直达：只请求目标页并替换缓冲区。
+  ///
+  /// 数据源插件的详情页每页 50 首（与本地页大小一致），第 N 页就是插件的
+  /// 第 N 页；上千首的歌单点后面的页码时不用逐页把中间页全部取回来。
+  /// 失败时退回原页码并提示，已加载的内容保留。
+  Future<void> _jumpToPageDirect(int page, {required int fallbackPage}) async {
+    setState(() => _pagingLoading = true);
+    try {
+      final result = await ref
+          .read(discoverRepositoryProvider)
+          .getPlaylistDetailPage(widget.playlistId, page: page);
+      if (!mounted || _pagedPlaylistId != widget.playlistId) return;
+      final songs = result.playlist?.songs ?? const <Song>[];
+      setState(() {
+        _baseSongs = songs;
+        _extraSongs.clear();
+        _page = page;
+        _isEnd = result.isEnd;
+        _total = result.total ?? _total;
+        _loadMoreError = null;
+        _pager.rebase(page);
+      });
+    } catch (e) {
+      debugPrint('[PlaylistDetailPage] 加载第 $page 页失败: $e');
+      if (!mounted) return;
+      setState(() => _pager.jumpTo(fallbackPage));
+      _showMessage('加载第 $page 页失败');
+    } finally {
+      if (mounted) setState(() => _pagingLoading = false);
+    }
   }
 
   /// 把当前页需要的数据补齐。
@@ -997,18 +1044,42 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
 
   /// 收藏前把剩下的歌曲页全部取回来：收藏里存的是完整歌单 / 榜单。
   ///
-  /// 已加载的歌曲直接用，从 [_page] 之后继续取，直到插件表示到底。
+  /// 已加载的歌曲直接用，只补取缓冲区前面缺的页和 [_page] 之后的页，
+  /// 直到插件表示到底。
   Future<List<Song>> _fetchAllSongsForFavorite() async {
     final seen = <String>{};
     final all = <Song>[];
+    var emptyStreak = 0;
+    final repository = ref.read(discoverRepositoryProvider);
+
+    // 跳页直达后缓冲区从中间页开始，前面的页没有加载过：先按顺序补回来，
+    // 否则收藏出来的歌单会缺歌、顺序也会乱。
+    final bufferedFirst = _pager.bufferBase;
+    var page = 0;
+    while (page < bufferedFirst - 1) {
+      page += 1;
+      final result = await repository.getPlaylistDetailPage(
+        widget.playlistId,
+        page: page,
+      );
+      final songs = result.playlist?.songs ?? const <Song>[];
+      for (final song in songs) {
+        if (seen.add(song.id)) all.add(song);
+      }
+      if (result.isEnd) break;
+      if (songs.isEmpty) {
+        if (++emptyStreak >= _maxConsecutiveEmptyPages) break;
+      } else {
+        emptyStreak = 0;
+      }
+    }
+
     for (final song in _songs) {
       if (seen.add(song.id)) all.add(song);
     }
 
-    var page = _page;
+    page = _page;
     var isEnd = _isEnd;
-    var emptyStreak = 0;
-    final repository = ref.read(discoverRepositoryProvider);
     while (!isEnd) {
       page += 1;
       final result = await repository.getPlaylistDetailPage(

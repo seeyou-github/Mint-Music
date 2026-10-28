@@ -141,7 +141,7 @@ test('QQ：分类歌单带分类取 content.total_cnt，不带分类取 data.tot
 });
 
 test('QQ：榜单 / 歌单详情透出 total 与 sheet.songCount', async () => {
-  const { plugin } = loadPlugin('数据源-QQ.js', (url, request) => {
+  const { plugin, requests } = loadPlugin('数据源-QQ.js', (url, request) => {
     if (musicuNode(request, 'musicToplist.ToplistInfoServer')) {
       return {
         toplist: {
@@ -153,12 +153,13 @@ test('QQ：榜单 / 歌单详情透出 total 与 sheet.songCount', async () => {
       };
     }
     if (musicuNode(request, 'music.srfDissInfo.aiDissInfo')) {
+      const param = musicuNode(request, 'music.srfDissInfo.aiDissInfo').param;
       return {
         req: {
           data: {
-            total_song_num: 30,
-            dirinfo: { title: '歌单', songnum: 30 },
-            songlist: [qqSong(1)]
+            total_song_num: 80,
+            dirinfo: { title: '歌单', songnum: 80 },
+            songlist: range(param.song_begin === 50 ? 30 : 50, param.song_begin + 1, qqSong)
           }
         }
       };
@@ -171,10 +172,21 @@ test('QQ：榜单 / 歌单详情透出 total 与 sheet.songCount', async () => {
   assert.equal(board.sheet.songCount, 300);
   assert.equal(board.isEnd, true, '榜单一次全量返回');
 
-  const sheet = await resultOf(plugin.getMusicSheetInfo('8825915544', 1));
-  assert.equal(sheet.total, 30);
-  assert.equal(sheet.sheet.songCount, 30);
-  assert.equal(sheet.isEnd, true);
+  const sheetFirst = await resultOf(plugin.getMusicSheetInfo('8825915544', 1));
+  assert.equal(sheetFirst.total, 80);
+  assert.equal(sheetFirst.sheet.songCount, 80);
+  assert.equal(sheetFirst.limit, 50);
+  assert.equal(sheetFirst.offset, 0);
+  assert.equal(sheetFirst.songs.length, 50);
+  assert.equal(sheetFirst.isEnd, false, '0 + 50 < 80');
+
+  const sheetLast = await resultOf(plugin.getMusicSheetInfo('8825915544', 2));
+  assert.equal(sheetLast.offset, 50);
+  assert.equal(sheetLast.songs.length, 30);
+  assert.equal(sheetLast.isEnd, true, '50 + 30 >= 80');
+  const sheetRequest = musicuNode(requests[requests.length - 1], 'music.srfDissInfo.aiDissInfo');
+  assert.equal(sheetRequest.param.song_begin, 50);
+  assert.equal(sheetRequest.param.song_num, 50);
 });
 
 /* -------------------------------------------------------------------- 酷我 */
@@ -298,14 +310,14 @@ test('酷我：分类歌单取 data.total，专辑 / 作者详情透出顶层 to
   assert.equal(worksLast.isEnd, true, '200 + 50 >= 250');
 });
 
-test('酷我：歌单详情按 pn 翻页（total=1877 超过单页 1000），榜单按 num 翻页', async () => {
+test('酷我：歌单详情按 pn 翻页（total=1877，每页 50 首），榜单按 num 翻页', async () => {
   const { plugin, requests } = loadPlugin('数据源-酷我.js', (url) => {
     const params = url.searchParams;
     if (url.hostname === 'nplserver.kuwo.cn') {
       const page = Number(params.get('pn')) + 1;
       return {
         total: 1877,
-        musiclist: range(page === 2 ? 877 : 1000, (page - 1) * 1000 + 1, kwSong),
+        musiclist: range(page === 38 ? 27 : 50, (page - 1) * 50 + 1, kwSong),
         title: '华语',
         info: '简介'
       };
@@ -314,7 +326,7 @@ test('酷我：歌单详情按 pn 翻页（total=1877 超过单页 1000），榜
       const page = Number(params.get('pn')) + 1;
       return {
         num: 300,
-        musiclist: range(100, (page - 1) * 100 + 1, kwSong),
+        musiclist: range(50, (page - 1) * 50 + 1, kwSong),
         title: '飙升榜'
       };
     }
@@ -324,20 +336,29 @@ test('酷我：歌单详情按 pn 翻页（total=1877 超过单页 1000），榜
   const sheetFirst = await resultOf(plugin.getMusicSheetInfo('3690679141', 1));
   assert.equal(sheetFirst.total, 1877);
   assert.equal(sheetFirst.sheet.songCount, 1877);
-  assert.equal(sheetFirst.isEnd, false, '第 1 页 1000 < 1877');
+  assert.equal(sheetFirst.limit, 50);
+  assert.equal(sheetFirst.isEnd, false, '第 1 页 50 < 1877');
+  assert.equal(sheetFirst.songs.length, 50);
   assert.equal(requests[0].url.searchParams.get('pn'), '0');
-  assert.equal(requests[0].url.searchParams.get('rn'), '1000');
+  assert.equal(requests[0].url.searchParams.get('rn'), '50');
 
   const sheetSecond = await resultOf(plugin.getMusicSheetInfo('3690679141', 2));
-  assert.equal(sheetSecond.isEnd, true, '1000 + 877 >= 1877');
+  assert.equal(sheetSecond.isEnd, false, '100 < 1877');
   assert.equal(requests[1].url.searchParams.get('pn'), '1', '第 2 页 pn=1');
-  assert.equal(sheetSecond.songs[0].id, '1001');
+  assert.equal(sheetSecond.songs[0].id, '51');
 
-  const boardLast = await resultOf(plugin.getTopListDetail('93', 3));
+  const sheetLast = await resultOf(plugin.getMusicSheetInfo('3690679141', 38));
+  assert.equal(sheetLast.isEnd, true, '1850 + 27 >= 1877');
+  assert.equal(sheetLast.songs.length, 27);
+  assert.equal(requests[2].url.searchParams.get('pn'), '37');
+  assert.equal(sheetLast.songs[0].id, '1851');
+
+  const boardLast = await resultOf(plugin.getTopListDetail('93', 6));
   assert.equal(boardLast.total, 300);
   assert.equal(boardLast.sheet.songCount, 300);
-  assert.equal(boardLast.isEnd, true, '200 + 100 >= 300');
-  assert.equal(requests[requests.length - 1].url.searchParams.get('pn'), '2');
+  assert.equal(boardLast.isEnd, true, '250 + 50 >= 300');
+  assert.equal(requests[3].url.searchParams.get('pn'), '5');
+  assert.equal(requests[3].url.searchParams.get('rn'), '50');
 });
 
 /* -------------------------------------------------------------------- 酷狗 */
@@ -415,7 +436,7 @@ test('酷狗：分类歌单接口无总数（total=null），固定 20 条/页�
   assert.equal(second.playlists.length, 8);
 });
 
-test('酷狗：歌单详情 songcount / data.total，榜单 data.total=500 可翻页', async () => {
+test('酷狗：歌单详情 songcount / data.total，榜单 data.total=500 按 50 首一页翻', async () => {
   const rankSongPages = [];
   const { plugin } = loadPlugin('数据源-酷狗.js', (url) => {
     if (url.pathname.includes('/special/song')) {
@@ -423,7 +444,7 @@ test('酷狗：歌单详情 songcount / data.total，榜单 data.total=500 可�
       return {
         data: {
           total: 1234,
-          info: range(page === 1 ? 1000 : 234, (page - 1) * 1000 + 1, kgSong)
+          info: range(page === 25 ? 34 : 50, (page - 1) * 50 + 1, kgSong)
         }
       };
     }
@@ -439,7 +460,7 @@ test('酷狗：歌单详情 songcount / data.total，榜单 data.total=500 可�
       const page = Number(url.searchParams.get('page'));
       rankSongPages.push(page);
       return {
-        data: { total: 500, info: range(100, (page - 1) * 100 + 1, kgSong) }
+        data: { total: 500, info: range(50, (page - 1) * 50 + 1, kgSong) }
       };
     }
     return undefined;
@@ -448,20 +469,25 @@ test('酷狗：歌单详情 songcount / data.total，榜单 data.total=500 可�
   const sheetFirst = await resultOf(plugin.getMusicSheetInfo('64463', 1));
   assert.equal(sheetFirst.total, 1234);
   assert.equal(sheetFirst.sheet.songCount, 1234);
-  assert.equal(sheetFirst.isEnd, false, '第 1 页 1000 < 1234');
-  assert.equal(sheetFirst.songs.length, 1000);
+  assert.equal(sheetFirst.limit, 50);
+  assert.equal(sheetFirst.isEnd, false, '第 1 页 50 < 1234');
+  assert.equal(sheetFirst.songs.length, 50);
 
   const sheetSecond = await resultOf(plugin.getMusicSheetInfo('64463', 2));
   assert.equal(sheetSecond.total, 1234, '第 2 页从 data.total 取总数');
-  assert.equal(sheetSecond.isEnd, true, '1000 + 234 >= 1234');
-  assert.equal(sheetSecond.songs.length, 234);
+  assert.equal(sheetSecond.isEnd, false, '100 < 1234');
+  assert.equal(sheetSecond.songs.length, 50);
+
+  const sheetLast = await resultOf(plugin.getMusicSheetInfo('64463', 25));
+  assert.equal(sheetLast.isEnd, true, '1200 + 34 >= 1234');
+  assert.equal(sheetLast.songs.length, 34);
 
   const boardFirst = await resultOf(plugin.getTopListDetail('8888', 1));
   assert.equal(boardFirst.total, 500);
   assert.equal(boardFirst.sheet.title, 'TOP500');
-  assert.equal(boardFirst.isEnd, false, '榜单不再一次判死，100 < 500');
+  assert.equal(boardFirst.isEnd, false, '榜单不再一次判死，50 < 500');
 
-  const boardLast = await resultOf(plugin.getTopListDetail('8888', 5));
-  assert.equal(boardLast.isEnd, true, '400 + 100 >= 500');
-  assert.deepEqual(rankSongPages, [1, 5], 'rank/song 的 page 参数逐页递增');
+  const boardLast = await resultOf(plugin.getTopListDetail('8888', 10));
+  assert.equal(boardLast.isEnd, true, '450 + 50 >= 500');
+  assert.deepEqual(rankSongPages, [1, 10], 'rank/song 的 page 参数逐页递增');
 });

@@ -293,7 +293,11 @@ function fetchTopListDetail(topId, page) {
   );
 }
 
-function fetchSheetDetail(dissId) {
+/** 歌单详情每页歌曲数（与 App 歌单详情页一致）。 */
+var SHEET_PAGE_SIZE = 50;
+
+function fetchSheetDetail(dissId, page) {
+  var currentPage = page || 1;
   return musicu(
     {
       comm: { ct: 19, cv: 1859 },
@@ -305,8 +309,8 @@ function fetchSheetDetail(dissId) {
           enc_host_uin: '',
           tag: 1,
           userinfo: 1,
-          song_begin: 0,
-          song_num: 1000
+          song_begin: (currentPage - 1) * SHEET_PAGE_SIZE,
+          song_num: SHEET_PAGE_SIZE
         }
       }
     },
@@ -387,7 +391,7 @@ function base64Decode(text) {
 module.exports = {
   pluginInfo: {
     name: '数据源-QQ',
-    version: '1.2.0',
+    version: '1.3.0',
     author: 'MintMusic',
     description:
       '只提供搜索、歌单分类、榜单、歌单详情的 QQ音乐数据源；' +
@@ -652,17 +656,22 @@ module.exports = {
   /* ------------------------------------------------------------- 歌单详情 */
   getMusicSheetInfo: function (sheetId, page) {
     var raw = String(sheetId || '').replace(/^tx[_:]/, '');
-    return fetchSheetDetail(raw).then(function (body) {
+    var currentPage = page || 1;
+    var size = SHEET_PAGE_SIZE;
+    var offset = (currentPage - 1) * size;
+    return fetchSheetDetail(raw, currentPage).then(function (body) {
       var data = (body.req && body.req.data) || {};
       var dirinfo = data.dirinfo || {};
       var songs = songsOf(data.songlist || []);
-      // 请求带 song_num: 1000 一次取全量；总数优先取 total_song_num
+      // 总数优先取 total_song_num；未知时只有第一页能用本页条数兜底
       var total = totalOf(data.total_song_num);
       if (total === null) total = totalOf(dirinfo.songnum);
-      if (total === null) total = songs.length;
+      if (total === null && currentPage === 1) total = songs.length;
       return JSON.stringify({
-        isEnd: true,
+        isEnd: isPageEnd(total, offset, songs.length, size, data),
         total: total,
+        limit: size,
+        offset: offset,
         sheet: {
           title: dirinfo.title || '',
           coverUrl: String(dirinfo.picurl || '').replace(/\{size\}/g, '400'),
@@ -670,7 +679,7 @@ module.exports = {
           author: dirinfo.creator && dirinfo.creator.nick
             ? String(dirinfo.creator.nick)
             : '',
-          songCount: total
+          songCount: total === null ? 0 : total
         },
         songs: songs
       });
