@@ -651,8 +651,8 @@ class _SongCoverState extends State<_SongCover> {
   static const Duration _retryDelay = Duration(milliseconds: 500);
 
   /// 所有候选地址都失败后，隔一段时间整体重试一次：CDN 抖动 / 风控恢复后
-  /// 自动补上封面，不需要用户滚动到下方再滚回来触发重建。
-  static const Duration _healDelay = Duration(seconds: 10);
+  /// 自动补上封面，不需要用户滚动到下方再滚回来触发重建。只补重试一轮。
+  static const Duration _healDelay = Duration(seconds: 3);
   static const int _maxRounds = 2;
 
   /// 当前显示 / 正在尝试的地址（解码失败、兜底取图时用）。
@@ -674,6 +674,10 @@ class _SongCoverState extends State<_SongCover> {
   /// 每次重新加载都自增，用来让上一轮还没结束的异步结果自行放弃。
   int _loadSeq = 0;
 
+  /// 重试等待用的计时器：退出页面时要能立刻取消，而不是等它自然到期。
+  Timer? _waitTimer;
+  Completer<void>? _waitCompleter;
+
   @override
   void initState() {
     super.initState();
@@ -691,19 +695,53 @@ class _SongCoverState extends State<_SongCover> {
       _failedUrls.clear();
       _brokenUrls.clear();
       _picRequested = false;
+      // 换了一首歌（含切换分页）：立刻停掉上一首还在等待的重试，重新开始加载。
+      _cancelWait();
       _startLoad(widget.initialUrl);
     }
   }
 
+  @override
+  void dispose() {
+    // 退出页面（这一行被销毁）后立即停止重试和兜底流程：作废进行中的加载，
+    // 并取消还在等待的重试计时器。切换分页只是换成另一批歌，各行会重新开始
+    // 加载，不受影响。
+    _loadSeq++;
+    _cancelWait();
+    super.dispose();
+  }
+
   bool _isCurrent(int seq) => mounted && seq == _loadSeq;
 
-  /// 先试歌曲自带封面，失败后再向音源要兜底地址；整轮都失败时隔一段时间
-  /// 再从头试一次。
+  /// 可取消的等待：dispose 时 [Completer] 立即完成，调用方随即检查
+  /// [_isCurrent] 退出，不会残留在后台继续重试。
+  Future<void> _wait(Duration duration) {
+    _cancelWait();
+    final completer = Completer<void>();
+    _waitCompleter = completer;
+    _waitTimer = Timer(duration, () {
+      _waitTimer = null;
+      _waitCompleter = null;
+      if (!completer.isCompleted) completer.complete();
+    });
+    return completer.future;
+  }
+
+  void _cancelWait() {
+    _waitTimer?.cancel();
+    _waitTimer = null;
+    final pending = _waitCompleter;
+    _waitCompleter = null;
+    if (pending != null && !pending.isCompleted) pending.complete();
+  }
+
+  /// 先试歌曲自带封面，失败后再向音源要兜底地址；整轮都失败时隔 3 秒
+  /// 再从头试一次（只补一次）。
   Future<void> _startLoad(String? initialUrl) async {
     final seq = ++_loadSeq;
     for (var round = 0; round < _maxRounds; round++) {
       if (round > 0) {
-        await Future<void>.delayed(_healDelay);
+        await _wait(_healDelay);
         if (!_isCurrent(seq)) return;
       }
       if (await _loadRound(seq, initialUrl)) return;
@@ -737,7 +775,7 @@ class _SongCoverState extends State<_SongCover> {
       if (_brokenUrls.contains(url)) continue;
       for (var attempt = 0; attempt < _maxAttemptsPerUrl; attempt++) {
         if (attempt > 0) {
-          await Future<void>.delayed(_retryDelay);
+          await _wait(_retryDelay);
           if (!_isCurrent(seq)) return false;
         }
         final file = await _fetch(url, attempt);
