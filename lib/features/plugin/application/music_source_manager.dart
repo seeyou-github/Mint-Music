@@ -1879,9 +1879,11 @@ class MusicSourceManager {
   }
 
   Future<String?> getLyric(Song song) async {
-    final sourceId = song.source;
-    if (sourceId == null) {
-      print('[MusicSourceManager] getLyric: source is null');
+    // 歌词跟随「当前使用的音源」：插件变体（含歌曲绑定的优先插件）直接
+    // 找那个插件取词，换音源后不会拿到别的音源的歌词。
+    final sourceId = song.lyricSourceId;
+    if (sourceId.isEmpty) {
+      print('[MusicSourceManager] getLyric: source is empty');
       return null;
     }
 
@@ -2251,8 +2253,9 @@ class MusicSourceManager {
   }
 
   Future<LyricResult?> getLyricResult(Song song) async {
-    final sourceId = song.source;
-    if (sourceId == null) return null;
+    // 与歌词缓存键使用同一个音源身份（见 [Song.lyricSourceId]）。
+    final sourceId = song.lyricSourceId;
+    if (sourceId.isEmpty) return null;
 
     // 插件优先（逐字歌词只有插件可能提供）。
     final host = _findPluginForSource(sourceId);

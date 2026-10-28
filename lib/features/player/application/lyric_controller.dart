@@ -192,11 +192,15 @@ class LyricController extends StateNotifier<LyricState> {
     }
 
     debugPrint(
-      '[LyricController] loadLyrics called for song: ${song.title}, id: ${song.id}, source: ${song.source}',
+      '[LyricController] loadLyrics called for song: ${song.title}, id: ${song.id}, source: ${song.lyricSourceId}',
     );
 
+    // 歌词按「音源 + 歌曲」归属：同一首歌换了音源（插件变体）也要重新取词，
+    // 不能沿用上一个音源的歌词。
+    final sourceKey = song.lyricSourceId;
+
     if (state.currentSongId == song.id &&
-        state.currentSongSource == song.source &&
+        state.currentSongSource == sourceKey &&
         state.lines.isNotEmpty) {
       debugPrint('[LyricController] Same song and lyrics already loaded');
       return;
@@ -209,7 +213,7 @@ class LyricController extends StateNotifier<LyricState> {
       lines: const [],
       isLoading: true,
       currentSongId: song.id,
-      currentSongSource: song.source,
+      currentSongSource: sourceKey,
       hasYrc: false,
     );
 
@@ -222,7 +226,7 @@ class LyricController extends StateNotifier<LyricState> {
         state = LyricState(
           error: tr('暂无歌词'),
           currentSongId: song.id,
-          currentSongSource: song.source,
+          currentSongSource: sourceKey,
         );
         return;
       }
@@ -234,10 +238,9 @@ class LyricController extends StateNotifier<LyricState> {
       String? ttmlText;
       List<LyricLine>? ttmlLines;
 
-      // 歌曲的 source 可能带 `@插件id`（插件音源；或者地址被插件解析后，
-      // 队列里歌曲的 source 被标记成了插件变体 id）。TTML 词库只按平台
+      // 歌曲的音源可能是插件变体（`平台id@插件id`）。TTML 词库只按平台
       // 提供，逐字格式也按平台辅助判断。
-      final baseSource = _baseSourceOf(song.source) ?? '';
+      final baseSource = _baseSourceOf(song.lyricSourceId) ?? '';
 
       // Step 0: 本地缓存。歌词来自网络，命中缓存就不用再请求，切歌时歌词
       // 立刻出现。
@@ -279,7 +282,9 @@ class LyricController extends StateNotifier<LyricState> {
         }
 
         Future<LyricResult?>? onlineFuture;
-        if (needOnlineLyric && song.source != null && song.source != 'local') {
+        if (needOnlineLyric &&
+            sourceKey.isNotEmpty &&
+            sourceKey != 'local') {
           onlineFuture = _musicSourceManager
               .getLyricResult(song)
               .timeout(_lyricFetchTimeout);
@@ -380,6 +385,7 @@ class LyricController extends StateNotifier<LyricState> {
           state = LyricState(
             lines: _convertLines(ttmlLines),
             currentSongId: song.id,
+            currentSongSource: sourceKey,
             hasYrc: hasYrc,
             lyricFormat: hasYrc ? 'TTML' : null,
           );
@@ -395,7 +401,11 @@ class LyricController extends StateNotifier<LyricState> {
 
       if ((lrc == null || lrc.isEmpty) &&
           (crlyric == null || crlyric.isEmpty)) {
-        state = LyricState(error: tr('暂无歌词'), currentSongId: song.id);
+        state = LyricState(
+          error: tr('暂无歌词'),
+          currentSongId: song.id,
+          currentSongSource: sourceKey,
+        );
         return;
       }
 
@@ -442,7 +452,11 @@ class LyricController extends StateNotifier<LyricState> {
       if (requestId != _requestId) return;
 
       if (parsedLines.isEmpty) {
-        state = LyricState(error: tr('歌词解析失败'), currentSongId: song.id);
+        state = LyricState(
+          error: tr('歌词解析失败'),
+          currentSongId: song.id,
+          currentSongSource: sourceKey,
+        );
         return;
       }
 
@@ -454,6 +468,7 @@ class LyricController extends StateNotifier<LyricState> {
       state = LyricState(
         lines: _convertLines(parsedLines),
         currentSongId: song.id,
+        currentSongSource: sourceKey,
         hasYrc: hasYrc,
         lyricFormat: hasYrc && chosenCandidate != null
             ? detectWordLyricFormat(chosenCandidate, source: baseSource)
@@ -463,14 +478,19 @@ class LyricController extends StateNotifier<LyricState> {
       debugPrint('[LyricController] Error loading lyrics: $e');
       debugPrint('[LyricController] Stack: $stack');
       if (requestId != _requestId) return;
-      state = LyricState(error: tr('加载歌词失败: $e'), currentSongId: song.id);
+      state = LyricState(
+        error: tr('加载歌词失败: $e'),
+        currentSongId: song.id,
+        currentSongSource: sourceKey,
+      );
     }
   }
 
   /// 手动指定歌词（「搜索歌词」里选中并确认的那一份）。
   ///
   /// 立即替换当前显示，并写入歌词缓存：下次播放这首歌会先命中缓存，
-  /// 不会被自动匹配的歌词覆盖。
+  /// 不会被自动匹配的歌词覆盖。缓存按 [Song.lyricSourceId] 归属，只对
+  /// 当前正在使用的音源生效。
   Future<void> applyManualLyric(
     Song song,
     LyricResult result, {
@@ -483,12 +503,12 @@ class LyricController extends StateNotifier<LyricState> {
     state = LyricState(
       lines: _convertLines(lines),
       currentSongId: song.id,
-      currentSongSource: song.source,
+      currentSongSource: song.lyricSourceId,
       hasYrc: hasYrc,
       lyricFormat: hasYrc
           ? lyricFormatOfResult(
               result,
-              source: _baseSourceOf(source ?? song.source),
+              source: _baseSourceOf(source ?? song.lyricSourceId),
             )
           : null,
     );
@@ -502,21 +522,24 @@ class LyricController extends StateNotifier<LyricState> {
     );
   }
 
-  /// 删除这首歌当前的歌词关联（歌词缓存 + 自动匹配）。
+  /// 删除这首歌当前音源下的歌词关联（歌词缓存 + 自动匹配）。
   ///
-  /// 清空正在显示的歌词，并记下「不再自动匹配」的标记：之后播放这首歌会
-  /// 一直显示暂无歌词，直到用户在「搜索歌词」里重新指定一份。
+  /// 清空正在显示的歌词，并记下「不再自动匹配」的标记：之后用同一个音源
+  /// 播放这首歌会一直显示暂无歌词，直到用户在「搜索歌词」里重新指定一份；
+  /// 换其它音源播放不受影响。
   Future<void> deleteLyricAssociation(Song song) async {
     // 让正在进行的歌词加载作废，避免它回来后把清空的状态覆盖掉。
     _requestId++;
     _rawLines = null;
     await LyricCache.remove(song);
     await LyricCache.markDeleted(song);
-    if (state.currentSongId == song.id) {
+    if (state.currentSongId == song.id &&
+        (state.currentSongSource == null ||
+            state.currentSongSource == song.lyricSourceId)) {
       state = LyricState(
         error: tr('暂无歌词'),
         currentSongId: song.id,
-        currentSongSource: song.source,
+        currentSongSource: song.lyricSourceId,
       );
     }
   }
@@ -535,11 +558,15 @@ final lyricControllerProvider = StateNotifierProvider<LyricController, LyricStat
   controller.applyLyricLocale(ref.read(effectiveLyricLocaleProvider));
 
   ref.listen<PlaybackState>(playbackControllerProvider, (previous, next) {
-    if (next.currentSong?.id != previous?.currentSong?.id) {
+    final previousSong = previous?.currentSong;
+    final nextSong = next.currentSong;
+    // 同一首歌换了音源（插件变体）时 id 不变，但歌词要按新音源重取。
+    if (nextSong?.id != previousSong?.id ||
+        nextSong?.lyricSourceId != previousSong?.lyricSourceId) {
       debugPrint(
-        '[LyricController] Song changed from ${previous?.currentSong?.title} to ${next.currentSong?.title}',
+        '[LyricController] Song changed from ${previousSong?.title} to ${nextSong?.title}',
       );
-      Future.microtask(() => controller.loadLyrics(next.currentSong));
+      Future.microtask(() => controller.loadLyrics(nextSong));
     }
   });
 

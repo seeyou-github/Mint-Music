@@ -59,10 +59,11 @@ bool areLyricsReadyForSong(Song? song, LyricState lyric) {
   if (lyric.isLoading) return false;
   // 歌词不属于当前播放的歌曲
   if (lyric.currentSongId != song.id) return false;
-  // 来源不一致（例如本地 vs 在线）时同样不可用；任一侧为空则不比较
+  // 来源不一致（例如本地 vs 在线、不同插件音源）时同样不可用；任一侧为空则不比较
+  final source = song.lyricSourceId;
   if (lyric.currentSongSource != null &&
-      song.source != null &&
-      lyric.currentSongSource != song.source) {
+      source.isNotEmpty &&
+      lyric.currentSongSource != source) {
     return false;
   }
   return true;

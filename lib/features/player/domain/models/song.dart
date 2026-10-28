@@ -84,6 +84,13 @@ class Song {
     return preferred.isNotEmpty ? preferred : source;
   }
 
+  /// 歌词归属的音源 id。
+  ///
+  /// 歌词缓存、「删除歌词关联」标记、手动指定的歌词都按它绑定：同一首歌
+  /// 换一个音源（插件变体）播放时，各用各的歌词，互不覆盖。和界面显示的
+  /// 「当前音源」保持一致，用 [displaySource]。
+  String get lyricSourceId => (displaySource ?? '').trim();
+
   String get displayDuration {
     if (duration <= 0) return '';
     final m = duration ~/ 60;

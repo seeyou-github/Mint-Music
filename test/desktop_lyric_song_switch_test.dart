@@ -69,6 +69,18 @@ void main() {
       expect(areLyricsReadyForSong(_song('a'), lyric), isTrue);
     });
 
+    test('同一首歌换了插件音源后，旧音源的歌词不可用', () {
+      final lyric = LyricState(
+        lines: _lines('旧音源的歌词'),
+        currentSongId: 'a',
+        currentSongSource: 'wy@pluginA',
+      );
+      final switched = _song('a').copyWith(preferredSource: 'wy@pluginB');
+      expect(areLyricsReadyForSong(switched, lyric), isFalse);
+      final same = _song('a').copyWith(preferredSource: 'wy@pluginA');
+      expect(areLyricsReadyForSong(same, lyric), isTrue);
+    });
+
     test('无歌词（加载失败/空结果）也算就绪，由调用方显示占位', () {
       // loadLyrics 失败时的最终状态：lines 为空、isLoading 为 false
       final lyric = LyricState(error: '加载歌词失败', currentSongId: 'a');

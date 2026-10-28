@@ -72,15 +72,12 @@ class LyricCache {
   /// 迁移标记用的模块名。
   static const String _migrationModule = 'lyric_cache';
 
-  /// 缓存键：平台 + 歌曲 id 的 md5。
+  /// 缓存键：音源 + 歌曲 id 的 md5。
   ///
-  /// 音源 id 里可能带 `@插件id`（插件音源；或者地址被插件解析后，队列里
-  /// 歌曲的 source 被标记成了插件变体 id）。这里只取平台部分：同一首歌在
-  /// 「裸平台 id」和「插件变体」下的歌词缓存要能对上，否则歌曲在两种来源
-  /// 之间切换时缓存全部失效（每次都要重新联网取词）。
+  /// 音源用 [Song.lyricSourceId]（含插件变体），同一首歌用不同音源播放时
+  /// 歌词各存一份；只有同一个音源再次播放才会命中缓存。
   static String keyFor(Song song) {
-    final source = (song.source ?? '').split('@').first;
-    final raw = '${source}_${song.id}';
+    final raw = '${song.lyricSourceId}_${song.id}';
     return md5.convert(utf8.encode(raw)).toString();
   }
 
@@ -162,6 +159,9 @@ class LyricCache {
   /// 删掉缓存还不够：下次播放又会自动从音源匹配回同一份歌词，删除等于没删。
   /// 这里记一条「不要再自动匹配」的标记，[LyricCache.isDeleted] 为 true 时
   /// 播放器直接显示暂无歌词，直到用户重新搜索并手动指定歌词。
+  ///
+  /// 标记与缓存同键（[keyFor]）：只对这一首歌的这个音源生效，换音源播放时
+  /// 仍会正常匹配那个音源自己的歌词。
   static const String _deletedKey = 'lyric_deleted_v1';
 
   static Future<bool> isDeleted(Song song) async {

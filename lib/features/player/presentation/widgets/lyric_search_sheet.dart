@@ -178,12 +178,8 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
     if (result == null) return;
     final messenger = ScaffoldMessenger.of(context);
     // 弹层开着的时候可能已经自动切歌了，这份歌词就对不上了。
-    final current = ref.read(playbackControllerProvider).currentSong;
-    final sameSong =
-        current != null &&
-        current.id == widget.song.id &&
-        current.source == widget.song.source;
-    if (!sameSong) {
+    final liveSong = _liveSong();
+    if (liveSong == null) {
       final switched = context.tr('歌曲已切换，请重新搜索歌词');
       Navigator.of(context).pop();
       messenger.showSnackBar(
@@ -196,9 +192,11 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
       return;
     }
     final message = context.tr('已使用这份歌词');
+    // 绑定到「当前正在使用的音源」（播放解析后可能已经换成插件变体），
+    // 换音源播放同一首歌时各自保留各自的歌词。
     await ref
         .read(lyricControllerProvider.notifier)
-        .applyManualLyric(widget.song, result, source: _sourceId);
+        .applyManualLyric(liveSong, result, source: _sourceId);
     if (!mounted) return;
     Navigator.of(context).pop();
     messenger.showSnackBar(
@@ -208,6 +206,28 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
         duration: const Duration(seconds: 2),
       ),
     );
+  }
+
+  /// 弹层对应的歌曲在播放器里是否还在播放。
+  ///
+  /// 歌曲 id 只在平台内唯一，比较时要带上平台部分；插件变体变化
+  /// （`wy` → `wy@插件`）仍算同一首歌。
+  bool _isSameSong(Song song) {
+    if (song.id != widget.song.id) return false;
+    final currentBase = MusicSourceManager.splitSourceId(
+      song.lyricSourceId,
+    ).$1;
+    final targetBase = MusicSourceManager.splitSourceId(
+      widget.song.lyricSourceId,
+    ).$1;
+    return currentBase == targetBase;
+  }
+
+  /// 播放器里正在播放的这首歌（已经切歌返回 null）。
+  Song? _liveSong() {
+    final current = ref.read(playbackControllerProvider).currentSong;
+    if (current == null || !_isSameSong(current)) return null;
+    return current;
   }
 
   @override
@@ -483,7 +503,11 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
   String? _activeFormat() {
     if (_selectedIndex < 0) {
       final lyric = ref.watch(lyricControllerProvider);
-      if (lyric.currentSongId != widget.song.id || !lyric.hasYrc) return null;
+      if (lyric.currentSongId != widget.song.id ||
+          !_sameLyricSource(lyric.currentSongSource) ||
+          !lyric.hasYrc) {
+        return null;
+      }
       return lyric.lyricFormat;
     }
     final result = _previewResult;
@@ -640,10 +664,22 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
     return _buildLyricLines(colors, _previewLines);
   }
 
+  /// 播放器里的歌词是否属于弹层这首歌的平台（插件变体不区分）。
+  bool _sameLyricSource(String? lyricSource) {
+    if (lyricSource == null) return true;
+    final lyricBase = MusicSourceManager.splitSourceId(lyricSource).$1;
+    final targetBase = MusicSourceManager.splitSourceId(
+      widget.song.lyricSourceId,
+    ).$1;
+    return lyricBase == targetBase;
+  }
+
   /// 当前正在使用的歌词（打开弹层时的默认内容）+「删除歌词关联」按钮。
   Widget _buildCurrentLyricPreview(ThemeColors colors) {
     final lyric = ref.watch(lyricControllerProvider);
-    final sameSong = lyric.currentSongId == widget.song.id;
+    final sameSong =
+        lyric.currentSongId == widget.song.id &&
+        _sameLyricSource(lyric.currentSongSource);
     final lines = sameSong ? lyric.lines : const <LyricLine>[];
     if (lines.isEmpty) {
       final hint = sameSong && lyric.isLoading
@@ -742,6 +778,8 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
   }
 
   /// 删除当前歌词关联：清缓存、清掉正在显示的歌词，之后不再自动匹配。
+  ///
+  /// 只删除「当前正在使用的音源」下的关联；换音源播放这首歌不受影响。
   Future<void> _deleteAssociation() async {
     if (_deleting) return;
     setState(() => _deleting = true);
@@ -749,7 +787,7 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
     final message = context.tr('已删除歌词关联');
     await ref
         .read(lyricControllerProvider.notifier)
-        .deleteLyricAssociation(widget.song);
+        .deleteLyricAssociation(_liveSong() ?? widget.song);
     if (!mounted) return;
     Navigator.of(context).pop();
     messenger.showSnackBar(
