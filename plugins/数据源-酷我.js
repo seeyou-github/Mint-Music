@@ -402,6 +402,79 @@ function fetchLyric(rid) {
   });
 }
 
+/**
+ * 逐字歌词（LRCX）：newlyric.kuwo.cn 的加密接口。
+ *
+ * 参数用 'yeelion' 循环异或后 base64，响应是「tp=content 头 + 裸 deflate」，
+ * 解压后是 base64 文本，再 base64 解码 + 同样的异或，得到 **GBK** 编码的
+ * LRCX（`[mm:ss.mmm]<相对起始,时长>字`）。GBK 交给 App 侧转码。
+ */
+function xorBase64(text, key) {
+  var bytes = cerumusic.utils.buffer.from(text, 'utf8');
+  var out = [];
+  for (var i = 0; i < bytes.length; i++) {
+    out.push((bytes[i] ^ key.charCodeAt(i % key.length)) & 0xff);
+  }
+  return cerumusic.utils.buffer.bufToString(out, 'base64');
+}
+
+function fetchLrcx(rid) {
+  if (!cerumusic.utils.zlib || !cerumusic.utils.charset) {
+    // 老版本 App 没有 inflateRaw / charset 桥，直接放弃逐字
+    return Promise.resolve('');
+  }
+  var params =
+    'user=12345,web,web,web&requester=localhost&req=1&rid=MUSIC_' +
+    rid +
+    '&lrcx=1';
+  var url =
+    'http://newlyric.kuwo.cn/newlyric.lrc?' + xorBase64(params, 'yeelion');
+  return cerumusic
+    .request(url, {
+      method: 'GET',
+      headers: { 'User-Agent': UA },
+      timeout: 15000
+    })
+    .then(function (res) {
+      var raw = cerumusic.utils.buffer.from(
+        (res && res.bodyBase64) || '',
+        'base64'
+      );
+      // 跳过 `tp=content\r\n...\r\n\r\n` 头
+      var start = -1;
+      for (var i = 0; i + 3 < raw.length; i++) {
+        if (raw[i] === 13 && raw[i + 1] === 10 && raw[i + 2] === 13 && raw[i + 3] === 10) {
+          start = i + 4;
+          break;
+        }
+      }
+      if (start < 0) return '';
+      var body = [];
+      for (var j = start; j < raw.length; j++) body.push(raw[j]);
+      return cerumusic.utils.zlib
+        .inflateRaw(body)
+        .catch(function () {
+          return cerumusic.utils.zlib.inflate(body);
+        })
+        .then(function (inflated) {
+          var base64Text = cerumusic.utils.buffer
+            .bufToString(inflated, 'utf8')
+            .trim();
+          if (!base64Text) return '';
+          var lrc = cerumusic.utils.buffer.from(base64Text, 'base64');
+          var key = 'yeelion';
+          var decoded = [];
+          for (var k = 0; k < lrc.length; k++) {
+            decoded.push((lrc[k] ^ key.charCodeAt(k % key.length)) & 0xff);
+          }
+          return cerumusic.utils.charset.decode(decoded, 'gbk');
+        });
+    })
+    .catch(function () {
+      return '';
+    });
+}
+
 /** 酷我歌词是 [{time, lineLyric}]，拼成标准 LRC。 */
 function lrcFromList(list) {
   if (!list || !list.length) return '';
@@ -426,7 +499,7 @@ function lrcFromList(list) {
 module.exports = {
   pluginInfo: {
     name: '数据源-酷我',
-    version: '1.3.0',
+    version: '1.4.0',
     author: 'MintMusic',
     description:
       '只提供搜索、歌单分类、榜单、歌单详情的酷我音乐数据源；' +
@@ -884,13 +957,25 @@ module.exports = {
         return lrcFromList(body.data && body.data.lrclist);
       });
     }
-    return once().then(function (lrc) {
-      // 这个接口偶尔返回空壳，重试一次再放弃
-      if (lrc) return lrc;
-      return once();
-    }).then(function (lrc) {
-      if (!lrc) return '';
-      return JSON.stringify({ lyric: lrc, lrc: lrc });
+    // 逐行 LRC（兜底）与逐字 LRCX 并行，LRCX 放 crlyric 走逐字通道
+    return Promise.all([
+      once().then(function (lrc) {
+        // 这个接口偶尔返回空壳，重试一次再放弃
+        return lrc || once();
+      }).catch(function () {
+        return '';
+      }),
+      fetchLrcx(rid)
+    ]).then(function (results) {
+      var lrc = results[0] || '';
+      var lrcx = results[1] || '';
+      if (!lrc && !lrcx) return '';
+      return JSON.stringify({
+        lyric: lrc || lrcx,
+        lrc: lrc,
+        lrcx: lrcx,
+        crlyric: lrcx
+      });
     });
   },
 

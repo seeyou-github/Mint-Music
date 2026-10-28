@@ -8,6 +8,7 @@ import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_js/flutter_js.dart';
+import 'package:gbk_codec/gbk_codec.dart';
 import 'package:pointycastle/export.dart' as pc;
 
 /// Data emitted when a plugin sends a `pluginNotice` with type `update`
@@ -359,8 +360,20 @@ var cerumusic = {
       inflate: function(buf) {
         return __zlibRequest('inflate', buf);
       },
+      inflateRaw: function(buf) {
+        return __zlibRequest('inflateRaw', buf);
+      },
       deflate: function(data) {
         return __zlibRequest('deflate', data);
+      }
+    },
+    charset: {
+      /** GBK/GB18030 字节 → 字符串（酷我逐字歌词是 GBK 编码的）。 */
+      decode: function(buf, encoding) {
+        var enc = String(encoding || 'gbk').toLowerCase();
+        return __zlibRequest('charset:' + enc, buf).then(function(bytes) {
+          return __bytesToString(bytes);
+        });
       }
     }
   },
@@ -1127,9 +1140,19 @@ function __zlibRequest(action, data) {
   ) async {
     try {
       final input = _decodeBase64Bytes(base64Data);
-      final output = action == 'deflate'
-          ? ZLibEncoder().encode(input)
-          : ZLibDecoder().decodeBytes(input);
+      List<int> output;
+      if (action == 'deflate') {
+        output = ZLibEncoder().encode(input);
+      } else if (action == 'inflateRaw') {
+        // 裸 deflate（没有 zlib 头）：酷我 newlyric 这类接口用的就是它
+        output = ZLibDecoder(raw: true).decodeBytes(input);
+      } else if (action.startsWith('charset:')) {
+        // 字符集解码：插件拿不到 GBK 文本时借这里转成 UTF-8 字节
+        final text = gbk.decode(input);
+        output = utf8.encode(text);
+      } else {
+        output = ZLibDecoder().decodeBytes(input);
+      }
       _resolveZlibResult(requestId, true, base64Encode(output));
     } catch (e) {
       print('[JsEngine] Zlib request error: $e');
