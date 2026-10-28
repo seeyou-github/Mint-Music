@@ -170,12 +170,6 @@ class SettingsService {
   Future<void> setAudioQuality(String v) =>
       _prefs.setString('audio_quality', v);
 
-  // -- automatic quality downgrade --
-  bool getAutoQualityDowngrade() =>
-      _prefs.getBool('auto_quality_downgrade') ?? false;
-  Future<void> setAutoQualityDowngrade(bool v) =>
-      _prefs.setBool('auto_quality_downgrade', v);
-
   // -- equalizer enable --
   bool getEqualizerEnabled() => _prefs.getBool('equalizer_enabled') ?? false;
   Future<void> setEqualizerEnabled(bool v) =>

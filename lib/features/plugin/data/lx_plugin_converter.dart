@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import '../domain/plugin_types.dart';
+
 class LxPluginConverter {
   /// 平台 id → 展示名。
   ///
@@ -167,58 +169,66 @@ function __lxHasAction(source, action) {
 }
 
 function __lxNormalizeMusicUrlResult(response, payload) {
-  if (typeof response === 'string') {
-    response = response.trim();
-    if (/^https?:\\/\\//i.test(response)) {
-      return { source: payload.source, action: payload.action, data: { type: payload.info.type, url: response } };
-    }
-    try { response = JSON.parse(response); } catch(e) {}
+  var responseKeys = ['url', 'src', 'playUrl', 'play_url', 'location', 'audioUrl', 'audio_url', 'data', 'body', 'result', 'response'];
+  var qualityAliases = ${jsonEncode(musicQualityAliases)};
+  var qualityTypes = ${jsonEncode(musicQualityTypes)};
+
+  function qualityKey(value) {
+    var key = String(value).trim().toLowerCase();
+    return Object.prototype.hasOwnProperty.call(qualityAliases, key) ? qualityAliases[key] : key;
   }
 
   function parseNested(value) {
-    if (typeof value !== 'string') return value;
-    var text = value.trim();
-    if (!text) return text;
-    try { return JSON.parse(text); } catch(e) { return text; }
+    while (typeof value === 'string') {
+      var text = value.trim();
+      if (!text) return text;
+      try { value = JSON.parse(text); } catch(e) { return text; }
+    }
+    return value;
   }
 
   function findUrl(value) {
     value = parseNested(value);
     if (typeof value === 'string') {
-      return /^https?:\\/\\//i.test(value.trim()) ? value.trim() : '';
+      return /^https?:\\/\\//i.test(value) ? value : '';
     }
     if (!value || typeof value !== 'object') return '';
-    var directKeys = ['url', 'src', 'playUrl', 'play_url', 'location', 'audioUrl', 'audio_url'];
-    for (var i = 0; i < directKeys.length; i++) {
-      var direct = findUrl(value[directKeys[i]]);
-      if (direct) return direct;
-    }
-    var nestedKeys = ['data', 'body', 'result', 'response'];
-    for (var j = 0; j < nestedKeys.length; j++) {
-      var nested = findUrl(value[nestedKeys[j]]);
+    for (var i = 0; i < responseKeys.length; i++) {
+      var nested = findUrl(value[responseKeys[i]]);
       if (nested) return nested;
     }
     if (Array.isArray(value)) {
-      for (var k = 0; k < value.length; k++) {
-        var item = findUrl(value[k]);
+      for (var j = 0; j < value.length; j++) {
+        var item = findUrl(value[j]);
         if (item) return item;
       }
     }
+    var error = value.error != null ? value.error : value.message;
+    if (error != null) throw new Error(String(error));
     return '';
   }
 
-  function findValue(value, keys) {
+  var reportedQuality = '';
+  var requestedKey = qualityKey(payload.info.type);
+  function validateQuality(value) {
     value = parseNested(value);
-    if (!value || typeof value !== 'object') return '';
-    for (var i = 0; i < keys.length; i++) {
-      if (typeof value[keys[i]] === 'string' && value[keys[i]].trim()) return value[keys[i]].trim();
-    }
-    var nestedKeys = ['data', 'body', 'result', 'response'];
-    for (var j = 0; j < nestedKeys.length; j++) {
-      var nested = findValue(value[nestedKeys[j]], keys);
-      if (nested) return nested;
-    }
-    return '';
+    if (!value || typeof value !== 'object') return;
+    // format describes a container, not a quality (hires can use flac).
+    ['quality', 'level', 'type'].forEach(function(key) {
+      var candidate = value[key];
+      if (typeof candidate !== 'string' && typeof candidate !== 'number') return;
+      var label = String(candidate).trim();
+      if (!label) return;
+      var normalized = qualityKey(label);
+      if (key === 'type' && !/^\\d{2,4}k${r'$'}/.test(normalized) && qualityTypes.indexOf(normalized) === -1) return;
+      if (normalized !== requestedKey) {
+        throw new Error('音质不匹配：请求 ' + payload.info.type + '，插件返回 ' + label + '，已拒绝替换音质');
+      }
+      if (!reportedQuality) reportedQuality = label;
+    });
+    // Do not stop at the first label or URL: every branch must agree.
+    responseKeys.forEach(function(key) { validateQuality(value[key]); });
+    if (Array.isArray(value)) value.forEach(validateQuality);
   }
 
   function findHeaders(value) {
@@ -233,24 +243,26 @@ function __lxNormalizeMusicUrlResult(response, payload) {
         });
       }
     });
-    ['data', 'body', 'result', 'response'].forEach(function(key) {
-      var nested = findHeaders(value[key]);
+    function merge(nestedValue) {
+      var nested = findHeaders(nestedValue);
       Object.keys(nested).forEach(function(header) { headers[header] = nested[header]; });
-    });
+    }
+    ['data', 'body', 'result', 'response'].forEach(function(key) { merge(value[key]); });
+    if (Array.isArray(value)) value.forEach(merge);
     return headers;
   }
 
-  if (response && typeof response === 'object') {
-    var url = findUrl(response);
-    var type = findValue(response, ['quality', 'type', 'format', 'level']) || payload.info.type;
-    if (url) {
-      var normalized = { source: payload.source, action: payload.action, data: { type: type, url: url } };
-      var headers = findHeaders(response);
-      if (Object.keys(headers).length) normalized.headers = headers;
-      return normalized;
-    }
+  var url = findUrl(response);
+  if (url) {
+    validateQuality(response);
+    // An absent label inherits the request, not a verified media bitrate.
+    var type = reportedQuality || payload.info.type;
+    var normalized = { source: payload.source, action: payload.action, data: { type: type, url: url } };
+    var headers = findHeaders(response);
+    if (Object.keys(headers).length) normalized.headers = headers;
+    return normalized;
   }
-  throw new Error('failed');
+  throw new Error('Plugin returned an invalid musicUrl result');
 }
 
 function __lxNormalizeSearchResult(response, limit) {

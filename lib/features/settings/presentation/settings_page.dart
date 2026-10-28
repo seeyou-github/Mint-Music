@@ -1894,30 +1894,12 @@ class _PlaybackContent extends ConsumerWidget {
     WidgetRef ref,
     ThemeColors colors,
   ) {
-    final autoQualityDowngrade = ref.watch(autoQualityDowngradeProvider);
     final markPlayedStatus = ref.watch(markPlayedStatusProvider);
     final hideVipExclusive = ref.watch(hideVipExclusiveSongsProvider);
     return SettingGroup(
       title: '播放设置',
       colors: colors,
       children: [
-        SettingRow(
-          icon: Icons.trending_down,
-          title: '音质自动降级',
-          trailing: Switch(
-            value: autoQualityDowngrade,
-            onChanged: (v) => _persistBool(
-              context,
-              autoQualityDowngradeProvider,
-              v,
-              (s) => s.setAutoQualityDowngrade(v),
-            ),
-            activeTrackColor: colors.primary.withValues(alpha: 0.3),
-            activeThumbColor: colors.primary,
-          ),
-          colors: colors,
-        ),
-        SettingDivider(colors: colors),
         SettingRow(
           icon: Icons.playlist_add_check,
           title: '标记歌曲播放状态',

@@ -34,7 +34,6 @@ var __mfSourcesCache = null;
 var __mfActionsCache = null;
 var __mfSourceIdCache = null;
 
-/* 本适配器支持的音质标签（与内置源保持一致，便于复用音质回退逻辑）。 */
 var __mfQualityLabels = ['128k', '320k', 'flac'];
 
 /* ------------------------------------------------------------------ *
@@ -688,68 +687,27 @@ function __mfErrorText(error) {
 }
 
 function __mfMusicUrl(source, musicInfo, quality) {
-  var lastError = '';
   return Promise.resolve()
     .then(function () {
       var plugin = __mfPluginObject();
       var item = __mfUnwrapItem(musicInfo);
+      var requested = __mfQualityKey(quality);
+      if (!requested) throw new Error('Unsupported quality: ' + quality);
 
       if (typeof plugin.getMediaSource !== 'function') {
         return __mfDirectUrl(item, quality);
       }
 
-      // 按「请求音质 → standard → high → low → super」的顺序尝试：
-      // 有些插件只实现了部分音质（例如「网易128k」仅支持 standard），
-      // 直接失败会让用户完全无法播放，这里退化为它能提供的音质。
-      var requested = __mfQualityKey(quality);
-      var candidates = [requested];
-      ['standard', 'high', 'low', 'super'].forEach(function (key) {
-        if (candidates.indexOf(key) < 0) candidates.push(key);
+      return Promise.resolve(plugin.getMediaSource(item, requested)).then(function (response) {
+        return __mfParseMediaSource(response, requested);
       });
-
-      var index = 0;
-      function attempt() {
-        if (index >= candidates.length) return __mfDirectUrl(item, quality);
-        var key = candidates[index++];
-        return Promise.resolve(plugin.getMediaSource(item, key)).then(
-          function (response) {
-            var parsed = __mfParseMediaSource(response, key);
-            if (parsed) return parsed;
-            return attempt();
-          },
-          function (error) {
-            lastError = __mfErrorText(error) || lastError;
-            if (typeof console !== 'undefined' && console.log) {
-              console.log(
-                '[MusicFree] getMediaSource(' +
-                  key +
-                  ') 失败: ' +
-                  (error && error.message ? error.message : error)
-              );
-            }
-            return attempt();
-          }
-        );
-      }
-
-      return attempt();
     })
-    .then(
-      function (value) {
-        if (value) return value;
-        // 所有音质与插件都失败：把最后一次的接口错误带回 Dart，
-        // 让播放失败提示能显示具体原因（如 HTTP 412）。
-        if (lastError) return { error: lastError };
-        return null;
-      },
-      function (error) {
-        lastError = __mfErrorText(error) || lastError;
-        if (typeof console !== 'undefined' && console.log) {
-          console.log('[MusicFree] getMediaSource 失败: ' + (error && error.message ? error.message : error));
-        }
-        return { error: lastError || 'getMediaSource failed' };
+    .then(null, function (error) {
+      if (typeof console !== 'undefined' && console.log) {
+        console.log('[MusicFree] getMediaSource 失败: ' + (error && error.message ? error.message : error));
       }
-    );
+      return { error: __mfErrorText(error) || 'getMediaSource failed' };
+    });
 }
 
 /** 归一化 getMediaSource 的返回值。返回 null 表示没有可用地址。 */
@@ -758,15 +716,25 @@ function __mfParseMediaSource(response, qualityKey) {
   var url = '';
   var headers = null;
   var userAgent = '';
+  var reportedQuality = '';
   if (typeof response === 'string') {
     url = response;
   } else if (typeof response === 'object') {
+    if (response.error) throw new Error(__mfErrorText(response.error));
+    [response.quality, response.data ? response.data.quality : null].forEach(function (value) {
+      var label = __mfText(value, '');
+      if (!label) return;
+      if (__mfQualityKey(label) !== qualityKey) {
+        throw new Error('Quality mismatch: requested ' + qualityKey + ', plugin returned ' + label);
+      }
+      if (!reportedQuality) reportedQuality = label;
+    });
     url = response.url || (response.data && response.data.url) || '';
     headers = response.headers || (response.data && response.data.headers) || null;
-    userAgent = response.userAgent || '';
+    userAgent = response.userAgent || (response.data && response.data.userAgent) || '';
   }
   url = __mfText(url, '');
-  if (!/^https?:/i.test(url)) return null;
+  if (!/^https?:\/\/[^/?#\s]+(?:[/?#][^\s]*)?$/i.test(url)) return null;
 
   var resultHeaders = {};
   if (headers && typeof headers === 'object') {
@@ -786,7 +754,7 @@ function __mfParseMediaSource(response, qualityKey) {
   return {
     url: url,
     headers: resultHeaders,
-    quality: __mfQualityLabel(qualityKey),
+    quality: reportedQuality || __mfQualityLabel(qualityKey),
   };
 }
 
@@ -794,21 +762,21 @@ function __mfParseMediaSource(response, qualityKey) {
 function __mfQualityLabel(qualityKey) {
   if (qualityKey === 'super') return 'flac';
   if (qualityKey === 'high') return '320k';
+  if (qualityKey === 'low') return '64k';
   return '128k';
 }
 
 function __mfDirectUrl(item, quality) {
-  var direct = '';
-  if (item && item.url) direct = String(item.url);
-  if (!direct && item && item.qualities && typeof item.qualities === 'object') {
-    var entry = item.qualities[quality] || item.qualities[__mfQualityKey(quality)];
-    if (typeof entry === 'string') direct = entry;
-    else if (entry && typeof entry === 'object' && entry.url) direct = String(entry.url);
+  var key = __mfQualityKey(quality);
+  if (item && item.qualities && typeof item.qualities === 'object') {
+    var keys = [quality, key].concat(Object.keys(item.qualities));
+    for (var i = 0; i < keys.length; i++) {
+      if (__mfQualityKey(keys[i]) !== key) continue;
+      var parsed = __mfParseMediaSource(item.qualities[keys[i]], key);
+      if (parsed) return parsed;
+    }
   }
-  if (direct && /^https?:/i.test(direct)) {
-    return { url: direct, headers: {}, quality: quality };
-  }
-  return null;
+  return item && item.url ? __mfParseMediaSource(item, key) : null;
 }
 
 function __mfGetPic(source, musicInfo) {
@@ -884,22 +852,12 @@ function __mfGetLyric(source, musicInfo) {
 
 /** 本项目音质标签 -> MusicFree 音质键（low / standard / high / super）。 */
 function __mfQualityKey(quality) {
-  var value = String(quality === null || quality === undefined ? '' : quality).toLowerCase();
+  var value = String(quality === null || quality === undefined ? '' : quality).trim().toLowerCase();
   if (value === 'low' || value === '64k') return 'low';
-  if (value === 'standard' || value === '128k' || value === '192k') return 'standard';
+  if (value === 'standard' || value === '128k') return 'standard';
   if (value === 'high' || value === '320k' || value === 'hq') return 'high';
-  if (
-    value === 'super' ||
-    value === 'flac' ||
-    value === 'flac24bit' ||
-    value === 'hires' ||
-    value === 'atmos' ||
-    value === 'master' ||
-    value === 'lossless'
-  ) {
-    return 'super';
-  }
-  return 'standard';
+  if (value === 'super' || value === 'flac' || value === 'lossless') return 'super';
+  return null;
 }
 
 /* ------------------------------------------------------------------ *

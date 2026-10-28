@@ -57,9 +57,6 @@ final playbackControllerProvider =
           persistUserQuality(ref, quality: quality, sourceId: sourceId),
         );
       };
-      controller.setAutoQualityDowngrade(
-        ref.read(autoQualityDowngradeProvider),
-      );
       controller.setPreferredSources(ref.read(preferredSourceMapProvider));
       controller.setDataSourcePlaybackSources(
         ref.read(dataSourcePlaybackSourcesProvider),
@@ -189,10 +186,6 @@ final playbackControllerProvider =
         persistSession();
       }());
 
-      ref.listen(autoQualityDowngradeProvider, (prev, next) {
-        controller.setAutoQualityDowngrade(next);
-      });
-
       void syncAudioEffects() {
         controller.setAudioEffects(
           AudioEffectsConfig(
@@ -224,7 +217,6 @@ final playbackControllerProvider =
       ref
           .read(settingsServiceProvider.future)
           .then((svc) async {
-            controller.setAutoQualityDowngrade(svc.getAutoQualityDowngrade());
             unawaited(controller.setSpeed(svc.getPlaybackSpeed()));
           })
           .catchError((e) {
@@ -361,8 +353,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   Duration? _seekTarget;
   Timer? _seekTargetTimer;
 
-  bool _autoQualityDowngrade = false;
-
   /// 平台 id → 优先插件音源（由设置页维护）。
   Map<String, String> _preferredSources = const {};
   Timer? _loadingTimer;
@@ -415,10 +405,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     this._audioEffectService,
   ) : super(const PlaybackState()) {
     _init();
-  }
-
-  void setAutoQualityDowngrade(bool enabled) {
-    _autoQualityDowngrade = enabled;
   }
 
   /// 更新「平台 id → 优先插件音源」映射。
@@ -789,13 +775,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
 
   // ==================== 核心播放方法 ====================
 
-  /// 播放指定索引的歌曲（照搬 CeruMusic playSong 逻辑）
-  ///
-  /// 容错分层（只在当前音源内部兜底，不做跨音源换源）：
-  /// 1. 当前音源 URL 获取成功 → 直接播放
-  /// 2. 当前音源 URL 获取失败 → 依次尝试更低音质（需开启「音质自动降级」）
-  /// 3. 播放器运行时 error → error listener 中同样按上述规则处理
-  /// 4. 全部失败 → 停止播放，**不自动播放下一首**
   /// 取播放地址的总超时。
   ///
   /// 12 秒只够一次插件请求：数据源歌曲还要先在播放源里搜一遍，插件内部也可能
@@ -972,19 +951,17 @@ class PlaybackController extends StateNotifier<PlaybackState> {
         : null;
     final quality = isLocal
         ? _getQualityFromSong(song)
-        : (getQualityForSource?.call(sourceId) ?? _getQualityFromSong(song));
+        : (getQualityForSource?.call(SourceInfo.baseIdOf(sourceId)) ??
+              _getQualityFromSong(song));
     final availableQualities = isLocal
         ? <String>[quality]
         : _musicSourceManager.getSupportedQualitiesForSourceId(sourceId);
-    final qualitySlot = availableQualities.contains(quality)
-        ? quality
-        : (availableQualities.isNotEmpty ? availableQualities.last : '320k');
     state = state.copyWith(
       currentIndex: index,
       currentSong: song,
       position: Duration.zero,
       isLoading: true,
-      currentQuality: qualitySlot,
+      currentQuality: quality,
       availableQualities: availableQualities,
     );
 
@@ -1000,10 +977,10 @@ class PlaybackController extends StateNotifier<PlaybackState> {
       if (!isLocal &&
           _hasPlayableUrl(urlToPlay) &&
           urlToPlay!.startsWith('http') &&
-          song.sourceQuality != qualitySlot) {
+          song.sourceQuality != quality) {
         debugPrint(
           '[PlaybackController] 音质已变化，重新解析: ${song.title} '
-          'song=${song.sourceQuality} current=$qualitySlot',
+          'song=${song.sourceQuality} current=$quality',
         );
         currentSongToPlay = currentSongToPlay.copyWith(
           clearSourceUrl: true,
@@ -1061,12 +1038,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
           currentSongToPlay = currentSongToPlay.copyWith(
             sourceUrl: urlToPlay,
             sourceHeaders: result.headers.isEmpty ? null : result.headers,
-            // 缓存键记录这次地址的真实音质：插件可能内部降级（请求 320k
-            // 实际返回 128k），此时按回报音质记录，重播时才能命中正确的
-            // 缓存；回报为空时退回本次请求的音质档位。
-            sourceQuality: result.quality.isEmpty
-                ? qualitySlot
-                : result.quality,
+            sourceQuality: quality,
             clearSourceHeaders: result.headers.isEmpty,
             clearSourceQuality: false,
             // 歌曲由插件解析地址，这里把音源标记成实际提供地址的插件，
@@ -1074,33 +1046,10 @@ class PlaybackController extends StateNotifier<PlaybackState> {
             source: result.source ?? currentSongToPlay.source,
           );
           _replaceSongInQueue(index, currentSongToPlay);
-          if (result.quality.isNotEmpty) {
-            state = state.copyWith(currentQuality: result.quality);
-          }
         }
       }
 
       if (urlToPlay == null || urlToPlay.isEmpty) {
-        // 当前音源拿不到播放地址：只在开启「音质自动降级」时再试更低音质，
-        // 仍然失败就停止播放。这里不做任何跨音源换源。
-        if (_autoQualityDowngrade && !isLocal) {
-          final qualityFallbackSong = await _tryQualityFallbackAfterFailure(
-            song: currentSongToPlay,
-            index: index,
-            requestId: requestId,
-            resumePosition: Duration.zero,
-            excludedUrls: const <String>{},
-          );
-          if (qualityFallbackSong != null) {
-            _errorListenerSub = _mountOneTimeErrorListener(
-              requestId,
-              index,
-              qualityFallbackSong,
-            );
-            return;
-          }
-        }
-
         if (_currentPlayRequestId != requestId) return;
         await _stopPlaybackOnFailure(_playbackFailureReason(song));
         return;
@@ -1115,8 +1064,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
       } catch (_) {
         if (_currentPlayRequestId != requestId) return;
 
-        // 接口返回了 URL 但音频响应不可播放：先试同一首歌的其它候选地址
-        // （同音源的不同插件 / 不同音质档位），全部失败再降级音质。
+        // 地址不可播放时，只尝试同音质的其它候选地址。
         final failedUrls = <String>{playUrl};
         for (final candidate in resolvedUrlCandidates) {
           final candidateUrl = candidate.url;
@@ -1133,9 +1081,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
               sourceHeaders: candidate.headers.isEmpty
                   ? null
                   : candidate.headers,
-              sourceQuality: candidate.quality.isEmpty
-                  ? qualitySlot
-                  : candidate.quality,
+              sourceQuality: quality,
               // 标记实际提供地址的音源，界面上显示真正正在使用的音源。
               source: candidate.source ?? currentSongToPlay.source,
               clearSourceHeaders: candidate.headers.isEmpty,
@@ -1147,14 +1093,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
             await _startPlayback();
             currentSongToPlay = fallbackSong;
             _replaceSongInQueue(index, fallbackSong);
-            final fallbackQuality = candidate.quality.isEmpty
-                ? state.currentQuality
-                : candidate.quality;
-            state = state.copyWith(
-              isLoading: false,
-              currentSong: fallbackSong,
-              currentQuality: fallbackQuality,
-            );
+            state = state.copyWith(isLoading: false, currentSong: fallbackSong);
             onMessage?.call(tr('原播放链接失败，已切换到备用播放链接'));
             _errorListenerSub = _mountOneTimeErrorListener(
               requestId,
@@ -1164,24 +1103,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
             return;
           } catch (_) {
             continue;
-          }
-        }
-
-        if (_autoQualityDowngrade && !isLocal) {
-          final qualityFallbackSong = await _tryQualityFallbackAfterFailure(
-            song: currentSongToPlay,
-            index: index,
-            requestId: requestId,
-            resumePosition: Duration.zero,
-            excludedUrls: failedUrls,
-          );
-          if (qualityFallbackSong != null) {
-            _errorListenerSub = _mountOneTimeErrorListener(
-              requestId,
-              index,
-              qualityFallbackSong,
-            );
-            return;
           }
         }
 
@@ -1611,13 +1532,10 @@ class PlaybackController extends StateNotifier<PlaybackState> {
         return;
       }
 
-      // 插件可能内部降级（请求 320k 实际返回 128k）：以回报音质为准，
-      // 缓存键 / 界面显示才和真正播放的音频一致；回报为空时用请求档位。
-      final resolvedQuality = result.quality.isEmpty ? quality : result.quality;
       final updatedSong = currentSong.copyWith(
         sourceUrl: result.url,
         sourceHeaders: result.headers.isEmpty ? null : result.headers,
-        sourceQuality: resolvedQuality,
+        sourceQuality: quality,
         clearSourceHeaders: result.headers.isEmpty,
         clearSourceQuality: false,
         // 标记实际提供地址的音源，界面上显示真正正在使用的音源。
@@ -1635,12 +1553,12 @@ class PlaybackController extends StateNotifier<PlaybackState> {
       state = state.copyWith(
         isLoading: false,
         isPlaying: wasPlaying,
-        currentQuality: resolvedQuality,
+        currentQuality: quality,
         currentSong: updatedSong,
       );
       await _resumeAfterQualitySwitch(requestId, wasPlaying);
       _finishQualitySwitch(requestId);
-      onMessage?.call(tr('已切换到 ${_getQualityDisplayName(resolvedQuality)}'));
+      onMessage?.call(tr('已切换到 ${_getQualityDisplayName(quality)}'));
       // 用户手动切换音质：同步「默认音质 / 全局音质」。
       onQualityChanged?.call(quality, currentSong.source);
     } catch (e) {
@@ -1804,8 +1722,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   }
 
   /// 播放失败后的统一收尾：停止播放并提示，绝不自动播放下一首。
-  ///
-  /// 当前音源（含更低音质兜底）播放失败时停止播放，**不要自动播放下一首**。
   Future<void> _stopPlaybackOnFailure(String reason) async {
     debugPrint('[PlaybackController] 播放失败，停止播放：$reason');
 
@@ -1859,209 +1775,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     );
   }
 
-  Future<List<PluginMusicUrlResult>> _getLowerQualityCandidates(
-    Song song, {
-    required Set<String> excludedUrls,
-  }) async {
-    if (!_autoQualityDowngrade ||
-        song.source == null ||
-        song.source == 'local') {
-      return const <PluginMusicUrlResult>[];
-    }
-
-    final results = <PluginMusicUrlResult>[];
-    final qualityChain = _musicSourceManager.getMusicQualityFallbacks(
-      song,
-      state.currentQuality,
-    );
-    for (final fallbackQuality in qualityChain) {
-      if (fallbackQuality == state.currentQuality) continue;
-      try {
-        final candidates = await _musicSourceManager
-            .getMusicUrlResultCandidates(
-              song,
-              quality: fallbackQuality,
-              excludedUrls: excludedUrls,
-              onResolveError: (message) => _lastResolveError = message,
-            )
-            .timeout(_urlFetchTimeout);
-        for (final candidate in candidates) {
-          if (candidate.url.isNotEmpty &&
-              !excludedUrls.contains(candidate.url) &&
-              !results.any((item) => item.url == candidate.url)) {
-            results.add(
-              candidate.quality.isEmpty
-                  ? PluginMusicUrlResult(
-                      url: candidate.url,
-                      quality: fallbackQuality,
-                      headers: candidate.headers,
-                    )
-                  : candidate,
-            );
-          }
-        }
-      } catch (e) {
-        debugPrint(
-          '[PlaybackController] quality fallback lookup failed: '
-          'quality=$fallbackQuality error=$e',
-        );
-      }
-    }
-    return results;
-  }
-
-  Future<Song?> _tryQualityFallbackAfterFailure({
-    required Song song,
-    required int index,
-    required int requestId,
-    required Duration resumePosition,
-    required Set<String> excludedUrls,
-  }) async {
-    if (!_autoQualityDowngrade ||
-        song.source == null ||
-        song.source == 'local') {
-      return null;
-    }
-
-    final triedUrls = <String>{...excludedUrls};
-    final qualityChain = _musicSourceManager.getMusicQualityFallbacks(
-      song,
-      state.currentQuality,
-    );
-
-    // Request one quality, verify its URLs immediately, then continue to the
-    // next lower quality only when every URL at this level fails.
-    for (final fallbackQuality in qualityChain) {
-      if (_currentPlayRequestId != requestId ||
-          fallbackQuality == state.currentQuality) {
-        continue;
-      }
-
-      List<PluginMusicUrlResult> candidates;
-      try {
-        candidates = await _musicSourceManager
-            .getMusicUrlResultCandidates(
-              song,
-              quality: fallbackQuality,
-              excludedUrls: triedUrls,
-            )
-            .timeout(_urlFetchTimeout);
-      } catch (e) {
-        debugPrint(
-          '[PlaybackController] quality fallback lookup failed: '
-          'quality=$fallbackQuality error=$e',
-        );
-        continue;
-      }
-
-      for (final candidate in candidates) {
-        if (_currentPlayRequestId != requestId ||
-            candidate.url.isEmpty ||
-            !triedUrls.add(candidate.url)) {
-          continue;
-        }
-
-        final resolvedQuality = candidate.quality.isEmpty
-            ? fallbackQuality
-            : candidate.quality;
-        final fallbackSong = song.copyWith(
-          sourceUrl: candidate.url,
-          sourceHeaders: candidate.headers.isEmpty ? null : candidate.headers,
-          sourceQuality: resolvedQuality,
-          clearSourceHeaders: candidate.headers.isEmpty,
-          clearSourceQuality: false,
-        );
-
-        try {
-          await _audioHandler
-              .setAudioSource(candidate.url, song: fallbackSong)
-              .timeout(_audioSetTimeout);
-          await _startPlayback();
-          await _resumeFromPosition(resumePosition);
-          _replaceSongInQueue(index, fallbackSong);
-          state = state.copyWith(
-            currentSong: fallbackSong,
-            currentQuality: resolvedQuality,
-            isLoading: false,
-          );
-          onMessage?.call(
-            tr('已自动降级到 ${_getQualityDisplayName(resolvedQuality)}'),
-          );
-          return fallbackSong;
-        } catch (e) {
-          debugPrint(
-            '[PlaybackController] quality fallback playback failed: '
-            'quality=$resolvedQuality error=$e',
-          );
-        }
-      }
-    }
-    return null;
-  }
-
-  // ignore: unused_element
-  Future<Song?> _tryQualityFallbackAfterFailureLegacy({
-    required Song song,
-    required int index,
-    required int requestId,
-    required Duration resumePosition,
-    required Set<String> excludedUrls,
-  }) async {
-    if (!_autoQualityDowngrade ||
-        song.source == null ||
-        song.source == 'local') {
-      return null;
-    }
-
-    final candidates = await _getLowerQualityCandidates(
-      song,
-      excludedUrls: excludedUrls,
-    );
-
-    for (final candidate in candidates) {
-      if (_currentPlayRequestId != requestId ||
-          candidate.url.isEmpty ||
-          excludedUrls.contains(candidate.url)) {
-        continue;
-      }
-
-      final resolvedQuality = candidate.quality.isEmpty
-          ? state.currentQuality
-          : candidate.quality;
-      final fallbackSong = song.copyWith(
-        sourceUrl: candidate.url,
-        sourceHeaders: candidate.headers.isEmpty ? null : candidate.headers,
-        sourceQuality: resolvedQuality,
-        clearSourceHeaders: candidate.headers.isEmpty,
-        clearSourceQuality: false,
-      );
-
-      try {
-        await _audioHandler
-            .setAudioSource(candidate.url, song: fallbackSong)
-            .timeout(_audioSetTimeout);
-        await _startPlayback();
-        await _resumeFromPosition(resumePosition);
-        _replaceSongInQueue(index, fallbackSong);
-        state = state.copyWith(
-          currentSong: fallbackSong,
-          currentQuality: resolvedQuality,
-          isLoading: false,
-        );
-        onMessage?.call(
-          tr('原音质播放失败，已降级到 ${_getQualityDisplayName(resolvedQuality)}'),
-        );
-        return fallbackSong;
-      } catch (e) {
-        debugPrint(
-          '[PlaybackController] quality fallback playback failed: '
-          'quality=$resolvedQuality error=$e',
-        );
-      }
-    }
-    return null;
-  }
-
   /// 一次性错误监听器（照搬 CeruMusic 的 error listener 机制）
   ///
   /// CeruMusic 使用 HTML5 Audio 元素的原生 error 事件（{ once: true }），
@@ -2073,9 +1786,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   /// 3. 一次性：触发一次后自动取消订阅
   ///
   /// 失败处理逻辑（对齐 CeruMusic error handler，但失败后不自动跳歌）：
-  /// - 先尝试当前音源重新获取 URL（可能只是 URL 过期）
-  /// - 仍失败则按「音质自动降级」试更低音质
-  /// - 全部失败 → 停止播放
+  /// - 按当前音质重新获取 URL（可能只是 URL 过期），失败则停止播放。
   StreamSubscription _mountOneTimeErrorListener(
     int requestId,
     int index,
@@ -2170,25 +1881,8 @@ class PlaybackController extends StateNotifier<PlaybackState> {
             );
             return;
           } catch (_) {
-            debugPrint('[PlaybackController] 原源新 URL 播放失败，尝试降级音质');
+            debugPrint('[PlaybackController] 原源新 URL 播放失败');
           }
-        }
-
-        // 原源重新获取失败后，只在开启「音质自动降级」时再试更低音质。
-        final qualityFallbackSong = await _tryQualityFallbackAfterFailure(
-          song: song,
-          index: index,
-          requestId: requestId,
-          resumePosition: resumePosition,
-          excludedUrls: excludedUrls,
-        );
-        if (qualityFallbackSong != null) {
-          _errorListenerSub = _mountOneTimeErrorListener(
-            requestId,
-            index,
-            qualityFallbackSong,
-          );
-          return;
         }
 
         // 2) 本音源已无可用地址 → 停止播放（不跨音源换源、不自动跳歌）

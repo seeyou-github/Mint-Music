@@ -20,7 +20,6 @@ final settingsServiceProvider = FutureProvider<SettingsService>((ref) async {
 
 // -- audio quality --
 final audioQualityProvider = StateProvider<String>((ref) => '128k');
-final autoQualityDowngradeProvider = StateProvider<bool>((ref) => false);
 
 // -- equalizer --
 final equalizerEnabledProvider = StateProvider<bool>((ref) => false);
@@ -533,8 +532,6 @@ final settingsInitProvider = FutureProvider<void>((ref) async {
       .getCustomBackgroundColorsDark();
 
   ref.read(audioQualityProvider.notifier).state = svc.getAudioQuality();
-  ref.read(autoQualityDowngradeProvider.notifier).state = svc
-      .getAutoQualityDowngrade();
   ref.read(equalizerEnabledProvider.notifier).state = svc.getEqualizerEnabled();
   ref.read(equalizerPresetProvider.notifier).state = svc.getEqualizerPreset();
   final bandsStr = svc.getEqualizerBands();

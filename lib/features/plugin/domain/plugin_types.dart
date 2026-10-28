@@ -253,6 +253,38 @@ class RequestResultFromPlugin {
   });
 }
 
+/// Only these aliases are interchangeable; all other quality labels stay exact.
+const musicQualityAliases = <String, String>{
+  'low': '64k',
+  'standard': '128k',
+  'high': '320k',
+  'hq': '320k',
+  'super': 'flac',
+  'lossless': 'flac',
+};
+
+/// Known non-bitrate LX quality types (not codecs such as mp3/aac/ogg).
+const musicQualityTypes = <String>[
+  'flac',
+  'flac24bit',
+  'hires',
+  'atmos',
+  'master',
+  '24bit',
+  'sq',
+  'dsd',
+];
+
+String musicQualityKey(String quality) {
+  final value = quality.trim().toLowerCase();
+  return musicQualityAliases[value] ?? value;
+}
+
+bool isMusicQualityType(String type) {
+  final key = musicQualityKey(type);
+  return RegExp(r'^\d{2,4}k$').hasMatch(key) || musicQualityTypes.contains(key);
+}
+
 /// Normalized playback information returned by an LX source.
 ///
 /// LX scripts may return a URL directly or wrap it in several layers of
@@ -260,6 +292,8 @@ class RequestResultFromPlugin {
 /// sources whose final media URL is protected by a referer or token header.
 class PluginMusicUrlResult {
   final String url;
+
+  /// Reported or requested label; not verification of the actual media bitrate.
   final String quality;
   final Map<String, String> headers;
 

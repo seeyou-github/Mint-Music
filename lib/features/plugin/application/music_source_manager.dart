@@ -1510,8 +1510,6 @@ class MusicSourceManager {
     PluginMusicUrlResult result, {
     String? requestedQuality,
   }) {
-    // 优先记录插件回报的真实音质（插件可能内部降级）；回报为空时退回
-    // 本次请求的档位——缓存键不能为空，否则无法命中 / 会按默认值误标。
     final quality = result.quality.isEmpty ? requestedQuality : result.quality;
     return song.copyWith(
       sourceUrl: result.url,
@@ -1520,56 +1518,6 @@ class MusicSourceManager {
       clearSourceHeaders: result.headers.isEmpty,
       clearSourceQuality: quality == null || quality.isEmpty,
     );
-  }
-
-  List<String> _qualityFallbackChain(
-    String requested, {
-    List<String>? supported,
-  }) {
-    const order = <String>[
-      '128k',
-      '192k',
-      '320k',
-      'flac',
-      'flac24bit',
-      'hires',
-      'atmos',
-      'master',
-      '24bit',
-    ];
-    final allowed = supported == null || supported.isEmpty
-        ? order.toSet()
-        : supported.toSet();
-    final result = <String>[];
-
-    void add(String value) {
-      if (allowed.contains(value) && !result.contains(value)) {
-        result.add(value);
-      }
-    }
-
-    add(requested);
-    final index = order.indexOf(requested);
-    if (index >= 0) {
-      for (var i = index - 1; i >= 0; i--) {
-        add(order[i]);
-      }
-    }
-    if (index < 0) {
-      add('320k');
-      add('128k');
-    }
-    return result.isEmpty ? <String>[requested] : result;
-  }
-
-  List<String> _getPluginQualities(PluginHost host, String sourceId) {
-    for (final source in host.sources) {
-      final effectiveId = SourceIdMapping.deriveId(source.name);
-      if (effectiveId == sourceId && source.qualities.isNotEmpty) {
-        return source.qualities;
-      }
-    }
-    return const <String>[];
   }
 
   Future<List<String>> getMusicUrlCandidates(
@@ -1594,7 +1542,6 @@ class MusicSourceManager {
     Song song, {
     String quality = '320k',
     Set<String> excludedUrls = const <String>{},
-    bool includeQualityFallbacks = false,
     List<PluginHost>? pluginHosts,
     void Function(String message)? onResolveError,
   }) async {
@@ -1635,53 +1582,48 @@ class MusicSourceManager {
       final pluginSourceId = _getSourceIdForHost(host, sourceId);
       if (pluginSourceId == null) continue;
 
-      final qualities = includeQualityFallbacks
-          ? _qualityFallbackChain(
-              quality,
-              supported: _getPluginQualities(host, pluginSourceId),
-            )
-          : <String>[quality];
-      for (final candidateQuality in qualities) {
-        try {
-          final result = await host.getMusicUrlResult(
-            pluginSourceId,
-            musicInfo,
-            candidateQuality,
-          );
-          final url = result.url.trim();
-          final normalized = PluginMusicUrlResult(
-            url: url,
-            quality: result.quality.isEmpty ? candidateQuality : result.quality,
-            headers: result.headers,
-            // 记录实际提供地址的音源（插件），界面上据此显示当前使用的音源。
-            source: _pluginSourceAppId(host, pluginSourceId),
-          );
-          print(
-            '[MusicSourceManager] LX URL candidate: source=$sourceId '
-            'requested=$quality quality=$candidateQuality '
-            'resolved=${normalized.quality} host=${_urlHost(url)}',
-          );
-          // 拒绝酷我提示音 / 加密格式 URL
-          if (sourceId == 'kw' && _isKuwoPromptUrl(url)) {
-            print('[MusicSourceManager] 拒绝酷我无效 URL: $url');
-            continue;
-          }
-          if (url.isNotEmpty &&
-              _isValidAudioUrl(url) &&
-              !excludedUrls.contains(url) &&
-              !results.any((item) => item.url == url)) {
-            results.add(normalized);
-          }
-        } catch (e) {
-          print(
-            '[MusicSourceManager] LX URL failed: '
-            'source=$sourceId quality=$candidateQuality error=$e',
-          );
-          // 接口的具体错误（如 HTTP 412 风控）带回调用方，用于播放失败提示。
-          onResolveError?.call(
-            e.toString().replaceFirst(RegExp(r'^Exception:\s*'), ''),
-          );
+      try {
+        final result = await host.getMusicUrlResult(
+          pluginSourceId,
+          musicInfo,
+          quality,
+        );
+        if (result.quality.trim().isNotEmpty &&
+            musicQualityKey(result.quality) != musicQualityKey(quality)) {
+          throw Exception('音质不匹配：请求 $quality，插件返回 ${result.quality}，已拒绝替换音质');
         }
+        final url = result.url.trim();
+        final normalized = PluginMusicUrlResult(
+          url: url,
+          quality: quality,
+          headers: result.headers,
+          // 记录实际提供地址的音源（插件），界面上据此显示当前使用的音源。
+          source: _pluginSourceAppId(host, pluginSourceId),
+        );
+        print(
+          '[MusicSourceManager] LX URL candidate: source=$sourceId '
+          'requested=$quality reported=${result.quality} host=${_urlHost(url)}',
+        );
+        // 拒绝酷我提示音 / 加密格式 URL
+        if (sourceId == 'kw' && _isKuwoPromptUrl(url)) {
+          print('[MusicSourceManager] 拒绝酷我无效 URL: $url');
+          continue;
+        }
+        if (url.isNotEmpty &&
+            _isValidAudioUrl(url) &&
+            !excludedUrls.contains(url) &&
+            !results.any((item) => item.url == url)) {
+          results.add(normalized);
+        }
+      } catch (e) {
+        print(
+          '[MusicSourceManager] LX URL failed: '
+          'source=$sourceId quality=$quality error=$e',
+        );
+        // 接口的具体错误（如 HTTP 412 风控）带回调用方，用于播放失败提示。
+        onResolveError?.call(
+          e.toString().replaceFirst(RegExp(r'^Exception:\s*'), ''),
+        );
       }
     }
 
@@ -1875,26 +1817,6 @@ class MusicSourceManager {
       if (norm(item.title) == title) return item;
     }
     return null;
-  }
-
-  /// Quality order used after the current quality is rejected by the real
-  /// audio player. The initial URL lookup intentionally does not use this.
-  List<String> getMusicQualityFallbacks(Song song, String requested) {
-    final sourceId = song.source;
-    if (sourceId == null || sourceId == 'local') return <String>[requested];
-
-    final host = _findPluginForSource(sourceId);
-    final pluginSourceId = host == null
-        ? null
-        : _getSourceIdForHost(host, sourceId);
-    final (baseId, _) = splitSourceId(sourceId);
-    final platformQualities = _defaultQualities[baseId];
-    return _qualityFallbackChain(
-      requested,
-      supported: host == null || pluginSourceId == null
-          ? platformQualities
-          : _getPluginQualities(host, pluginSourceId),
-    );
   }
 
   String _urlHost(String url) {

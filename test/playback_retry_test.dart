@@ -124,22 +124,23 @@ class _MemorySourceManager implements MusicSourceManager {
   final unavailable = <String>{};
   final results = <String, PluginMusicUrlResult>{};
   bool throwOnUnavailable = false;
-  Future<List<PluginMusicUrlResult>>? pendingFallback;
-  Completer<void>? fallbackStarted;
+  Future<List<PluginMusicUrlResult>>? pendingRequest;
+  Completer<void>? requestStarted;
+  List<String> supportedQualities = ['128k', '320k'];
+  final candidates = <String, List<PluginMusicUrlResult>>{};
 
   @override
   Future<List<PluginMusicUrlResult>> getMusicUrlResultCandidates(
     Song song, {
     String quality = '320k',
     Set<String> excludedUrls = const <String>{},
-    bool includeQualityFallbacks = false,
     List<PluginHost>? pluginHosts,
     void Function(String message)? onResolveError,
   }) async {
     requests.add((song: song, quality: quality));
-    if (quality == '128k' && pendingFallback != null) {
-      fallbackStarted?.complete();
-      return pendingFallback!;
+    if (song.id == 'b' && pendingRequest != null) {
+      requestStarted?.complete();
+      return pendingRequest!;
     }
     if (unavailable.contains(song.id)) {
       if (throwOnUnavailable) throw StateError('Resolver offline');
@@ -149,7 +150,9 @@ class _MemorySourceManager implements MusicSourceManager {
     final result =
         results[song.id] ??
         PluginMusicUrlResult(url: _url(song.id), quality: quality);
-    return excludedUrls.contains(result.url) ? const [] : [result];
+    return (candidates[song.id] ?? [result])
+        .where((candidate) => !excludedUrls.contains(candidate.url))
+        .toList();
   }
 
   @override
@@ -169,16 +172,26 @@ class _MemorySourceManager implements MusicSourceManager {
   }
 
   @override
-  List<String> getMusicQualityFallbacks(Song song, String requested) => [
-    requested,
-    if (requested == '320k') '128k',
-  ];
+  Future<Song> resolveSingleSongUrl(
+    Song song, {
+    String quality = '320k',
+    Set<String> excludedUrls = const <String>{},
+    void Function(String message)? onResolveError,
+  }) async {
+    final result = await getMusicUrlResult(
+      song,
+      quality: quality,
+      excludedUrls: excludedUrls,
+      onResolveError: onResolveError,
+    );
+    return result == null
+        ? song
+        : song.copyWith(sourceUrl: result.url, sourceQuality: quality);
+  }
 
   @override
-  List<String> getSupportedQualitiesForSourceId(String sourceId) => [
-    '128k',
-    '320k',
-  ];
+  List<String> getSupportedQualitiesForSourceId(String sourceId) =>
+      supportedQualities;
 
   @override
   String? dataSourcePluginIdForSong(Song song) => null;
@@ -240,7 +253,6 @@ void main() {
     audio = _MemoryAudioHandler();
     sources = _MemorySourceManager();
     controller = PlaybackController(audio, sources, _NoIoAudioEffects());
-    controller.setAutoQualityDowngrade(false);
     controller.getQualityForSource = (_) => '320k';
     messages = [];
     controller.onMessage = (message, {backgroundColor}) =>
@@ -523,42 +535,202 @@ void main() {
     },
   );
 
+  for (final quality in ['128k', '192k', '320k', 'flac', 'hires', 'master']) {
+    test(
+      '$quality resolution failure and retry never request another quality',
+      () async {
+        controller.getQualityForSource = (_) => quality;
+        sources.unavailable.add('b');
+        await controller.setQueue([a, b, c], startIndex: 1);
+        await controller.togglePlayPause();
+        await pumpEventQueue();
+
+        expectSelectedB(playing: false);
+        expect(sources.requests, hasLength(4));
+        expect(
+          sources.requests.map((request) => request.quality),
+          everyElement(quality),
+        );
+        expect(controller.playbackState.currentQuality, quality);
+        expect(audio.loads, isEmpty);
+      },
+    );
+  }
+
   test(
-    'obsolete quality fallback failure does not stop newly selected c',
+    'unsupported preferred quality is not replaced with an available quality',
     () async {
-      final fallback = Completer<List<PluginMusicUrlResult>>();
-      final started = Completer<void>();
-      sources
-        ..unavailable.add('b')
-        ..pendingFallback = fallback.future
-        ..fallbackStarted = started;
-      controller.setAutoQualityDowngrade(true);
-      final oldRequest = controller.setQueue([a, b, c], startIndex: 1);
-      await started.future;
-      await controller.playSongAt(2);
-      await pumpEventQueue();
-      expect(playedIds(), ['c']);
-      expect(controller.playbackState.currentSong?.id, 'c');
-      expect(controller.playbackState.isPlaying, isTrue);
-
-      fallback.complete([]);
-      await oldRequest;
+      controller.getQualityForSource = (_) => 'flac';
+      sources.supportedQualities = ['128k'];
+      await controller.setQueue([b]);
       await pumpEventQueue();
 
-      expect(controller.playbackState.currentSong?.id, 'c');
-      expect(controller.playbackState.currentIndex, 2);
-      expect(controller.playbackState.isPlaying, isTrue);
-      expect(controller.playbackState.isLoading, isFalse);
-      expect(audio.playing, isTrue);
-      expect(messages, isEmpty);
-      final loads = audio.loads.length;
-      await controller.togglePlayPause();
-      await controller.togglePlayPause();
-      await pumpEventQueue();
-      expect(playedIds(), ['c', 'c']);
-      expect(audio.loads, hasLength(loads));
+      expect(sources.requests.single.quality, 'flac');
+      expect(controller.playbackState.currentQuality, 'flac');
+      expect(audio.loadedSong?.sourceQuality, 'flac');
     },
   );
+
+  test(
+    'plugin source identity keeps platform quality after failure and retry',
+    () async {
+      final sourceIds = <String>[];
+      controller.getQualityForSource = (sourceId) {
+        sourceIds.add(sourceId);
+        return sourceId == 'wy' ? '320k' : '128k';
+      };
+      sources.results['b'] = PluginMusicUrlResult(
+        url: _url('b'),
+        quality: '320k',
+        source: 'wy@playback-plugin',
+      );
+      await controller.setQueue([a, b, c], startIndex: 1);
+      await pumpEventQueue();
+      expectSelectedB(playing: true);
+      expect(
+        controller.playbackState.currentSong?.source,
+        'wy@playback-plugin',
+      );
+
+      audio.failingUrls.add(_url('b'));
+      await controller.playSongAt(1);
+      await pumpEventQueue();
+      expectSelectedB(playing: false);
+      expect(controller.playbackState.currentQuality, '320k');
+
+      audio.failingUrls.clear();
+      await controller.togglePlayPause();
+      await pumpEventQueue();
+      expectSelectedB(playing: true);
+      expect(sourceIds, ['wy', 'wy', 'wy']);
+      expect(sources.requests.map((request) => request.quality), [
+        '320k',
+        '320k',
+      ]);
+      expect(
+        audio.loads.map((load) => load.song?.sourceQuality),
+        everyElement('320k'),
+      );
+      expect(controller.playbackState.currentQuality, '320k');
+    },
+  );
+
+  for (final allFail in [false, true]) {
+    test(
+      'same-quality alternate URLs ${allFail ? 'all fail without downgrade' : 'can recover playback'}',
+      () async {
+        const first = PluginMusicUrlResult(
+          url: 'https://audio.invalid/b-first.mp3',
+          quality: '320k',
+        );
+        const second = PluginMusicUrlResult(
+          url: 'https://audio.invalid/b-second.mp3',
+          quality: '320k',
+        );
+        sources.candidates['b'] = [first, second];
+        audio.failingUrls.add(first.url);
+        if (allFail) audio.failingUrls.add(second.url);
+        await controller.setQueue([a, b, c], startIndex: 1);
+        await pumpEventQueue();
+
+        expectSelectedB(playing: !allFail);
+        expect(sources.requests.single.quality, '320k');
+        expect(audio.loads.map((load) => load.url), [first.url, second.url]);
+        expect(
+          audio.loads.map((load) => load.song?.sourceQuality),
+          everyElement('320k'),
+        );
+        expect(controller.playbackState.currentQuality, '320k');
+      },
+    );
+  }
+
+  test(
+    'failed manual quality selection preserves the current quality',
+    () async {
+      await controller.setQueue([b]);
+      await controller.seek(const Duration(seconds: 42));
+      sources.unavailable.add('b');
+      final before = sources.requests.length;
+      await controller.setQuality('flac');
+      await pumpEventQueue();
+
+      expect(sources.requests.skip(before).map((request) => request.quality), [
+        'flac',
+      ]);
+      expect(controller.playbackState.currentQuality, '320k');
+      expect(controller.playbackState.isPlaying, isTrue);
+      expect(audio.loadedSong?.sourceQuality, '320k');
+      expect(audio.currentPosition, const Duration(seconds: 42));
+    },
+  );
+
+  for (final refreshAvailable in [false, true]) {
+    test(
+      'runtime error ${refreshAvailable ? 'retries a same-quality URL' : 'stops after same-quality resolution fails'} without downgrade',
+      () async {
+        await controller.setQueue([a, b, c], startIndex: 1);
+        await pumpEventQueue();
+        const fresh = PluginMusicUrlResult(
+          url: 'https://audio.invalid/b-fresh.mp3',
+          quality: '320k',
+        );
+        if (refreshAvailable) {
+          sources.results['b'] = fresh;
+          audio.failingUrls.add(fresh.url);
+        } else {
+          sources.unavailable.add('b');
+        }
+        final before = sources.requests.length;
+        await Future<void>.delayed(const Duration(milliseconds: 6100));
+        audio.emitState(PlayerState(true, ProcessingState.ready));
+        await pumpEventQueue();
+        audio.emitState(PlayerState(false, ProcessingState.idle));
+        await pumpEventQueue();
+
+        expectSelectedB(playing: false);
+        expect(
+          sources.requests.skip(before).map((request) => request.quality),
+          ['320k'],
+        );
+        expect(controller.playbackState.currentQuality, '320k');
+        if (refreshAvailable) expect(audio.loads.last.url, fresh.url);
+        expect(messages, isNotEmpty);
+      },
+    );
+  }
+
+  test('obsolete resolution failure does not stop newly selected c', () async {
+    final pending = Completer<List<PluginMusicUrlResult>>();
+    final started = Completer<void>();
+    sources
+      ..pendingRequest = pending.future
+      ..requestStarted = started;
+    final oldRequest = controller.setQueue([a, b, c], startIndex: 1);
+    await started.future;
+    await controller.playSongAt(2);
+    await pumpEventQueue();
+    expect(playedIds(), ['c']);
+    expect(controller.playbackState.currentSong?.id, 'c');
+    expect(controller.playbackState.isPlaying, isTrue);
+
+    pending.complete([]);
+    await oldRequest;
+    await pumpEventQueue();
+
+    expect(controller.playbackState.currentSong?.id, 'c');
+    expect(controller.playbackState.currentIndex, 2);
+    expect(controller.playbackState.isPlaying, isTrue);
+    expect(controller.playbackState.isLoading, isFalse);
+    expect(audio.playing, isTrue);
+    expect(messages, isEmpty);
+    final loads = audio.loads.length;
+    await controller.togglePlayPause();
+    await controller.togglePlayPause();
+    await pumpEventQueue();
+    expect(playedIds(), ['c', 'c']);
+    expect(audio.loads, hasLength(loads));
+  });
 
   test(
     'failed selection retries even if old player still reports playing',

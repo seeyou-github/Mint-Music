@@ -487,17 +487,17 @@ JSON.stringify((function() {
       throw Exception('Plugin returned empty result for musicUrl');
     }
 
-    return _parseMusicUrlResult(result);
+    return _parseMusicUrlResult(result, quality);
   }
 
-  PluginMusicUrlResult _parseMusicUrlResult(String result) {
+  PluginMusicUrlResult _parseMusicUrlResult(String result, String quality) {
     try {
       final decoded = _decodeLooseJson(result);
       final url = _extractMusicUrl(decoded);
       if (url != null && url.isNotEmpty) {
         return PluginMusicUrlResult(
           url: url,
-          quality: _extractMusicQuality(decoded) ?? '',
+          quality: _validateMusicQuality(decoded, quality) ?? quality,
           headers: _extractMusicHeaders(decoded),
         );
       }
@@ -509,15 +509,14 @@ JSON.stringify((function() {
 
     final fallback = result.trim();
     if (_isHttpUrl(fallback)) {
-      return PluginMusicUrlResult(url: fallback, quality: '');
+      return PluginMusicUrlResult(url: fallback, quality: quality);
     }
     throw Exception('Plugin returned an invalid musicUrl result');
   }
 
   dynamic _decodeLooseJson(dynamic value) {
     var current = value;
-    for (var i = 0; i < 3; i++) {
-      if (current is! String) return current;
+    while (current is String) {
       final trimmed = current.trim();
       if (trimmed.isEmpty) return trimmed;
       final looksJson =
@@ -540,14 +539,6 @@ JSON.stringify((function() {
       return null;
     }
     if (value is Map) {
-      final error = value['error'] ?? value['message'];
-      if (error != null &&
-          value['url'] == null &&
-          value['data'] == null &&
-          value['body'] == null) {
-        throw Exception(error.toString());
-      }
-
       for (final key in const [
         'url',
         'src',
@@ -565,6 +556,8 @@ JSON.stringify((function() {
         final url = _extractMusicUrl(value[key]);
         if (url != null && url.isNotEmpty) return url;
       }
+      final error = value['error'] ?? value['message'];
+      if (error != null) throw Exception(error.toString());
     }
     if (value is List) {
       for (final item in value) {
@@ -575,30 +568,51 @@ JSON.stringify((function() {
     return null;
   }
 
-  String? _extractMusicQuality(dynamic value) {
-    if (value is String) {
-      final decoded = _decodeLooseJson(value.trim());
-      if (decoded is! String) return _extractMusicQuality(decoded);
-    }
-    if (value is Map) {
-      for (final key in const ['quality', 'type', 'format', 'level']) {
-        final candidate = value[key];
-        if (candidate is String && candidate.trim().isNotEmpty) {
-          return candidate.trim();
+  String? _validateMusicQuality(dynamic value, String requested) {
+    final requestedKey = musicQualityKey(requested);
+    String? reported;
+
+    void read(dynamic current) {
+      current = _decodeLooseJson(current);
+      if (current is Map) {
+        // Container formats cannot identify quality tiers (hires can use flac).
+        for (final key in const ['quality', 'level', 'type']) {
+          final candidate = current[key];
+          if (candidate is! String && candidate is! num) continue;
+          final label = candidate.toString().trim();
+          if (label.isEmpty || (key == 'type' && !isMusicQualityType(label))) {
+            continue;
+          }
+          if (musicQualityKey(label) != requestedKey) {
+            throw Exception('音质不匹配：请求 $requested，插件返回 $label，已拒绝替换音质');
+          }
+          reported ??= label;
+        }
+        // Check every response branch, including labels after the first URL.
+        for (final key in const [
+          'url',
+          'src',
+          'playUrl',
+          'play_url',
+          'location',
+          'audioUrl',
+          'audio_url',
+          'data',
+          'body',
+          'result',
+          'response',
+        ]) {
+          read(current[key]);
+        }
+      } else if (current is List) {
+        for (final item in current) {
+          read(item);
         }
       }
-      for (final key in const ['data', 'body', 'result', 'response']) {
-        final nested = _extractMusicQuality(value[key]);
-        if (nested != null) return nested;
-      }
     }
-    if (value is List) {
-      for (final item in value) {
-        final nested = _extractMusicQuality(item);
-        if (nested != null) return nested;
-      }
-    }
-    return null;
+
+    read(value);
+    return reported;
   }
 
   Map<String, String> _extractMusicHeaders(dynamic value) {
