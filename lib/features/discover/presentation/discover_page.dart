@@ -1070,6 +1070,14 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
 
   Widget _buildLeaderboardsTab(ThemeColors colors) {
     final isHot = _leaderboardCategory == _LeaderboardCategory.hot;
+    // 榜单分类与「热榜 / 所有」合并成一行：「所有」是全部数据，
+    // 右侧各分类直接过滤（分类来自插件给的 group，少于 2 组不显示）。
+    final leaderboards =
+        ref.watch(leaderboardsProvider).valueOrNull ?? const <Leaderboard>[];
+    final groups = _leaderboardGroupsOf(leaderboards);
+    final effectiveGroup = groups.contains(_selectedLeaderboardGroup)
+        ? _selectedLeaderboardGroup
+        : null;
     return Column(
       children: [
         SizedBox(
@@ -1096,13 +1104,27 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
                         padding: const EdgeInsets.only(left: AppSpacing.sm),
                         child: _buildTagChip(
                           label: context.tr('所有'),
-                          isActive: !isHot,
+                          isActive: !isHot && effectiveGroup == null,
                           colors: colors,
-                          onTap: () => _selectLeaderboardCategory(
-                            _LeaderboardCategory.all,
-                          ),
+                          onTap: () => setState(() {
+                            _leaderboardCategory = _LeaderboardCategory.all;
+                            _selectedLeaderboardGroup = null;
+                          }),
                         ),
                       ),
+                      for (final group in groups)
+                        Padding(
+                          padding: const EdgeInsets.only(left: AppSpacing.sm),
+                          child: _buildTagChip(
+                            label: group,
+                            isActive: !isHot && effectiveGroup == group,
+                            colors: colors,
+                            onTap: () => setState(() {
+                              _leaderboardCategory = _LeaderboardCategory.all;
+                              _selectedLeaderboardGroup = group;
+                            }),
+                          ),
+                        ),
                     ],
                   ),
                 ),
@@ -1126,6 +1148,18 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
         ),
       ],
     );
+  }
+
+  /// 榜单分类（按插件给出的 group 去重，保持接口顺序）。
+  List<String> _leaderboardGroupsOf(List<Leaderboard> leaderboards) {
+    final groups = <String>[];
+    for (final board in leaderboards) {
+      final group = board.group;
+      if (group != null && group.isNotEmpty && !groups.contains(group)) {
+        groups.add(group);
+      }
+    }
+    return groups;
   }
 
   void _selectLeaderboardCategory(_LeaderboardCategory category) {
@@ -1727,17 +1761,9 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
             ),
           );
         }
-        // 插件给出的榜单分类（巅峰榜/地区榜/特色榜/全球榜…），≥2 组才显示过滤栏。
-        final groups = <String>[];
-        for (final board in leaderboards) {
-          final group = board.group;
-          if (group != null && group.isNotEmpty && !groups.contains(group)) {
-            groups.add(group);
-          }
-        }
-        if (groups.length < 2) {
-          return _buildLeaderboardGrid(colors, leaderboards);
-        }
+        // 分类 chips 在「热榜 / 所有」同一行里（见 _buildLeaderboardsTab），
+        // 这里只按选中的分类过滤；选中分类失效（切音源后）时回退全部。
+        final groups = _leaderboardGroupsOf(leaderboards);
         final selected = groups.contains(_selectedLeaderboardGroup)
             ? _selectedLeaderboardGroup
             : null;
@@ -1746,55 +1772,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
             : leaderboards
                   .where((board) => board.group == selected)
                   .toList(growable: false);
-        return Column(
-          children: [
-            SizedBox(
-              height: 36,
-              child: Row(
-                children: [
-                  Expanded(
-                    child: ScrollConfiguration(
-                      behavior: const _CategoryScrollBehavior(),
-                      child: ListView(
-                        scrollDirection: Axis.horizontal,
-                        padding: const EdgeInsets.only(left: AppSpacing.lg),
-                        children: [
-                          Padding(
-                            padding: const EdgeInsets.only(right: AppSpacing.sm),
-                            child: _buildTagChip(
-                              label: context.tr('全部'),
-                              isActive: selected == null,
-                              colors: colors,
-                              onTap: () => setState(
-                                () => _selectedLeaderboardGroup = null,
-                              ),
-                            ),
-                          ),
-                          for (final group in groups)
-                            Padding(
-                              padding: const EdgeInsets.only(
-                                right: AppSpacing.sm,
-                              ),
-                              child: _buildTagChip(
-                                label: group,
-                                isActive: selected == group,
-                                colors: colors,
-                                onTap: () => setState(
-                                  () => _selectedLeaderboardGroup = group,
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: AppSpacing.lg),
-                ],
-              ),
-            ),
-            Expanded(child: _buildLeaderboardGrid(colors, filtered)),
-          ],
-        );
+        return _buildLeaderboardGrid(colors, filtered);
       },
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (_, __) => Center(
@@ -2013,6 +1991,8 @@ class _HotBoardPickerSheetState extends ConsumerState<_HotBoardPickerSheet> {
       for (final board in widget.boards)
         if (!addedIds.contains(board.id)) board,
     ];
+    final pickerGroups = _pickerGroupsOf(available);
+    final ungrouped = _ungroupedOf(available);
     return SizedBox(
       height: widget.height,
       child: Column(
@@ -2092,13 +2072,66 @@ class _HotBoardPickerSheetState extends ConsumerState<_HotBoardPickerSheet> {
                         style: TextStyle(fontSize: 12, color: colors.textHint),
                       ),
                     )
-                  else
-                    for (final board in available) _availableTile(board),
+                  else if (pickerGroups.length < 2)
+                    for (final board in available) _availableTile(board)
+                  else ...[
+                    // 榜单按分类分节展示（与发现页的分类 chips 同一套数据）
+                    for (final group in pickerGroups) ...[
+                      _pickerGroupLabel(group),
+                      for (final board in available)
+                        if (board.group == group) _availableTile(board),
+                    ],
+                    if (ungrouped.isNotEmpty) ...[
+                      _pickerGroupLabel(context.tr('其他')),
+                      for (final board in ungrouped) _availableTile(board),
+                    ],
+                  ],
                 ],
               ),
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// 待添加榜单的分类（按插件给出的 group 去重，保持顺序；少于 2 组不分节）。
+  List<String> _pickerGroupsOf(List<Leaderboard> available) {
+    final groups = <String>[];
+    for (final board in available) {
+      final group = board.group;
+      if (group != null && group.isNotEmpty && !groups.contains(group)) {
+        groups.add(group);
+      }
+    }
+    return groups;
+  }
+
+  /// 没有分类归属的榜单（分节展示时归到「其他」）。
+  List<Leaderboard> _ungroupedOf(List<Leaderboard> available) {
+    if (_pickerGroupsOf(available).length < 2) return const <Leaderboard>[];
+    return [
+      for (final board in available)
+        if (board.group == null || board.group!.isEmpty) board,
+    ];
+  }
+
+  Widget _pickerGroupLabel(String title) {
+    final colors = widget.colors;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.lg,
+        AppSpacing.sm,
+        AppSpacing.lg,
+        AppSpacing.xs,
+      ),
+      child: Text(
+        title,
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          color: colors.primary,
+        ),
       ),
     );
   }
