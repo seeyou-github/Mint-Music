@@ -72,11 +72,22 @@ class LyricCache {
   /// 迁移标记用的模块名。
   static const String _migrationModule = 'lyric_cache';
 
-  /// 缓存键：音源 + 歌曲 id 的 md5。
+  /// 缓存键版本：歌词解码/解析修复后递增，让旧版存下的原文（例如酷我
+  /// GBK 歌词被按 Latin-1 解出来的乱码）失效重取。
+  static const int _cacheVersion = 2;
+
+  /// 缓存键：版本 + 音源 + 歌曲 id 的 md5。
   ///
   /// 音源用 [Song.lyricSourceId]（含插件变体），同一首歌用不同音源播放时
   /// 歌词各存一份；只有同一个音源再次播放才会命中缓存。
   static String keyFor(Song song) {
+    final raw = 'v$_cacheVersion|${song.lyricSourceId}_${song.id}';
+    return md5.convert(utf8.encode(raw)).toString();
+  }
+
+  /// 「删除关联」标记的键，故意不跟缓存版本走：升级后用户删过的关联
+  /// 不应该又自动匹配回来。
+  static String _deletedKeyFor(Song song) {
     final raw = '${song.lyricSourceId}_${song.id}';
     return md5.convert(utf8.encode(raw)).toString();
   }
@@ -160,15 +171,16 @@ class LyricCache {
   /// 这里记一条「不要再自动匹配」的标记，[LyricCache.isDeleted] 为 true 时
   /// 播放器直接显示暂无歌词，直到用户重新搜索并手动指定歌词。
   ///
-  /// 标记与缓存同键（[keyFor]）：只对这一首歌的这个音源生效，换音源播放时
-  /// 仍会正常匹配那个音源自己的歌词。
+  /// 标记按音源 + 歌曲 id 记录（[Song.lyricSourceId]）：只对这一首歌的这个
+  /// 音源生效，换音源播放时仍会正常匹配那个音源自己的歌词；且不随缓存
+  /// 版本失效，升级后不会把用户删过的关联又匹配回来。
   static const String _deletedKey = 'lyric_deleted_v1';
 
   static Future<bool> isDeleted(Song song) async {
     try {
       final prefs = await AppPreferences.getInstance();
       final keys = prefs.getStringList(_deletedKey) ?? const <String>[];
-      return keys.contains(keyFor(song));
+      return keys.contains(_deletedKeyFor(song));
     } catch (_) {
       return false;
     }
@@ -179,7 +191,7 @@ class LyricCache {
       final prefs = await AppPreferences.getInstance();
       final keys =
           (prefs.getStringList(_deletedKey) ?? const <String>[]).toSet()
-            ..add(keyFor(song));
+            ..add(_deletedKeyFor(song));
       await prefs.setStringList(_deletedKey, keys.toList());
     } catch (e) {
       debugPrint('[LyricCache] 记录删除关联失败: $e');
@@ -192,7 +204,7 @@ class LyricCache {
       final prefs = await AppPreferences.getInstance();
       final keys =
           (prefs.getStringList(_deletedKey) ?? const <String>[]).toSet()
-            ..remove(keyFor(song));
+            ..remove(_deletedKeyFor(song));
       await prefs.setStringList(_deletedKey, keys.toList());
     } catch (e) {
       debugPrint('[LyricCache] 清除删除标记失败: $e');

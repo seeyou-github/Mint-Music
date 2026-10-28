@@ -88,7 +88,7 @@ String _stripInlineLrcTags(String text) =>
 /// 用于各格式解析器"无词标签回退"分支，避免标签以文本形式显示。
 String _stripWordTags(String text) => text
     .replaceAll(RegExp(r'[(（]\d+[,，]\d+(?:[,，]\d+)?[)）]'), '')
-    .replaceAll(RegExp(r'<\d+(?:,\d+)+>'), '')
+    .replaceAll(RegExp(r'<-?\d+(?:,-?\d+)+>'), '')
     .replaceAll(_lrcInlineTagRegExp, '')
     .trim();
 
@@ -728,11 +728,12 @@ bool isLrcxFormat(String text) {
     final trimmed = line.trim();
     if (trimmed.isEmpty) continue;
     // 标准 LRCx：`[毫秒,时长]<相对起始,时长>字`
-    if (RegExp(r'^\[\d+,\d+\].*<\d+,\d+>').hasMatch(trimmed)) {
+    // 酷我 LRCX 的标签可能是负数（首字标签必为 `<x,-x>`），一并算作 LRCX。
+    if (RegExp(r'^\[\d+,\d+\].*<-?\d+,-?\d+>').hasMatch(trimmed)) {
       return true;
     }
     // 咪咕（Migu）风格：LRC 行时间戳 + 相对字时间标签 `[mm:ss.mmm]<相对起始,时长>字`
-    if (RegExp(r'^\[\d{1,2}:\d{2}\.\d{2,3}\].*<\d+,\d+>').hasMatch(trimmed)) {
+    if (RegExp(r'^\[\d{1,2}:\d{2}\.\d{2,3}\].*<-?\d+,-?\d+>').hasMatch(trimmed)) {
       return true;
     }
   }
@@ -900,7 +901,10 @@ List<LyricLine> parseLrcx(String lrcxText) {
   final lines = <LyricLine>[];
   final lineTimeExp = RegExp(r'^\[(\d+),(\d+)\]');
   final lineTime2Exp = RegExp(r'^\[(\d{1,2}):(\d{2})\.(\d{2,3})\]');
-  final wordTimeExp = RegExp(r'<(\d+),(\d+)>');
+  final wordTimeExp = RegExp(r'<(-?\d+),(-?\d+)>');
+  // 酷我 LRCX 的字标签不是 `<起始,时长>`，而是「中点 ± 半宽」编码，
+  // 首字标签必带负数（如 `<52,-52>`），[kuwo:XYZ] 头给出两个除数。
+  final kuwo = _kuwoLrcxParams(lrcxText);
 
   for (final rawLine in lrcxText.split('\n')) {
     final trimmed = rawLine.trim();
@@ -927,7 +931,7 @@ List<LyricLine> parseLrcx(String lrcxText) {
       duration = 5000;
     }
 
-    final endTime = startTime + duration;
+    var endTime = startTime + duration;
     final words = <LyricWord>[];
     var remaining = content;
     var lastEnd = startTime;
@@ -937,15 +941,30 @@ List<LyricLine> parseLrcx(String lrcxText) {
       if (match == null) break;
 
       final textBefore = remaining.substring(0, match.start);
-      final rawWordStart = int.parse(match.group(1)!);
-      final wordDuration = int.parse(match.group(2)!);
-      final wordStart = _resolveTimedWordStart(
-        lineStartTime: startTime,
-        lineEndTime: endTime,
-        rawStartTime: rawWordStart,
-        duration: wordDuration,
-      );
-      final wordEnd = wordStart + wordDuration;
+      final rawStart = int.parse(match.group(1)!);
+      final rawDuration = int.parse(match.group(2)!);
+      final int wordStart;
+      final int wordEnd;
+      if (kuwo != null) {
+        final relStart = ((rawStart + rawDuration) / (kuwo.offset * 2))
+            .abs()
+            .truncate();
+        final relEnd =
+            ((rawStart - rawDuration) / (kuwo.offset2 * 2))
+                .abs()
+                .truncate() +
+            relStart;
+        wordStart = startTime + relStart;
+        wordEnd = startTime + (relEnd > relStart ? relEnd : relStart);
+      } else {
+        wordStart = _resolveTimedWordStart(
+          lineStartTime: startTime,
+          lineEndTime: endTime,
+          rawStartTime: rawStart,
+          duration: rawDuration,
+        );
+        wordEnd = wordStart + rawDuration;
+      }
 
       remaining = remaining.substring(match.end);
 
@@ -994,6 +1013,8 @@ List<LyricLine> parseLrcx(String lrcxText) {
     }
 
     if (words.isNotEmpty) {
+      // 酷我 LRCX 没有行时长，行尾就是最后一个字的结束时间。
+      if (kuwo != null) endTime = words.last.endTimeMs;
       lines.add(
         LyricLine(startTimeMs: startTime, endTimeMs: endTime, words: words),
       );
@@ -1002,6 +1023,31 @@ List<LyricLine> parseLrcx(String lrcxText) {
 
   lines.sort((a, b) => a.startTimeMs.compareTo(b.startTimeMs));
   return lines;
+}
+
+/// 酷我 LRCX 的编码参数；返回 null 表示不是酷我 LRCX。
+///
+/// 标签 `<a,b>` 实际是「中点 ± 半宽」：起始 = |(a+b)/(offset*2)|，
+/// 结束 = |(a-b)/(offset2*2)| + 起始。两个除数来自 `[kuwo:XYZ]` 头，
+/// XYZ 按八进制读，十位是 offset、个位是 offset2，缺省都是 1。
+({int offset, int offset2})? _kuwoLrcxParams(String text) {
+  final hasNegativeTag = RegExp(r'<-\d+,-?\d+>|<\d+,-\d+>').hasMatch(text);
+  final tag = RegExp(r'\[kuwo:([^\[\]]+)\]').firstMatch(text);
+  if (!hasNegativeTag && tag == null) return null;
+
+  var offset = 1;
+  var offset2 = 1;
+  final content = tag?.group(1)?.split('][').first.trim();
+  final value = content == null ? null : int.tryParse(content, radix: 8);
+  if (value != null && value > 0) {
+    final first = value ~/ 10;
+    final second = value % 10;
+    if (first > 0 && second > 0) {
+      offset = first;
+      offset2 = second;
+    }
+  }
+  return (offset: offset, offset2: offset2);
 }
 
 /// 检测是否为 NetEase JSON-lines YRC 格式。

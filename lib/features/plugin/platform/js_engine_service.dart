@@ -1115,6 +1115,12 @@ function __zlibRequest(action, data) {
     }
   }
 
+  /// GBK/GB18030 字节 → 字符串。
+  ///
+  /// 用 `gbk_bytes` 而不是 `gbk`：后者在 gbk_codec 0.4.0 里按单字节查表，
+  /// 双字节汉字会被原样输出成字节码（等同 Latin-1），导致歌词乱码。
+  static String decodeGbkBytes(List<int> bytes) => gbk_bytes.decode(bytes);
+
   BigInt _bytesToBigInt(List<int> bytes) {
     var result = BigInt.zero;
     for (final byte in bytes) {
@@ -1147,8 +1153,11 @@ function __zlibRequest(action, data) {
         // 裸 deflate（没有 zlib 头）：酷我 newlyric 这类接口用的就是它
         output = ZLibDecoder().decodeBytes(input, raw: true);
       } else if (action.startsWith('charset:')) {
-        // 字符集解码：插件拿不到 GBK 文本时借这里转成 UTF-8 字节
-        final text = gbk.decode(input);
+        // 字符集解码：插件拿不到 GBK 文本时借这里转成 UTF-8 字节。
+        // 必须用 gbk_bytes（按双字节解码）；gbk_codec 的 gbk.decode 是逐字节
+        // 查表，遇到 GBK 双字节汉字只会原样输出字节码（等同 Latin-1），
+        // 酷我逐字歌词会因此整段乱码。
+        final text = decodeGbkBytes(input);
         output = utf8.encode(text);
       } else {
         output = ZLibDecoder().decodeBytes(input);

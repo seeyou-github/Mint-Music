@@ -540,7 +540,7 @@ class TagWriteService {
       final text = m
           .group(4)!
           .replaceAll(RegExp(r'[(（]\d+[,，]\d+(?:[,，]\d+)?[)）]'), '')
-          .replaceAll(RegExp(r'<\d+(?:,\d+)+>'), '')
+          .replaceAll(RegExp(r'<-?\d+(?:,-?\d+)+>'), '')
           .replaceAll(
             RegExp(r'[\[\［]\d{1,2}:\d{1,2}(?:[.:]\d{1,3})?[\]\］]'),
             '',
