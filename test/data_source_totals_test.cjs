@@ -491,3 +491,161 @@ test('酷狗：歌单详情 songcount / data.total，榜单 data.total=500 按 5
   assert.equal(boardLast.isEnd, true, '450 + 50 >= 500');
   assert.deepEqual(rankSongPages, [1, 10], 'rank/song 的 page 参数逐页递增');
 });
+
+/* ------------------------------------------------------- 酷狗：专辑搜索 / 详情 */
+
+function kgAlbum(index) {
+  return {
+    albumid: 900000 + index,
+    albumname: '专辑<em>' + index + '</em>',
+    singername: '<em>歌手</em>' + index,
+    imgurl: 'http://imge.kugou.com/stdmusic/{size}/20240101/cover' + index + '.jpg',
+    publishtime: '2024-01-0' + (index % 9 + 1) + ' 00:00:00',
+    songcount: 10 + index,
+    intro: '简介' + index
+  };
+}
+
+function kgAlbumSong(index) {
+  return {
+    hash: 'AHASH' + index,
+    filename: '歌手' + index + ' - 曲' + index,
+    duration: 180 + index,
+    album_id: '900001',
+    album_audio_id: 30000000 + index,
+    trans_param: { union_cover: 'http://imge.kugou.com/stdmusic/{size}/20240101/cover1.jpg' },
+    remark: '专辑1'
+  };
+}
+
+test('酷狗：supportedSearchTypes 包含 album', () => {
+  const { plugin } = loadPlugin('数据源-酷狗.js', () => undefined);
+  const types = plugin.supportedSearchTypes();
+  assert.ok(Array.isArray(types));
+  assert.ok(types.includes('album'), 'album 应在支持列表里');
+  assert.ok(!types.includes('artist'), '酷狗不支持作者搜索');
+});
+
+test('酷狗：专辑搜索取 data.total，<em> 标签剥掉，raw 带回 albumid', async () => {
+  const { plugin, requests } = loadPlugin('数据源-酷狗.js', (url) => {
+    if (url.pathname.includes('/api/v3/search/album')) {
+      const page = Number(url.searchParams.get('page'));
+      const size = Number(url.searchParams.get('pagesize'));
+      return {
+        data: {
+          total: 42,
+          info: range(page === 3 ? 2 : size, (page - 1) * size + 1, kgAlbum)
+        }
+      };
+    }
+    return undefined;
+  });
+
+  const first = await resultOf(plugin.searchTyped('kg', '周杰伦', 1, 20, 'album'));
+  assert.equal(first.total, 42);
+  assert.equal(first.limit, 20);
+  assert.equal(first.isEnd, false, '20 < 42');
+  assert.equal(first.list.length, 20);
+  assert.equal(first.list[0].id, '900001');
+  assert.equal(first.list[0].title, '专辑1', '<em> 标签应剥掉');
+  assert.equal(first.list[0].artist, '歌手1', '<em> 标签应剥掉');
+  assert.equal(first.list[0].worksNum, 11);
+  assert.equal(first.list[0].date, '2024-01-02');
+  assert.equal(first.list[0].raw.albumid, '900001', 'raw 须带回 albumid 供 getAlbumInfo 使用');
+  assert.ok(first.list[0].coverUrl.startsWith('https://'), '封面应升级为 https');
+  assert.equal(requests[0].url.searchParams.get('keyword'), '周杰伦');
+
+  const last = await resultOf(plugin.searchTyped('kg', '周杰伦', 3, 20, 'album'));
+  assert.equal(last.isEnd, true, '40 + 2 >= 42');
+  assert.equal(last.list.length, 2);
+});
+
+test('酷狗：searchTyped artist 返回空列表（不支持作者搜索）', async () => {
+  const { plugin } = loadPlugin('数据源-酷狗.js', () => undefined);
+  const r = await resultOf(plugin.searchTyped('kg', '周杰伦', 1, 20, 'artist'));
+  assert.equal(r.list.length, 0);
+  assert.equal(r.isEnd, true);
+});
+
+test('酷狗：专辑详情第 1 页取 album/info 元数据，翻页只取 album/song', async () => {
+  const albumSongPages = [];
+  const { plugin, requests } = loadPlugin('数据源-酷狗.js', (url) => {
+    if (url.pathname.includes('/api/v3/album/song')) {
+      const page = Number(url.searchParams.get('page'));
+      albumSongPages.push(page);
+      const size = Number(url.searchParams.get('pagesize'));
+      const total = 120;
+      const count = page === 3 ? 20 : size;
+      return {
+        data: { total, info: range(count, (page - 1) * size + 1, kgAlbumSong) }
+      };
+    }
+    if (url.pathname.includes('/api/v3/album/info')) {
+      return {
+        data: {
+          albumid: 900001,
+          albumname: '专辑1',
+          singername: '歌手1',
+          imgurl: 'http://imge.kugou.com/stdmusic/{size}/20240101/cover1.jpg',
+          publishtime: '2024-01-02 00:00:00',
+          intro: '专辑简介',
+          songcount: 0
+        }
+      };
+    }
+    return undefined;
+  });
+
+  const albumItem = { raw: { id: '900001', albumid: '900001', artwork: 'http://x/{size}.jpg', title: '专辑1' } };
+
+  const p1 = await resultOf(plugin.getAlbumInfo('kg', albumItem, 1));
+  assert.equal(p1.total, 120);
+  assert.equal(p1.limit, 50);
+  assert.equal(p1.isEnd, false, '50 < 120');
+  assert.equal(p1.musicList.length, 50);
+  assert.equal(p1.albumItem.title, '专辑1');
+  assert.equal(p1.albumItem.artist, '歌手1');
+  assert.equal(p1.albumItem.date, '2024-01-02');
+  assert.equal(p1.albumItem.worksNum, 120);
+  assert.equal(p1.musicList[0].id, 'AHASH1');
+  assert.equal(p1.musicList[0].name, '曲1');
+  assert.equal(p1.musicList[0].singer, '歌手1');
+  assert.equal(p1.musicList[0].albumName, '专辑1');
+  assert.equal(p1.musicList[0].source, 'kg');
+  assert.ok(p1.musicList[0].artwork.startsWith('https://'), '封面应升级为 https');
+  // 第 1 页同时请求 album/song 和 album/info
+  assert.equal(requests.filter((r) => r.url.pathname.includes('/album/info')).length, 1);
+
+  const p2 = await resultOf(plugin.getAlbumInfo('kg', albumItem, 2));
+  assert.equal(p2.isEnd, false, '100 < 120');
+  assert.equal(p2.musicList.length, 50);
+  // 第 2 页不再请求 album/info
+  assert.equal(requests.filter((r) => r.url.pathname.includes('/album/info')).length, 1, 'album/info 只在第 1 页请求');
+
+  const p3 = await resultOf(plugin.getAlbumInfo('kg', albumItem, 3));
+  assert.equal(p3.isEnd, true, '100 + 20 >= 120');
+  assert.equal(p3.musicList.length, 20);
+  assert.deepEqual(albumSongPages, [1, 2, 3], 'album/song 的 page 参数逐页递增');
+});
+
+test('酷狗：专辑详情 albumItem 无 raw 时直接用 id', async () => {
+  const { plugin } = loadPlugin('数据源-酷狗.js', (url) => {
+    if (url.pathname.includes('/api/v3/album/song')) {
+      return { data: { total: 1, info: [kgAlbumSong(1)] } };
+    }
+    if (url.pathname.includes('/api/v3/album/info')) {
+      return { data: { albumname: '直接ID', singername: '歌手', imgurl: '', publishtime: '', intro: '' } };
+    }
+    return undefined;
+  });
+
+  const r = await resultOf(plugin.getAlbumInfo('kg', { id: '900001' }, 1));
+  assert.equal(r.musicList.length, 1);
+  assert.equal(r.albumItem.title, '直接ID');
+});
+
+test('酷狗：专辑详情 albumId 为空时返回空 musicList', async () => {
+  const { plugin } = loadPlugin('数据源-酷狗.js', () => undefined);
+  const r = await resultOf(plugin.getAlbumInfo('kg', {}, 1));
+  assert.equal(r.musicList.length, 0);
+});

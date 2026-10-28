@@ -22,6 +22,7 @@ var UA =
   '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 var SEARCH = 'https://songsearch.kugou.com';
 var MSEARCH = 'http://msearchretry.kugou.com';
+var ALBUM_SEARCH = 'http://msearch.kugou.com';
 var CDN = 'http://mobilecdn.kugou.com';
 var CDNBJ = 'http://mobilecdnbj.kugou.com';
 var YUEKU = 'http://www2.kugou.kugou.com';
@@ -431,6 +432,57 @@ function fetchTopListDetail(rankId, page) {
   return getJson(url);
 }
 
+/** 搜索结果里的 <em> 高亮标签（专辑名 / 歌手名）需要剥掉。 */
+function stripTags(text) {
+  return String(text || '').replace(/<[^>]+>/g, '');
+}
+
+function fetchAlbumSearch(keyword, page, limit) {
+  var url =
+    ALBUM_SEARCH +
+    '/api/v3/search/album?' +
+    encodeQuery({
+      version: 9108,
+      iscorrection: 1,
+      highlight: 'em',
+      plat: 0,
+      keyword: keyword,
+      pagesize: limit,
+      page: page,
+      sver: 2,
+      with_res_tag: 0
+    });
+  return getJson(url);
+}
+
+function fetchAlbumSongs(albumId, page) {
+  var url =
+    CDN +
+    '/api/v3/album/song?' +
+    encodeQuery({
+      version: 9108,
+      albumid: albumId,
+      plat: 0,
+      pagesize: SHEET_PAGE_SIZE,
+      area_code: 1,
+      page: page,
+      with_res_tag: 0
+    });
+  return getJson(url);
+}
+
+function fetchAlbumInfo(albumId) {
+  return getJson(
+    CDN + '/api/v3/album/info?albumid=' + albumId + '&version=9108'
+  )
+    .then(function (body) {
+      return body.data || null;
+    })
+    .catch(function () {
+      return null;
+    });
+}
+
 function fetchLyric(hash, duration) {
   // 先查歌词 id + accesskey，再下载 LRC（内容仍是 base64）
   var searchUrl =
@@ -463,10 +515,10 @@ function fetchLyric(hash, duration) {
 module.exports = {
   pluginInfo: {
     name: '数据源-酷狗',
-    version: '1.3.0',
+    version: '1.4.0',
     author: 'MintMusic',
     description:
-      '只提供搜索、歌单分类、榜单、歌单详情的酷狗音乐数据源；' +
+      '只提供搜索（歌曲 / 专辑）、歌单分类、榜单、歌单 / 专辑详情的酷狗音乐数据源；' +
       '播放需要在「插件管理 → 数据源」里指定一个已安装的播放源。',
     // ★ 数据源标记
     // 站点图标：导入插件时下载并缓存到插件目录（音源列表 / 切换按钮用它）
@@ -487,6 +539,11 @@ module.exports = {
     sheetDetail: true,
     topList: true,
     playlistSearch: true
+  },
+
+  /** 支持的搜索类型：歌曲 / 专辑（酷狗没有可用的作者搜索接口）。 */
+  supportedSearchTypes: function () {
+    return ['music', 'album'];
   },
 
   isDataSource: true,
@@ -578,6 +635,122 @@ module.exports = {
         limit: size,
         isEnd: isPageEnd(total, size * ((page || 1) - 1), list.length, size, data),
         playlists: playlists
+      });
+    });
+  },
+
+  /* ------------------------------------------------------- 搜索专辑 */
+  searchTyped: function (source, keyword, page, limit, type) {
+    if (type !== 'album') {
+      return Promise.resolve(
+        JSON.stringify({ list: [], total: null, limit: limit || 20, isEnd: true })
+      );
+    }
+    var size = limit || 20;
+    var currentPage = page || 1;
+    return fetchAlbumSearch(keyword, currentPage, size).then(function (body) {
+      var data = body.data || {};
+      var list = data.info || [];
+      var total = totalOf(data.total);
+      var items = [];
+      for (var i = 0; i < list.length; i++) {
+        var item = list[i] || {};
+        var albumId = item.albumid || item.id;
+        if (!albumId) continue;
+        items.push({
+          id: String(albumId),
+          title: decodeName(stripTags(item.albumname)),
+          coverUrl: normalizeImage(item.imgurl, '400'),
+          artist: decodeName(stripTags(item.singername)),
+          worksNum: Number(item.songcount || 0),
+          date: String(item.publishtime || '').slice(0, 10),
+          description: decodeName(item.intro || ''),
+          // getAlbumInfo 需要原样带回的信息
+          raw: {
+            id: String(albumId),
+            albumid: String(albumId),
+            artwork: normalizeImage(item.imgurl, '800'),
+            title: decodeName(stripTags(item.albumname))
+          }
+        });
+      }
+      return JSON.stringify({
+        list: items,
+        total: total,
+        limit: size,
+        isEnd: isPageEnd(total, size * (currentPage - 1), list.length, size, data)
+      });
+    });
+  },
+
+  /* ------------------------------------------------------------ 专辑详情 */
+  getAlbumInfo: function (source, albumItem, page) {
+    var raw = (albumItem && albumItem.raw) || albumItem || {};
+    var albumId = raw.albumid || raw.id || (albumItem && albumItem.id) || '';
+    if (!albumId) {
+      return Promise.resolve(JSON.stringify({ musicList: [] }));
+    }
+    var currentPage = page || 1;
+    var size = SHEET_PAGE_SIZE;
+    return Promise.all([
+      fetchAlbumSongs(albumId, currentPage),
+      currentPage === 1 ? fetchAlbumInfo(albumId) : Promise.resolve(null)
+    ]).then(function (results) {
+      var body = results[0] || {};
+      var info = results[1] || {};
+      var data = body.data || {};
+      var list = data.info || [];
+      var songs = [];
+      for (var i = 0; i < list.length; i++) {
+        var item = list[i] || {};
+        var hash = item.hash || item.origin_hash || '';
+        if (!hash) continue;
+        // filename 格式：「歌手 - 歌名」
+        var fileName = String(item.filename || '');
+        var parts = fileName.split(' - ');
+        var songName = parts.length > 1 ? parts.slice(1).join(' - ') : fileName;
+        var artist = parts.length > 1 ? parts[0].trim() : '';
+        var cover = normalizeImage(
+          (item.trans_param && item.trans_param.union_cover) ||
+            raw.artwork ||
+            '',
+          '800'
+        );
+        songs.push({
+          id: String(hash),
+          songId: String(hash),
+          songmid: String(hash),
+          albumId: String(albumId),
+          name: decodeName(songName.trim()),
+          singer: decodeName(artist),
+          albumName: decodeName(item.remark || raw.title || ''),
+          artwork: cover,
+          duration: Math.floor(Number(item.duration || 0)),
+          source: 'kg'
+        });
+      }
+      var total = totalOf(data.total);
+      if (total === null && currentPage === 1) total = songs.length;
+      return JSON.stringify({
+        total: total,
+        limit: size,
+        isEnd: isPageEnd(
+          total,
+          size * (currentPage - 1),
+          songs.length,
+          size,
+          data
+        ),
+        albumItem: {
+          id: String(albumId),
+          title: decodeName(info.albumname || raw.title || ''),
+          coverUrl: normalizeImage(info.imgurl || raw.artwork || '', '400'),
+          artist: decodeName(info.singername || ''),
+          worksNum: total === null ? 0 : total,
+          date: String(info.publishtime || '').slice(0, 10),
+          description: decodeName(info.intro || '')
+        },
+        musicList: songs
       });
     });
   },
