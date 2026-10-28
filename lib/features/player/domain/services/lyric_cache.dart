@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
 import '../../../../core/storage/app_database.dart';
+import '../../../../core/storage/app_preferences.dart';
 import '../../../../shared/services/cache_paths.dart';
 import '../models/song.dart';
 
@@ -136,6 +137,65 @@ class LyricCache {
       await _trimIfNeeded(db);
     } catch (e) {
       debugPrint('[LyricCache] 写入缓存失败: $e');
+    }
+  }
+
+  /// 删除这首歌的歌词缓存。
+  static Future<void> remove(Song song) async {
+    try {
+      await _ensureMigrated();
+      final db = await AppDatabase.cacheDatabase();
+      await db.delete(
+        'lyrics',
+        where: 'cache_key = ?',
+        whereArgs: [keyFor(song)],
+      );
+    } catch (e) {
+      debugPrint('[LyricCache] 删除缓存失败: $e');
+    }
+  }
+
+  // ---------------------------------------------------------------- 删除关联
+
+  /// 用户手动删除了歌词关联的歌曲键。
+  ///
+  /// 删掉缓存还不够：下次播放又会自动从音源匹配回同一份歌词，删除等于没删。
+  /// 这里记一条「不要再自动匹配」的标记，[LyricCache.isDeleted] 为 true 时
+  /// 播放器直接显示暂无歌词，直到用户重新搜索并手动指定歌词。
+  static const String _deletedKey = 'lyric_deleted_v1';
+
+  static Future<bool> isDeleted(Song song) async {
+    try {
+      final prefs = await AppPreferences.getInstance();
+      final keys = prefs.getStringList(_deletedKey) ?? const <String>[];
+      return keys.contains(keyFor(song));
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<void> markDeleted(Song song) async {
+    try {
+      final prefs = await AppPreferences.getInstance();
+      final keys =
+          (prefs.getStringList(_deletedKey) ?? const <String>[]).toSet()
+            ..add(keyFor(song));
+      await prefs.setStringList(_deletedKey, keys.toList());
+    } catch (e) {
+      debugPrint('[LyricCache] 记录删除关联失败: $e');
+    }
+  }
+
+  /// 手动指定新歌词后清掉删除标记，这首歌恢复自动匹配。
+  static Future<void> clearDeleted(Song song) async {
+    try {
+      final prefs = await AppPreferences.getInstance();
+      final keys =
+          (prefs.getStringList(_deletedKey) ?? const <String>[]).toSet()
+            ..remove(keyFor(song));
+      await prefs.setStringList(_deletedKey, keys.toList());
+    } catch (e) {
+      debugPrint('[LyricCache] 清除删除标记失败: $e');
     }
   }
 

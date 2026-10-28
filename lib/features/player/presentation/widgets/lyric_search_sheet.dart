@@ -58,6 +58,7 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
   LyricResult? _previewResult;
   bool _loadingPreview = false;
   String? _previewError;
+  bool _deleting = false;
 
   @override
   void initState() {
@@ -126,7 +127,8 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
         _searching = false;
         _searchError = filtered.isEmpty ? context.tr('没有搜到相关歌曲') : null;
       });
-      if (filtered.isNotEmpty) unawaited(_selectResult(0));
+      // 不自动选中第一条：默认继续展示当前正在使用的歌词，用户点了候选
+      // 才切换到那份歌词的预览。
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -578,8 +580,9 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
     );
   }
 
-  /// 歌词预览：跟随当前播放进度，也可以手动滚动。
+  /// 歌词预览：还没挑候选时显示当前使用的歌词，挑了就预览候选歌词。
   Widget _buildPreview(ThemeColors colors) {
+    if (_selectedIndex < 0) return _buildCurrentLyricPreview(colors);
     if (_loadingPreview) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -595,6 +598,84 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
         ),
       );
     }
+    return _buildLyricLines(colors, _previewLines);
+  }
+
+  /// 当前正在使用的歌词（打开弹层时的默认内容）+「删除歌词关联」按钮。
+  Widget _buildCurrentLyricPreview(ThemeColors colors) {
+    final lyric = ref.watch(lyricControllerProvider);
+    final sameSong = lyric.currentSongId == widget.song.id;
+    final lines = sameSong ? lyric.lines : const <LyricLine>[];
+    if (lines.isEmpty) {
+      final hint = sameSong && lyric.isLoading
+          ? context.tr('歌词加载中…')
+          : _searchError ?? context.tr('选择上面的搜索结果预览歌词');
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+          child: Text(
+            hint,
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 13, color: colors.textHint),
+          ),
+        ),
+      );
+    }
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.lg,
+            0,
+            AppSpacing.sm,
+            0,
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.check_circle_outline, size: 14, color: colors.primary),
+              const SizedBox(width: AppSpacing.xs),
+              Expanded(
+                child: Text(
+                  context.tr('当前使用的歌词'),
+                  style: TextStyle(fontSize: 12, color: colors.textSecondary),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: _deleting
+                    ? null
+                    : () => unawaited(_deleteAssociation()),
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  minimumSize: const Size(0, 30),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.sm,
+                  ),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                icon: _deleting
+                    ? SizedBox(
+                        width: 12,
+                        height: 12,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: colors.textHint,
+                        ),
+                      )
+                    : Icon(Icons.link_off, size: 15, color: colors.error),
+                label: Text(
+                  context.tr(_deleting ? '删除中' : '删除歌词关联'),
+                  style: TextStyle(fontSize: 12, color: colors.error),
+                ),
+              ),
+            ],
+          ),
+        ),
+        Expanded(child: _buildLyricLines(colors, lines)),
+      ],
+    );
+  }
+
+  Widget _buildLyricLines(ThemeColors colors, List<LyricLine> lines) {
     final position = ref.watch(
       playbackControllerProvider.select((s) => s.position),
     );
@@ -604,10 +685,10 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
       child: LyricScrollView(
-        lines: _previewLines,
+        lines: lines,
         currentTimeMs: position.inMilliseconds,
         isPlaying: isPlaying,
-        hasYrc: _previewLines.any((line) => line.isYrc),
+        hasYrc: lines.any((line) => line.isYrc),
         activeColor: colors.primary,
         inactiveColor: colors.textHint,
         mainFontSize: 18,
@@ -617,6 +698,26 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
         enableBlur: false,
         enableScale: true,
         centerAlign: true,
+      ),
+    );
+  }
+
+  /// 删除当前歌词关联：清缓存、清掉正在显示的歌词，之后不再自动匹配。
+  Future<void> _deleteAssociation() async {
+    if (_deleting) return;
+    setState(() => _deleting = true);
+    final messenger = ScaffoldMessenger.of(context);
+    final message = context.tr('已删除歌词关联');
+    await ref
+        .read(lyricControllerProvider.notifier)
+        .deleteLyricAssociation(widget.song);
+    if (!mounted) return;
+    Navigator.of(context).pop();
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(message),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
       ),
     );
   }

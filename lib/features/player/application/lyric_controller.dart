@@ -197,6 +197,19 @@ class LyricController extends StateNotifier<LyricState> {
     );
 
     try {
+      // 用户手动删除了这首歌的歌词关联：不再自动匹配（重启后也一样），
+      // 等用户在「搜索歌词」里重新指定。
+      if (await LyricCache.isDeleted(song)) {
+        if (requestId != _requestId) return;
+        _rawLines = null;
+        state = LyricState(
+          error: tr('暂无歌词'),
+          currentSongId: song.id,
+          currentSongSource: song.source,
+        );
+        return;
+      }
+
       String? lrc = song.lrc;
       String? crlyric;
       String? tlyric;
@@ -444,6 +457,7 @@ class LyricController extends StateNotifier<LyricState> {
       currentSongSource: song.source,
       hasYrc: lines.any((line) => line.isYrc),
     );
+    await LyricCache.clearDeleted(song);
     await LyricCache.write(
       song,
       lrc: result.lrc,
@@ -451,6 +465,25 @@ class LyricController extends StateNotifier<LyricState> {
       tlyric: result.tlyric,
       rlyric: result.rlyric,
     );
+  }
+
+  /// 删除这首歌当前的歌词关联（歌词缓存 + 自动匹配）。
+  ///
+  /// 清空正在显示的歌词，并记下「不再自动匹配」的标记：之后播放这首歌会
+  /// 一直显示暂无歌词，直到用户在「搜索歌词」里重新指定一份。
+  Future<void> deleteLyricAssociation(Song song) async {
+    // 让正在进行的歌词加载作废，避免它回来后把清空的状态覆盖掉。
+    _requestId++;
+    _rawLines = null;
+    await LyricCache.remove(song);
+    await LyricCache.markDeleted(song);
+    if (state.currentSongId == song.id) {
+      state = LyricState(
+        error: tr('暂无歌词'),
+        currentSongId: song.id,
+        currentSongSource: song.source,
+      );
+    }
   }
 
   void clear() {

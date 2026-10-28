@@ -21,6 +21,7 @@ import '../../features/player/application/playback_context.dart';
 import '../../features/player/application/playback_controller.dart';
 import '../../features/player/domain/models/song.dart';
 import '../../features/player/presentation/playback_source_navigation.dart';
+import '../../features/player/presentation/widgets/lyric_search_sheet.dart';
 import '../../features/radio/application/radio_session.dart';
 import '../../features/download/application/download_providers.dart';
 import '../../features/settings/application/font_providers.dart';
@@ -461,6 +462,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                   // 「下载」「启用桌面歌词」「定时」已经挪到播放页的图标按钮上了。
                   // Android 端的倍速也挪到播放页，这里不再重复。
                   if (!Platform.isAndroid) _buildSpeedItem(colors),
+                  _buildSearchLyricItem(colors),
                   _buildLyricSettingsItem(colors),
                   ..._buildBlacklistItems(colors, blacklist),
                 ],
@@ -1023,6 +1025,37 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
       final svc = await ref.read(settingsServiceProvider.future);
       await svc.setPlaybackSpeed(speed);
     } catch (_) {}
+  }
+
+  /// 「搜索歌词」入口（播放页更多菜单，位于「歌词设置」上方）。
+  ///
+  /// 没有歌词时播放页会有同名按钮；这里始终提供，方便替换歌词或删除关联。
+  Widget _buildSearchLyricItem(ThemeColors colors) {
+    return InkWell(
+      onTap: () {
+        final song = widget.song;
+        // 先关掉更多菜单，避免两层弹层叠在一起。当前 context 在路由退场
+        // 动画结束前仍然有效，可以直接打开搜索弹层。
+        Navigator.pop(context);
+        unawaited(showLyricSearchSheet(context, song: song));
+      },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.lg,
+          vertical: AppSpacing.md,
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.search, size: 22, color: colors.textSecondary),
+            const SizedBox(width: AppSpacing.md),
+            Text(
+              context.tr('搜索歌词'),
+              style: TextStyle(fontSize: 15, color: colors.textSecondary),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _buildLyricSettingsItem(ThemeColors colors) {
