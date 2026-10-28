@@ -429,6 +429,46 @@ function fetchTopList() {
   ]);
 }
 
+/* 榜单分类派生：/api/toplist 是扁平数组（官方网页/App 的分组都是页面侧
+ * 自己实现的），这里按官方 App 榜单页的板块习惯派生 group。 */
+
+// 品牌合作 / 运营榜（车厂、音乐合伙人、直播/游戏联名等），官方 App 榜单页
+// 不作主列表展示，直接过滤。命中任一模式返回 null。
+var NETEASE_BOARD_BRAND_PATTERNS = [
+  /车友爱听榜$/,
+  /^音乐合伙人/,
+  /^小天才/,
+  /^荣耀音乐/,
+  /蛋仔派对/,
+  /^LOOK直播/,
+  /^星云榜/,
+  /喜力/,
+  /^乐夏榜$/,
+  /^赏音榜$/,
+  /^BEAT排行榜$/,
+  /^潮流风向榜$/
+];
+
+/** 榜单 → 分类名；命中品牌榜模式返回 null（过滤）。 */
+function neteaseBoardGroup(item) {
+  var name = String(item.name || '');
+  for (var i = 0; i < NETEASE_BOARD_BRAND_PATTERNS.length; i++) {
+    if (NETEASE_BOARD_BRAND_PATTERNS[i].test(name)) return null;
+  }
+  // ToplistType（S/N/O/H）只存在于飙升/新歌/原创/热歌官方四榜
+  if (item.ToplistType) return '官方榜';
+  if (/^网易云(韩语|日语|欧美热歌|欧美新歌)榜$/.test(name)) return '语种榜';
+  if (/^(俄语|越南语|泰语)榜$/.test(name)) return '语种榜';
+  if (/^(UK排行榜|美国Billboard|Beatport全球电子舞曲|KTV唛榜|日本Oricon|法国|俄罗斯top hit)/.test(name)) {
+    return '全球媒体榜';
+  }
+  if (/^网易云/.test(name) || /^(中文慢摇DJ榜|欧美R&B榜)$/.test(name)) {
+    return '曲风榜';
+  }
+  // 听歌识曲、潜力爆款、网络热歌、AI歌曲、实时热度/分享、黑胶VIP系列等
+  return '精选榜';
+}
+
 function fetchSearch(keyword, type, limit, offset) {
   var form = { s: keyword, type: type, limit: limit, offset: offset };
   var query = {
@@ -730,10 +770,10 @@ function textOf(block) {
 module.exports = {
   pluginInfo: {
     name: '数据源-网易',
-    version: '1.4.0',
+    version: '1.5.0',
     author: 'MintMusic',
     description:
-      '只提供搜索、歌单分类、榜单、歌单 / 专辑 / 作者详情的网易云数据源；' +
+      '只提供搜索、歌单分类、榜单（含分类，已过滤品牌运营榜）、歌单 / 专辑 / 作者详情的网易云数据源；' +
       '播放需要在「插件管理 → 数据源」里指定一个已安装的播放源。',
     // ★ 数据源标记：导入时会归到「插件管理 → 数据源」分类
     // 站点图标：导入插件时下载并缓存到插件目录（音源列表 / 切换按钮用它）
@@ -1035,13 +1075,17 @@ module.exports = {
       for (var i = 0; i < list.length; i++) {
         var item = list[i] || {};
         if (item.id === undefined) continue;
+        // 品牌合作/运营榜不入列表（neteaseBoardGroup 返回 null）
+        var group = neteaseBoardGroup(item);
+        if (!group) continue;
         result.push({
           id: String(item.id),
           name: item.name || '',
           coverUrl: normalizeCover(item.coverImgUrl),
           playCount: formatPlayCount(item.playCount),
           updateFrequency: item.updateFrequency ? String(item.updateFrequency) : '',
-          description: item.description || ''
+          description: item.description || '',
+          group: group
         });
       }
       return JSON.stringify(result);
