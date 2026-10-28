@@ -87,20 +87,6 @@ function postForm(url, form) {
 var EAPI_KEY = 'e82ckenh8dichen8';
 var EAPI_UA = 'NeteaseMusicDesktop/2.10.13.201538 (Windows 10)';
 
-function utf8ToBase64(text) {
-  return cerumusic.utils.buffer.bufToString(
-    cerumusic.utils.buffer.from(text, 'utf8'),
-    'base64'
-  );
-}
-
-function base64ToHex(base64) {
-  return cerumusic.utils.buffer.bufToString(
-    cerumusic.utils.buffer.from(base64, 'base64'),
-    'hex'
-  );
-}
-
 /**
  * eapi 加密参数：`url-36cd479b6b5-json-36cd479b6b5-md5`，AES-128-ECB 后转大写 hex。
  * 网易云的逐字歌词（yrc）只在这个加密接口里返回。
@@ -111,12 +97,22 @@ function eapiParams(url, payload) {
     'nobody' + url + 'use' + text + 'md5forencrypt'
   );
   var data = url + '-36cd479b6b5-' + text + '-36cd479b6b5-' + digest;
-  // aesEncrypt 是异步桥（返回 Promise），必须链式等待后再转 hex；
-  // 同步取值会把 Promise 传给 Buffer.from 得到空串，params 恒为空。
+  // 两个坑：
+  // 1. aesEncrypt 是异步桥，返回 Promise（resolve 出来是**字节数组**）；
+  // 2. 它收的是**字节**：App 的 __valueToBytes 会把字符串按 UTF-8 取字节，
+  //    传 base64 字符串等于把 base64 文本本身加密了，参数必然不对
+  //    （表现就是 eapi 能 200 但没有 yrc）。所以这里必须传 Buffer。
   return cerumusic.utils.crypto
-    .aesEncrypt(utf8ToBase64(data), 'aes-128-ecb', utf8ToBase64(EAPI_KEY), '')
+    .aesEncrypt(
+      cerumusic.utils.buffer.from(data, 'utf8'),
+      'aes-128-ecb',
+      cerumusic.utils.buffer.from(EAPI_KEY, 'utf8'),
+      []
+    )
     .then(function (encrypted) {
-      return base64ToHex(encrypted).toUpperCase();
+      return cerumusic.utils.buffer
+        .bufToString(encrypted, 'hex')
+        .toUpperCase();
     });
 }
 
@@ -770,7 +766,7 @@ function textOf(block) {
 module.exports = {
   pluginInfo: {
     name: '数据源-网易',
-    version: '1.5.0',
+    version: '1.6.0',
     author: 'MintMusic',
     description:
       '只提供搜索、歌单分类、榜单（含分类，已过滤品牌运营榜）、歌单 / 专辑 / 作者详情的网易云数据源；' +
