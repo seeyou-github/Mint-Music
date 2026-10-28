@@ -5,28 +5,36 @@ import 'package:flutter/foundation.dart';
 import '../../../../core/storage/app_preferences.dart';
 import '../domain/models/hot_board.dart';
 
-/// 「热榜」选择（榜单 + 前 10 首歌）的本地存储。
+/// 「热榜」数据（多个榜单 + 各自前 10 首歌）的本地存储。
+///
+/// 所有音源的榜单都保存在一起，展示时按当前音源过滤；这样切换音源时
+/// 各音源添加过的热榜都不会丢。
 class HotBoardStore {
-  static const String _key = 'hot_board_v1';
+  static const String _key = 'hot_boards_v2';
+  static const String _legacyKey = 'hot_board_v1';
 
-  Future<HotBoard?> load() async {
+  Future<List<HotBoard>> load() async {
     try {
       final prefs = await AppPreferences.getInstance();
       final raw = prefs.getString(_key);
-      if (raw == null || raw.trim().isEmpty) return null;
-      final decoded = jsonDecode(raw);
-      if (decoded is! Map) return null;
-      return HotBoard.fromJson(Map<String, dynamic>.from(decoded));
+      // 已经保存过多榜单（哪怕是空列表）就不再读旧版单榜单，
+      // 否则把热榜全部移除后旧榜单会被重新迁移出来。
+      if (raw != null) return decode(raw);
+
+      final legacy = prefs.getString(_legacyKey);
+      if (legacy == null || legacy.trim().isEmpty) return const [];
+      final board = _decodeSingle(legacy);
+      return board == null ? const [] : [board];
     } catch (e) {
       debugPrint('[HotBoardStore] 读取热榜失败: $e');
-      return null;
+      return const [];
     }
   }
 
-  Future<void> save(HotBoard board) async {
+  Future<void> save(List<HotBoard> boards) async {
     try {
       final prefs = await AppPreferences.getInstance();
-      await prefs.setString(_key, jsonEncode(board.toJson()));
+      await prefs.setString(_key, encode(boards));
     } catch (e) {
       debugPrint('[HotBoardStore] 保存热榜失败: $e');
     }
@@ -36,8 +44,37 @@ class HotBoardStore {
     try {
       final prefs = await AppPreferences.getInstance();
       await prefs.remove(_key);
+      await prefs.remove(_legacyKey);
     } catch (e) {
       debugPrint('[HotBoardStore] 清除热榜失败: $e');
+    }
+  }
+
+  static String encode(List<HotBoard> boards) =>
+      jsonEncode([for (final board in boards) board.toJson()]);
+
+  static List<HotBoard> decode(String raw) {
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return const [];
+      return [
+        for (final item in decoded)
+          if (item is Map) HotBoard.fromJson(Map<String, dynamic>.from(item)),
+      ];
+    } catch (e) {
+      debugPrint('[HotBoardStore] 解析热榜失败: $e');
+      return const [];
+    }
+  }
+
+  static HotBoard? _decodeSingle(String raw) {
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return null;
+      return HotBoard.fromJson(Map<String, dynamic>.from(decoded));
+    } catch (e) {
+      debugPrint('[HotBoardStore] 解析旧版热榜失败: $e');
+      return null;
     }
   }
 }

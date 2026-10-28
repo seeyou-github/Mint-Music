@@ -1103,10 +1103,10 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
     );
   }
 
-  /// 「热榜」分类：没有数据时给出引导，有数据时展示榜单 TOP 10。
+  /// 「热榜」分类：没有数据时给出引导，有数据时逐个展示榜单 TOP 10。
   Widget _buildHotBoardTab(ThemeColors colors) {
     return ref
-        .watch(hotBoardProvider)
+        .watch(currentHotBoardsProvider)
         .when(
           loading: () => const Center(child: CircularProgressIndicator()),
           error: (_, _) => Center(
@@ -1121,17 +1121,21 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
                 ),
                 const SizedBox(height: AppSpacing.md),
                 TextButton(
-                  onPressed: () => ref.invalidate(hotBoardProvider),
+                  onPressed: () => ref.invalidate(hotBoardsProvider),
                   child: Text(context.tr('重试')),
                 ),
               ],
             ),
           ),
-          data: (board) {
-            if (board == null || board.songs.isEmpty) {
+          data: (boards) {
+            final visible = [
+              for (final board in boards)
+                if (board.songs.isNotEmpty) board,
+            ];
+            if (visible.isEmpty) {
               return _buildHotBoardEmpty(colors);
             }
-            return _buildHotBoardContent(colors, board);
+            return _buildHotBoardContent(colors, visible);
           },
         );
   }
@@ -1147,7 +1151,10 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
             color: colors.textHint,
           ),
           const SizedBox(height: AppSpacing.md),
-          Text(context.tr('还没有热榜数据'), style: TextStyle(color: colors.textHint)),
+          Text(
+            context.tr('当前音源还没有热榜数据'),
+            style: TextStyle(color: colors.textHint),
+          ),
           const SizedBox(height: AppSpacing.xs),
           Text(
             context.tr('点击右上角 + 选择要展示的榜单'),
@@ -1164,72 +1171,126 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
     );
   }
 
-  Widget _buildHotBoardContent(ThemeColors colors, HotBoard board) {
+  Widget _buildHotBoardContent(ThemeColors colors, List<HotBoard> boards) {
     final horizontalPadding = ResponsiveLayout.horizontalPadding(context);
-    final sourceName = ref
-        .watch(musicSourceManagerProvider)
-        .sourceDisplayName(board.source);
+    final columns = _hotBoardColumns(context);
     return CustomScrollView(
       cacheExtent: 360,
       slivers: [
-        SliverPadding(
-          padding: EdgeInsets.fromLTRB(
-            horizontalPadding,
-            AppSpacing.sm,
-            horizontalPadding,
-            AppSpacing.md,
-          ),
-          sliver: SliverToBoxAdapter(
-            child: Row(
-              children: [
-                Icon(
-                  Icons.local_fire_department_rounded,
-                  size: 20,
-                  color: colors.primary,
-                ),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    board.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                      color: colors.textPrimary,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: AppSpacing.sm),
-                SourceNameTag(label: sourceName, colors: colors),
-                const SizedBox(width: AppSpacing.sm),
-                Text(
-                  context.tr('前 ${board.songs.length} 首'),
-                  style: TextStyle(fontSize: 11, color: colors.textHint),
-                ),
-              ],
+        for (final board in boards) ...[
+          SliverPadding(
+            padding: EdgeInsets.fromLTRB(
+              horizontalPadding,
+              AppSpacing.sm,
+              horizontalPadding,
+              AppSpacing.sm,
+            ),
+            sliver: SliverToBoxAdapter(
+              child: _buildHotBoardHeader(colors, board),
             ),
           ),
-        ),
-        SliverPadding(
-          padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
-          sliver: SliverGrid(
-            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: _hotBoardColumns(context),
-              mainAxisExtent: 68,
-              mainAxisSpacing: AppSpacing.sm,
-              crossAxisSpacing: AppSpacing.sm,
-            ),
-            delegate: SliverChildBuilderDelegate(
-              (context, index) => _buildHotSongItem(colors, board, index),
-              childCount: board.songs.length,
-              addAutomaticKeepAlives: false,
+          SliverPadding(
+            padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+            sliver: SliverGrid(
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: columns,
+                mainAxisExtent: 68,
+                mainAxisSpacing: AppSpacing.sm,
+                crossAxisSpacing: AppSpacing.sm,
+              ),
+              delegate: SliverChildBuilderDelegate(
+                (context, index) => _buildHotSongItem(colors, board, index),
+                childCount: board.songs.length,
+                addAutomaticKeepAlives: false,
+              ),
             ),
           ),
-        ),
+        ],
         const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.xxxl)),
       ],
     );
+  }
+
+  Widget _buildHotBoardHeader(ThemeColors colors, HotBoard board) {
+    final sourceName = ref
+        .watch(musicSourceManagerProvider)
+        .sourceDisplayName(board.source);
+    return Row(
+      children: [
+        Icon(
+          Icons.local_fire_department_rounded,
+          size: 20,
+          color: colors.primary,
+        ),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            board.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+              color: colors.textPrimary,
+            ),
+          ),
+        ),
+        const SizedBox(width: AppSpacing.sm),
+        SourceNameTag(label: sourceName, colors: colors),
+        const SizedBox(width: AppSpacing.sm),
+        Text(
+          context.tr('前 ${board.songs.length} 首'),
+          style: TextStyle(fontSize: 11, color: colors.textHint),
+        ),
+        const SizedBox(width: AppSpacing.xs),
+        Tooltip(
+          message: context.tr('移除热榜'),
+          child: GestureDetector(
+            onTap: () => unawaited(_confirmRemoveHotBoard(board)),
+            child: Padding(
+              padding: const EdgeInsets.all(4),
+              child: Icon(Icons.close, size: 16, color: colors.textHint),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _confirmRemoveHotBoard(HotBoard board) async {
+    final colors = ref.read(themeColorsProvider);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: colors.surface,
+        title: Text(
+          context.tr('移除热榜'),
+          style: TextStyle(fontSize: 17, color: colors.textPrimary),
+        ),
+        content: Text(
+          context.tr('确定移除「${board.name}」吗？'),
+          style: TextStyle(fontSize: 14, color: colors.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(
+              context.tr('取消'),
+              style: TextStyle(color: colors.textHint),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(
+              context.tr('移除'),
+              style: TextStyle(color: colors.error),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    await ref.read(hotBoardsProvider.notifier).remove(board);
   }
 
   /// 热榜列数：横屏至少 3 列；手机竖屏 1 列，平板竖屏 2 列。
@@ -1343,18 +1404,27 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
   }
 
   /// 选择当前音源下的一个榜单，把它的前 10 首歌存成「热榜」。
+  ///
+  /// 每添加一次就多一个榜单，之前添加的不会被替换；同一榜单再次添加时
+  /// 只刷新它自己的歌曲。
   Future<void> _addHotBoard() async {
     if (_addingHotBoard) return;
     setState(() => _addingHotBoard = true);
     final colors = ref.read(themeColorsProvider);
     try {
+      final sourceId = ref.read(discoverSourceIdProvider);
       final leaderboards = await ref.read(leaderboardsProvider.future);
       if (!mounted) return;
-      if (leaderboards.isEmpty) {
+      // 只提供当前使用音源自己的榜单。
+      final candidates = [
+        for (final board in leaderboards)
+          if (board.source == sourceId) board,
+      ];
+      if (candidates.isEmpty) {
         _showMessage(context.tr('当前音源暂无榜单数据'));
         return;
       }
-      final selected = await _pickLeaderboard(colors, leaderboards);
+      final selected = await _pickLeaderboard(colors, candidates, sourceId);
       if (selected == null || !mounted) return;
 
       final page = await ref
@@ -1369,8 +1439,8 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
         return;
       }
       await ref
-          .read(hotBoardProvider.notifier)
-          .save(
+          .read(hotBoardsProvider.notifier)
+          .add(
             HotBoard(
               id: selected.id,
               name: selected.name,
@@ -1397,9 +1467,14 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
   Future<Leaderboard?> _pickLeaderboard(
     ThemeColors colors,
     List<Leaderboard> boards,
+    String sourceId,
   ) {
     final sheetHeight = MediaQuery.sizeOf(context).height * 0.7;
-    final currentId = ref.read(hotBoardProvider).valueOrNull?.id;
+    final addedIds = {
+      for (final board
+          in ref.read(hotBoardsProvider).valueOrNull ?? const <HotBoard>[])
+        if (board.source == sourceId) board.id,
+    };
     return showModalBottomSheet<Leaderboard>(
       context: context,
       isScrollControlled: true,
@@ -1437,7 +1512,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
                     ),
                     const SizedBox(height: AppSpacing.xs),
                     Text(
-                      context.tr('选择当前音源下要展示的榜单'),
+                      context.tr('选择当前音源下要展示的榜单，可添加多个'),
                       style: TextStyle(fontSize: 12, color: colors.textHint),
                     ),
                   ],
@@ -1455,7 +1530,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
                   ),
                   itemBuilder: (_, index) {
                     final board = boards[index];
-                    final selected = board.id == currentId;
+                    final added = addedIds.contains(board.id);
                     return InkWell(
                       onTap: () => Navigator.of(sheetContext).pop(board),
                       child: Padding(
@@ -1511,13 +1586,9 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
                             ),
                             const SizedBox(width: AppSpacing.sm),
                             Icon(
-                              selected
-                                  ? Icons.check_circle
-                                  : Icons.chevron_right,
+                              added ? Icons.check_circle : Icons.chevron_right,
                               size: 20,
-                              color: selected
-                                  ? colors.primary
-                                  : colors.textHint,
+                              color: added ? colors.primary : colors.textHint,
                             ),
                           ],
                         ),

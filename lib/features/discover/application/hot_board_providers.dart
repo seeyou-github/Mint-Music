@@ -2,27 +2,60 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/hot_board_store.dart';
 import '../domain/models/hot_board.dart';
+import 'discover_providers.dart';
 
 final hotBoardStoreProvider = Provider<HotBoardStore>((ref) => HotBoardStore());
 
-/// 「热榜」分类当前保存的榜单与歌曲（没有配置时为 null）。
-final hotBoardProvider = AsyncNotifierProvider<HotBoardNotifier, HotBoard?>(
-  HotBoardNotifier.new,
-);
+/// 用户添加的全部热榜（跨音源保存，展示时按当前音源过滤）。
+final hotBoardsProvider =
+    AsyncNotifierProvider<HotBoardsNotifier, List<HotBoard>>(
+      HotBoardsNotifier.new,
+    );
 
-class HotBoardNotifier extends AsyncNotifier<HotBoard?> {
+/// 当前音源的热榜：主页切换音源时，热榜内容跟着切换。
+final currentHotBoardsProvider = Provider<AsyncValue<List<HotBoard>>>((ref) {
+  final sourceId = ref.watch(discoverSourceIdProvider);
+  return ref
+      .watch(hotBoardsProvider)
+      .whenData(
+        (boards) => [
+          for (final board in boards)
+            if (board.source == sourceId) board,
+        ],
+      );
+});
+
+class HotBoardsNotifier extends AsyncNotifier<List<HotBoard>> {
   @override
-  Future<HotBoard?> build() {
+  Future<List<HotBoard>> build() {
     return ref.read(hotBoardStoreProvider).load();
   }
 
-  Future<void> save(HotBoard board) async {
-    state = AsyncData(board);
-    await ref.read(hotBoardStoreProvider).save(board);
+  /// 添加榜单：同一榜单（id + 音源）重复添加时刷新它的歌曲，
+  /// 其它榜单原样保留，所以可以连续添加多个。
+  Future<void> add(HotBoard board) async {
+    final boards = [...await future];
+    final index = boards.indexWhere(
+      (item) => item.id == board.id && item.source == board.source,
+    );
+    if (index >= 0) {
+      boards[index] = board;
+    } else {
+      boards.add(board);
+    }
+    await _update(boards);
   }
 
-  Future<void> clear() async {
-    state = const AsyncData(null);
-    await ref.read(hotBoardStoreProvider).clear();
+  Future<void> remove(HotBoard board) async {
+    final boards = [
+      for (final item in await future)
+        if (item.id != board.id || item.source != board.source) item,
+    ];
+    await _update(boards);
+  }
+
+  Future<void> _update(List<HotBoard> boards) async {
+    state = AsyncData(boards);
+    await ref.read(hotBoardStoreProvider).save(boards);
   }
 }
