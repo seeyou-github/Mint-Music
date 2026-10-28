@@ -647,7 +647,7 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
 
   /// 列表底部：翻页状态 + 分页条。
   Widget _pageFooter(ThemeColors colors, int pageCount) {
-    final status = _footer(colors);
+    final status = _footer(colors, pageCount);
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -663,7 +663,7 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
     );
   }
 
-  Widget? _footer(ThemeColors colors) {
+  Widget? _footer(ThemeColors colors, int pageCount) {
     if (_loadingMore) {
       return LoadMoreFooter(status: LoadMoreStatus.loading, colors: colors);
     }
@@ -675,7 +675,9 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
         onRetry: () => unawaited(_retryLoadMore()),
       );
     }
-    if (!_isEnd) return null;
+    // 「没有更多了」只属于最后一页：每页底部都会渲染同一个 footer，
+    // 只判断 _isEnd 会让已经加载完的列表在前面几页也显示这个提示。
+    if (!_isEnd || _pager.page < pageCount) return null;
     return LoadMoreFooter(status: LoadMoreStatus.noMore, colors: colors);
   }
 }
