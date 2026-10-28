@@ -283,6 +283,39 @@ void main() {
     expect(collections.state.results.single.id, '4');
   });
 
+  test('切回结果标签页时同关键词同音源不再重复搜索', () async {
+    final manager = _Manager();
+    var playlistCalls = 0;
+    manager.playlistPage = (page) async {
+      playlistCalls++;
+      return PageResult(items: [_playlist(page)], total: 1, isEnd: true);
+    };
+    final playlists = PlaylistSearchNotifier(manager);
+    addTearDown(playlists.dispose);
+    await playlists.search('list', 'wy');
+    await playlists.search('list', 'wy', force: false);
+    expect(playlistCalls, 1, reason: '同关键词同音源直接复用');
+    await playlists.search('other', 'wy', force: false);
+    expect(playlistCalls, 2, reason: '换关键词重新搜索');
+
+    var collectionCalls = 0;
+    manager.collectionPage = (page) async {
+      collectionCalls++;
+      return CollectionSearchPage(
+        items: [_collection(page)],
+        total: 1,
+        isEnd: true,
+      );
+    };
+    final albums = CollectionSearchController(manager);
+    addTearDown(albums.dispose);
+    await albums.search('album', 'wy', CollectionType.album);
+    await albums.search('album', 'wy', CollectionType.album, force: false);
+    expect(collectionCalls, 1, reason: '同关键词同音源同类型直接复用');
+    await albums.search('album', 'kg', CollectionType.album, force: false);
+    expect(collectionCalls, 2, reason: '换音源重新搜索');
+  });
+
   test('发现分类短页不中断，总数在通知状态前更新', () async {
     final manager = _Manager();
     manager.categoryPage = (page) async =>

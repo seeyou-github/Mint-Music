@@ -634,10 +634,22 @@ class PlaylistSearchNotifier extends StateNotifier<PlaylistSearchState> {
   /// 跳页直达的目标页：失败时保留供重试，成功后清零。
   int _pendingPage = 0;
 
-  Future<void> search(String query, String sourceId) async {
+  Future<void> search(
+    String query,
+    String sourceId, {
+    bool force = true,
+  }) async {
     final normalizedQuery = query.trim();
     if (normalizedQuery.isEmpty) {
       reset();
+      return;
+    }
+
+    // 切换结果标签页时同一关键词 + 同一音源已有结果，直接复用，不重复搜索。
+    if (!force &&
+        state.query == normalizedQuery &&
+        _sourceId == sourceId &&
+        (state.isLoading || state.playlists.isNotEmpty)) {
       return;
     }
 
@@ -883,12 +895,15 @@ class CollectionSearchState {
   }
 }
 
-final collectionSearchProvider =
-    StateNotifierProvider<CollectionSearchController, CollectionSearchState>((
-      ref,
-    ) {
-      return CollectionSearchController(ref.watch(musicSourceManagerProvider));
-    });
+/// 专辑 / 作者搜索结果，按类型各保留一份状态：
+/// 切换专辑 ↔ 作者标签页时互不覆盖，回来时能直接复用已加载的结果。
+final collectionSearchProvider = StateNotifierProvider.family<
+  CollectionSearchController,
+  CollectionSearchState,
+  CollectionType
+>((ref, type) {
+  return CollectionSearchController(ref.watch(musicSourceManagerProvider));
+});
 
 class CollectionSearchController extends StateNotifier<CollectionSearchState> {
   CollectionSearchController(this._manager)
@@ -907,14 +922,25 @@ class CollectionSearchController extends StateNotifier<CollectionSearchState> {
   Future<void> search(
     String query,
     String sourceId,
-    CollectionType type,
-  ) async {
+    CollectionType type, {
+    bool force = true,
+  }) async {
     final keyword = query.trim();
-    final requestId = ++_requestId;
     if (keyword.isEmpty) {
       state = const CollectionSearchState();
       return;
     }
+    // 专辑 / 作者各占一个控制器；切标签时同一关键词 + 同一音源 +
+    // 同一类型已有结果（或已判定不支持），直接复用，不重复搜索。
+    // 注意要放在 ++_requestId 之前：复用时不能作废还在进行的请求。
+    if (!force &&
+        state.query == keyword &&
+        _sourceId == sourceId &&
+        _type == type &&
+        (state.loading || state.results.isNotEmpty || state.unsupported)) {
+      return;
+    }
+    final requestId = ++_requestId;
     _sourceId = sourceId;
     _type = type;
     _pendingPage = 0;
@@ -1083,5 +1109,11 @@ class CollectionSearchController extends StateNotifier<CollectionSearchState> {
       if (seen.add('${item.source}:${item.id}')) result.add(item);
     }
     return result;
+  }
+
+  void reset() {
+    _requestId++;
+    _pendingPage = 0;
+    state = const CollectionSearchState();
   }
 }

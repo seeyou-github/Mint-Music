@@ -145,6 +145,12 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         ref.read(pendingSearchTabProvider.notifier).state = null;
         ref.read(searchResultsControllerProvider.notifier).reset();
         ref.read(playlistSearchControllerProvider.notifier).reset();
+        ref
+            .read(collectionSearchProvider(CollectionType.album).notifier)
+            .reset();
+        ref
+            .read(collectionSearchProvider(CollectionType.artist).notifier)
+            .reset();
       } catch (_) {
         // 页面销毁后 ProviderScope 可能已一并销毁（如 App 退出），忽略即可。
       }
@@ -249,16 +255,13 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         );
       case SearchTab.albums:
       case SearchTab.artists:
+        final collectionType = tab == SearchTab.albums
+            ? CollectionType.album
+            : CollectionType.artist;
         unawaited(
           ref
-              .read(collectionSearchProvider.notifier)
-              .search(
-                query,
-                sourceId,
-                tab == SearchTab.albums
-                    ? CollectionType.album
-                    : CollectionType.artist,
-              ),
+              .read(collectionSearchProvider(collectionType).notifier)
+              .search(query, sourceId, collectionType),
         );
     }
   }
@@ -434,17 +437,20 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     final pager = _collectionPager(type);
     setState(() => pager.jumpTo(page));
     if (_gridScrollController.hasClients) _gridScrollController.jumpTo(0);
-    final loaded = ref.read(collectionSearchProvider).results.length;
+    final loaded = ref
+        .read(collectionSearchProvider(type))
+        .results
+        .length;
     if (_beyondBuffer(pager, page, loaded)) {
       final ok = await ref
-          .read(collectionSearchProvider.notifier)
+          .read(collectionSearchProvider(type).notifier)
           .goToPage(page);
       if (!mounted) return;
       setState(() {
         if (ok) {
           pager.rebase(page);
         } else {
-          pager.jumpTo(ref.read(collectionSearchProvider).page);
+          pager.jumpTo(ref.read(collectionSearchProvider(type)).page);
         }
       });
     } else {
@@ -459,19 +465,23 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     setState(() => _pagingLoading = true);
     try {
       while (mounted && generation == _pagingGeneration) {
-        final state = ref.read(collectionSearchProvider);
+        final state = ref.read(collectionSearchProvider(type));
         if (pager.missing(state.results.length, hasMore: state.hasMore) == 0) {
           break;
         }
         if (state.loadingMore || state.loadMoreError != null) break;
         final before = state.results.length;
-        await ref.read(collectionSearchProvider.notifier).loadMore();
+        await ref
+            .read(collectionSearchProvider(type).notifier)
+            .loadMore();
         if (!mounted) return;
-        if (ref.read(collectionSearchProvider).results.length == before) break;
+        if (ref.read(collectionSearchProvider(type)).results.length == before) {
+          break;
+        }
       }
     } finally {
       if (mounted && generation == _pagingGeneration) {
-        final state = ref.read(collectionSearchProvider);
+        final state = ref.read(collectionSearchProvider(type));
         setState(() {
           _pagingLoading = false;
           pager.clampTo(
@@ -555,6 +565,12 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       if (next.isEmpty) {
         ref.read(searchResultsControllerProvider.notifier).reset();
         ref.read(playlistSearchControllerProvider.notifier).reset();
+        ref
+            .read(collectionSearchProvider(CollectionType.album).notifier)
+            .reset();
+        ref
+            .read(collectionSearchProvider(CollectionType.artist).notifier)
+            .reset();
         _resetPagers();
       }
     });
@@ -1377,17 +1393,14 @@ class _SearchPageState extends ConsumerState<SearchPage> {
             onTap: () {
               if (currentTab == SearchTab.songs) return;
               ref.read(searchTabProvider.notifier).state = SearchTab.songs;
-              // 切换到歌曲标签时，如果有搜索词则触发歌曲搜索
+              // 切换到歌曲标签时，同一关键词 + 同一音源已有结果就直接复用
+              // （start 内部按 关键词+音源 判重），换了才重新搜索。
               final query = ref.read(searchQueryProvider).trim();
               if (query.isNotEmpty) {
                 unawaited(
                   ref
                       .read(searchResultsControllerProvider.notifier)
-                      .start(
-                        query,
-                        ref.read(searchSourceIdProvider),
-                        force: true,
-                      ),
+                      .start(query, ref.read(searchSourceIdProvider)),
                 );
               }
             },
@@ -1400,13 +1413,18 @@ class _SearchPageState extends ConsumerState<SearchPage> {
             onTap: () {
               if (currentTab == SearchTab.playlists) return;
               ref.read(searchTabProvider.notifier).state = SearchTab.playlists;
-              // 切换到歌单标签时，如果有搜索词则触发歌单搜索
+              // 切换到歌单标签时，同一关键词 + 同一音源已有结果就直接复用
+              // （search 内部判重），换了才重新搜索。
               final query = ref.read(searchQueryProvider).trim();
               if (query.isNotEmpty) {
                 unawaited(
                   ref
                       .read(playlistSearchControllerProvider.notifier)
-                      .search(query, ref.read(searchSourceIdProvider)),
+                      .search(
+                        query,
+                        ref.read(searchSourceIdProvider),
+                        force: false,
+                      ),
                 );
               }
             },
@@ -1432,7 +1450,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     );
   }
 
-  /// 切到专辑 / 作者分类：有搜索词就立刻查一次。
+  /// 切到专辑 / 作者分类：同一关键词 + 同一音源已有结果就直接复用
+  /// （专辑 / 作者各保留一份状态），换了才重新搜索。
   void _switchCollectionTab(SearchTab tab, CollectionType type) {
     if (ref.read(searchTabProvider) == tab) return;
     ref.read(searchTabProvider.notifier).state = tab;
@@ -1440,8 +1459,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     if (query.isEmpty) return;
     unawaited(
       ref
-          .read(collectionSearchProvider.notifier)
-          .search(query, ref.read(searchSourceIdProvider), type),
+          .read(collectionSearchProvider(type).notifier)
+          .search(query, ref.read(searchSourceIdProvider), type, force: false),
     );
   }
 
@@ -1476,7 +1495,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
 
   /// 专辑 / 作者结果（网格）。
   Widget _buildCollectionResults(ThemeColors colors, CollectionType type) {
-    final state = ref.watch(collectionSearchProvider);
+    final state = ref.watch(collectionSearchProvider(type));
 
     if (state.unsupported) {
       return Center(
@@ -1516,7 +1535,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         message: state.error,
         onRetry: () => unawaited(
           ref
-              .read(collectionSearchProvider.notifier)
+              .read(collectionSearchProvider(type).notifier)
               .search(state.query, ref.read(searchSourceIdProvider), type),
         ),
       );
@@ -1578,7 +1597,9 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         loading: state.loadingMore,
         error: state.loadMoreError,
         onRetry: () => unawaited(
-          ref.read(collectionSearchProvider.notifier).retryLoadMore(),
+          ref
+              .read(collectionSearchProvider(type).notifier)
+              .retryLoadMore(),
         ),
         onPage: (page) => unawaited(_goToCollectionPage(type, page)),
       ),
