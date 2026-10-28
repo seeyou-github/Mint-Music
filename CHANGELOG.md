@@ -3,6 +3,12 @@
 ## [未发布]
 
 ### 修改
+- 数据源-QQ插件（v1.5.0）：新增作者搜索与作者作品
+  - 搜索页「作者」标签页现在可以搜索 QQ 歌手：接口走 `musicu.fcg` 的
+    `music.search.SearchCgiService`（search_type=1），总数取 `meta.sum`
+  - 歌手头像由 singerMID 拼成 500x500 地址（比接口返回的 150x150 清晰）
+  - 作者作品按 50 首一页加载：走 `music.web_singer_info_svr` 的
+    `get_singer_detail_info`（sort=5），作品数 1000+ 的歌手不再一次拉全量
 - 数据源-QQ插件（v1.4.0）：新增专辑搜索与专辑详情
   - 搜索页「专辑」标签页现在可以搜索 QQ 专辑：接口走 `musicu.fcg` 的
     `music.search.SearchCgiService`（search_type=2），总数取 `meta.sum`
