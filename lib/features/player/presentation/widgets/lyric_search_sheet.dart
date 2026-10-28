@@ -15,6 +15,8 @@ import '../../application/lyric_controller.dart';
 import '../../application/playback_controller.dart';
 import '../../domain/models/lyric_line.dart';
 import '../../domain/models/song.dart';
+import '../../domain/services/embedded_lyrics_writer.dart';
+import '../../domain/services/lyric_parser.dart';
 import 'lyric_format_tag.dart';
 import 'lyric_scroll_view.dart';
 
@@ -191,14 +193,38 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
       );
       return;
     }
-    final message = context.tr('已使用这份歌词');
     // 绑定到「当前正在使用的音源」（播放解析后可能已经换成插件变体），
     // 换音源播放同一首歌时各自保留各自的歌词。
     await ref
         .read(lyricControllerProvider.notifier)
         .applyManualLyric(liveSong, result, source: _sourceId);
+
+    // 本地歌曲：顺手把这份歌词写回音频文件，覆盖原来的内嵌歌词，
+    // 这样换播放器 / 清缓存后也还是这份词。
+    var embedded = _EmbeddedWriteResult.skipped;
+    if (liveSong.isLocal) {
+      final path = liveSong.filePath;
+      final text = _portableLyric(result);
+      if (path == null || path.isEmpty) {
+        embedded = _EmbeddedWriteResult.unsupported;
+      } else if (text.isEmpty) {
+        embedded = _EmbeddedWriteResult.failed;
+      } else {
+        final ok = await EmbeddedLyricsWriter.write(path, text);
+        embedded = ok
+            ? _EmbeddedWriteResult.written
+            : _EmbeddedWriteResult.failed;
+      }
+    }
+
     if (!mounted) return;
     Navigator.of(context).pop();
+    final message = switch (embedded) {
+      _EmbeddedWriteResult.written => context.tr('已使用这份歌词，并写入歌曲文件'),
+      _EmbeddedWriteResult.failed => context.tr('已使用这份歌词（写入歌曲文件失败）'),
+      _EmbeddedWriteResult.unsupported => context.tr('已使用这份歌词（该格式暂不支持写入文件）'),
+      _EmbeddedWriteResult.skipped => context.tr('已使用这份歌词'),
+    };
     messenger.showSnackBar(
       SnackBar(
         content: Text(message),
@@ -206,6 +232,40 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
         duration: const Duration(seconds: 2),
       ),
     );
+  }
+
+  /// 要写进音频文件的歌词文本。
+  ///
+  /// 优先用普通 LRC（其它播放器也认）；只有逐字歌词时，按行首时间戳
+  /// 折成标准 LRC 再写。
+  String _portableLyric(LyricResult result) {
+    final lrc = result.lrc?.trim() ?? '';
+    if (lrc.isNotEmpty) return lrc;
+
+    final word = result.crlyric?.trim() ?? '';
+    if (word.isEmpty) return '';
+
+    final lines = parseLyricAuto(word);
+    if (lines.isEmpty) return word;
+
+    final buffer = StringBuffer();
+    for (final line in lines) {
+      final text = line.plainText.trim();
+      if (text.isEmpty) continue;
+      buffer.writeln('[${_formatLrcTime(line.startTimeMs)}]$text');
+    }
+    return buffer.toString().trimRight();
+  }
+
+  static String _formatLrcTime(int milliseconds) {
+    final total = milliseconds < 0 ? 0 : milliseconds;
+    final minutes = total ~/ 60000;
+    final seconds = (total % 60000) ~/ 1000;
+    final hundredths = (total % 1000) ~/ 10;
+    final mm = minutes.toString().padLeft(2, '0');
+    final ss = seconds.toString().padLeft(2, '0');
+    final xx = hundredths.toString().padLeft(2, '0');
+    return '$mm:$ss.$xx';
   }
 
   /// 弹层对应的歌曲在播放器里是否还在播放。
@@ -848,4 +908,19 @@ class _ResultsScrollBehavior extends MaterialScrollBehavior {
     PointerDeviceKind.trackpad,
     PointerDeviceKind.unknown,
   };
+}
+
+/// 「使用这份歌词」时，本地歌曲写回文件的结果。
+enum _EmbeddedWriteResult {
+  /// 不是本地歌曲，不需要写文件。
+  skipped,
+
+  /// 已成功写入。
+  written,
+
+  /// 写了但失败（只读、磁盘错误…）。
+  failed,
+
+  /// 格式不支持（m4a / ogg / ape …）。
+  unsupported,
 }
