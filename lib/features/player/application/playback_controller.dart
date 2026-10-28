@@ -521,6 +521,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     // 数据源（只提供元数据）解析失败属于「配置问题」，重试没有意义：还会让
     // 用户多等一轮搜索 + 取地址。
     var dataSourceFailure = false;
+    var timedOut = false;
     Future<List<PluginMusicUrlResult>> resolveOnce() async {
       try {
         return await _musicSourceManager
@@ -542,11 +543,11 @@ class PlaybackController extends StateNotifier<PlaybackState> {
           'source=${song.source} error=$error',
         );
         if (error is DataSourcePlaybackException) dataSourceFailure = true;
+        if (error is TimeoutException) timedOut = true;
         if (_currentPlayRequestId == requestId) {
-          _lastResolveError = error.toString().replaceFirst(
-            RegExp(r'^Exception:\s*'),
-            '',
-          );
+          _lastResolveError = error is TimeoutException
+              ? tr('获取播放地址超时')
+              : error.toString().replaceFirst(RegExp(r'^Exception:\s*'), '');
         }
         return const <PluginMusicUrlResult>[];
       }
@@ -555,7 +556,9 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     var candidates = await resolveOnce();
     if (candidates.isNotEmpty ||
         _currentPlayRequestId != requestId ||
-        dataSourceFailure) {
+        dataSourceFailure ||
+        // 超时已经等满整个取地址窗口，重试只会再等一轮。
+        timedOut) {
       return candidates;
     }
 
@@ -793,7 +796,13 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   /// 2. 当前音源 URL 获取失败 → 依次尝试更低音质（需开启「音质自动降级」）
   /// 3. 播放器运行时 error → error listener 中同样按上述规则处理
   /// 4. 全部失败 → 停止播放，**不自动播放下一首**
-  static const Duration _urlFetchTimeout = Duration(seconds: 12);
+  /// 取播放地址的总超时。
+  ///
+  /// 12 秒只够一次插件请求：数据源歌曲还要先在播放源里搜一遍，插件内部也可能
+  /// 串行请求多个接口（如「星海」先查自建后端、再换 GD API），两个 10 秒超时
+  /// 叠加就超过 12 秒，看起来像「必超时」。这里给到 25 秒，正好覆盖「搜索 +
+  /// 插件内部两次请求」的最坏情况。
+  static const Duration _urlFetchTimeout = Duration(seconds: 25);
   static const Duration _audioSetTimeout = Duration(seconds: 10);
   static const Duration _musicSourceReadyTimeout = Duration(seconds: 12);
 
