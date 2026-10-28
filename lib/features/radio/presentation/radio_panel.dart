@@ -14,6 +14,7 @@ import '../../discover/application/discover_providers.dart';
 import '../../player/application/playback_controller.dart';
 import '../application/radio_providers.dart';
 import '../application/radio_session.dart';
+import 'radio_category_manager_sheet.dart';
 import 'radio_edit_page.dart';
 
 /// 发现页的「电台」分类：分类栏 + 电台列表。
@@ -131,62 +132,18 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
     );
   }
 
+  /// 电台分类管理弹框：新建 + 已建分类的排序 / 改名 / 删除。
+  ///
+  /// 删除当前选中的分类不用额外处理：build 里的兜底会自动回到「全部」。
   Future<void> _createCategory() async {
-    final controller = TextEditingController();
-    final name = await showDialog<String>(
-      context: context,
-      builder: (ctx) {
-        final colors = ref.read(themeColorsProvider);
-        return AlertDialog(
-          backgroundColor: colors.surface,
-          title: Text(
-            context.tr('新建电台分类'),
-            style: TextStyle(fontSize: 17, color: colors.textPrimary),
-          ),
-          content: TextField(
-            controller: controller,
-            autofocus: true,
-            style: TextStyle(fontSize: 14, color: colors.textPrimary),
-            decoration: InputDecoration(
-              isDense: true,
-              hintText: context.tr('分类名称'),
-              hintStyle: TextStyle(fontSize: 14, color: colors.textHint),
-              filled: true,
-              fillColor: colors.surfaceVariant,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(AppRadius.md),
-                borderSide: BorderSide.none,
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: Text(
-                context.tr('取消'),
-                style: TextStyle(color: colors.textHint),
-              ),
-            ),
-            TextButton(
-              onPressed: () {
-                final value = controller.text.trim();
-                if (value.isEmpty) return;
-                Navigator.pop(ctx, value);
-              },
-              child: Text(
-                context.tr('创建'),
-                style: TextStyle(color: colors.primary),
-              ),
-            ),
-          ],
-        );
+    final colors = ref.read(themeColorsProvider);
+    await showRadioCategoryManagerSheet(
+      context,
+      colors: colors,
+      onCreated: (category) {
+        if (mounted) setState(() => _categoryId = category.id);
       },
     );
-    controller.dispose();
-    if (name == null || name.trim().isEmpty) return;
-    final category = await ref.read(radioProvider.notifier).addCategory(name);
-    if (!mounted) return;
-    setState(() => _categoryId = category.id);
   }
 
   Future<void> _confirmRemoveCategory(RadioCategory category) async {
