@@ -351,7 +351,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   Duration _lastEmittedPosition = Duration.zero;
   static const Duration _positionThrottle = Duration(milliseconds: 200);
 
-  /// 恢复上次会话后还没有加载音频源：用户点播放时先按当前索引重新解析。
+  // 恢复会话或播放失败后，底层可能仍留着旧曲目，不能直接恢复播放。
   bool _needsSourceLoad = false;
 
   /// seek 后等待位置流追上目标位置的临时锁。
@@ -651,7 +651,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
       }
     });
     _playerStateSub = _audioHandler.playerStateStream.listen((playerState) {
-      if (!mounted) return;
+      if (!mounted || _needsSourceLoad) return;
       // 真实收听时长：只有真正出声时采样进度，暂停 / 缓冲 / 加载 / 播完都停。
       _syncListenSession(playerState);
       // 暂停 / 停止时记录一次播放进度。
@@ -1020,7 +1020,8 @@ class PlaybackController extends StateNotifier<PlaybackState> {
               .timeout(_audioSetTimeout);
           await _startPlayback();
         } catch (_) {
-          state = state.copyWith(isLoading: false, isPlaying: false);
+          if (_currentPlayRequestId != requestId) return;
+          await _stopPlaybackOnFailure(tr('播放歌曲失败'));
           return;
         }
         // 遵循 CeruMusic：不乐观设 isPlaying=true。
@@ -1100,6 +1101,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
           }
         }
 
+        if (_currentPlayRequestId != requestId) return;
         await _stopPlaybackOnFailure(_playbackFailureReason(song));
         return;
       }
@@ -1325,8 +1327,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     _justCompleted = false;
     // 播完后用户又点了播放：这是一次新的收听，重新允许结算。
     _completedListenCounted = false;
-    // 恢复的会话还没有加载音频源（保存时清掉了会过期的在线地址），
-    // 这里按当前索引重新走一遍加载流程。
     if (_needsSourceLoad) {
       final index = _currentIndex;
       if (index >= 0 && index < state.queue.length) {
@@ -1355,7 +1355,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     // CeruMusic 的 togglePlayPause:
     //   const isActuallyPlaying = a ? !a.paused : Audio.value.isPlay
     final isActuallyPlaying = _audioHandler.playing;
-    if (isActuallyPlaying) {
+    if (isActuallyPlaying && !_needsSourceLoad) {
       await pause();
     } else {
       await play();
@@ -1630,6 +1630,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
           .setAudioSource(result.url, song: updatedSong)
           .timeout(_audioSetTimeout);
       if (_currentPlayRequestId != requestId) return;
+      _needsSourceLoad = false;
       await _seekWithoutCounting(currentPosition);
       state = state.copyWith(
         isLoading: false,
@@ -1812,11 +1813,25 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     _finalizeListenSession();
 
     _cancelPendingAutoNext();
+    _needsSourceLoad = true;
+    unawaited(_errorListenerSub?.cancel());
+    _errorListenerSub = null;
     _loadingTimer?.cancel();
     _loadingTimer = null;
     _stallBaselinePosition = null;
     if (mounted) {
-      state = state.copyWith(isLoading: false);
+      final song = state.currentSong;
+      final index = _currentIndex;
+      if (song != null && !song.isLocal && index >= 0) {
+        final retrySong = song.copyWith(
+          clearSourceUrl: true,
+          clearSourceHeaders: true,
+          clearSourceQuality: true,
+        );
+        final queue = List<Song>.from(state.queue)..[index] = retrySong;
+        state = state.copyWith(currentSong: retrySong, queue: queue);
+      }
+      state = state.copyWith(isPlaying: false, isLoading: false);
     }
 
     try {
