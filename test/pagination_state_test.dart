@@ -347,4 +347,142 @@ void main() {
     expect(pager.page, 40);
     expect(pager.slice(notifier.state.songs).single.id, '40');
   });
+
+  test('发现歌单跳页直达只请求目标页，相邻页继续追加', () async {
+    final manager = _Manager();
+    final pages = <int>[];
+    manager.categoryPage = (page) async {
+      pages.add(page);
+      return PageResult(
+        items: [for (var i = 0; i < 30; i++) _playlist((page - 1) * 30 + i)],
+        total: 500,
+        isEnd: false,
+      );
+    };
+    final notifier = CategoryPlaylistsNotifier(DiscoverRepository(manager));
+    addTearDown(notifier.dispose);
+    await notifier.fetchPlaylists(sortId: 'hot', tagId: '', reset: true);
+    pages.clear();
+
+    final effective = await notifier.goToPage(
+      page: 10,
+      pageSize: 30,
+      sortId: 'hot',
+      tagId: '',
+    );
+    expect(effective, 10);
+    expect(pages, [10], reason: '不补齐前面 9 页');
+    final items = notifier.state.valueOrNull!;
+    expect(items, hasLength(30));
+    expect(items.first.id, '${9 * 30}');
+    expect(items.last.id, '${10 * 30 - 1}');
+    expect(notifier.total, 500);
+    expect(notifier.noMore, isFalse);
+
+    await notifier.fetchPlaylists(sortId: 'hot', tagId: '');
+    expect(pages, [10, 11], reason: '相邻页从接口下一页继续追加');
+    expect(notifier.state.valueOrNull!, hasLength(60));
+  });
+
+  test('界面每页条数与接口每页不同时按接口页换算', () async {
+    final manager = _Manager();
+    final pages = <int>[];
+    manager.categoryPage = (page) async {
+      pages.add(page);
+      return PageResult(
+        items: [for (var i = 0; i < 20; i++) _playlist((page - 1) * 20 + i)],
+        total: 400,
+        isEnd: false,
+      );
+    };
+    final notifier = CategoryPlaylistsNotifier(DiscoverRepository(manager));
+    addTearDown(notifier.dispose);
+    await notifier.fetchPlaylists(sortId: 'hot', tagId: '', reset: true);
+    pages.clear();
+
+    // 界面每页 40 条（10 行 × 4 列），接口每页 20 条：第 3 页从第 81 条起。
+    final effective = await notifier.goToPage(
+      page: 3,
+      pageSize: 40,
+      sortId: 'hot',
+      tagId: '',
+    );
+    expect(effective, 3);
+    expect(pages, [5, 6], reason: '只取覆盖目标页的接口页');
+    final ids = notifier.state.valueOrNull!
+        .map((playlist) => int.parse(playlist.id))
+        .toList();
+    expect(ids, hasLength(40));
+    expect(ids.first, 80);
+    expect(ids.last, 119);
+  });
+
+  test('发现歌单跳页遇到空页时回退到最近的有数据页', () async {
+    final manager = _Manager();
+    final pages = <int>[];
+    manager.categoryPage = (page) async {
+      pages.add(page);
+      if (page > 3) return const PageResult(items: [], total: 500);
+      return PageResult(
+        items: [for (var i = 0; i < 30; i++) _playlist((page - 1) * 30 + i)],
+        total: 500,
+        isEnd: false,
+      );
+    };
+    final notifier = CategoryPlaylistsNotifier(DiscoverRepository(manager));
+    addTearDown(notifier.dispose);
+    await notifier.fetchPlaylists(sortId: 'hot', tagId: '', reset: true);
+    pages.clear();
+
+    final effective = await notifier.goToPage(
+      page: 5,
+      pageSize: 30,
+      sortId: 'hot',
+      tagId: '',
+    );
+    expect(effective, 3, reason: '停在最近的有数据页');
+    expect(pages, [5, 4, 3], reason: '往回退时只查这几页');
+    expect(notifier.state.valueOrNull!.first.id, '${2 * 30}');
+    expect(notifier.state.valueOrNull!, hasLength(30));
+    expect(notifier.total, 90, reason: '总数按实际数据收尾');
+    expect(notifier.noMore, isTrue);
+  });
+
+  test('发现歌单跳页失败保留原缓冲', () async {
+    final manager = _Manager();
+    final pages = <int>[];
+    var fail = true;
+    manager.categoryPage = (page) async {
+      pages.add(page);
+      if (page == 7 && fail) throw Exception('offline');
+      return PageResult(
+        items: [for (var i = 0; i < 30; i++) _playlist((page - 1) * 30 + i)],
+        total: 300,
+        isEnd: false,
+      );
+    };
+    final notifier = CategoryPlaylistsNotifier(DiscoverRepository(manager));
+    addTearDown(notifier.dispose);
+    await notifier.fetchPlaylists(sortId: 'hot', tagId: '', reset: true);
+    final before = notifier.state.valueOrNull!.map((p) => p.id).toList();
+    pages.clear();
+
+    expect(
+      await notifier.goToPage(page: 7, pageSize: 30, sortId: 'hot', tagId: ''),
+      isNull,
+    );
+    expect(pages, [7]);
+    expect(
+      notifier.state.valueOrNull!.map((p) => p.id).toList(),
+      before,
+      reason: '失败时保留已加载内容',
+    );
+
+    fail = false;
+    expect(
+      await notifier.goToPage(page: 7, pageSize: 30, sortId: 'hot', tagId: ''),
+      7,
+    );
+    expect(pages, [7, 7]);
+  });
 }

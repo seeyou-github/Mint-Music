@@ -97,12 +97,67 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
     super.dispose();
   }
 
-  /// 切到第 [page] 页；数据不够时继续向接口取。
+  /// 切到第 [page] 页；离缓冲区远的页只取该页，不把中间页逐页拉一遍。
   Future<void> _goToPlaylistPage(int page) async {
     if (page < 1 || _pagingLoading) return;
+    final previousPage = _playlistPager.page;
     setState(() => _playlistPager.jumpTo(page));
     if (_scrollController.hasClients) _scrollController.jumpTo(0);
-    await _ensurePlaylistPage();
+    final loaded = ref.read(categoryPlaylistsProvider).valueOrNull?.length ?? 0;
+    if (_beyondPlaylistBuffer(page, loaded)) {
+      await _jumpToPlaylistPageDirect(page, fallbackPage: previousPage);
+    } else {
+      await _ensurePlaylistPage();
+    }
+  }
+
+  /// 目标页是否超出「缓冲区 + 下一页」的连续范围。
+  ///
+  /// 超出（或往回翻出缓冲区）时走跳页直达——只取目标页，不把中间页
+  /// 逐页拉一遍；范围内仍走追加补齐，缓冲可以继续复用。
+  bool _beyondPlaylistBuffer(int page, int loaded) {
+    final contiguousEnd =
+        _playlistPager.bufferBase -
+        1 +
+        (loaded / _playlistPager.pageSize).ceil();
+    return page < _playlistPager.bufferBase || page > contiguousEnd + 1;
+  }
+
+  /// 跳页直达：只请求目标页并替换缓冲；失败时退回原页码并提示。
+  Future<void> _jumpToPlaylistPageDirect(
+    int page, {
+    required int fallbackPage,
+  }) async {
+    final generation = _pagingGeneration;
+    setState(() => _pagingLoading = true);
+    int? effectivePage;
+    try {
+      effectivePage = await ref
+          .read(categoryPlaylistsProvider.notifier)
+          .goToPage(
+            page: page,
+            pageSize: _playlistPager.pageSize,
+            sortId: 'hot',
+            tagId: ref.read(activeTagIdProvider),
+            sourceId: ref.read(discoverSourceIdProvider),
+          );
+    } catch (_) {
+      effectivePage = null;
+    } finally {
+      if (mounted && generation == _pagingGeneration) {
+        setState(() {
+          _pagingLoading = false;
+          if (effectivePage != null) {
+            _playlistPager.rebase(effectivePage);
+          } else {
+            _playlistPager.jumpTo(fallbackPage);
+          }
+        });
+      }
+    }
+    if (effectivePage == null && mounted && generation == _pagingGeneration) {
+      _showMessage(context.tr('加载第 $page 页失败'));
+    }
   }
 
   /// 补当前页数据：接口一次给的比一页少时继续取，多给的留着下次用。
