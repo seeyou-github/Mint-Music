@@ -15,6 +15,7 @@ import '../../application/lyric_controller.dart';
 import '../../application/playback_controller.dart';
 import '../../domain/models/lyric_line.dart';
 import '../../domain/models/song.dart';
+import 'lyric_format_tag.dart';
 import 'lyric_scroll_view.dart';
 
 /// 打开「搜索歌词」弹层。
@@ -197,7 +198,7 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
     final message = context.tr('已使用这份歌词');
     await ref
         .read(lyricControllerProvider.notifier)
-        .applyManualLyric(widget.song, result);
+        .applyManualLyric(widget.song, result, source: _sourceId);
     if (!mounted) return;
     Navigator.of(context).pop();
     messenger.showSnackBar(
@@ -289,6 +290,7 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
               ),
               const SizedBox(height: AppSpacing.sm),
               _buildResults(colors),
+              _buildFormatTag(colors),
               const Divider(height: 1),
               Expanded(child: _buildPreview(colors)),
               _buildFooter(colors),
@@ -471,6 +473,43 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  /// 预览中的逐字歌词格式（YRC / QRC / KRC / LRCX / TTML ...）。
+  ///
+  /// 没选候选时展示的「当前使用的歌词」，格式取播放器里已加载的歌词。
+  String? _activeFormat() {
+    if (_selectedIndex < 0) {
+      final lyric = ref.watch(lyricControllerProvider);
+      if (lyric.currentSongId != widget.song.id || !lyric.hasYrc) return null;
+      return lyric.lyricFormat;
+    }
+    final result = _previewResult;
+    if (result == null || !_previewLines.any((line) => line.isYrc)) {
+      return null;
+    }
+    final index = _selectedIndex;
+    final source = index < _results.length
+        ? MusicSourceManager.splitSourceId(_results[index].source ?? '').$1
+        : '';
+    return lyricFormatOfResult(result, source: source.isEmpty ? null : source);
+  }
+
+  Widget _buildFormatTag(ThemeColors colors) {
+    final format = _activeFormat();
+    if (format == null) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.lg,
+        AppSpacing.xs,
+        AppSpacing.lg,
+        AppSpacing.xs,
+      ),
+      child: Align(
+        alignment: Alignment.centerRight,
+        child: LyricFormatTag(format: format, colors: colors),
       ),
     );
   }

@@ -26,6 +26,10 @@ class LyricState {
   final String? currentSongSource;
   final bool hasYrc;
 
+  /// 逐字歌词的英文格式名（YRC / QRC / KRC / LRCX / MRC / TTML / ELRC）。
+  /// 普通 LRC 或尚未加载时为 null。
+  final String? lyricFormat;
+
   const LyricState({
     this.lines = const [],
     this.isLoading = false,
@@ -33,6 +37,7 @@ class LyricState {
     this.currentSongId,
     this.currentSongSource,
     this.hasYrc = false,
+    this.lyricFormat,
   });
 
   LyricState copyWith({
@@ -42,6 +47,7 @@ class LyricState {
     String? currentSongId,
     String? currentSongSource,
     bool? hasYrc,
+    String? lyricFormat,
   }) {
     return LyricState(
       lines: lines ?? this.lines,
@@ -50,6 +56,7 @@ class LyricState {
       currentSongId: currentSongId ?? this.currentSongId,
       currentSongSource: currentSongSource ?? this.currentSongSource,
       hasYrc: hasYrc ?? this.hasYrc,
+      lyricFormat: lyricFormat ?? this.lyricFormat,
     );
   }
 }
@@ -85,6 +92,16 @@ List<LyricLine> buildLyricLinesFrom(LyricResult result) {
     lines = mergeRomanLyric(lines, rlyric);
   }
   return sanitizeLyricLines(lines);
+}
+
+/// 这份歌词的逐字格式名；普通 LRC 返回 null。
+String? lyricFormatOfResult(LyricResult result, {String? source}) {
+  for (final text in [result.crlyric, result.lrc]) {
+    if (text == null || text.trim().isEmpty) continue;
+    final format = detectWordLyricFormat(text, source: source);
+    if (format != null) return format;
+  }
+  return null;
 }
 
 class LyricController extends StateNotifier<LyricState> {
@@ -217,6 +234,11 @@ class LyricController extends StateNotifier<LyricState> {
       String? ttmlText;
       List<LyricLine>? ttmlLines;
 
+      // 歌曲的 source 可能带 `@插件id`（插件音源；或者地址被插件解析后，
+      // 队列里歌曲的 source 被标记成了插件变体 id）。TTML 词库只按平台
+      // 提供，逐字格式也按平台辅助判断。
+      final baseSource = _baseSourceOf(song.source) ?? '';
+
       // Step 0: 本地缓存。歌词来自网络，命中缓存就不用再请求，切歌时歌词
       // 立刻出现。
       final cached = await LyricCache.read(song);
@@ -234,10 +256,6 @@ class LyricController extends StateNotifier<LyricState> {
           ttmlLines = lines.isEmpty ? null : lines;
         }
       } else {
-        // 歌曲的 source 可能带 `@插件id`（插件音源；或者地址被插件解析后，
-        // 队列里歌曲的 source 被标记成了插件变体 id）。TTML 词库只按平台
-        // 提供，这里要取平台部分，否则切歌回来就取不到逐字歌词了。
-        final baseSource = _baseSourceOf(song.source) ?? '';
         final sourceSupportsWordLyric =
             baseSource == 'tx' ||
             baseSource == 'wy' ||
@@ -363,6 +381,7 @@ class LyricController extends StateNotifier<LyricState> {
             lines: _convertLines(ttmlLines),
             currentSongId: song.id,
             hasYrc: hasYrc,
+            lyricFormat: hasYrc ? 'TTML' : null,
           );
           return;
         }
@@ -387,6 +406,7 @@ class LyricController extends StateNotifier<LyricState> {
         if (lrc != null && lrc.isNotEmpty) lrc,
       ];
 
+      String? chosenCandidate;
       if (lyricCandidates.isNotEmpty) {
         parsedLines = [];
         for (final candidate in lyricCandidates) {
@@ -399,6 +419,7 @@ class LyricController extends StateNotifier<LyricState> {
           final candidateHasYrc = parsed.any((line) => line.isYrc);
           if (candidateHasYrc || parsedLines.isEmpty) {
             parsedLines = parsed;
+            chosenCandidate = candidate;
           }
           if (candidateHasYrc) break;
         }
@@ -434,6 +455,9 @@ class LyricController extends StateNotifier<LyricState> {
         lines: _convertLines(parsedLines),
         currentSongId: song.id,
         hasYrc: hasYrc,
+        lyricFormat: hasYrc && chosenCandidate != null
+            ? detectWordLyricFormat(chosenCandidate, source: baseSource)
+            : null,
       );
     } catch (e, stack) {
       debugPrint('[LyricController] Error loading lyrics: $e');
@@ -447,15 +471,26 @@ class LyricController extends StateNotifier<LyricState> {
   ///
   /// 立即替换当前显示，并写入歌词缓存：下次播放这首歌会先命中缓存，
   /// 不会被自动匹配的歌词覆盖。
-  Future<void> applyManualLyric(Song song, LyricResult result) async {
+  Future<void> applyManualLyric(
+    Song song,
+    LyricResult result, {
+    String? source,
+  }) async {
     final lines = buildLyricLinesFrom(result);
     if (lines.isEmpty) return;
+    final hasYrc = lines.any((line) => line.isYrc);
     _rawLines = lines;
     state = LyricState(
       lines: _convertLines(lines),
       currentSongId: song.id,
       currentSongSource: song.source,
-      hasYrc: lines.any((line) => line.isYrc),
+      hasYrc: hasYrc,
+      lyricFormat: hasYrc
+          ? lyricFormatOfResult(
+              result,
+              source: _baseSourceOf(source ?? song.source),
+            )
+          : null,
     );
     await LyricCache.clearDeleted(song);
     await LyricCache.write(

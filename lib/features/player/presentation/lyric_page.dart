@@ -21,6 +21,7 @@ import '../domain/services/cover_color_extractor.dart';
 import '../../settings/application/settings_providers.dart';
 import '../../library/application/playlist_providers.dart';
 import '../application/root_overlay_tracker.dart';
+import 'widgets/lyric_format_tag.dart';
 import 'widgets/lyric_scroll_view.dart';
 import 'widgets/player_controls.dart';
 import '../../../shared/widgets/sleep_timer_picker.dart';
@@ -330,6 +331,15 @@ class _LyricPageState extends ConsumerState<LyricPage> {
                                     ),
                                   ),
                                 ),
+                                if (lyricState.lyricFormat != null)
+                                  Positioned(
+                                    top: 16,
+                                    right: 16,
+                                    child: LyricFormatTag(
+                                      format: lyricState.lyricFormat!,
+                                      dark: true,
+                                    ),
+                                  ),
                               ],
                             );
                           },

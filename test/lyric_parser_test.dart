@@ -1,4 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mintmusic/features/player/application/lyric_controller.dart';
+import 'package:mintmusic/features/player/domain/models/lyric_line.dart';
 import 'package:mintmusic/features/player/domain/services/lyric_parser.dart';
 
 void main() {
@@ -104,6 +106,88 @@ void main() {
       expect(lines, hasLength(2));
       expect(lines[0].plainText, '我感觉');
       expect(lines[1].plainText, '别一个人看喜剧');
+    });
+  });
+
+  group('detectWordLyricFormat', () {
+    test('returns null for plain lrc', () {
+      expect(detectWordLyricFormat('[00:12.00]普通歌词'), isNull);
+      expect(detectWordLyricFormat(''), isNull);
+    });
+
+    test('detects yrc with tag before each word', () {
+      expect(
+        detectWordLyricFormat('[12005,340](12005,180,0)Stay(12185,160,0)here'),
+        'YRC',
+      );
+    });
+
+    test('uses source to separate qrc and mrc', () {
+      const line = '[12005,340]Stay(0,180)here(180,160)';
+      expect(detectWordLyricFormat(line, source: 'tx'), 'QRC');
+      expect(detectWordLyricFormat(line, source: 'mg'), 'MRC');
+      expect(detectWordLyricFormat(line), 'QRC');
+    });
+
+    test('detects krc and lrcx angle bracket timings', () {
+      expect(
+        detectWordLyricFormat('[12005,340]<0,180,0>Stay<180,160,0>here'),
+        'KRC',
+      );
+      expect(
+        detectWordLyricFormat('[12005,340]<0,180>Stay<180,160>here'),
+        'LRCX',
+      );
+    });
+
+    test('detects enhanced lrc and interleaved lrc', () {
+      expect(
+        detectWordLyricFormat('[00:12.00]<00:12.00>Stay<00:12.18>here'),
+        'ELRC',
+      );
+      expect(
+        detectWordLyricFormat('[00:12.00]我[00:12.30]感[00:13.00]觉'),
+        'ELRC',
+      );
+      expect(
+        detectWordLyricFormat('我[02:13.20]感[02:13.64]觉[02:14.53]'),
+        'ELRC',
+      );
+    });
+
+    test('detects netease json lines yrc and ttml', () {
+      expect(
+        detectWordLyricFormat(
+          '{"t":12005,"c":[{"tx":"S","t":"0:12.005"},{"tx":"t","t":"0:12.185"}]}\n'
+          '{"t":14000,"c":[{"tx":"a","t":"0:14.000"},{"tx":"y","t":"0:14.200"}]}',
+        ),
+        'YRC',
+      );
+      expect(
+        detectWordLyricFormat(
+          '<tt xmlns="http://www.w3.org/ns/ttml"><body><div><p begin="0s">x</p></div></body></tt>',
+        ),
+        'TTML',
+      );
+    });
+  });
+
+  group('lyricFormatOfResult', () {
+    test('prefers word lyric format and falls back to plain lrc', () {
+      expect(
+        lyricFormatOfResult(
+          const LyricResult(
+            crlyric: '[12005,340](12005,180,0)Stay',
+            lrc: '[00:12.00]Stay',
+          ),
+          source: 'wy',
+        ),
+        'YRC',
+      );
+      expect(
+        lyricFormatOfResult(const LyricResult(lrc: '[00:12.00]Stay')),
+        isNull,
+      );
     });
   });
 }

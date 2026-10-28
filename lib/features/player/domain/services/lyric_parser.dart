@@ -761,6 +761,47 @@ bool isTtmlFormat(String text) {
           trimmed.contains('<p'));
 }
 
+/// 逐字歌词的英文格式名（YRC / QRC / KRC / LRCX / MRC / TTML / ELRC）。
+///
+/// 只有逐字格式才返回名称，普通 LRC 返回 null。QRC 与 MRC 的行结构相同，
+/// 需要 [source]（wy / tx / kg / kw / mg）辅助区分；无法判断时按 QRC 处理。
+String? detectWordLyricFormat(String text, {String? source}) {
+  if (text.isEmpty) return null;
+  final content = extractEmbeddedLyricContent(text).trimLeft();
+  if (content.isEmpty) return null;
+
+  if (isTtmlFormat(content)) return 'TTML';
+  if (isNeteaseJsonYrcFormat(content)) return 'YRC';
+  if (isKrcFormat(content)) return 'KRC';
+  if (isLrcxFormat(content)) return 'LRCX';
+  if (isEnhancedLrcFormat(content)) return 'ELRC';
+
+  final lineRegExp = RegExp(r'^\[\d+,\d+\](.*)$');
+  final wordTagRegExp = RegExp(r'\(\d+,\d+(?:,\d+)?\)');
+  for (final rawLine in content.split('\n').take(80)) {
+    final line = rawLine.trim();
+    if (line.isEmpty) continue;
+    final match = lineRegExp.firstMatch(line);
+    if (match == null) continue;
+    final body = match.group(1) ?? '';
+    if (!wordTagRegExp.hasMatch(body)) continue;
+    // YRC：时间标签在前（`(start,dur,0)字`）；QRC / MRC：文字在前，
+    // 两者行结构相同，靠来源区分，无法判断时按 QRC 处理。
+    if (body.startsWith('(')) return 'YRC';
+    if (source == 'mg') return 'MRC';
+    return 'QRC';
+  }
+
+  // 交错式逐字 LRC：`[mm:ss.xx]字[mm:ss.xx]字`（也可能首段文字在标签前）。
+  if (RegExp(
+    r'^[^\n\[]*\[\d{1,2}:\d{2}(?:[.:]\d{1,3})?\][^\n\[]*\[\d{1,2}:\d{2}(?:[.:]\d{1,3})\]',
+    multiLine: true,
+  ).hasMatch(content)) {
+    return 'ELRC';
+  }
+  return null;
+}
+
 List<LyricLine> parseEnhancedLrc(String lrcText) {
   if (lrcText.isEmpty) return [];
 

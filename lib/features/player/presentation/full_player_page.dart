@@ -28,6 +28,7 @@ import '../../plugin/application/plugin_providers.dart';
 import '../../settings/application/settings_providers.dart';
 import '../../../shared/widgets/song_action_sheet.dart';
 import '../../../shared/widgets/sleep_timer_picker.dart';
+import 'widgets/lyric_format_tag.dart';
 import 'widgets/lyric_scroll_view.dart';
 import 'widgets/lyric_search_sheet.dart';
 import 'widgets/play_queue_sheet.dart';
@@ -957,30 +958,47 @@ class _PlayerLyricsPage extends ConsumerWidget {
     if (lyricState.lines.isEmpty) {
       return _buildEmptyState(context, ref, context.tr('暂无歌词'));
     }
-    return LyricScrollView(
-      lines: lyricState.lines,
-      currentTimeMs: lyricPosition.inMilliseconds,
-      isPlaying: isPlaying,
-      isSeekPreview: seekPreview != null,
-      hasYrc: hasYrc,
-      activeColor: activeColor,
-      inactiveColor: inactiveColor,
-      mainFontSize: baseFontSize,
-      transFontSize: transFontSize,
-      romanFontSize: romanFontSize,
-      fontSizeRate: watchFontRate,
-      showTranslation: showTranslation,
-      showRoman: showRoman,
-      enableBlur: enableBlur,
-      enableScale: enableScale,
-      centerAlign: lyricCenterAlign,
-      fontFamily: watchFontFamily,
-      fontWeight: watchFontWeight,
-      onSeek: (startTimeMs) {
-        ref
-            .read(playbackControllerProvider.notifier)
-            .seek(Duration(milliseconds: startTimeMs));
-      },
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: LyricScrollView(
+            lines: lyricState.lines,
+            currentTimeMs: lyricPosition.inMilliseconds,
+            isPlaying: isPlaying,
+            isSeekPreview: seekPreview != null,
+            hasYrc: hasYrc,
+            activeColor: activeColor,
+            inactiveColor: inactiveColor,
+            mainFontSize: baseFontSize,
+            transFontSize: transFontSize,
+            romanFontSize: romanFontSize,
+            fontSizeRate: watchFontRate,
+            showTranslation: showTranslation,
+            showRoman: showRoman,
+            enableBlur: enableBlur,
+            enableScale: enableScale,
+            centerAlign: lyricCenterAlign,
+            fontFamily: watchFontFamily,
+            fontWeight: watchFontWeight,
+            onSeek: (startTimeMs) {
+              ref
+                  .read(playbackControllerProvider.notifier)
+                  .seek(Duration(milliseconds: startTimeMs));
+            },
+          ),
+        ),
+        if (lyricState.lyricFormat != null)
+          Positioned(
+            top: 8,
+            right: 16,
+            child: IgnorePointer(
+              child: LyricFormatTag(
+                format: lyricState.lyricFormat!,
+                dark: true,
+              ),
+            ),
+          ),
+      ],
     );
   }
 
