@@ -277,11 +277,17 @@ function fetchSheetsByTag(tagId, page) {
 }
 
 function fetchTopLists() {
-  return getJson(
-    YQQ +
-      '/v8/fcg-bin/fcg_myqq_toplist.fcg?g_tk=5381&loginUin=0&hostUin=0' +
-      '&format=json&inCharset=utf8&outCharset=utf-8&notice=0' +
-      '&platform=yqq&needNewCode=0'
+  // 官方排行榜页同源接口：topList.data.group[] 按 巅峰榜/地区榜/特色榜/全球榜 分组
+  return musicu(
+    {
+      comm: { ct: 24, cv: 0 },
+      topList: {
+        module: 'musicToplist.ToplistInfoServer',
+        method: 'GetAll',
+        param: {}
+      }
+    },
+    ['topList']
   );
 }
 
@@ -777,10 +783,10 @@ function fetchQrc(songId, songInfo) {
 module.exports = {
   pluginInfo: {
     name: '数据源-QQ',
-    version: '1.6.0',
+    version: '1.7.0',
     author: 'MintMusic',
     description:
-      '只提供搜索（歌曲 / 专辑 / 作者）、歌单分类、榜单、歌单 / 专辑 / 作者详情的 QQ音乐数据源；' +
+      '只提供搜索（歌曲 / 专辑 / 作者）、歌单分类、榜单（含分类）、歌单 / 专辑 / 作者详情的 QQ音乐数据源；' +
       '歌词支持逐字 QRC（需播放源提供数字歌曲 id）；' +
       '播放需要在「插件管理 → 数据源」里指定一个已安装的播放源。',
     // ★ 数据源标记
@@ -1151,19 +1157,28 @@ module.exports = {
   /* ------------------------------------------------------------- 榜单列表 */
   getTopLists: function () {
     return fetchTopLists().then(function (body) {
-      var list = (body.data && body.data.topList) || [];
+      var groups =
+        (body.topList && body.topList.data && body.topList.data.group) || [];
       var result = [];
-      for (var i = 0; i < list.length; i++) {
-        var item = list[i] || {};
-        // 跳过 MV 榜（与内置源一致）
-        if (Number(item.id) === 201) continue;
-        result.push({
-          id: String(item.id),
-          name: String(item.topTitle || '').replace(/巅峰榜·/g, ''),
-          coverUrl: String(item.picUrl || ''),
-          playCount: formatPlayCount(item.listenCount),
-          updateFrequency: ''
-        });
+      for (var i = 0; i < groups.length; i++) {
+        var group = groups[i] || {};
+        var groupName = String(group.groupName || '');
+        var items = group.toplist || [];
+        for (var j = 0; j < items.length; j++) {
+          var item = items[j] || {};
+          var topId = item.topId;
+          if (topId === undefined || topId === null || topId === '') continue;
+          // MV 榜没法播，跳过（与旧行为一致）
+          if (Number(topId) === 201) continue;
+          result.push({
+            id: String(topId),
+            name: String(item.title || ''),
+            coverUrl: String(item.frontPicUrl || item.headPicUrl || ''),
+            playCount: formatPlayCount(item.listenNum),
+            updateFrequency: String(item.updateTips || item.updateTime || ''),
+            group: groupName
+          });
+        }
       }
       return JSON.stringify(result);
     });

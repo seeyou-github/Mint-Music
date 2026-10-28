@@ -68,6 +68,9 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
   /// 榜单分类，默认「热榜」；每次进入榜单页都会回到「热榜」。
   _LeaderboardCategory _leaderboardCategory = _LeaderboardCategory.hot;
 
+  /// 「所有」榜单里的分组过滤（null = 全部）。切音源后分组消失时自动视为全部。
+  String? _selectedLeaderboardGroup;
+
   /// 正在挑选 / 获取热榜数据。
   bool _addingHotBoard = false;
 
@@ -1724,7 +1727,74 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
             ),
           );
         }
-        return _buildLeaderboardGrid(colors, leaderboards);
+        // 插件给出的榜单分类（巅峰榜/地区榜/特色榜/全球榜…），≥2 组才显示过滤栏。
+        final groups = <String>[];
+        for (final board in leaderboards) {
+          final group = board.group;
+          if (group != null && group.isNotEmpty && !groups.contains(group)) {
+            groups.add(group);
+          }
+        }
+        if (groups.length < 2) {
+          return _buildLeaderboardGrid(colors, leaderboards);
+        }
+        final selected = groups.contains(_selectedLeaderboardGroup)
+            ? _selectedLeaderboardGroup
+            : null;
+        final filtered = selected == null
+            ? leaderboards
+            : leaderboards
+                  .where((board) => board.group == selected)
+                  .toList(growable: false);
+        return Column(
+          children: [
+            SizedBox(
+              height: 36,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: ScrollConfiguration(
+                      behavior: const _CategoryScrollBehavior(),
+                      child: ListView(
+                        scrollDirection: Axis.horizontal,
+                        padding: const EdgeInsets.only(left: AppSpacing.lg),
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.only(right: AppSpacing.sm),
+                            child: _buildTagChip(
+                              label: context.tr('全部'),
+                              isActive: selected == null,
+                              colors: colors,
+                              onTap: () => setState(
+                                () => _selectedLeaderboardGroup = null,
+                              ),
+                            ),
+                          ),
+                          for (final group in groups)
+                            Padding(
+                              padding: const EdgeInsets.only(
+                                right: AppSpacing.sm,
+                              ),
+                              child: _buildTagChip(
+                                label: group,
+                                isActive: selected == group,
+                                colors: colors,
+                                onTap: () => setState(
+                                  () => _selectedLeaderboardGroup = group,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: AppSpacing.lg),
+                ],
+              ),
+            ),
+            Expanded(child: _buildLeaderboardGrid(colors, filtered)),
+          ],
+        );
       },
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (_, __) => Center(

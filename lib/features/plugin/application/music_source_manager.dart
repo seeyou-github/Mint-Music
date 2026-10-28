@@ -2446,11 +2446,12 @@ class MusicSourceManager {
       final rawId = _nonEmptyText(entry['id']);
       if (rawId == null) continue;
       final name = _nonEmptyText(entry['name']) ?? rawId;
-      final group = _nonEmptyText(entry['group']);
       boards.add(
         Leaderboard(
           id: pluginBoardId(sourceId, rawId),
-          name: (group == null || group == name) ? name : '$group · $name',
+          name: name,
+          // 榜单分类（巅峰榜/地区榜/特色榜/全球榜…），无分组为 null
+          group: _nonEmptyText(entry['group']),
           coverUrl: _nonEmptyText(entry['coverUrl']),
           // 榜单卡片的播放量与更新时间（由插件给出已格式化的文本，
           // 例如「65.2亿」「刚刚更新」「每周四更新」「更新20首」）。

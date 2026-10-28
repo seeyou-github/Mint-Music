@@ -1,6 +1,9 @@
 class Leaderboard {
   final String id;
   final String name;
+
+  /// 榜单分类（如 巅峰榜/地区榜/特色榜/全球榜），由插件给出；无分组为 null。
+  final String? group;
   final String? coverUrl;
   final String? playCount;
   final String? updateFrequency;
@@ -9,6 +12,7 @@ class Leaderboard {
   const Leaderboard({
     required this.id,
     required this.name,
+    this.group,
     this.coverUrl,
     this.playCount,
     this.updateFrequency,
