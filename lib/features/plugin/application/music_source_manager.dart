@@ -2412,13 +2412,17 @@ class MusicSourceManager {
   Future<String?> getPic(
     Song song, {
     Set<String> excludedUrls = const <String>{},
+    bool refresh = false,
   }) async {
     final sourceId = song.source;
     if (sourceId == null) return null;
 
     final cacheKey = '$sourceId:${song.id}';
     final cached = _coverCache[cacheKey];
-    if (cached != null &&
+    // refresh 用于「上一次只是插件 / 网络抖动」的重试：绕过缓存的空结果，
+    // 否则重试会直接拿到 null，列表里的封面就再也补不上了。
+    if (!refresh &&
+        cached != null &&
         cached.isValid &&
         (cached.data == null || !excludedUrls.contains(cached.data))) {
       return cached.data;

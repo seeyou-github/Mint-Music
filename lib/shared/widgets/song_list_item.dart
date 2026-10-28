@@ -1,6 +1,8 @@
+import 'dart:async';
+import 'dart:io' as io;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import '../../core/l10n/l10n.dart';
 import '../../core/theme/app_spacing.dart';
 import '../../core/theme/theme_provider.dart';
@@ -10,6 +12,7 @@ import '../../features/player/application/play_progress_providers.dart';
 import '../../features/player/domain/models/song.dart';
 import '../../features/settings/application/settings_providers.dart';
 import '../../shared/services/app_image_cache.dart';
+import '../../shared/services/cover_fetcher.dart';
 import '../../features/plugin/application/music_source_manager.dart';
 import '../../features/plugin/domain/plugin_types.dart';
 import '../../features/plugin/application/plugin_providers.dart';
@@ -639,15 +642,43 @@ class _SongCover extends StatefulWidget {
 }
 
 class _SongCoverState extends State<_SongCover> {
+  /// 单张封面的下载超时。封面文件通常只有几十 KB，超过这个时间基本就是
+  /// 请求卡住了；不设超时的话这一行会一直停在占位图，只能靠滚动重建行来重试。
+  static const Duration _downloadTimeout = Duration(seconds: 10);
+
+  /// 每个候选地址最多尝试几次、失败后等多久再试。
+  static const int _maxAttemptsPerUrl = 2;
+  static const Duration _retryDelay = Duration(milliseconds: 500);
+
+  /// 所有候选地址都失败后，隔一段时间整体重试一次：CDN 抖动 / 风控恢复后
+  /// 自动补上封面，不需要用户滚动到下方再滚回来触发重建。
+  static const Duration _healDelay = Duration(seconds: 10);
+  static const int _maxRounds = 2;
+
+  /// 当前显示 / 正在尝试的地址（解码失败、兜底取图时用）。
   String? _url;
+
+  /// 已下载到本地缓存的文件；为 null 时显示占位图。
+  io.File? _file;
+
+  /// 本轮加载里已经确认不可用的地址（交给 getPic 时排除，避免又拿回同一个）。
   final Set<String> _failedUrls = <String>{};
-  bool _fallbackStarted = false;
+
+  /// 下载成功但解码失败的地址：缓存里的文件是错误页 / 已损坏，不再重试。
+  final Set<String> _brokenUrls = <String>{};
+
+  /// 是否已经向音源要过兜底地址：之后再要时绕过它缓存的空结果（可能只是
+  /// 上一次插件 / 网络抖动导致的失败）。
+  bool _picRequested = false;
+
+  /// 每次重新加载都自增，用来让上一轮还没结束的异步结果自行放弃。
+  int _loadSeq = 0;
 
   @override
   void initState() {
     super.initState();
     _url = widget.initialUrl;
-    if (_url == null || _url!.isEmpty) _loadFallback();
+    _startLoad(widget.initialUrl);
   }
 
   @override
@@ -655,40 +686,122 @@ class _SongCoverState extends State<_SongCover> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.song.id != widget.song.id ||
         oldWidget.initialUrl != widget.initialUrl) {
+      _file = null;
       _url = widget.initialUrl;
       _failedUrls.clear();
-      _fallbackStarted = false;
-      if (_url == null || _url!.isEmpty) _loadFallback();
+      _brokenUrls.clear();
+      _picRequested = false;
+      _startLoad(widget.initialUrl);
     }
   }
 
-  Future<void> _loadFallback() async {
-    if (_fallbackStarted) return;
-    _fallbackStarted = true;
+  bool _isCurrent(int seq) => mounted && seq == _loadSeq;
+
+  /// 先试歌曲自带封面，失败后再向音源要兜底地址；整轮都失败时隔一段时间
+  /// 再从头试一次。
+  Future<void> _startLoad(String? initialUrl) async {
+    final seq = ++_loadSeq;
+    for (var round = 0; round < _maxRounds; round++) {
+      if (round > 0) {
+        await Future<void>.delayed(_healDelay);
+        if (!_isCurrent(seq)) return;
+      }
+      if (await _loadRound(seq, initialUrl)) return;
+      if (!_isCurrent(seq)) return;
+    }
+  }
+
+  Future<bool> _loadRound(int seq, String? initialUrl) async {
+    final primary = initialUrl == null || initialUrl.isEmpty
+        ? const <String>[]
+        : CoverFetcher.candidatesOf(initialUrl, netEaseThumbSize: 200);
+    if (await _tryUrls(seq, primary)) return true;
+    if (!_isCurrent(seq)) return false;
+
     final fallback = await widget.sourceManager.getPic(
       widget.song,
-      excludedUrls: _failedUrls,
+      excludedUrls: {..._failedUrls, ...primary},
+      refresh: _picRequested,
     );
-    if (!mounted || fallback == null || fallback.isEmpty) return;
-    if (_failedUrls.contains(fallback)) return;
-    if (fallback == _url) return;
-    setState(() => _url = fallback);
+    _picRequested = true;
+    if (!_isCurrent(seq) || fallback == null || fallback.isEmpty) return false;
+    final candidates = CoverFetcher.candidatesOf(
+      fallback,
+      netEaseThumbSize: 200,
+    );
+    return _tryUrls(seq, candidates);
   }
 
-  void _handleImageError(String failedUrl) {
-    if (_failedUrls.add(failedUrl)) {
-      setState(() => _url = null);
-      _loadFallback();
+  Future<bool> _tryUrls(int seq, List<String> urls) async {
+    for (final url in urls) {
+      if (_brokenUrls.contains(url)) continue;
+      for (var attempt = 0; attempt < _maxAttemptsPerUrl; attempt++) {
+        if (attempt > 0) {
+          await Future<void>.delayed(_retryDelay);
+          if (!_isCurrent(seq)) return false;
+        }
+        final file = await _fetch(url, attempt);
+        if (!_isCurrent(seq)) return false;
+        if (file != null) {
+          setState(() {
+            _url = url;
+            _file = file;
+          });
+          return true;
+        }
+        _failedUrls.add(url);
+      }
     }
+    return false;
+  }
+
+  Future<io.File?> _fetch(String url, int attempt) async {
+    try {
+      final headers = CoverFetcher.headersFor(url, retry: attempt > 0);
+      final file = attempt == 0
+          // 先走缓存：已经下载过的封面直接读取，不发请求。
+          ? await AppImageCache.manager
+                .getSingleFile(url, headers: headers ?? const {})
+                .timeout(_downloadTimeout)
+          // 上一次可能卡在同一个下载上：强制重新请求，不再复用那条挂住的连接。
+          : (await AppImageCache.manager
+                    .downloadFile(url, authHeaders: headers, force: true)
+                    .timeout(_downloadTimeout))
+                .file;
+      final local = io.File(file.path);
+      if (!await local.exists() || await local.length() < 100) {
+        // 缓存里存的是错误页 / 空文件（或文件已被缓存清理删掉）：
+        // 删掉索引，别让下次直接复用它。
+        await _removeFromCache(url);
+        return null;
+      }
+      return local;
+    } catch (e) {
+      debugPrint('[SongListItem] 封面加载失败: $url - $e');
+      return null;
+    }
+  }
+
+  Future<void> _removeFromCache(String url) async {
+    try {
+      await AppImageCache.manager.removeFile(url);
+    } catch (_) {}
+  }
+
+  /// 下载成功但解码失败：缓存文件坏了，删掉它并换下一个候选地址重新加载。
+  void _handleDecodeError(String? url) {
+    if (url == null || _brokenUrls.contains(url) || url != _url) return;
+    _brokenUrls.add(url);
+    _failedUrls.add(url);
+    setState(() => _file = null);
+    unawaited(_removeFromCache(url));
+    _startLoad(widget.initialUrl);
   }
 
   @override
   Widget build(BuildContext context) {
+    final file = _file;
     final url = _url;
-    if (url == null || url.isEmpty || _failedUrls.contains(url)) {
-      return _buildPlaceholder();
-    }
-
     return Container(
       width: 44,
       height: 44,
@@ -698,27 +811,29 @@ class _SongCoverState extends State<_SongCover> {
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(AppRadius.sm),
-        child: CachedNetworkImage(
-          imageUrl: url,
-          cacheManager: AppImageCache.manager,
-          width: 44,
-          height: 44,
-          fit: BoxFit.cover,
-          memCacheWidth: 132,
-          memCacheHeight: 132,
-          maxWidthDiskCache: 132,
-          maxHeightDiskCache: 132,
-          fadeInDuration: Duration.zero,
-          fadeOutDuration: Duration.zero,
-          filterQuality: FilterQuality.low,
-          placeholder: (context, url) => _buildPlaceholder(),
-          errorWidget: (context, url, error) {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (mounted) _handleImageError(url);
-            });
-            return _buildPlaceholder();
-          },
-        ),
+        child: file == null
+            ? _buildPlaceholder()
+            : Image.file(
+                file,
+                width: 44,
+                height: 44,
+                fit: BoxFit.cover,
+                cacheWidth: 132,
+                cacheHeight: 132,
+                gaplessPlayback: true,
+                filterQuality: FilterQuality.low,
+                // 解码要一两帧时间，这期间继续显示占位图，避免封面位置闪一下空白。
+                frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+                  if (wasSynchronouslyLoaded || frame != null) return child;
+                  return _buildPlaceholder();
+                },
+                errorBuilder: (context, error, stackTrace) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (mounted) _handleDecodeError(url);
+                  });
+                  return _buildPlaceholder();
+                },
+              ),
       ),
     );
   }

@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
@@ -27,6 +26,9 @@ class CoverFetcher {
   /// 候选地址，避免整个下载任务被一张封面卡住。
   static const Duration timeout = Duration(seconds: 30);
 
+  static const String _userAgent =
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
   static final Dio _plainDio = Dio(
     BaseOptions(
       connectTimeout: const Duration(seconds: 10),
@@ -39,8 +41,7 @@ class CoverFetcher {
       connectTimeout: const Duration(seconds: 10),
       receiveTimeout: timeout,
       headers: const {
-        'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'User-Agent': _userAgent,
       },
     ),
   );
@@ -50,12 +51,24 @@ class CoverFetcher {
       connectTimeout: const Duration(seconds: 10),
       receiveTimeout: timeout,
       headers: const {
-        'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'User-Agent': _userAgent,
         'Referer': 'https://music.163.com',
       },
     ),
   );
+
+  /// 下载封面时附带的请求头。
+  ///
+  /// 网易 CDN 需要 Referer（同时带上浏览器 UA）；其它 CDN 第一次用默认请求，
+  /// 重试时再补一个 User-Agent —— 部分图床会拒绝 Dart 默认 UA 的请求。
+  static Map<String, String>? headersFor(String url, {bool retry = false}) {
+    final needsReferer = url.contains('music.126.net');
+    if (!needsReferer && !retry) return null;
+    return {
+      'User-Agent': _userAgent,
+      if (needsReferer) 'Referer': 'https://music.163.com',
+    };
+  }
 
   /// 下载封面；失败返回 null。
   static Future<Uint8List?> fetch(String rawUrl) => fetchAny(<String?>[rawUrl]);
@@ -181,7 +194,10 @@ class CoverFetcher {
   }
 
   /// 按 CDN 规则生成候选地址（顺序即尝试顺序）。
-  static List<String> candidatesOf(String rawUrl) {
+  ///
+  /// [netEaseThumbSize] 是网易封面缩略图的边长：原图可能好几 MB，
+  /// 列表里 44px 的小封面没必要拉原图（写标签等需要清晰的场景保持 400）。
+  static List<String> candidatesOf(String rawUrl, {int netEaseThumbSize = 400}) {
     final result = <String>[];
     void add(String url) {
       if (url.isNotEmpty && !result.contains(url)) result.add(url);
@@ -197,9 +213,9 @@ class CoverFetcher {
       if (url.startsWith('http://')) {
         url = 'https://${url.substring(7)}';
       }
-      // 原图可能好几 MB，先用 400x400 缩略图。
+      // 原图可能好几 MB，先用缩略图。
       final base = url.split('?').first;
-      add('$base?param=400y400');
+      add('$base?param=${netEaseThumbSize}y$netEaseThumbSize');
     }
 
     // 酷我图片 CDN 不支持 https。
