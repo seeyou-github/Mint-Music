@@ -54,6 +54,7 @@ final playlistTagsProvider = FutureProvider<List<PlaylistTagGroup>>((
 ) async {
   // 插件接管平台时，分类由插件提供（插件可能带「置顶分类」）；必须等插件加载
   // 完成再取，否则重启后分类可能为空。
+  ref.watch(pluginSupportedSourcesProvider);
   await ref.watch(pluginInitializedProvider.future);
   final repo = ref.watch(discoverRepositoryProvider);
   final sourceId = ref.watch(discoverSourceIdProvider);
@@ -61,6 +62,7 @@ final playlistTagsProvider = FutureProvider<List<PlaylistTagGroup>>((
 });
 
 final hotPlaylistTagsProvider = FutureProvider<List<PlaylistTag>>((ref) async {
+  ref.watch(pluginSupportedSourcesProvider);
   await ref.watch(pluginInitializedProvider.future);
   final repo = ref.watch(discoverRepositoryProvider);
   final sourceId = ref.watch(discoverSourceIdProvider);

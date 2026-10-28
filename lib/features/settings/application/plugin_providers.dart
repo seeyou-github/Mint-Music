@@ -10,7 +10,8 @@ export '../../plugin/application/plugin_providers.dart'
         musicSourceManagerProvider,
         pluginServiceProvider,
         pluginInitializedProvider,
-        pluginSourceStateProvider;
+        pluginSourceStateProvider,
+        pluginSupportedSourcesProvider;
 
 final pluginRepositoryProvider = Provider<PluginRepository>((ref) {
   return PluginRepository();
@@ -140,7 +141,8 @@ class PluginsNotifier extends AsyncNotifier<List<PluginInfo>> {
     final pluginService = ref.read(pluginServiceProvider);
     try {
       await pluginService.togglePlugin(id, isEnabled);
-      ref.invalidate(pluginInitializedProvider);
+      ref.read(musicSourceManagerProvider).clearAllCaches();
+      ref.invalidate(pluginSupportedSourcesProvider);
       final refreshedPlugins = await ref
           .read(pluginRepositoryProvider)
           .loadPlugins();

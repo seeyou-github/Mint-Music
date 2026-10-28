@@ -765,9 +765,7 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
   }) {
     final manager = ref.read(musicSourceManagerProvider);
     final map = ref.watch(dataSourcePlaybackSourcesProvider);
-    // 安装 / 开关插件后会重建初始化，期间插件引擎被整体卸载重载、音源列表
-    // 是残缺的。监听初始化状态，完成后重算行内的「已失效」判断。
-    ref.watch(pluginInitializedProvider);
+    ref.watch(pluginSupportedSourcesProvider);
     final configuredId = map[plugin.id]?.trim() ?? '';
 
     // 可选的播放源：已安装、能解析播放地址的插件音源（数据源自己不参与）。

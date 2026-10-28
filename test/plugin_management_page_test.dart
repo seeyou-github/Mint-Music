@@ -19,7 +19,15 @@ class _MemoryService extends PluginService {
   List<PluginInfo> plugins;
   bool failSave = false;
   Completer<void>? pendingSave;
+  Completer<void>? pendingToggle;
+  bool failToggle = false;
   int toggleCount = 0;
+  int initializeCount = 0;
+
+  @override
+  Future<void> initializePlugins() async {
+    initializeCount++;
+  }
 
   @override
   Future<List<PluginInfo>> loadPlugins() async => [...plugins];
@@ -34,6 +42,8 @@ class _MemoryService extends PluginService {
   @override
   Future<void> togglePlugin(String id, bool isEnabled) async {
     toggleCount++;
+    await pendingToggle?.future;
+    if (failToggle) throw Exception('插件开关失败');
     plugins = [
       for (final plugin in plugins)
         if (plugin.id == id) plugin.copyWith(isEnabled: isEnabled) else plugin,
@@ -74,7 +84,9 @@ Future<ProviderContainer> _pumpPage(
     overrides: [
       pluginServiceProvider.overrideWithValue(service),
       pluginRepositoryProvider.overrideWithValue(_MemoryRepository(service)),
-      pluginInitializedProvider.overrideWith((ref) async {}),
+      pluginInitializedProvider.overrideWith(
+        (ref) => service.initializePlugins(),
+      ),
       themeColorsProvider.overrideWithValue(
         dark ? ThemeColors.dark : ThemeColors.light,
       ),
@@ -167,6 +179,114 @@ void main() {
     await tester.pumpAndSettle();
     expect(service.plugins.first.isEnabled, isFalse);
     expect(service.toggleCount, 1);
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final enabled in [true, false]) {
+    testWidgets('${enabled ? '开启' : '关闭'}插件不移除列表或改变滚动位置', (tester) async {
+      final service = _MemoryService([
+        for (var index = 0; index < 12; index++)
+          _plugin('n$index').copyWith(isEnabled: index == 6 ? !enabled : true),
+      ]);
+      final container = await _pumpPage(
+        tester,
+        service,
+        size: const Size(420, 800),
+      );
+      final loadingStates = <bool>[];
+      final subscription = container.listen(
+        pluginsProvider,
+        (_, next) => loadingStates.add(next.isLoading),
+      );
+      addTearDown(subscription.close);
+      final scrollFinder = find
+          .descendant(
+            of: find.byType(CustomScrollView),
+            matching: find.byType(Scrollable),
+          )
+          .first;
+      final toggle = find.descendant(
+        of: find.byKey(const ValueKey('n6')),
+        matching: find.byType(Switch),
+      );
+      await tester.scrollUntilVisible(toggle, 300, scrollable: scrollFinder);
+      await tester.pumpAndSettle();
+      final scrollState = tester.state<ScrollableState>(scrollFinder);
+      scrollState.position.jumpTo(scrollState.position.pixels - 150);
+      await tester.pumpAndSettle();
+      final offset = scrollState.position.pixels;
+      expect(offset, greaterThan(0));
+      expect(service.initializeCount, 1);
+      service.pendingToggle = Completer<void>();
+
+      await tester.tap(toggle);
+      await tester.pump();
+
+      expect(tester.widget<Switch>(toggle).value, enabled);
+      expect(find.byType(CustomScrollView), findsOneWidget);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(tester.state<ScrollableState>(scrollFinder), same(scrollState));
+      expect(scrollState.position.pixels, offset);
+      expect(service.plugins[6].isEnabled, !enabled);
+
+      service.pendingToggle!.complete();
+      await tester.pumpAndSettle();
+
+      expect(tester.widget<Switch>(toggle).value, enabled);
+      expect(tester.state<ScrollableState>(scrollFinder), same(scrollState));
+      expect(scrollState.position.pixels, offset);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(loadingStates, isNotEmpty);
+      expect(loadingStates, everyElement(isFalse));
+      expect(service.initializeCount, 1);
+      expect(service.toggleCount, 1);
+      expect(service.plugins[6].isEnabled, enabled);
+      expect(
+        service.plugins.where((plugin) => plugin.id != 'n6'),
+        everyElement(
+          isA<PluginInfo>().having((p) => p.isEnabled, 'enabled', true),
+        ),
+      );
+      expect(service.plugins.map((plugin) => plugin.id), [
+        for (var index = 0; index < 12; index++) 'n$index',
+      ]);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets('插件开关失败恢复状态且列表保持挂载', (tester) async {
+    final service = _MemoryService([_plugin('n1'), _plugin('n2')])
+      ..pendingToggle = Completer<void>()
+      ..failToggle = true;
+    final container = await _pumpPage(tester, service);
+    final loadingStates = <bool>[];
+    final subscription = container.listen(
+      pluginsProvider,
+      (_, next) => loadingStates.add(next.isLoading),
+    );
+    addTearDown(subscription.close);
+    final listElement = tester.element(find.byType(CustomScrollView));
+    final toggle = find.descendant(
+      of: find.byKey(const ValueKey('n1')),
+      matching: find.byType(Switch),
+    );
+
+    await tester.tap(toggle);
+    await tester.pump();
+    expect(tester.widget<Switch>(toggle).value, isFalse);
+    expect(tester.element(find.byType(CustomScrollView)), same(listElement));
+
+    service.pendingToggle!.complete();
+    await tester.pumpAndSettle();
+
+    expect(tester.widget<Switch>(toggle).value, isTrue);
+    expect(tester.element(find.byType(CustomScrollView)), same(listElement));
+    expect(loadingStates, isNotEmpty);
+    expect(loadingStates, everyElement(isFalse));
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.textContaining('插件开关失败'), findsOneWidget);
+    expect(service.initializeCount, 1);
+    expect(service.plugins.first.isEnabled, isTrue);
     expect(tester.takeException(), isNull);
   });
 

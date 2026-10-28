@@ -865,14 +865,15 @@ class PluginService {
       rethrow;
     }
 
-    // 多个插件可以同时启用，这里只更新目标插件的状态，不再影响其它插件。
-    final updatedPlugins = plugins
-        .map(
-          (plugin) =>
-              plugin.id == id ? plugin.copyWith(isEnabled: true) : plugin,
-        )
-        .toList();
     try {
+      // 加载宿主可能补齐元数据，不能用加载前的列表覆盖它。
+      final currentPlugins = await loadPlugins();
+      final updatedPlugins = currentPlugins
+          .map(
+            (plugin) =>
+                plugin.id == id ? plugin.copyWith(isEnabled: true) : plugin,
+          )
+          .toList();
       await savePlugins(updatedPlugins);
     } catch (_) {
       // Do not leave a newly-created runtime host active when persistence

@@ -58,7 +58,7 @@ class _Host implements PluginHost {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
-// Real reorder logic; the runtime ordering getter is not exercised by this fake.
+// Real reorder logic and an in-memory toggle boundary; no runtime I/O.
 class _MemoryPluginService extends PluginService {
   _MemoryPluginService(this.store)
     : hosts = {for (final plugin in store.plugins) plugin.id: _Host(plugin)};
@@ -68,9 +68,13 @@ class _MemoryPluginService extends PluginService {
   int loadCalls = 0;
   int saveCalls = 0;
   int initializeCalls = 0;
+  int toggleCalls = 0;
   Completer<void>? saveStarted;
   Future<void>? saveBarrier;
   Object? saveError;
+  Completer<void>? toggleStarted;
+  Future<void>? toggleBarrier;
+  Object? toggleError;
 
   @override
   Future<List<PluginInfo>> loadPlugins() async {
@@ -92,6 +96,20 @@ class _MemoryPluginService extends PluginService {
   @override
   Future<void> initializePlugins() async {
     initializeCalls++;
+  }
+
+  @override
+  Future<void> togglePlugin(String id, bool isEnabled) async {
+    toggleCalls++;
+    toggleStarted?.complete();
+    final barrier = toggleBarrier;
+    if (barrier != null) await barrier;
+    final error = toggleError;
+    if (error != null) throw error;
+    store.plugins = [
+      for (final plugin in store.plugins)
+        if (plugin.id == id) plugin.copyWith(isEnabled: isEnabled) else plugin,
+    ];
   }
 
   @override
@@ -609,6 +627,218 @@ void main() {
         }
       },
     );
+  });
+
+  group('PluginsNotifier toggle without reinitialization', () {
+    for (final target in ['d2', 'n2']) {
+      for (final isEnabled in [false, true]) {
+        final action = isEnabled ? 'enable' : 'disable';
+        final plugins = _mixedPlugins().map((plugin) {
+          return plugin.copyWith(
+            isEnabled: plugin.id == target ? !isEnabled : plugin.id != 'd3',
+          );
+        }).toList();
+        final menuWithTarget = _initialMenuIds
+            .where((id) => id != 'wy@d3')
+            .toList();
+        final menuWithoutTarget = menuWithTarget
+            .where((id) => id != 'wy@$target')
+            .toList();
+        final initialMenu = isEnabled ? menuWithoutTarget : menuWithTarget;
+        final expectedMenu = isEnabled ? menuWithTarget : menuWithoutTarget;
+        final expectedRecords = plugins.map((plugin) {
+          return (plugin.id == target
+                  ? plugin.copyWith(isEnabled: isEnabled)
+                  : plugin)
+              .toJson();
+        }).toList();
+
+        test(
+          '$action $target keeps AsyncData and refreshes source menus',
+          () async {
+            final harness = _Harness(_MemoryStore(plugins));
+            final notifier = await harness.ready();
+            final storedBefore = harness.store.plugins;
+            final originalHosts = Map.of(harness.service.hosts);
+            final initialization = harness.container.read(
+              pluginInitializedProvider.future,
+            );
+            final states = <AsyncValue<List<PluginInfo>>>[];
+            harness.container.listen(
+              pluginsProvider,
+              (_, next) => states.add(next),
+            );
+            final menus = [for (final _ in _menuProviders) <List<String>>[]];
+            for (var index = 0; index < _menuProviders.length; index++) {
+              final events = menus[index];
+              harness.container.listen(
+                _menuProviders[index],
+                (_, sources) => events.add(_sourceIds(sources)),
+                fireImmediately: true,
+              );
+            }
+            expect(menus, everyElement([initialMenu]));
+            final gate = Completer<void>();
+            final started = Completer<void>();
+            harness.service
+              ..toggleBarrier = gate.future
+              ..toggleStarted = started;
+
+            final pending = notifier.togglePlugin(target, isEnabled);
+            expect(
+              harness.state.map((plugin) => plugin.toJson()),
+              expectedRecords,
+              reason:
+                  'Only the target flag changes before the service completes',
+            );
+            await started.future;
+            await harness.container.pump();
+            expect(harness.store.plugins, same(storedBefore));
+            expect(menus, everyElement([initialMenu]));
+            expect(states, hasLength(1));
+            expect(harness.service.initializeCalls, 1);
+            expect(harness.repository.loadCalls, 1);
+
+            gate.complete();
+            await pending;
+            await harness.container.pump();
+
+            expect(
+              harness.state.map((plugin) => plugin.toJson()),
+              expectedRecords,
+            );
+            expect(
+              harness.store.plugins.map((plugin) => plugin.toJson()),
+              expectedRecords,
+            );
+            expect(_ids(harness.state), _ids(plugins));
+            for (var index = 0; index < plugins.length; index++) {
+              expect(harness.state[index], same(harness.store.plugins[index]));
+              if (plugins[index].id != target) {
+                expect(harness.store.plugins[index], same(storedBefore[index]));
+              }
+            }
+            expect(states, hasLength(2));
+            expect(states, everyElement(isA<AsyncData<List<PluginInfo>>>()));
+            expect(
+              states.map((state) => state.isLoading),
+              everyElement(isFalse),
+            );
+            expect(menus, everyElement([initialMenu, expectedMenu]));
+            for (final sources in _menus(harness.container)) {
+              expect(_sourceIds(sources), expectedMenu);
+            }
+            expect(harness.service.toggleCalls, 1);
+            expect(harness.service.initializeCalls, 1);
+            expect(harness.manager.loadSourceStateCalls, 1);
+            expect(harness.repository.loadCalls, 2);
+            expect(
+              harness.container.read(pluginInitializedProvider.future),
+              same(initialization),
+            );
+            expect(
+              harness.container.read(pluginsProvider.notifier),
+              same(notifier),
+            );
+            expect(
+              harness.service.enabledPlugins.map(
+                harness.service.getPluginIdForHost,
+              ),
+              plugins
+                  .where(
+                    (plugin) =>
+                        plugin.id == target ? isEnabled : plugin.isEnabled,
+                  )
+                  .map((plugin) => plugin.id),
+            );
+            for (final host in harness.service.enabledPlugins) {
+              expect(
+                host,
+                same(originalHosts[harness.service.getPluginIdForHost(host)]),
+              );
+            }
+          },
+        );
+
+        test(
+          '$action $target failure rolls back without affecting other plugins',
+          () async {
+            final harness = _Harness(_MemoryStore(plugins));
+            final notifier = await harness.ready();
+            final before = harness.state;
+            final storedBefore = harness.store.plugins;
+            final enabledBefore = harness.service.enabledPlugins;
+            final menusBefore = _menus(harness.container);
+            for (final sources in menusBefore) {
+              expect(_sourceIds(sources), initialMenu);
+            }
+            final states = <AsyncValue<List<PluginInfo>>>[];
+            harness.container.listen(
+              pluginsProvider,
+              (_, next) => states.add(next),
+            );
+            final menus = [for (final _ in _menuProviders) <List<String>>[]];
+            for (var index = 0; index < _menuProviders.length; index++) {
+              final events = menus[index];
+              harness.container.listen(
+                _menuProviders[index],
+                (_, sources) => events.add(_sourceIds(sources)),
+                fireImmediately: true,
+              );
+            }
+            final gate = Completer<void>();
+            final started = Completer<void>();
+            final failure = StateError('toggle failed');
+            harness.service
+              ..toggleBarrier = gate.future
+              ..toggleStarted = started
+              ..toggleError = failure;
+
+            final pending = notifier.togglePlugin(target, isEnabled);
+            final failed = expectLater(pending, throwsA(same(failure)));
+            expect(
+              harness.state.map((plugin) => plugin.toJson()),
+              expectedRecords,
+            );
+            await started.future;
+            await harness.container.pump();
+            expect(harness.store.plugins, same(storedBefore));
+            expect(menus, everyElement([initialMenu]));
+            expect(states, hasLength(1));
+
+            gate.complete();
+            await failed;
+            await harness.container.pump();
+
+            expect(harness.state, same(before));
+            expect(harness.store.plugins, same(storedBefore));
+            expect(harness.service.enabledPlugins, enabledBefore);
+            expect(_ids(harness.state), _ids(plugins));
+            expect(states, hasLength(2));
+            expect(states.last.requireValue, same(before));
+            expect(states, everyElement(isA<AsyncData<List<PluginInfo>>>()));
+            expect(
+              states.map((state) => state.isLoading),
+              everyElement(isFalse),
+            );
+            expect(menus, everyElement([initialMenu]));
+            final menusAfter = _menus(harness.container);
+            for (var index = 0; index < menusBefore.length; index++) {
+              expect(menusAfter[index], same(menusBefore[index]));
+              expect(_sourceIds(menusAfter[index]), initialMenu);
+            }
+            expect(harness.service.toggleCalls, 1);
+            expect(harness.service.initializeCalls, 1);
+            expect(harness.manager.loadSourceStateCalls, 1);
+            expect(harness.repository.loadCalls, 1);
+            expect(
+              harness.container.read(pluginsProvider.notifier),
+              same(notifier),
+            );
+          },
+        );
+      }
+    }
   });
 
   group('menu provider reorder propagation', () {
