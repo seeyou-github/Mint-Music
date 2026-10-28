@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../core/constants/app_routes.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
@@ -20,6 +21,7 @@ import '../application/sleep_timer_provider.dart';
 import '../application/playback_ui_providers.dart';
 import '../application/root_overlay_tracker.dart';
 import '../application/lyric_controller.dart';
+import '../../local/presentation/widgets/accurate_match_sheet.dart';
 import '../../radio/application/radio_session.dart';
 import '../domain/models/song.dart';
 import '../domain/services/cover_color_extractor.dart';
@@ -1285,7 +1287,25 @@ class _PlayerActions extends ConsumerWidget {
       icon: Icons.more_horiz,
       onPressed: song == null
           ? null
-          : () => SongActionSheet.showPlayerMenu(context, song: song),
+          : () => SongActionSheet.showPlayerMenu(
+              context,
+              song: song,
+              // 本地歌曲：菜单里「搜索歌词」换成「精准匹配」「编辑标签」。
+              onAccurateMatch: song.isLocal
+                  ? () => unawaited(
+                      showAccurateMatchSheet(
+                        context,
+                        song: song,
+                        onApply: (updated) =>
+                            applyAccurateMatchResult(context, ref, updated),
+                      ),
+                    )
+                  : null,
+              onEditTag: song.isLocal
+                  ? () =>
+                        context.push('${AppRoutes.tagEditor}?songId=${song.id}')
+                  : null,
+            ),
       tooltip: context.tr('更多'),
     );
 

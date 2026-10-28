@@ -141,6 +141,12 @@ class SongActionSheet extends ConsumerStatefulWidget {
   final VoidCallback? onRemove;
   final bool compactMode;
 
+  /// 播放页更多菜单里，本地歌曲「编辑标签」的入口。
+  ///
+  /// 与 [showEditTag] 的区别：那个是列表页用的，内部自己 push 标签编辑页；
+  /// 这里交给调用方（播放页），因为弹层关闭后由页面 context 跳转更稳。
+  final VoidCallback? onEditTag;
+
   /// 首个主操作是否用「下一首播放」取代「播放」。
   ///
   /// - `false`（默认）：显示「播放」，行为由 [playlistSongs] 决定
@@ -165,6 +171,7 @@ class SongActionSheet extends ConsumerStatefulWidget {
     this.onRemove,
     this.compactMode = false,
     this.showPlayNextInsteadOfPlay = false,
+    this.onEditTag,
   });
 
   static Future<void> show(
@@ -180,6 +187,7 @@ class SongActionSheet extends ConsumerStatefulWidget {
     bool showRemove = false,
     VoidCallback? onRemove,
     bool showPlayNextInsteadOfPlay = false,
+    VoidCallback? onEditTag,
   }) {
     return showModalBottomSheet(
       context: context,
@@ -199,6 +207,7 @@ class SongActionSheet extends ConsumerStatefulWidget {
         showRemove: showRemove,
         onRemove: onRemove,
         showPlayNextInsteadOfPlay: showPlayNextInsteadOfPlay,
+        onEditTag: onEditTag,
       ),
     );
   }
@@ -208,6 +217,8 @@ class SongActionSheet extends ConsumerStatefulWidget {
   static Future<void> showPlayerMenu(
     BuildContext context, {
     required Song song,
+    VoidCallback? onAccurateMatch,
+    VoidCallback? onEditTag,
   }) {
     return showModalBottomSheet(
       context: context,
@@ -215,8 +226,13 @@ class SongActionSheet extends ConsumerStatefulWidget {
       useRootNavigator: true,
       sheetAnimationStyle: _sheetAnimationStyle,
       backgroundColor: Colors.transparent,
-      builder: (context) =>
-          SongActionSheet(song: song, showDownload: true, compactMode: true),
+      builder: (context) => SongActionSheet(
+        song: song,
+        showDownload: true,
+        compactMode: true,
+        onAccurateMatch: onAccurateMatch,
+        onEditTag: onEditTag,
+      ),
     );
   }
 
@@ -462,7 +478,11 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                   // 「下载」「启用桌面歌词」「定时」已经挪到播放页的图标按钮上了。
                   // Android 端的倍速也挪到播放页，这里不再重复。
                   if (!Platform.isAndroid) _buildSpeedItem(colors),
-                  _buildSearchLyricItem(colors),
+                  // 本地歌曲没有在线歌词可搜：改为「精准匹配」「编辑标签」。
+                  if (widget.song.isLocal)
+                    ..._buildLocalSongItems(colors)
+                  else
+                    _buildSearchLyricItem(colors),
                   _buildLyricSettingsItem(colors),
                   ..._buildBlacklistItems(colors, blacklist),
                 ],
@@ -1025,6 +1045,29 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
       final svc = await ref.read(settingsServiceProvider.future);
       await svc.setPlaybackSpeed(speed);
     } catch (_) {}
+  }
+
+  /// 本地歌曲专属项（播放页更多菜单）：精准匹配、编辑标签。
+  ///
+  /// 对应本地歌曲列表项「更多」里的同名两项；回调由播放页传入，弹层关闭后
+  /// 由页面去跳转 / 打开弹层。
+  List<Widget> _buildLocalSongItems(ThemeColors colors) {
+    return [
+      if (widget.onAccurateMatch != null)
+        _buildActionItem(
+          colors: colors,
+          icon: Icons.search,
+          label: context.tr('精准匹配'),
+          onTap: widget.onAccurateMatch!,
+        ),
+      if (widget.onEditTag != null)
+        _buildActionItem(
+          colors: colors,
+          icon: Icons.edit,
+          label: context.tr('编辑标签'),
+          onTap: widget.onEditTag!,
+        ),
+    ];
   }
 
   /// 「搜索歌词」入口（播放页更多菜单，位于「歌词设置」上方）。
