@@ -1145,7 +1145,7 @@ function __zlibRequest(action, data) {
         output = ZLibEncoder().encode(input);
       } else if (action == 'inflateRaw') {
         // 裸 deflate（没有 zlib 头）：酷我 newlyric 这类接口用的就是它
-        output = ZLibDecoder(raw: true).decodeBytes(input);
+        output = ZLibDecoder().decodeBytes(input, raw: true);
       } else if (action.startsWith('charset:')) {
         // 字符集解码：插件拿不到 GBK 文本时借这里转成 UTF-8 字节
         final text = gbk.decode(input);
