@@ -66,10 +66,19 @@ class _SongCompareDialogState extends ConsumerState<_SongCompareDialog> {
     _loadOriginalMetadata();
   }
 
+  /// 拉取下载版本的歌词。
+  ///
+  /// 用 getLyricResult 而不是 getLyric：插件把逐字歌词
+  /// 放在 crlyric 里，getLyric 只会给整行时间轴的 lrc，逐字歌词就丢了。
   Future<void> _fetchCandidateLyric() async {
     try {
       final manager = ref.read(musicSourceManagerProvider);
-      final lyric = await manager.getLyric(widget.candidate);
+      final result = await manager.getLyricResult(widget.candidate);
+      final wordLyric = result?.crlyric?.trim() ?? '';
+      final plainLyric = result?.lrc?.trim() ?? '';
+      final lyric = wordLyric.isNotEmpty
+          ? result!.crlyric
+          : (plainLyric.isNotEmpty ? result!.lrc : null);
       if (!mounted) return;
       setState(() {
         _candidateLyric = lyric;

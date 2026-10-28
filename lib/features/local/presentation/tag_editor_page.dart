@@ -13,6 +13,7 @@ import '../../../shared/widgets/source_icon.dart';
 import '../../discover/application/search_providers.dart';
 import '../../download/domain/services/audio_tag_writer.dart';
 import '../../plugin/domain/plugin_types.dart';
+import '../../settings/application/settings_providers.dart';
 import '../application/local_providers.dart';
 import '../../player/domain/models/song.dart';
 import '../../plugin/application/plugin_providers.dart';
@@ -53,8 +54,10 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
   /// 强制它重建并重新取图。
   int _coverVersion = 0;
 
-  /// 在线搜索使用的音源 id（默认网易云，和之前一致）。
-  String _searchSourceId = 'wy';
+  /// 在线搜索使用的音源 id。
+  ///
+  /// 空串表示用户还没手动选过：默认跟随当前音源（见 [_resolvedSearchSourceId]）。
+  String _searchSourceId = '';
 
   /// 切换音源按钮的锚点，用于把菜单弹在按钮下方。
   final _sourceButtonKey = GlobalKey();
@@ -700,10 +703,24 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
     );
   }
 
+  /// 实际使用的搜索音源。
+  ///
+  /// 用户手动选过的优先；没选过时跟随当前音源（发现页 / 插件管理里正在用的
+  /// 那个），当前音源不可搜索时退回到列表里的第一个。
+  String _resolvedSearchSourceId(List<SourceInfo> sources) {
+    if (sources.any((source) => source.id == _searchSourceId)) {
+      return _searchSourceId;
+    }
+    final current = ref.read(defaultSourceIdProvider);
+    if (sources.any((source) => source.id == current)) return current;
+    return sources.isEmpty ? _searchSourceId : sources.first.id;
+  }
+
   Widget _buildSearchTab(ThemeColors colors) {
     final sources = ref
         .watch(searchAvailableSourcesProvider)
         .toList(growable: false);
+    final sourceId = _resolvedSearchSourceId(sources);
     return Column(
       children: [
         Padding(
@@ -712,7 +729,7 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
             children: [
               Expanded(child: _buildSearchBar(colors)),
               const SizedBox(width: AppSpacing.sm),
-              _buildSourceButton(colors, sources),
+              _buildSourceButton(colors, sources, sourceId),
             ],
           ),
         ),
@@ -744,17 +761,25 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
   static const double _searchBarHeight = 44;
 
   /// 搜索框右侧的音源切换按钮（与发现页搜索页的样式保持一致）。
-  Widget _buildSourceButton(ThemeColors colors, List<SourceInfo> sources) {
+  ///
+  /// 按钮直接显示 [currentId] 这个音源的图标，用户一眼能看出当前在搜哪个音源。
+  Widget _buildSourceButton(
+    ThemeColors colors,
+    List<SourceInfo> sources,
+    String currentId,
+  ) {
     SourceInfo? current;
     for (final source in sources) {
-      if (source.id == _searchSourceId) {
+      if (source.id == currentId) {
         current = source;
         break;
       }
     }
     return GestureDetector(
       key: _sourceButtonKey,
-      onTap: sources.isEmpty ? null : () => _showSourceMenu(colors, sources),
+      onTap: sources.isEmpty
+          ? null
+          : () => _showSourceMenu(colors, sources, currentId),
       child: Container(
         width: _searchBarHeight,
         height: _searchBarHeight,
@@ -779,7 +804,11 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
     );
   }
 
-  void _showSourceMenu(ThemeColors colors, List<SourceInfo> sources) {
+  void _showSourceMenu(
+    ThemeColors colors,
+    List<SourceInfo> sources,
+    String currentId,
+  ) {
     final box =
         _sourceButtonKey.currentContext?.findRenderObject() as RenderBox?;
     if (box == null) return;
@@ -814,23 +843,23 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
                     source.name,
                     style: TextStyle(
                       fontSize: 13,
-                      color: source.id == _searchSourceId
+                      color: source.id == currentId
                           ? colors.primary
                           : colors.textPrimary,
-                      fontWeight: source.id == _searchSourceId
+                      fontWeight: source.id == currentId
                           ? FontWeight.w500
                           : FontWeight.normal,
                     ),
                   ),
                 ),
-                if (source.id == _searchSourceId)
+                if (source.id == currentId)
                   Icon(Icons.check, size: 16, color: colors.primary),
               ],
             ),
           ),
       ],
     ).then((selectedId) {
-      if (selectedId == null || selectedId == _searchSourceId) return;
+      if (selectedId == null || selectedId == currentId) return;
       final id = selectedId;
       setState(() => _searchSourceId = id);
       // 已经搜过的话，换音源后直接用新音源重搜一次。
@@ -1053,11 +1082,28 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
 
     setState(() => _searching = true);
 
+    // 用户没手动选过音源时，要按当前音源搜，而不是某个写死的平台。
+    final sourceId = _resolvedSearchSourceId(
+      ref.read(searchAvailableSourcesProvider),
+    );
+    if (sourceId.isEmpty) {
+      if (mounted) {
+        setState(() => _searching = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(context.tr('请先在插件管理里启用音源')),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+      return;
+    }
+
     try {
       final manager = ref.read(musicSourceManagerProvider);
       final results = await manager.search(
         keyword,
-        sourceId: _searchSourceId,
+        sourceId: sourceId,
         limit: 30,
       );
       if (mounted) {
