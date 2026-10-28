@@ -203,6 +203,32 @@ void main() {
     expect(notifier.state.songs.map((s) => s.id).toList(), ['50', '60']);
   });
 
+  test('末页没有数据时回退到最近的有数据页', () async {
+    final manager = _Manager();
+    final pages = <int>[];
+    manager.songPage = (_, page) async {
+      pages.add(page);
+      if (page >= 3) {
+        return const PageResult(items: [], total: 500, isEnd: false);
+      }
+      return PageResult(
+        items: [for (var i = 0; i < 30; i++) _song((page - 1) * 30 + i)],
+        total: 500,
+        isEnd: false,
+      );
+    };
+    final notifier = SearchResultsNotifier(manager);
+    addTearDown(notifier.dispose);
+    await notifier.start('song', 'wy');
+    final ok = await notifier.goToPage(5);
+    expect(ok, isTrue);
+    expect(pages, [1, 5, 4, 3, 2], reason: '往回找到有数据的页就停');
+    expect(notifier.state.page, 2);
+    expect(notifier.state.songs, hasLength(30));
+    expect(notifier.state.hasMore, isFalse);
+    expect(notifier.state.total, 60);
+  });
+
   test('跳页失败保留原缓冲，重试仍直取目标页', () async {
     final manager = _Manager();
     final pages = <int>[];

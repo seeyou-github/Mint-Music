@@ -138,6 +138,12 @@ class SearchResultsNotifier extends StateNotifier<SearchResultsState> {
   /// 跳页直达的目标页：加载失败时保留，供重试仍直取该页；成功后清零。
   int _pendingPage = 0;
 
+  /// 当前缓冲区首条对应的页码（跳页直达后可能不是 1）。
+  ///
+  /// 缓冲区只是完整列表中间一段时，[SearchResultsState.songs] 的长度
+  /// 不能当成完整总数使用。
+  int _bufferBase = 1;
+
   Future<void> start(
     String query,
     String sourceId, {
@@ -160,6 +166,7 @@ class SearchResultsNotifier extends StateNotifier<SearchResultsState> {
     final requestId = ++_requestId;
     _requestKey = key;
     _pendingPage = 0;
+    _bufferBase = 1;
     state = SearchResultsState(
       query: normalizedQuery,
       sourceId: sourceId,
@@ -216,11 +223,51 @@ class SearchResultsNotifier extends StateNotifier<SearchResultsState> {
         page,
       );
       if (!mounted || requestId != _requestId) return false;
+      if (result.items.isEmpty) {
+        // 目标页没有歌：音源给的总数偏大（网易云搜索常见，第 10 页
+        // 常常已经取不到数据）。往回找最近的有数据页，避免停在一张
+        // 空白页上；找不到就按空结果处理。
+        for (var fallbackPage = page - 1; fallbackPage >= 1; fallbackPage--) {
+          final fallback = await _loadSingleSourcePage(
+            state.sourceId,
+            state.query,
+            fallbackPage,
+          );
+          if (!mounted || requestId != _requestId) return false;
+          if (fallback.items.isEmpty) continue;
+          state = state.copyWith(
+            songs: fallback.items,
+            page: fallbackPage,
+            isLoading: false,
+            isLoadingMore: false,
+            hasMore: false,
+            total: (fallbackPage - 1) * _pageSize + fallback.items.length,
+            clearError: true,
+            clearLoadMoreError: true,
+          );
+          _bufferBase = fallbackPage;
+          _pendingPage = 0;
+          return true;
+        }
+        state = state.copyWith(
+          songs: const [],
+          page: 1,
+          isLoading: false,
+          isLoadingMore: false,
+          hasMore: false,
+          total: 0,
+          clearError: true,
+          clearLoadMoreError: true,
+        );
+        _bufferBase = 1;
+        _pendingPage = 0;
+        return false;
+      }
       final total = result.total ?? state.total;
       final hasMore =
           result.isEnd != true &&
-          result.items.isNotEmpty &&
           (total == null || result.items.length < total);
+      _bufferBase = page;
       state = state.copyWith(
         songs: result.items,
         page: page,
@@ -247,6 +294,7 @@ class SearchResultsNotifier extends StateNotifier<SearchResultsState> {
     _requestId++;
     _requestKey = '';
     _pendingPage = 0;
+    _bufferBase = 1;
     state = const SearchResultsState();
   }
 
@@ -256,6 +304,7 @@ class SearchResultsNotifier extends StateNotifier<SearchResultsState> {
     required bool replace,
   }) async {
     if (requestId != _requestId) return;
+    if (replace) _bufferBase = 1;
     state = state.copyWith(
       isLoading: replace,
       isLoadingMore: !replace,
@@ -283,6 +332,19 @@ class SearchResultsNotifier extends StateNotifier<SearchResultsState> {
           pageSongs.isNotEmpty &&
           (replace || appendedAny) &&
           (total == null || merged.length < total);
+      if (!replace && !appendedAny) {
+        // 这一页没有新歌：到底了。页码停在已加载的最后一页，总数按缓冲区
+        // 是否从第 1 页开始决定：跳页直达后缓冲区只是完整列表的一段，
+        // 不能把缓冲区条数当成总数。
+        state = state.copyWith(
+          isLoading: false,
+          isLoadingMore: false,
+          hasMore: false,
+          total: _bufferBase > 1 ? total : merged.length,
+          clearLoadMoreError: true,
+        );
+        return;
+      }
       state = state.copyWith(
         songs: merged,
         page: page,

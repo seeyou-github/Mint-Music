@@ -313,16 +313,20 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   }
 
   /// 跳页直达：只取目标页并替换缓冲；失败回退到原页面（底部有重试）。
+  ///
+  /// 目标页为空（音源总数偏大）时控制器会退到最近的有数据页，
+  /// 所以这里以控制器实际停留的页为准。
   Future<void> _jumpSongPageDirect(int page) async {
     final ok = await ref
         .read(searchResultsControllerProvider.notifier)
         .goToPage(page);
     if (!mounted) return;
+    final effectivePage = ref.read(searchResultsControllerProvider).page;
     setState(() {
       if (ok) {
-        _songPager.rebase(page);
+        _songPager.rebase(effectivePage);
       } else {
-        _songPager.jumpTo(ref.read(searchResultsControllerProvider).page);
+        _songPager.jumpTo(effectivePage);
       }
     });
   }
@@ -367,10 +371,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     if (page < 1 || _pagingLoading) return;
     setState(() => _playlistPager.jumpTo(page));
     if (_gridScrollController.hasClients) _gridScrollController.jumpTo(0);
-    final loaded = ref
-        .read(playlistSearchControllerProvider)
-        .playlists
-        .length;
+    final loaded = ref.read(playlistSearchControllerProvider).playlists.length;
     if (_beyondBuffer(_playlistPager, page, loaded)) {
       final ok = await ref
           .read(playlistSearchControllerProvider.notifier)

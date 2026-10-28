@@ -262,14 +262,26 @@ void main() {
       expect(pager.absoluteStart, 360);
     });
 
-    test('窗口缓冲下已知总数按总数算页数，未知总数保留当前页入口', () {
+    test('窗口缓冲下还有更多时按总数算，加载结束后按缓冲区覆盖的页数算', () {
       final pager = PageSlicer(pageSize: 30)..rebase(12);
       // total=600：缓冲里只有 30 条也不能按 loaded 算成 1 页
       expect(pager.pageCount(30, hasMore: true, total: 600), 20);
-      expect(pager.pageCount(30, hasMore: false, total: 600), 20);
+      // 已结束说明总数偏大或已到真实末页，按缓冲区覆盖范围收尾，
+      // 不能把上游虚高的总数继续当成可翻页数（会出现空白末页）。
+      expect(pager.pageCount(30, hasMore: false, total: 600), 12);
       // 未知总数：至少给到当前页 + 下一页入口
       expect(pager.pageCount(30, hasMore: true), 13);
       expect(pager.pageCount(30, hasMore: false), 12);
+    });
+
+    test('上游总数偏大导致末页为空时，页码收回有数据的页', () {
+      // 缓冲区是跳页直达后的第 8~9 页（共 60 条），第 10 页已经取不到数据。
+      final pager = PageSlicer(pageSize: 30)..rebase(8);
+      pager.jumpTo(10);
+      pager.clampTo(60, hasMore: false, total: 290);
+      expect(pager.page, 9);
+      final songs = List.generate(60, (i) => i);
+      expect(pager.slice(songs), [for (var i = 30; i < 60; i++) i]);
     });
 
     test('目标页在缓冲区之前时切片为空、missing 为 0，clamp 不收回', () {

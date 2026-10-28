@@ -79,12 +79,12 @@ class PageSlicer {
   /// 已知数据下能翻到第几页。
   ///
   /// 还有更多（[hasMore]）且 [total] 为正数时以总数为准（跳页直达的窗口
-  /// 缓冲里只有一页数据，不能拿 loaded 当页数依据）；窗口缓冲（基页 > 1）
-  /// 下即使加载结束也按总数算。加载结束后的连续缓冲以 [loaded] 为准，
-  /// 校正上游总数不准或去重造成的差异。总数未知时按缓冲区已覆盖的页数
-  /// 算，还有更多则多留一个页码入口，点它才去接口取。
+  /// 缓冲里只有一页数据，不能拿 loaded 当页数依据）。加载结束后一律按
+  /// 缓冲区覆盖的页数算：上游总数可能偏大（网易云搜索常见），最后一个
+  /// 空页会把窗口缓冲的页码算错。总数未知时按缓冲区已覆盖的页数算，
+  /// 还有更多则多留一个页码入口，点它才去接口取。
   int pageCount(int loaded, {required bool hasMore, int? total}) {
-    if (total != null && total > 0 && (hasMore || _base > 1)) {
+    if (hasMore && total != null && total > 0) {
       final count = total > loaded ? total : loaded;
       return (count + pageSize - 1) ~/ pageSize;
     }
@@ -93,7 +93,9 @@ class PageSlicer {
       return _page + (hasMore ? 1 : 0);
     }
     final knownPages = _base - 1 + ((loaded + pageSize - 1) ~/ pageSize);
-    var pages = _base > 1 && knownPages < _page ? _page : knownPages;
+    // 还有更多时，正在加载的远页不能被收回；加载结束后就要按缓冲区
+    // 实际覆盖的页数收尾，否则上游总数偏大会留下空白末页。
+    var pages = hasMore && _base > 1 && knownPages < _page ? _page : knownPages;
     if (hasMore) pages += 1;
     return pages < 1 ? 1 : pages;
   }
