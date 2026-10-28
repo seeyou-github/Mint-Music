@@ -1572,25 +1572,8 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
                 ),
               ),
               const SizedBox(width: AppSpacing.sm),
-              Expanded(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    title,
-                    const SizedBox(height: 2),
-                    Text(
-                      song.artist,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: colors.textSecondary,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+              // 前三首只显示歌名，不显示歌手名。
+              Expanded(child: title),
             ] else ...[
               // 第 4 首起不显示封面：标题与前三首的标题对齐。
               const SizedBox(width: 40 + AppSpacing.sm),
