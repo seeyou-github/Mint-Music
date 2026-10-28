@@ -98,9 +98,54 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
   /// 切到第 [page] 页并补齐数据。
   Future<void> _goToPage(int page) async {
     if (page < 1 || _pagingLoading) return;
+    final previousPage = _pager.page;
     setState(() => _pager.jumpTo(page));
     if (_scrollController.hasClients) _scrollController.jumpTo(0);
-    await _ensurePageLoaded();
+    if (_beyondBuffer(page)) {
+      await _jumpToPageDirect(page, fallbackPage: previousPage);
+    } else {
+      await _ensurePageLoaded();
+    }
+  }
+
+  /// 目标页是否超出「缓冲区 + 下一页」的连续范围。
+  ///
+  /// 超出（或往回翻出缓冲区）时走跳页直达——只取目标页，不把中间页
+  /// 逐页拉一遍；范围内仍走追加补齐，缓冲可以继续复用。
+  bool _beyondBuffer(int page) {
+    final contiguousEnd =
+        _pager.bufferBase - 1 + (_songs.length / _pager.pageSize).ceil();
+    return page < _pager.bufferBase || page > contiguousEnd + 1;
+  }
+
+  /// 跳页直达：只请求目标页并替换缓冲区。
+  ///
+  /// 作者作品动辄几十页，逐页补齐在点「最后一页」时要发几十个请求。
+  /// 失败时退回原页码并提示，已加载的内容保留。
+  Future<void> _jumpToPageDirect(int page, {required int fallbackPage}) async {
+    setState(() => _pagingLoading = true);
+    try {
+      final detail = await _fetch(page);
+      if (!mounted) return;
+      setState(() {
+        _item = detail.item;
+        _songs
+          ..clear()
+          ..addAll(detail.songs);
+        _page = page;
+        _isEnd = detail.isEnd;
+        _total = detail.total ?? _total;
+        _loadMoreError = null;
+        _pager.rebase(page);
+      });
+    } catch (e) {
+      if (!mounted) return;
+      final message = _messageOf(e);
+      setState(() => _pager.jumpTo(fallbackPage));
+      _toast(context.tr('加载第 $page 页失败：$message'));
+    } finally {
+      if (mounted) setState(() => _pagingLoading = false);
+    }
   }
 
   Future<void> _ensurePageLoaded() async {
@@ -271,19 +316,39 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
     _toast(context.tr('已收藏到「收藏」'));
   }
 
-  /// 收藏前把剩下的歌曲页全部取回来：收藏里存的是完整专辑 / 作者作品。
+  /// 收藏前把其余歌曲页全部取回来：收藏里存的是完整专辑 / 作者作品。
   ///
-  /// 已加载的歌曲直接用，从 [_page] 之后继续取，直到插件表示到底。
+  /// 已加载的歌曲直接用，只补取缓冲区前面缺的页和 [_page] 之后的页，
+  /// 直到插件表示到底。
   Future<List<Song>> _fetchAllSongsForFavorite() async {
     final seen = <String>{};
     final all = <Song>[];
+    var emptyStreak = 0;
+
+    // 跳页直达后缓冲区从中间页开始，前面的页没有加载过：先按顺序补回来，
+    // 否则收藏出来的歌单会缺歌、顺序也会乱。
+    final bufferedFirst = _pager.bufferBase;
+    var page = 0;
+    while (page < bufferedFirst - 1) {
+      page += 1;
+      final detail = await _fetch(page);
+      for (final song in detail.songs) {
+        if (seen.add(song.id)) all.add(song);
+      }
+      if (detail.isEnd) break;
+      if (detail.songs.isEmpty) {
+        if (++emptyStreak >= 5) break;
+      } else {
+        emptyStreak = 0;
+      }
+    }
+
     for (final song in _songs) {
       if (seen.add(song.id)) all.add(song);
     }
 
-    var page = _page;
+    page = _page;
     var isEnd = _isEnd;
-    var emptyStreak = 0;
     while (!isEnd) {
       page += 1;
       final detail = await _fetch(page);
@@ -621,10 +686,13 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
           return _pageFooter(colors, pageCount);
         }
         final song = visible[index];
-        final songIndex = _pager.start + index;
+        // 序号按全局位置编号（跳页直达后缓冲区从当前页起，也要接续页码）；
+        // 播放队列用的是缓冲区内的下标。
+        final displayIndex = _pager.absoluteStart + index;
+        final bufferIndex = _pager.start + index;
         return SongListItem(
           song: song,
-          index: songIndex,
+          index: displayIndex,
           isPlaying: currentSongId == song.id,
           showPlayedTag: true,
           onPlayTap: () async {
@@ -636,7 +704,7 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
             );
             await ref
                 .read(playbackControllerProvider.notifier)
-                .setQueue(songs, startIndex: songIndex);
+                .setQueue(songs, startIndex: bufferIndex);
           },
           onMenuTap: () =>
               SongActionSheet.show(context, song: song, playlistSongs: songs),
