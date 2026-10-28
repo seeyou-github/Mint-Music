@@ -18,12 +18,7 @@ final discoverSourceIdProvider = StateProvider<String>(
 );
 
 final discoverSupportedSourcesProvider = Provider<List<SourceInfo>>((ref) {
-  // 插件初始化 + 插件自带音源开关都会影响这里的列表。
-  ref.watch(pluginInitializedProvider);
-  ref.watch(pluginSourceStateProvider);
-
-  final manager = ref.watch(musicSourceManagerProvider);
-  return manager.getDiscoverSupportedSources();
+  return ref.watch(pluginSupportedSourcesProvider);
 });
 
 final hotPlaylistsProvider = FutureProvider<List<Playlist>>((ref) async {

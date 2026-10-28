@@ -166,8 +166,13 @@ class MusicSourceManager {
   List<SourceInfo> getPluginSupportedSources() {
     final sources = <SourceInfo>[];
     final seenIds = <String>{};
+    final plugins = _pluginService.enabledPlugins;
+    final orderedPlugins = [
+      ...plugins.where((host) => host.isDataSource),
+      ...plugins.where((host) => !host.isDataSource),
+    ];
 
-    for (final host in _pluginService.enabledPlugins) {
+    for (final host in orderedPlugins) {
       final pluginId = _pluginService.getPluginIdForHost(host);
       // 只有插件自带多个音源时才把插件名加上：
       // 单音源插件（MusicFree 常见）的 platform 本身就是插件名，再加一次

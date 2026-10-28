@@ -43,6 +43,9 @@ class _Host implements PluginHost {
   List<PluginSourceInfo> get sources => const [];
 
   @override
+  bool get isDataSource => false;
+
+  @override
   Map<String, List<String>> get sourceActions => const {
     'wy': ['musicSearch'],
   };

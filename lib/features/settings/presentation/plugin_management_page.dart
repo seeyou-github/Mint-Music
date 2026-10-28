@@ -42,6 +42,7 @@ class PluginManagementPage extends ConsumerStatefulWidget {
 
 class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
   bool _isCheckingUpdates = false;
+  bool _isSavingPluginOrder = false;
 
   /// 正在单独检查更新的插件 id（卡片上的「更新」按钮显示转圈）。
   final Set<String> _checkingPluginUpdateIds = {};
@@ -329,24 +330,57 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
         // 数据源插件单独成组，普通插件列表里不再重复出现。
         final dataSources = plugins.where((p) => p.isDataSource).toList();
         final normalPlugins = plugins.where((p) => !p.isDataSource).toList();
-        return ListView(
-          padding: const EdgeInsets.all(AppSpacing.lg),
-          children: [
-            _buildAutoUpdateSection(colors),
-            const SizedBox(height: AppSpacing.lg),
-            _buildDataSourceSection(colors, dataSources, mergedResults),
-            const SizedBox(height: AppSpacing.lg),
-            _buildPluginSectionHeader(colors, normalPlugins.length),
-            const SizedBox(height: AppSpacing.sm),
-            if (normalPlugins.isEmpty)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: AppSpacing.xxl),
-                child: _buildEmptyState(colors),
-              )
-            else
-              ...normalPlugins.map(
-                (plugin) => _buildPluginCard(colors, plugin, mergedResults),
+        return CustomScrollView(
+          slivers: [
+            SliverPadding(
+              padding: const EdgeInsets.all(AppSpacing.lg),
+              sliver: SliverMainAxisGroup(
+                slivers: [
+                  SliverToBoxAdapter(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _buildAutoUpdateSection(colors),
+                        const SizedBox(height: AppSpacing.lg),
+                        _buildDataSourceSection(colors, dataSources),
+                      ],
+                    ),
+                  ),
+                  _buildReorderablePluginSliver(
+                    colors,
+                    dataSources,
+                    mergedResults,
+                    isDataSource: true,
+                  ),
+                  SliverToBoxAdapter(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const SizedBox(height: AppSpacing.lg),
+                        _buildPluginSectionHeader(colors, normalPlugins.length),
+                        const SizedBox(height: AppSpacing.sm),
+                      ],
+                    ),
+                  ),
+                  if (normalPlugins.isEmpty)
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          vertical: AppSpacing.xxl,
+                        ),
+                        child: _buildEmptyState(colors),
+                      ),
+                    )
+                  else
+                    _buildReorderablePluginSliver(
+                      colors,
+                      normalPlugins,
+                      mergedResults,
+                      isDataSource: false,
+                    ),
+                ],
               ),
+            ),
           ],
         );
       },
@@ -473,6 +507,81 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
     );
   }
 
+  Widget _buildReorderablePluginSliver(
+    ThemeColors colors,
+    List<PluginInfo> plugins,
+    List<PluginUpdateResult> updateResults, {
+    required bool isDataSource,
+  }) {
+    return SliverReorderableList(
+      key: ValueKey(isDataSource),
+      itemCount: plugins.length,
+      itemBuilder: (context, index) {
+        final plugin = plugins[index];
+        return Consumer(
+          key: ValueKey(plugin.id),
+          builder: (context, ref, _) => _buildPluginCard(
+            colors,
+            plugin,
+            updateResults,
+            ref: ref,
+            reorderIndex: index,
+            footer: isDataSource
+                ? _buildDataSourcePlaybackRow(colors, plugin, ref: ref)
+                : null,
+          ),
+        );
+      },
+      onReorder: (oldIndex, newIndex) => unawaited(
+        _reorderPlugins(
+          isDataSource: isDataSource,
+          oldIndex: oldIndex,
+          newIndex: newIndex,
+        ),
+      ),
+      proxyDecorator: (child, index, animation) =>
+          Material(type: MaterialType.transparency, child: child),
+    );
+  }
+
+  Future<void> _reorderPlugins({
+    required bool isDataSource,
+    required int oldIndex,
+    required int newIndex,
+  }) async {
+    if (_isSavingPluginOrder ||
+        oldIndex == newIndex ||
+        oldIndex + 1 == newIndex) {
+      return;
+    }
+    setState(() => _isSavingPluginOrder = true);
+    try {
+      await ref
+          .read(pluginsProvider.notifier)
+          .reorderPlugins(
+            isDataSource: isDataSource,
+            oldIndex: oldIndex,
+            newIndex: newIndex,
+          );
+    } catch (error) {
+      if (!mounted) return;
+      final colors = ref.read(themeColorsProvider);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            context.tr(
+              '排序保存失败：${PluginManagementPage.pluginErrorMessage(error)}',
+            ),
+          ),
+          backgroundColor: colors.error,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isSavingPluginOrder = false);
+    }
+  }
+
   /// 「自动检测更新」开关（默认关闭）。
   ///
   /// 关闭时进入本页不会自动检查插件更新，需要用户点击右上角的刷新按钮。
@@ -594,11 +703,8 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
   /// 里的歌曲时，用这个播放源重新找歌并解析地址。
   Widget _buildDataSourceSection(
     ThemeColors colors,
-    List<PluginInfo> plugins,
-    List<PluginUpdateResult> updateResults,
+    List<PluginInfo> dataSources,
   ) {
-    final dataSources = plugins.where((plugin) => plugin.isDataSource).toList();
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -642,15 +748,6 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
               ),
               style: TextStyle(fontSize: 12, color: colors.textHint),
             ),
-          )
-        else
-          ...dataSources.map(
-            (plugin) => _buildPluginCard(
-              colors,
-              plugin,
-              updateResults,
-              footer: _buildDataSourcePlaybackRow(colors, plugin),
-            ),
           ),
       ],
     );
@@ -661,7 +758,11 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
   /// 用和发现页音源切换一致的弹出菜单（`showMenu`）而不是 `DropdownButton`：
   /// 卡片里可用宽度有限，DropdownButton 在窄容器里弹出的菜单经常渲染不出内容，
   /// 而且「已失效」提示会把下拉框挤到中间。
-  Widget _buildDataSourcePlaybackRow(ThemeColors colors, PluginInfo plugin) {
+  Widget _buildDataSourcePlaybackRow(
+    ThemeColors colors,
+    PluginInfo plugin, {
+    required WidgetRef ref,
+  }) {
     final manager = ref.read(musicSourceManagerProvider);
     final map = ref.watch(dataSourcePlaybackSourcesProvider);
     // 安装 / 开关插件后会重建初始化，期间插件引擎被整体卸载重载、音源列表
@@ -951,6 +1052,8 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
     ThemeColors colors,
     PluginInfo plugin,
     List<PluginUpdateResult> updateResults, {
+    required WidgetRef ref,
+    required int reorderIndex,
     Widget? footer,
   }) {
     final sourceStates = ref.watch(pluginSourceStateProvider);
@@ -1091,6 +1194,29 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
                   },
                   activeTrackColor: colors.primary.withValues(alpha: 0.3),
                   activeThumbColor: colors.primary,
+                ),
+                ReorderableDragStartListener(
+                  index: reorderIndex,
+                  enabled: !_isSavingPluginOrder,
+                  child: MouseRegion(
+                    cursor: _isSavingPluginOrder
+                        ? SystemMouseCursors.basic
+                        : SystemMouseCursors.grab,
+                    child: Tooltip(
+                      message: context.tr('拖动排序'),
+                      child: SizedBox(
+                        width: 40,
+                        height: 48,
+                        child: Icon(
+                          Icons.drag_handle,
+                          size: 22,
+                          color: _isSavingPluginOrder
+                              ? colors.textHint.withValues(alpha: 0.4)
+                              : colors.textHint,
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
               ],
             ),

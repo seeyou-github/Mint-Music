@@ -155,6 +155,40 @@ class PluginsNotifier extends AsyncNotifier<List<PluginInfo>> {
     }
   }
 
+  Future<void> reorderPlugins({
+    required bool isDataSource,
+    required int oldIndex,
+    required int newIndex,
+  }) async {
+    final previousPlugins = state.requireValue;
+    final group = previousPlugins
+        .where((plugin) => plugin.isDataSource == isDataSource)
+        .toList();
+    if (newIndex > oldIndex) newIndex--;
+    if (newIndex == oldIndex) return;
+
+    group.insert(newIndex, group.removeAt(oldIndex));
+    var groupIndex = 0;
+    final reordered = [
+      for (final plugin in previousPlugins)
+        if (plugin.isDataSource == isDataSource)
+          group[groupIndex++]
+        else
+          plugin,
+    ];
+    state = AsyncData(reordered);
+    try {
+      final saved = await ref
+          .read(pluginServiceProvider)
+          .reorderPlugins(reordered.map((plugin) => plugin.id).toList());
+      state = AsyncData(saved);
+      ref.invalidate(pluginSupportedSourcesProvider);
+    } catch (_) {
+      state = AsyncData(previousPlugins);
+      rethrow;
+    }
+  }
+
   /// Check all installed plugins for updates.
   Future<void> checkForUpdates() async {
     final repo = ref.read(pluginRepositoryProvider);

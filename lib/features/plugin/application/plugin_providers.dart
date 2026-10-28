@@ -49,6 +49,7 @@ final pluginTestServiceProvider = Provider<PluginTestService>((ref) {
 
 final pluginSupportedSourcesProvider = Provider<List<SourceInfo>>((ref) {
   ref.watch(pluginInitializedProvider);
+  ref.watch(pluginSourceStateProvider);
 
   final manager = ref.watch(musicSourceManagerProvider);
   final sources = manager.getPluginSupportedSources();
@@ -63,17 +64,13 @@ final pluginSupportedSourcesProvider = Provider<List<SourceInfo>>((ref) {
 ///
 /// 没有任何插件音源时返回空字符串，由调用方提示「请先安装音源」。
 final firstEnabledSourceIdProvider = Provider<String>((ref) {
-  ref.watch(pluginInitializedProvider);
-  final manager = ref.watch(musicSourceManagerProvider);
-  final sources = manager.getPluginSupportedSources();
+  final sources = ref.watch(pluginSupportedSourcesProvider);
   if (sources.isNotEmpty) return sources.first.id;
   return '';
 });
 
 final searchSupportedSourcesProvider = Provider<List<SourceInfo>>((ref) {
-  ref.watch(pluginInitializedProvider);
-  // 插件自带音源的开关变化后需要重算音源列表。
-  ref.watch(pluginSourceStateProvider);
+  ref.watch(pluginSupportedSourcesProvider);
 
   final manager = ref.watch(musicSourceManagerProvider);
   final sources = manager.getSearchSupportedSources();

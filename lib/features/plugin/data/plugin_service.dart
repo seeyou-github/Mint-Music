@@ -100,6 +100,7 @@ class PluginService {
 
   final Map<String, PluginHost> _loadedPlugins = {};
   final Map<String, JsEngineService> _engines = {};
+  List<String> _pluginOrder = [];
 
   /// 插件自动重载的冷却时间（同一个插件两次重载的最小间隔）。
   static const Duration _reloadCooldown = Duration(seconds: 30);
@@ -156,6 +157,20 @@ class PluginService {
     final prefs = await AppPreferences.getInstance();
     final data = jsonEncode(plugins.map((p) => p.toJson()).toList());
     await prefs.setString(_prefsKey, data);
+    _pluginOrder = plugins.map((plugin) => plugin.id).toList();
+  }
+
+  Future<List<PluginInfo>> reorderPlugins(List<String> orderedIds) async {
+    final plugins = await loadPlugins();
+    final remaining = {for (final plugin in plugins) plugin.id: plugin};
+    final ordered = <PluginInfo>[];
+    for (final id in orderedIds) {
+      final plugin = remaining.remove(id);
+      if (plugin != null) ordered.add(plugin);
+    }
+    ordered.addAll(remaining.values);
+    await savePlugins(ordered);
+    return ordered;
   }
 
   Future<String> _getPluginsDir() async {
@@ -604,6 +619,7 @@ class PluginService {
 
   Future<void> initializePlugins() async {
     final plugins = await _normalizeEnabledPlugins(await loadPlugins());
+    _pluginOrder = plugins.map((plugin) => plugin.id).toList();
     _unloadAllPlugins();
     print('[PluginService] 开始初始化插件，共 ${plugins.length} 个插件');
 
@@ -1092,7 +1108,11 @@ class PluginService {
       print('[PluginService] 自动隔离故障插件运行时: $id');
       _quarantinePlugin(id);
     }
-    return _loadedPlugins.values.toList();
+    final remaining = Map<String, PluginHost>.from(_loadedPlugins);
+    return [
+      for (final id in _pluginOrder) ?remaining.remove(id),
+      ...remaining.values,
+    ];
   }
 
   /// 返回某个插件宿主对应的插件 id。
