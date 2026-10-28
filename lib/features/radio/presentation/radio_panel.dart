@@ -57,8 +57,10 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
   Widget _buildCategoryBar(ThemeColors colors) {
     final data = ref.watch(radioProvider);
     final categories = [RadioCategory.all, ...data.categories];
+    // 尺寸 / 字体与发现页歌单分类栏保持一致：36 高、13 号字、12×4 内边距、
+    // 圆角 6、标签间距 8。
     return SizedBox(
-      height: 40,
+      height: 36,
       child: Row(
         children: [
           Expanded(
@@ -68,7 +70,7 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
                 horizontal: ResponsiveLayout.horizontalPadding(context),
               ),
               itemCount: categories.length,
-              separatorBuilder: (_, _) => const SizedBox(width: AppSpacing.md),
+              separatorBuilder: (_, _) => const SizedBox(width: AppSpacing.sm),
               itemBuilder: (context, index) {
                 final category = categories[index];
                 final selected = category.id == _categoryId;
@@ -79,17 +81,20 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
                       : () => _confirmRemoveCategory(category),
                   child: Container(
                     alignment: Alignment.center,
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 4,
+                    ),
                     decoration: BoxDecoration(
                       color: selected
                           ? colors.primary.withValues(alpha: 0.15)
                           : Colors.transparent,
-                      borderRadius: BorderRadius.circular(AppRadius.sm),
+                      borderRadius: BorderRadius.circular(6),
                     ),
                     child: Text(
                       category.name,
                       style: TextStyle(
-                        fontSize: 14,
+                        fontSize: 13,
                         fontWeight: selected
                             ? FontWeight.w600
                             : FontWeight.w400,
