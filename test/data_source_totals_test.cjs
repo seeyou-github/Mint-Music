@@ -518,12 +518,12 @@ function kgAlbumSong(index) {
   };
 }
 
-test('酷狗：supportedSearchTypes 包含 album', () => {
+test('酷狗：supportedSearchTypes 包含 album 与 artist', () => {
   const { plugin } = loadPlugin('数据源-酷狗.js', () => undefined);
   const types = plugin.supportedSearchTypes();
   assert.ok(Array.isArray(types));
   assert.ok(types.includes('album'), 'album 应在支持列表里');
-  assert.ok(!types.includes('artist'), '酷狗不支持作者搜索');
+  assert.ok(types.includes('artist'), 'artist 应在支持列表里');
 });
 
 test('酷狗：专辑搜索取 data.total，<em> 标签剥掉，raw 带回 albumid', async () => {
@@ -560,11 +560,166 @@ test('酷狗：专辑搜索取 data.total，<em> 标签剥掉，raw 带回 album
   assert.equal(last.list.length, 2);
 });
 
-test('酷狗：searchTyped artist 返回空列表（不支持作者搜索）', async () => {
+test('酷狗：searchTyped 未知类型返回空列表', async () => {
   const { plugin } = loadPlugin('数据源-酷狗.js', () => undefined);
-  const r = await resultOf(plugin.searchTyped('kg', '周杰伦', 1, 20, 'artist'));
+  const r = await resultOf(plugin.searchTyped('kg', '周杰伦', 1, 20, 'mv'));
   assert.equal(r.list.length, 0);
   assert.equal(r.isEnd, true);
+});
+
+/* ------------------------------------------------------- 酷狗：作者搜索 / 作品 */
+
+function kgSinger(id, name) {
+  return { singerid: id, singername: name };
+}
+
+function kgSingerInfo(id, name) {
+  return {
+    singerid: id,
+    singername: name,
+    songcount: 1000 + id,
+    imgurl: 'http://singerimg.kugou.com/uploadpic/softhead/{size}/20260324/avatar' + id + '.jpg',
+    profile: '简介' + id
+  };
+}
+
+function kgSingerSong(index) {
+  return {
+    hash: 'SHASH' + index,
+    filename: '歌手 - 曲' + index,
+    duration: 200 + index,
+    album_id: '800000' + index,
+    album_name: '专辑' + index,
+    album_audio_id: 90000000 + index,
+    trans_param: { union_cover: 'http://imge.kugou.com/stdmusic/{size}/20240101/c' + index + '.jpg' }
+  };
+}
+
+test('酷狗：作者搜索补 singer/info（头像 / 作品数 / 简介），data 为数组且无总数', async () => {
+  const { plugin, requests } = loadPlugin('数据源-酷狗.js', (url) => {
+    if (url.pathname.includes('/api/v3/search/singer')) {
+      // 该接口 data 直接是数组，无 total，固定最多 10 条
+      return { status: 1, data: [kgSinger(3520, '周杰伦'), kgSinger(720479, '情敌周杰伦')] };
+    }
+    if (url.pathname.includes('/api/v3/singer/info')) {
+      const id = Number(url.searchParams.get('singerid'));
+      return { status: 1, data: kgSingerInfo(id, '名字' + id) };
+    }
+    return undefined;
+  });
+
+  const r = await resultOf(plugin.searchTyped('kg', '周杰伦', 1, 20, 'artist'));
+  assert.equal(r.total, null, 'search/singer 不返回总数');
+  assert.equal(r.limit, 20);
+  assert.equal(r.isEnd, true, '2 < 20 → 到底');
+  assert.equal(r.list.length, 2);
+  assert.equal(r.list[0].id, '3520');
+  assert.equal(r.list[0].title, '周杰伦');
+  assert.equal(r.list[0].worksNum, 1000 + 3520, '作品数来自 singer/info');
+  assert.ok(r.list[0].coverUrl.startsWith('https://singerimg'), '头像应升级为 https');
+  assert.equal(r.list[0].description, '简介3520');
+  assert.equal(r.list[0].raw.singerid, '3520', 'raw 须带回 singerid 供 getArtistWorks 使用');
+  // 1 次搜索 + 2 次 singer/info
+  assert.equal(requests.length, 3);
+});
+
+test('酷狗：作者搜索 singer/info 失败时不影响列表', async () => {
+  const { plugin } = loadPlugin('数据源-酷狗.js', (url) => {
+    if (url.pathname.includes('/api/v3/search/singer')) {
+      return { status: 1, data: [kgSinger(3520, '周杰伦')] };
+    }
+    if (url.pathname.includes('/api/v3/singer/info')) {
+      throw new Error('接口挂了');
+    }
+    return undefined;
+  });
+
+  const r = await resultOf(plugin.searchTyped('kg', '周杰伦', 1, 20, 'artist'));
+  assert.equal(r.list.length, 1);
+  assert.equal(r.list[0].worksNum, 0);
+  assert.equal(r.list[0].coverUrl, '');
+});
+
+test('酷狗：作者作品按 50 首一页翻，第 1 页取 singer/info，翻页不再取', async () => {
+  const songPages = [];
+  const { plugin, requests } = loadPlugin('数据源-酷狗.js', (url) => {
+    if (url.pathname.includes('/api/v3/singer/song')) {
+      const page = Number(url.searchParams.get('page'));
+      songPages.push(page);
+      const size = Number(url.searchParams.get('pagesize'));
+      const total = 130;
+      const count = page === 3 ? 30 : size;
+      return { status: 1, data: { total, info: range(count, (page - 1) * size + 1, kgSingerSong) } };
+    }
+    if (url.pathname.includes('/api/v3/singer/info')) {
+      return { status: 1, data: kgSingerInfo(3520, '周杰伦') };
+    }
+    return undefined;
+  });
+
+  const artistItem = { raw: { id: '3520', singerid: '3520', name: '周杰伦' } };
+
+  const p1 = await resultOf(plugin.getArtistWorks('kg', artistItem, 1, 'music'));
+  assert.equal(p1.total, 130);
+  assert.equal(p1.limit, 50);
+  assert.equal(p1.isEnd, false, '50 < 130');
+  assert.equal(p1.musicList.length, 50);
+  assert.equal(p1.artistItem.title, '周杰伦');
+  assert.equal(p1.artistItem.worksNum, 130);
+  assert.equal(p1.artistItem.description, '简介3520');
+  assert.ok(p1.artistItem.coverUrl.startsWith('https://singerimg'));
+  assert.equal(p1.musicList[0].id, 'SHASH1');
+  assert.equal(p1.musicList[0].name, '曲1');
+  assert.equal(p1.musicList[0].singer, '歌手');
+  assert.equal(p1.musicList[0].source, 'kg');
+  assert.ok(p1.musicList[0].artwork.startsWith('https://'));
+  assert.equal(requests.filter((r) => r.url.pathname.includes('/singer/info')).length, 1, 'singer/info 只在第 1 页请求');
+
+  const p2 = await resultOf(plugin.getArtistWorks('kg', artistItem, 2, 'music'));
+  assert.equal(p2.isEnd, false, '100 < 130');
+  assert.equal(requests.filter((r) => r.url.pathname.includes('/singer/info')).length, 1, '翻页不再请求 singer/info');
+
+  const p3 = await resultOf(plugin.getArtistWorks('kg', artistItem, 3, 'music'));
+  assert.equal(p3.isEnd, true, '100 + 30 >= 130');
+  assert.equal(p3.musicList.length, 30);
+  assert.deepEqual(songPages, [1, 2, 3], 'singer/song 的 page 参数逐页递增');
+});
+
+test('酷狗：作者作品 raw 没有 singerid 时按名字反查', async () => {
+  const { plugin, requests } = loadPlugin('数据源-酷狗.js', (url) => {
+    if (url.pathname.includes('/api/v3/search/singer')) {
+      return { status: 1, data: [kgSinger(111, '别人'), kgSinger(3520, '周杰伦')] };
+    }
+    if (url.pathname.includes('/api/v3/singer/song')) {
+      return { status: 1, data: { total: 1, info: [kgSingerSong(1)] } };
+    }
+    if (url.pathname.includes('/api/v3/singer/info')) {
+      return { status: 1, data: kgSingerInfo(3520, '周杰伦') };
+    }
+    return undefined;
+  });
+
+  const r = await resultOf(
+    plugin.getArtistWorks('kg', { raw: { name: '周杰伦' } }, 1, 'music')
+  );
+  assert.equal(r.musicList.length, 1);
+  assert.equal(r.artistItem.id, '3520', '按名字精确匹配到 singerid');
+  const searchReq = requests.find((r) => r.url.pathname.includes('/search/singer'));
+  assert.equal(searchReq.url.searchParams.get('keyword'), '周杰伦');
+});
+
+test('酷狗：作者作品 singerid 反查不到时返回空 musicList', async () => {
+  const { plugin } = loadPlugin('数据源-酷狗.js', (url) => {
+    if (url.pathname.includes('/api/v3/search/singer')) {
+      return { status: 1, data: [] };
+    }
+    return undefined;
+  });
+
+  const r = await resultOf(
+    plugin.getArtistWorks('kg', { raw: { name: '不存在' } }, 1, 'music')
+  );
+  assert.equal(r.musicList.length, 0);
 });
 
 test('酷狗：专辑详情第 1 页取 album/info 元数据，翻页只取 album/song', async () => {
