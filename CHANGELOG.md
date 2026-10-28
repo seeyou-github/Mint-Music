@@ -3,6 +3,12 @@
 ## [未发布]
 
 ### 修改
+- 数据源-QQ插件（v1.4.0）：新增专辑搜索与专辑详情
+  - 搜索页「专辑」标签页现在可以搜索 QQ 专辑：接口走 `musicu.fcg` 的
+    `music.search.SearchCgiService`（search_type=2），总数取 `meta.sum`
+  - 专辑封面由 albumMID 拼成 800x800 地址（比接口返回的 180x180 清晰）
+  - 专辑详情走 `music.musichallAlbum.AlbumSongList` 一次全量返回，
+    无需翻页；歌曲直接复用现有映射（mid / 歌手 / 专辑 / 封面）
 - 数据源-酷狗插件（v1.5.0）：新增作者搜索与作者作品
   - 搜索页「作者」标签页现在可以搜索酷狗歌手：接口走 `mobilecdn.kugou.com/api/v3/search/singer`，
     逐个补 singer/info 拿头像、作品数和简介（该接口无总数、固定最多 10 条）

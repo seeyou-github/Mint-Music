@@ -353,6 +353,47 @@ function fetchPlaylistSearch(keyword, page, limit) {
   return getJson(url, { Referer: 'http://y.qq.com/portal/search.html' });
 }
 
+/* ------------------------------------------------------------ 专辑搜索 / 详情 */
+
+function fetchAlbumSearch(keyword, page, limit) {
+  return musicu(
+    {
+      comm: { ct: 19, cv: 1859 },
+      req_1: {
+        method: 'DoSearchForQQMusicDesktop',
+        module: 'music.search.SearchCgiService',
+        param: {
+          num_per_page: limit,
+          page_num: page,
+          query: keyword,
+          search_type: 2
+        }
+      }
+    },
+    ['req_1']
+  );
+}
+
+function fetchAlbumSongs(albumMid, albumId) {
+  return musicu(
+    {
+      comm: { ct: 24, cv: 10000 },
+      albumSonglist: {
+        method: 'GetAlbumSongList',
+        param: {
+          albumMid: albumMid,
+          albumID: Number(albumId) || 0,
+          begin: 0,
+          num: 999,
+          order: 2
+        },
+        module: 'music.musichallAlbum.AlbumSongList'
+      }
+    },
+    ['albumSonglist']
+  );
+}
+
 function fetchLyric(songMid) {
   var url =
     YQQ +
@@ -391,10 +432,10 @@ function base64Decode(text) {
 module.exports = {
   pluginInfo: {
     name: '数据源-QQ',
-    version: '1.3.0',
+    version: '1.4.0',
     author: 'MintMusic',
     description:
-      '只提供搜索、歌单分类、榜单、歌单详情的 QQ音乐数据源；' +
+      '只提供搜索（歌曲 / 专辑）、歌单分类、榜单、歌单 / 专辑详情的 QQ音乐数据源；' +
       '播放需要在「插件管理 → 数据源」里指定一个已安装的播放源。',
     // ★ 数据源标记
     // 站点图标：导入插件时下载并缓存到插件目录（音源列表 / 切换按钮用它）
@@ -415,6 +456,11 @@ module.exports = {
     sheetDetail: true,
     topList: true,
     playlistSearch: true
+  },
+
+  /** 支持的搜索类型：歌曲 / 专辑（QQ 侧暂不开放作者搜索）。 */
+  supportedSearchTypes: function () {
+    return ['music', 'album'];
   },
 
   isDataSource: true,
@@ -505,6 +551,93 @@ module.exports = {
         limit: size,
         isEnd: isPageEnd(total, size * (currentPage - 1), list.length, size, data),
         playlists: playlists
+      });
+    });
+  },
+
+  /* ------------------------------------------------------- 搜索专辑 */
+  searchTyped: function (source, keyword, page, limit, type) {
+    if (type !== 'album') {
+      return Promise.resolve(
+        JSON.stringify({ list: [], total: null, limit: limit || 20, isEnd: true })
+      );
+    }
+    var size = limit || 20;
+    var currentPage = page || 1;
+    return fetchAlbumSearch(keyword, currentPage, size).then(function (body) {
+      var data = (body.req_1 && body.req_1.data) || {};
+      var meta = data.meta || {};
+      var albumNode = (data.body && data.body.album) || {};
+      var list = albumNode.list || [];
+      var total = totalOf(meta.sum);
+      var items = [];
+      for (var i = 0; i < list.length; i++) {
+        var item = list[i] || {};
+        var albumId = item.albumID;
+        var albumMid = item.albumMID || item.album_mid;
+        if (albumId === undefined && !albumMid) continue;
+        var cover = coverOfAlbumMid(albumMid) || String(item.albumPic || '');
+        items.push({
+          id: String(albumId !== undefined ? albumId : albumMid),
+          title: decodeEntities(item.albumName || item.album_name),
+          coverUrl: cover,
+          artist: decodeEntities(item.singerName || item.singer_name),
+          worksNum: Number(item.song_count || item.songcnt || 0),
+          date: String(item.publicTime || item.pub_time || ''),
+          description: decodeEntities(item.desc || ''),
+          // getAlbumInfo 需要原样带回的信息
+          raw: {
+            id: String(albumId !== undefined ? albumId : albumMid),
+            albumMID: String(albumMid || ''),
+            title: decodeEntities(item.albumName || item.album_name),
+            artist: decodeEntities(item.singerName || item.singer_name),
+            date: String(item.publicTime || ''),
+            artwork: cover
+          }
+        });
+      }
+      return JSON.stringify({
+        list: items,
+        total: total,
+        limit: size,
+        isEnd: isPageEnd(total, size * (currentPage - 1), list.length, size, meta)
+      });
+    });
+  },
+
+  /* ------------------------------------------------------------ 专辑详情 */
+  getAlbumInfo: function (source, albumItem, page) {
+    var raw = (albumItem && albumItem.raw) || albumItem || {};
+    var albumMid = raw.albumMID || raw.albummid || raw.mid || '';
+    var albumId = raw.id || raw.albumid || (albumItem && albumItem.id) || 0;
+    if (!albumMid && !albumId) {
+      return Promise.resolve(JSON.stringify({ musicList: [] }));
+    }
+    return fetchAlbumSongs(String(albumMid), albumId).then(function (body) {
+      var data = (body.albumSonglist && body.albumSonglist.data) || {};
+      var rows = data.songList || [];
+      var songs = [];
+      for (var i = 0; i < rows.length; i++) {
+        var row = rows[i] || {};
+        var song = songOf(row.songInfo || row);
+        if (song) songs.push(song);
+      }
+      // 专辑接口一次全量返回（begin=0, num=999），无需翻页
+      var total = totalOf(data.totalNum);
+      if (total === null) total = songs.length;
+      return JSON.stringify({
+        isEnd: true,
+        total: total,
+        albumItem: {
+          id: String(albumId || albumMid),
+          title: decodeEntities(raw.title || ''),
+          coverUrl: raw.artwork || coverOfAlbumMid(albumMid),
+          artist: decodeEntities(raw.artist || ''),
+          worksNum: total,
+          date: raw.date || '',
+          description: decodeEntities(raw.description || '')
+        },
+        musicList: songs
       });
     });
   },

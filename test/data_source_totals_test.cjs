@@ -62,6 +62,153 @@ function qqSong(index) {
   };
 }
 
+test('QQ：supportedSearchTypes 包含 album', () => {
+  const { plugin } = loadPlugin('数据源-QQ.js', () => undefined);
+  const types = plugin.supportedSearchTypes();
+  assert.ok(Array.isArray(types));
+  assert.ok(types.includes('album'), 'album 应在支持列表里');
+  assert.ok(!types.includes('artist'), 'QQ 侧未开放作者搜索');
+});
+
+/* --------------------------------------------------------- QQ：专辑搜索 / 详情 */
+
+function qqAlbumSearchItem(index) {
+  return {
+    albumID: 700000 + index,
+    albumMID: 'ALBM' + index,
+    albumName: '专辑' + index,
+    albumPic: 'http://y.gtimg.cn/music/photo_new/T002R180x180M000ALBM' + index + '_1.jpg',
+    publicTime: '2024-06-0' + (index % 9 + 1),
+    singerID: 4558,
+    singerMID: 'SINGER',
+    singerName: '歌手' + index,
+    song_count: 10 + index
+  };
+}
+
+test('QQ：专辑搜索走 SearchCgiService（search_type=2），meta.sum 当总数', async () => {
+  const { plugin, requests } = loadPlugin('数据源-QQ.js', (url, request) => {
+    const node = musicuNode(request, 'music.search.SearchCgiService');
+    if (node) {
+      const page = node.param.page_num;
+      const size = node.param.num_per_page;
+      const sum = 45;
+      const count = page === 3 ? 5 : size;
+      return {
+        req_1: {
+          code: 0,
+          data: {
+            meta: { sum },
+            body: { album: { list: range(count, (page - 1) * size + 1, qqAlbumSearchItem) } }
+          }
+        }
+      };
+    }
+    return undefined;
+  });
+
+  const first = await resultOf(plugin.searchTyped('tx', '周杰伦', 1, 20, 'album'));
+  assert.equal(first.total, 45);
+  assert.equal(first.limit, 20);
+  assert.equal(first.isEnd, false, '20 < 45');
+  assert.equal(first.list.length, 20);
+  assert.equal(first.list[0].id, '700001');
+  assert.equal(first.list[0].title, '专辑1');
+  assert.equal(first.list[0].artist, '歌手1');
+  assert.equal(first.list[0].worksNum, 11);
+  assert.equal(first.list[0].date, '2024-06-02');
+  assert.ok(first.list[0].coverUrl.includes('T002R800x800M000ALBM1.jpg'), '封面应由 albumMID 拼成 800x800');
+  assert.equal(first.list[0].raw.albumMID, 'ALBM1', 'raw 须带回 albumMID 供 getAlbumInfo 使用');
+  const searchReq = requests[0];
+  const node = musicuNode(searchReq, 'music.search.SearchCgiService');
+  assert.equal(node.param.search_type, 2);
+  assert.equal(node.param.query, '周杰伦');
+
+  const last = await resultOf(plugin.searchTyped('tx', '周杰伦', 3, 20, 'album'));
+  assert.equal(last.isEnd, true, '40 + 5 >= 45');
+  assert.equal(last.list.length, 5);
+});
+
+test('QQ：searchTyped 未知类型返回空列表', async () => {
+  const { plugin } = loadPlugin('数据源-QQ.js', () => undefined);
+  const r = await resultOf(plugin.searchTyped('tx', '周杰伦', 1, 20, 'mv'));
+  assert.equal(r.list.length, 0);
+  assert.equal(r.isEnd, true);
+});
+
+test('QQ：专辑详情一次全量（AlbumSongList），isEnd=true，歌曲带封面', async () => {
+  const { plugin, requests } = loadPlugin('数据源-QQ.js', (url, request) => {
+    const node = musicuNode(request, 'music.musichallAlbum.AlbumSongList');
+    if (node) {
+      const size = node.param.num;
+      return {
+        albumSonglist: {
+          code: 0,
+          data: {
+            albumMid: node.param.albumMid,
+            totalNum: 12,
+            songList: range(12, 1, (i) => ({
+              songInfo: {
+                mid: 'SM' + i,
+                songid: 900000 + i,
+                name: '曲' + i,
+                interval: 200 + i,
+                singer: [{ name: '歌手' }],
+                album: { mid: 'ALBM1', name: '专辑1' }
+              }
+            })).slice(0, size)
+          }
+        }
+      };
+    }
+    return undefined;
+  });
+
+  const albumItem = { raw: { id: '700001', albumMID: 'ALBM1', title: '专辑1', artist: '歌手1', date: '2024-06-01', artwork: 'http://cover' } };
+
+  const r = await resultOf(plugin.getAlbumInfo('tx', albumItem, 1));
+  assert.equal(r.total, 12);
+  assert.equal(r.isEnd, true, '专辑一次全量返回');
+  assert.equal(r.musicList.length, 12);
+  assert.equal(r.albumItem.title, '专辑1');
+  assert.equal(r.albumItem.artist, '歌手1');
+  assert.equal(r.albumItem.worksNum, 12);
+  assert.equal(r.albumItem.coverUrl, 'http://cover');
+  assert.equal(r.musicList[0].id, 'SM1');
+  assert.equal(r.musicList[0].songId, '900001');
+  assert.equal(r.musicList[0].name, '曲1');
+  assert.equal(r.musicList[0].singer, '歌手');
+  assert.equal(r.musicList[0].albumName, '专辑1');
+  assert.equal(r.musicList[0].source, 'tx');
+  assert.ok(r.musicList[0].artwork.includes('T002R800x800M000ALBM1.jpg'));
+  const detailReq = requests[0];
+  const node = musicuNode(detailReq, 'music.musichallAlbum.AlbumSongList');
+  assert.equal(node.param.albumMid, 'ALBM1');
+  assert.equal(node.param.num, 999, '一次全量取完');
+});
+
+test('QQ：专辑详情 raw 无 albumMID 时也能用 id 兜底，空专辑返回空列表', async () => {
+  const { plugin } = loadPlugin('数据源-QQ.js', (url, request) => {
+    const node = musicuNode(request, 'music.musichallAlbum.AlbumSongList');
+    if (node) {
+      return {
+        albumSonglist: {
+          code: 0,
+          data: { totalNum: 1, songList: [{ songInfo: { mid: 'SM1', name: '曲1', singer: [{ name: '歌手' }] } }] }
+        }
+      };
+    }
+    return undefined;
+  });
+
+  const r = await resultOf(plugin.getAlbumInfo('tx', { id: '700001' }, 1));
+  assert.equal(r.musicList.length, 1);
+  assert.equal(r.albumItem.title, '');
+
+  const empty = await resultOf(plugin.getAlbumInfo('tx', {}, 1));
+  assert.equal(empty.musicList.length, 0);
+});
+
 test('QQ：搜索歌曲 / 歌单搜索输出 totalnum / display_num', async () => {
   const { plugin, requests } = loadPlugin('数据源-QQ.js', (url) => {
     if (url.pathname.includes('search_for_qq_cp')) {
