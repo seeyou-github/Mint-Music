@@ -81,6 +81,33 @@ class RadioNotifier extends Notifier<RadioData> {
     await _persist();
   }
 
+  /// 重命名分类（「全部」不可改）。
+  Future<void> renameCategory(String id, String name) async {
+    if (id == RadioCategory.allId) return;
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return;
+    state = state.copyWithCategories([
+      for (final category in state.categories)
+        if (category.id == id)
+          RadioCategory(id: category.id, name: trimmed)
+        else
+          category,
+    ]);
+    await _persist();
+  }
+
+  /// 分类拖动排序。
+  Future<void> reorderCategories(int oldIndex, int newIndex) async {
+    final categories = [...state.categories];
+    if (oldIndex < 0 || oldIndex >= categories.length) return;
+    if (newIndex > oldIndex) newIndex -= 1;
+    if (newIndex < 0 || newIndex > categories.length) return;
+    final moved = categories.removeAt(oldIndex);
+    categories.insert(newIndex, moved);
+    state = state.copyWithCategories(categories);
+    await _persist();
+  }
+
   /// 新增 / 更新电台（封面会先缓存到本地）。
   Future<RadioStation> saveStation(RadioStation station) async {
     var saved = station;
