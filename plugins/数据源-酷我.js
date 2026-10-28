@@ -301,6 +301,52 @@ function fetchTopList() {
   );
 }
 
+/* 榜单分类派生：榜单树没有分组字段（官方网页/App 的分组是各自页面侧
+ * 实现的），按官方 App 榜单页的板块习惯用精确名映射；映射表外的
+ * 新榜兜底归「特色榜」（酷我 web 的分组名），不会丢榜。 */
+var KUWO_BOARD_GROUPS = {
+  官方榜: ['酷我飙升榜', '酷我新歌榜', '酷我热歌榜', '抖音热歌榜'],
+  曲风榜: [
+    'DJ嗨歌榜',
+    '古风音乐榜',
+    '酷我电音榜',
+    '最强翻唱榜',
+    '经典怀旧榜',
+    'Vlog音乐榜',
+    '酷我热评榜'
+  ],
+  语种榜: ['酷我华语榜', '酷我粤语榜', '酷我欧美榜', '酷我韩语榜', '酷我日语榜'],
+  全球榜: [
+    'Billboard榜',
+    'beatport电音榜',
+    '英国UK榜',
+    '百大DJ榜',
+    'YouTube音乐排行榜',
+    '日本公信榜'
+  ],
+  '场景/内容榜': [
+    '现场音乐榜',
+    '影视金曲榜',
+    '网红新歌榜',
+    '腾讯音乐人原创榜',
+    '流行趋势榜',
+    '会员畅听榜',
+    '儿童歌曲榜'
+  ]
+};
+
+/** 榜单名 → 分类名（官方榜优先级最高，兜底「特色榜」）。 */
+function kuwoBoardGroup(name) {
+  for (var group in KUWO_BOARD_GROUPS) {
+    if (!Object.prototype.hasOwnProperty.call(KUWO_BOARD_GROUPS, group)) continue;
+    var names = KUWO_BOARD_GROUPS[group];
+    for (var i = 0; i < names.length; i++) {
+      if (names[i] === name) return group;
+    }
+  }
+  return '特色榜';
+}
+
 /** 歌单 / 榜单详情每页歌曲数（与 App 歌单详情页一致）。 */
 var SHEET_PAGE_SIZE = 50;
 
@@ -499,10 +545,10 @@ function lrcFromList(list) {
 module.exports = {
   pluginInfo: {
     name: '数据源-酷我',
-    version: '1.4.0',
+    version: '1.5.0',
     author: 'MintMusic',
     description:
-      '只提供搜索、歌单分类、榜单、歌单详情的酷我音乐数据源；' +
+      '只提供搜索、歌单分类（不含专区）、榜单（含分类，已过滤学习机/有声榜）、歌单详情的酷我音乐数据源；' +
       '播放需要在「插件管理 → 数据源」里指定一个已安装的播放源。',
     // ★ 数据源标记
     // 站点图标：导入插件时下载并缓存到插件目录（音源列表 / 切换按钮用它）
@@ -774,6 +820,8 @@ module.exports = {
       var result = [];
       for (var i = 0; i < groups.length; i++) {
         var group = groups[i] || {};
+        // 「专区」分类拿不到数据（分类歌单接口不认这些标签），不入面板
+        if (decodeName(group.name) === '专区') continue;
         var rawTags = group.data || [];
         var tags = [];
         for (var j = 0; j < rawTags.length; j++) {
@@ -845,24 +893,24 @@ module.exports = {
   getTopLists: function () {
     return fetchTopList().then(function (body) {
       var list = body.child || [];
-      // 按收听量从高到低（与内置源一致）
-      list.sort(function (a, b) {
-        return Number(b.listen || 0) - Number(a.listen || 0);
-      });
       var result = [];
       for (var i = 0; i < list.length; i++) {
         var item = list[i] || {};
         // 只保留真实榜单（sourceid 是数字；「由你音乐榜」这类外链节点跳过）
         if (item.sourceid === undefined) continue;
         if (!/^\d+$/.test(String(item.sourceid))) continue;
+        var name = decodeName(item.name);
+        // 学习机内容与有声故事榜不属于音乐榜单，过滤
+        if (/^青少年专属/.test(name) || name === '儿童故事榜') continue;
         result.push({
           id: String(item.sourceid),
-          name: decodeName(item.name),
+          name: name,
           coverUrl: String(item.pic || ''),
           // 榜单树里的 listen 是在榜歌曲数 / 新增数，不是播放量：宁可不显示，
           // 也不要给用户一个错误的播放量。
           playCount: '',
-          updateFrequency: item.info ? String(item.info) : ''
+          updateFrequency: item.info ? String(item.info) : '',
+          group: kuwoBoardGroup(name)
         });
       }
       return JSON.stringify(result);
