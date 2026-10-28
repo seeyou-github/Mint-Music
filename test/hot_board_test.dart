@@ -188,6 +188,38 @@ void main() {
       expect(container.read(hotBoardsProvider).valueOrNull!.length, 2);
     });
 
+    test('拖动排序只调整当前音源内的顺序', () async {
+      final store = _FakeStore();
+      final container = _container(store);
+      await container.read(hotBoardsProvider.future);
+      final notifier = container.read(hotBoardsProvider.notifier);
+      await notifier.add(_board('wy-a', 'wy'));
+      await notifier.add(_board('tx-a', 'tx'));
+      await notifier.add(_board('wy-b', 'wy'));
+      await notifier.add(_board('wy-c', 'wy'));
+
+      // 把第 1 个（wy-a）拖到末尾：ReorderableListView 传入的 newIndex 是插入位。
+      await notifier.reorderForSource('wy', 0, 3);
+      expect(
+        container
+            .read(currentHotBoardsProvider)
+            .valueOrNull!
+            .map((item) => item.id),
+        ['wy-b', 'wy-c', 'wy-a'],
+      );
+      expect(
+        container.read(hotBoardsProvider).valueOrNull!.map((item) => item.id),
+        ['wy-b', 'tx-a', 'wy-c', 'wy-a'],
+        reason: '其它音源的榜单位置不变',
+      );
+      expect(store.boards.map((item) => item.id), [
+        'wy-b',
+        'tx-a',
+        'wy-c',
+        'wy-a',
+      ]);
+    });
+
     test('移除榜单只删除自己', () async {
       final store = _FakeStore();
       final container = _container(store);

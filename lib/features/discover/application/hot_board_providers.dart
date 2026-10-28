@@ -54,6 +54,30 @@ class HotBoardsNotifier extends AsyncNotifier<List<HotBoard>> {
     await _update(boards);
   }
 
+  /// 调整某个音源内榜单的顺序（拖动排序）；不改变其它音源的位置。
+  Future<void> reorderForSource(
+    String sourceId,
+    int oldIndex,
+    int newIndex,
+  ) async {
+    final all = [...await future];
+    final slots = <int>[
+      for (var i = 0; i < all.length; i++)
+        if (all[i].source == sourceId) i,
+    ];
+    if (oldIndex < 0 || oldIndex >= slots.length) return;
+    if (newIndex > oldIndex) newIndex -= 1;
+    newIndex = newIndex.clamp(0, slots.length - 1);
+
+    final boards = [for (final index in slots) all[index]];
+    final moved = boards.removeAt(oldIndex);
+    boards.insert(newIndex, moved);
+    for (var i = 0; i < slots.length; i++) {
+      all[slots[i]] = boards[i];
+    }
+    await _update(all);
+  }
+
   Future<void> _update(List<HotBoard> boards) async {
     state = AsyncData(boards);
     await ref.read(hotBoardStoreProvider).save(boards);
