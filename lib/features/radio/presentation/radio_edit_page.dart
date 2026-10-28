@@ -437,6 +437,7 @@ class _RadioEditPageState extends ConsumerState<RadioEditPage> {
               label: category.name,
               selected: category.id == _categoryId,
               onTap: () => setState(() => _categoryId = category.id),
+              onDelete: category.isAll ? null : () => _removeCategory(category),
             ),
           _buildChoice(
             colors,
@@ -495,6 +496,48 @@ class _RadioEditPageState extends ConsumerState<RadioEditPage> {
     final category = await ref.read(radioProvider.notifier).addCategory(name);
     if (!mounted) return;
     setState(() => _categoryId = category.id);
+  }
+
+  /// 删除分类：分类里的电台回到「全部」，电台本身保留。
+  Future<void> _removeCategory(RadioCategory category) async {
+    if (category.isAll) return;
+    final colors = ref.read(themeColorsProvider);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: colors.surface,
+        title: Text(
+          context.tr('删除分类'),
+          style: TextStyle(fontSize: 17, color: colors.textPrimary),
+        ),
+        content: Text(
+          context.tr('删除「${category.name}」后，里面的电台会回到「全部」，电台本身不会删除。'),
+          style: TextStyle(fontSize: 14, color: colors.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(
+              context.tr('取消'),
+              style: TextStyle(color: colors.textHint),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(
+              context.tr('删除'),
+              style: TextStyle(color: colors.error),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    await ref.read(radioProvider.notifier).removeCategory(category.id);
+    if (!mounted) return;
+    if (_categoryId == category.id) {
+      setState(() => _categoryId = RadioCategory.allId);
+    }
   }
 
   Widget _buildSourceSection(ThemeColors colors, List<SourceInfo> sources) {
@@ -688,29 +731,69 @@ class _RadioEditPageState extends ConsumerState<RadioEditPage> {
     required String label,
     required bool selected,
     required VoidCallback onTap,
+    VoidCallback? onDelete,
   }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.md,
-          vertical: 6,
-        ),
-        decoration: BoxDecoration(
-          color: selected
-              ? colors.primary.withValues(alpha: 0.15)
-              : colors.surfaceVariant,
-          borderRadius: BorderRadius.circular(AppRadius.full),
-          border: Border.all(color: selected ? colors.primary : colors.divider),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 12,
-            color: selected ? colors.primary : colors.textSecondary,
-          ),
+    final chip = Container(
+      padding: EdgeInsets.fromLTRB(
+        AppSpacing.md,
+        6,
+        onDelete == null ? AppSpacing.md : AppSpacing.lg,
+        6,
+      ),
+      decoration: BoxDecoration(
+        color: selected
+            ? colors.primary.withValues(alpha: 0.15)
+            : colors.surfaceVariant,
+        borderRadius: BorderRadius.circular(AppRadius.full),
+        border: Border.all(color: selected ? colors.primary : colors.divider),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 12,
+          color: selected ? colors.primary : colors.textSecondary,
         ),
       ),
+    );
+    final choice = GestureDetector(onTap: onTap, child: chip);
+    if (onDelete == null) return choice;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        choice,
+        Positioned(
+          right: -6,
+          top: -6,
+          child: Semantics(
+            button: true,
+            label: context.tr('删除分类'),
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: onDelete,
+              child: SizedBox(
+                width: 26,
+                height: 26,
+                child: Center(
+                  child: Container(
+                    width: 18,
+                    height: 18,
+                    decoration: BoxDecoration(
+                      color: colors.error,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: colors.background, width: 1.5),
+                    ),
+                    child: const Icon(
+                      Icons.close_rounded,
+                      size: 10,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
