@@ -1575,8 +1575,9 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
               // 前三首只显示歌名，不显示歌手名。
               Expanded(child: title),
             ] else ...[
-              // 第 4 首起不显示封面：标题与前三首的标题对齐。
-              const SizedBox(width: 40 + AppSpacing.sm),
+              // 第 4 首起不显示封面：占位宽 = 封面 40 + 前后两个间距，
+              // 歌名与前三首封面对齐的标题起点一致。
+              const SizedBox(width: 40 + AppSpacing.sm * 2),
               Expanded(child: title),
             ],
             if (isCurrent) ...[
