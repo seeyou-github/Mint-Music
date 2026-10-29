@@ -16,6 +16,17 @@
 - MusicFree 适配器支持插件声明 `iconUrl` 与 `customSheets`（老插件启动时从宿主
   补一次 iconUrl 并缓存图标）
 
+### 修复
+- 数据源歌曲交给 MusicFree 播放源时提示「Plugin returned empty result for musicUrl」（榜单歌曲必现）
+  - 适配器拼给插件的 musicItem 缺平台标识：只带了 `id`，没带 `songmid` / `strMediaMid`
+    （QQ 插件拼 vkey 文件名要用 strMediaMid）、`hash`（酷狗）、`copyrightId`（咪咕），
+    现在一并带上，其余字段也原样补齐
+  - QQ_数据源：歌曲补 `strMediaMid`（歌单取 `vs[4]/vs[3]`，榜单接口直接给），
+    播放源可以直接走 vkey，不必再依赖需要卡密的第三方代理
+  - QQ_数据源：榜单详情改用经典接口 `fcg_v8_toplist_cp.fcg` —— 原来走的 musicu
+    `GetDetail` 已只返回 `songId` + 歌名（没有 mid / 时长），取不到播放地址；
+    现在按 100 首/页分页，带总数与 isEnd
+
 ### 修改
 - 落雪（LX）格式音源不再出现在音源切换按钮的列表里：主页 / 搜索页 / 歌词搜索 /
   编辑标签「在线搜索」/ 快速匹配本地歌曲

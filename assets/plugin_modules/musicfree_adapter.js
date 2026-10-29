@@ -283,15 +283,32 @@ function __mfUnwrapItem(musicInfo) {
   if (extra && typeof extra === 'object' && extra.musicItem && typeof extra.musicItem === 'object') {
     return extra.musicItem;
   }
-  // 回退：用本项目字段拼一个最小可用的 musicItem（例如内置源搜索到的歌曲
-  // 交给 MusicFree 插件解析播放地址）。
+  // 回退：用本项目字段拼一个 musicItem（例如数据源插件搜到的歌曲交给
+  // MusicFree 插件解析播放地址）。
+  //
+  // 注意：各平台插件拼播放地址用的是它自己的字段名，少一个就直接取不到链接
+  // （表现为 `Plugin returned empty result for musicUrl`）：
+  //   · QQ：songmid + strMediaMid（两者不是同一个值，只给 songmid 拼出来的文件名无效）
+  //   · 酷狗：hash（+ albumId）
+  //   · 咪咕：copyrightId
+  // 所以这里把平台标识一并带过去，再把 info 里剩下的字段补进 item。
   var id = info.songmid || info.songId || info.songid || info.id || '';
   // 部分插件在 getMediaSource 第一行就检查 musicItem.qualities[quality]，
   // 内置源没有插件自己的音质表，这里按 MusicFree 的四个音质键补齐，
   // 具体的可用性交给插件接口判断。
   var qualities = { low: {}, standard: {}, high: {}, super: {} };
-  return {
+  var item = {
     id: id,
+    songmid: __mfText(info.songmid || info.mid, '') || id,
+    strMediaMid: __mfText(
+      info.strMediaMid || info.media_mid || info.mediaMid,
+      ''
+    ),
+    hash: __mfText(info.hash, ''),
+    albumId: __mfText(info.albumId || info.albumid, ''),
+    albumMid: __mfText(info.albumMid || info.albummid, ''),
+    copyrightId: info.copyrightId,
+    type: info.type !== undefined ? info.type : info.songType,
     platform: __mfPluginMeta().name,
     title: __mfText(info.name || info.title, ''),
     artist: __mfText(info.singer || info.artist, ''),
@@ -301,6 +318,11 @@ function __mfUnwrapItem(musicInfo) {
     qualities: qualities,
     _info: info,
   };
+  // 插件可能还认其它字段（别名 / 平台私有字段），剩下的原样补上。
+  Object.keys(info).forEach(function (key) {
+    if (item[key] === undefined) item[key] = info[key];
+  });
+  return item;
 }
 
 /** 角标里是否带「充电专属 / 会员专享」文案（App 列表的充电标记）。 */

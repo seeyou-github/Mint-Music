@@ -165,10 +165,18 @@ function songOf(item) {
   var mid = item.songmid || item.mid || '';
   if (!mid) return null;
   var interval = Number(item.interval) || 0;
+  // 播放源（MusicFree 的 QQ 插件）拼 vkey 文件名用的是 strMediaMid，它和 songmid
+  // 不是同一个值；不带上的话只能退回到需要卡密的第三方代理，慢且经常取不到地址。
+  // 歌单接口给 vs[4]（320k）/ vs[3]（128k），榜单接口直接给 strMediaMid。
+  var file = item.file || {};
+  var vs = item.vs && item.vs.length ? item.vs : [];
+  var mediaMid =
+    item.strMediaMid || item.media_mid || file.media_mid || vs[4] || vs[3] || '';
   return {
     id: String(mid),
     songId: String(item.songid || item.id || mid),
     songmid: String(mid),
+    strMediaMid: mediaMid ? String(mediaMid) : undefined,
     name: item.songname || item.name || item.title || '',
     singer: singersOf(item),
     albumName: albumNameOf(item),
@@ -307,18 +315,27 @@ function fetchTopLists() {
   );
 }
 
+/** 榜单详情每页歌曲数。 */
+var TOPLIST_PAGE_SIZE = 100;
+
+/**
+ * 榜单详情。
+ *
+ * 不能用 musicu 的 `GetDetail`：它只回 `data.song`（songId + 歌名 + 封面 mid），
+ * 没有 `mid` / `strMediaMid`，播放源拿不出 vkey，只能报「取不到播放地址」。
+ * 这里走经典接口 `fcg_v8_toplist_cp.fcg`，`songlist[].data` 里字段是全的
+ * （songmid / strMediaMid / interval / albummid / singer…）。
+ */
 function fetchTopListDetail(topId, page) {
-  return musicu(
-    {
-      toplist: {
-        module: 'musicToplist.ToplistInfoServer',
-        method: 'GetDetail',
-        param: { topid: Number(topId) || 0, num: 300, period: '' }
-      },
-      comm: { uin: 0, format: 'json', ct: 20, cv: 1859 }
-    },
-    ['toplist']
-  );
+  var currentPage = page > 0 ? page : 1;
+  var begin = (currentPage - 1) * TOPLIST_PAGE_SIZE;
+  var url =
+    'https://c.y.qq.com/v8/fcg-bin/fcg_v8_toplist_cp.fcg?topid=' +
+    encodeURIComponent(String(topId === undefined || topId === null ? '' : topId)) +
+    '&format=json&inCharset=utf8&outCharset=utf-8&notice=0' +
+    '&platform=yqq.json&needNewCode=0&tpl=3&page=detail&type=top' +
+    '&song_begin=' + begin + '&song_num=' + TOPLIST_PAGE_SIZE;
+  return getJson(url, { Referer: 'https://y.qq.com/' });
 }
 
 /** 歌单详情每页歌曲数（与 App 歌单详情页一致）。 */
@@ -799,7 +816,7 @@ function fetchQrc(songId, songInfo) {
 module.exports = {
   pluginInfo: {
     name: 'QQ_数据源',
-    version: '1.7.0',
+    version: '1.7.1',
     author: 'MintMusic',
     description:
       '只提供搜索（歌曲 / 专辑 / 作者）、歌单分类、榜单（含分类）、歌单 / 专辑 / 作者详情的 QQ音乐数据源；' +
@@ -1202,20 +1219,31 @@ module.exports = {
 
   /* ------------------------------------------------------------- 榜单详情 */
   getTopListDetail: function (id, page) {
-    return fetchTopListDetail(id, page).then(function (body) {
-      var data = (body.toplist && body.toplist.data) || {};
-      var info = data.data || data.topInfo || {};
-      var songs = songsOf(data.songInfoList || []);
-      // 榜单一次全量返回（toplist.data.data.totalNum），无需翻页
-      var total = totalOf(data.data && data.data.totalNum);
+    var currentPage = page > 0 ? page : 1;
+    return fetchTopListDetail(id, currentPage).then(function (body) {
+      var list = body.songlist || [];
+      var songs = [];
+      for (var i = 0; i < list.length; i++) {
+        var entry = list[i] || {};
+        // 经典接口：songlist[i].data 才是歌曲本体（外层是排名信息）。
+        var song = songOf(entry.data || entry);
+        if (song) songs.push(song);
+      }
+      var info = body.topinfo || {};
+      var size = TOPLIST_PAGE_SIZE;
+      var total = totalOf(body.total_song_num);
       if (total === null) total = songs.length;
+      var isEnd =
+        songs.length < size || (total !== null && currentPage * size >= total);
       return JSON.stringify({
-        isEnd: true,
+        isEnd: isEnd,
         total: total,
+        limit: size,
         sheet: {
-          title: info.title || info.topTitle || '排行榜',
-          coverUrl: info.headPicUrl || info.frontPicUrl || '',
-          description: info.updateTime || '',
+          title: info.ListName || info.listName || '排行榜',
+          coverUrl:
+            info.headPic_v12 || info.MacListPicUrl || info.pic_album || '',
+          description: info.update_time || body.update_time || '',
           author: '',
           songCount: total
         },
