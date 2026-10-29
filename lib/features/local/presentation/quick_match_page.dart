@@ -68,7 +68,12 @@ class _QuickMatchPageState extends ConsumerState<QuickMatchPage> {
 
   /// 批量算一遍歌词状态：内嵌歌词（扫描时记下的标记）+ 歌词缓存。
   Future<void> _loadLyricStatus(List<Song> songs) async {
-    if (!mounted || _statusRunning || songs.isEmpty) return;
+    if (!mounted || _statusRunning) return;
+    if (songs.isEmpty) {
+      // 没有歌就没什么可算的：把「正在算」的标志复位，别让界面一直转圈。
+      setState(() => _loadingStatus = false);
+      return;
+    }
     _statusRunning = true;
     setState(() => _loadingStatus = true);
     final entries = await LyricCache.readMany(songs);
@@ -202,12 +207,20 @@ class _QuickMatchPageState extends ConsumerState<QuickMatchPage> {
             _buildListHeader(colors),
             Expanded(
               child: songsAsync.when(
-                data: (_) => _loadingStatus && songs.isEmpty
+                data: (_) =>
+                    // 只在「有歌但歌词状态还没算完」时转圈；完全没有歌曲时
+                    // 直接走空状态（提示添加扫描目录），否则会永远转下去——
+                    // _loadLyricStatus 对空列表直接返回，_loadingStatus 不会复位。
+                    _loadingStatus && allSongs.isNotEmpty && songs.isEmpty
                     ? const Center(child: CircularProgressIndicator())
                     : songs.isEmpty
                     ? _buildEmpty(colors, dirs, allSongs)
                     : _buildSongList(colors, songs, allSongs),
-                loading: () => const Center(child: CircularProgressIndicator()),
+                loading: () =>
+                    // 曲库还在加载且连扫描目录都没设置：不会有歌出来，直接提示。
+                    dirs.isEmpty && allSongs.isEmpty
+                    ? _buildEmpty(colors, dirs, allSongs)
+                    : const Center(child: CircularProgressIndicator()),
                 error: (e, _) => Center(
                   child: Text('$e', style: TextStyle(color: colors.textHint)),
                 ),
