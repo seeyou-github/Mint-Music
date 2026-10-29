@@ -392,23 +392,32 @@ double DesktopLyricWindow::ActiveSungFraction() const {
   double sung_width = 0.0;
   if (dc != nullptr) {
     const HFONT old_font = static_cast<HFONT>(::SelectObject(dc, font_));
+    // 先量完整行：分母必须是整行宽度。边量边累加、又在当前字处 break 的话，
+    // 分母只包含「已唱到当前字为止」的宽度，比率恒接近 1——表现为一句刚开始
+    // 填充就贴到行尾，随后在行尾来回跳。
+    std::vector<double> widths;
+    widths.reserve(line.words.size());
     for (const auto& word : line.words) {
       const double word_width = std::max(
           1.0, static_cast<double>(MeasureTextWidth(dc, word.text)));
+      widths.push_back(word_width);
       total_width += word_width;
+    }
+    for (size_t i = 0; i < line.words.size(); i++) {
+      const DesktopLyricWord& word = line.words[i];
       long long start = word.start_ms;
       long long end = word.end_ms;
       if (end <= start) {
         end = start + 1;
       }
       if (position <= start) {
-        continue;  // 这个字还没唱到
+        break;  // 这个字还没唱到，后面的都没唱
       }
       if (position >= end) {
-        sung_width += word_width;  // 整个字唱完
+        sung_width += widths[i];  // 整个字唱完
       } else {
         // 唱到这个字的中间：按时间在字宽里线性推进，后面的一律没唱。
-        sung_width += word_width * static_cast<double>(position - start) /
+        sung_width += widths[i] * static_cast<double>(position - start) /
                       static_cast<double>(end - start);
         break;
       }
