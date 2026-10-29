@@ -171,26 +171,36 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
       final metadata = await LocalMetadataReader.read(path);
       if (!mounted) return;
       setState(() {
+        // 只给空字段补值，并把补进来的值也算成「原始值」——文件里本来就是这样，
+        // 不算用户修改，保存时也就不会无谓地重写文件。
         if (_yearController.text.trim().isEmpty) {
           final year = song.year ?? metadata.year;
-          if (year != null) _yearController.text = year.toString();
+          if (year != null) {
+            _yearController.text = year.toString();
+            _baseYear = _yearController.text;
+          }
         }
         if (_lrcController.text.trim().isEmpty) {
           final lrc = song.lrc ?? metadata.lyrics;
-          if (lrc != null && lrc.isNotEmpty) _lrcController.text = lrc;
+          if (lrc != null && lrc.isNotEmpty) {
+            _lrcController.text = lrc;
+            _baseLrc = _lrcController.text;
+          }
         }
         if (_genreController.text.trim().isEmpty) {
           final genre = song.genre ?? metadata.genre;
-          if (genre != null && genre.isNotEmpty) _genreController.text = genre;
+          if (genre != null && genre.isNotEmpty) {
+            _genreController.text = genre;
+            _baseGenre = _genreController.text;
+          }
         }
         if (_commentController.text.trim().isEmpty) {
           final comment = song.comment ?? metadata.comment;
           if (comment != null && comment.isNotEmpty) {
             _commentController.text = comment;
+            _baseComment = _commentController.text;
           }
         }
-        // 这些值是从文件里读出来的，也算「原始值」，不算用户修改。
-        _captureBaseline();
       });
     } catch (e) {
       debugPrint('[TagEditor] 读取文件标签失败: $e');
