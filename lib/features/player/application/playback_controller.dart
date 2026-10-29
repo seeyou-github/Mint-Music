@@ -710,10 +710,11 @@ class PlaybackController extends StateNotifier<PlaybackState> {
           state = state.copyWith(
             isPlaying: playerState.playing,
             isLoading: false,
+            isBuffering: processingState == ProcessingState.buffering,
           );
         }
       } else if (processingState == ProcessingState.loading) {
-        state = state.copyWith(isLoading: true);
+        state = state.copyWith(isLoading: true, isBuffering: false);
         // isPlaying 不变（play()/playSongAt() 已乐观设置）
       } else if (processingState == ProcessingState.completed) {
         debugPrint('[PlaybackController] 歌曲播放完成');
@@ -728,7 +729,11 @@ class PlaybackController extends StateNotifier<PlaybackState> {
           // 这里不再重复记录。
           if (!_settingQueue) _recordCompletedListen();
         }
-        state = state.copyWith(isPlaying: false, isLoading: false);
+        state = state.copyWith(
+          isPlaying: false,
+          isLoading: false,
+          isBuffering: false,
+        );
         // 使用 Future.microtask 延迟 next() 到所有 pending 的
         // playerStateStream 事件（idle/loading 等）处理完毕之后。
         // 直接调用 next() 可能与之竞态，导致 playSongAt 被中断。
@@ -751,7 +756,11 @@ class PlaybackController extends StateNotifier<PlaybackState> {
         // 此时保留 playSongAt 设置的乐观 isPlaying / isLoading，避免提前清零导致
         // 按钮状态与实际播放不一致。
         if (!_settingQueue && !_isSwitchingQuality) {
-          state = state.copyWith(isPlaying: false, isLoading: false);
+          state = state.copyWith(
+            isPlaying: false,
+            isLoading: false,
+            isBuffering: false,
+          );
         }
       }
     });

@@ -11,6 +11,9 @@ class PlaybackState {
   final List<Song> queue;
   final int currentIndex;
   final bool isLoading;
+
+  /// 播放器正在缓冲（网络卡顿、拖动进度条后等数据）。
+  final bool isBuffering;
   final String currentQuality;
   final List<String> availableQualities;
 
@@ -24,6 +27,7 @@ class PlaybackState {
     this.queue = const [],
     this.currentIndex = -1,
     this.isLoading = false,
+    this.isBuffering = false,
     this.currentQuality = '320k',
     this.availableQualities = const [
       '128k',
@@ -55,6 +59,13 @@ class PlaybackState {
 
   bool get hasNext => queue.isNotEmpty;
 
+  /// 是否真的在出声。
+  ///
+  /// 缓冲 / 加载时 [isPlaying] 仍可能是 true（播放器的 playWhenReady），
+  /// 但播放器没有出声、进度也停在原地。靠进度补间推进的界面（歌词时钟）
+  /// 必须用这个判断，否则缓冲期间会自己往前走。
+  bool get isAudible => isPlaying && !isBuffering;
+
   PlaybackState copyWith({
     Song? currentSong,
     bool? isPlaying,
@@ -65,6 +76,7 @@ class PlaybackState {
     List<Song>? queue,
     int? currentIndex,
     bool? isLoading,
+    bool? isBuffering,
     String? currentQuality,
     List<String>? availableQualities,
     bool forceCurrentSong = false,
@@ -80,6 +92,7 @@ class PlaybackState {
     final newQueue = queue ?? this.queue;
     final newCurrentIndex = currentIndex ?? this.currentIndex;
     final newIsLoading = isLoading ?? this.isLoading;
+    final newIsBuffering = isBuffering ?? this.isBuffering;
     final newCurrentQuality = currentQuality ?? this.currentQuality;
     final newAvailableQualities = availableQualities ?? this.availableQualities;
 
@@ -93,6 +106,7 @@ class PlaybackState {
         identical(newQueue, this.queue) &&
         newCurrentIndex == this.currentIndex &&
         newIsLoading == this.isLoading &&
+        newIsBuffering == this.isBuffering &&
         newCurrentQuality == this.currentQuality &&
         identical(newAvailableQualities, this.availableQualities)) {
       return this;
@@ -108,6 +122,7 @@ class PlaybackState {
       queue: newQueue,
       currentIndex: newCurrentIndex,
       isLoading: newIsLoading,
+      isBuffering: newIsBuffering,
       currentQuality: newCurrentQuality,
       availableQualities: newAvailableQualities,
     );

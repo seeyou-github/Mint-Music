@@ -294,6 +294,27 @@ void main() {
     expect(retryRequests.map((request) => request.song.id), everyElement('b'));
   }
 
+  test('缓冲时 isAudible 为 false，恢复 ready 后重新为 true', () async {
+    await startA();
+
+    audio.emitState(PlayerState(true, ProcessingState.buffering));
+    await pumpEventQueue();
+
+    expect(controller.playbackState.isPlaying, isTrue);
+    expect(controller.playbackState.isBuffering, isTrue);
+    expect(
+      controller.playbackState.isAudible,
+      isFalse,
+      reason: '缓冲时没有出声，歌词时钟不能继续推进',
+    );
+
+    audio.emitState(PlayerState(true, ProcessingState.ready));
+    await pumpEventQueue();
+
+    expect(controller.playbackState.isBuffering, isFalse);
+    expect(controller.playbackState.isAudible, isTrue);
+  });
+
   for (final mode in PlayMode.values) {
     test(
       '${mode.name}: playlist failure retries selected b, never a/c',

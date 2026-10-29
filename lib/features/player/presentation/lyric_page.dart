@@ -270,7 +270,7 @@ class _LyricPageState extends ConsumerState<LyricPage> {
                                         playbackControllerProvider.select(
                                           (state) => (
                                             position: state.position,
-                                            isPlaying: state.isPlaying,
+                                            isPlaying: state.isAudible,
                                           ),
                                         ),
                                       );

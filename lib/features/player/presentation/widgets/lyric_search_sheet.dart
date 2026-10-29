@@ -815,7 +815,7 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
       playbackControllerProvider.select((s) => s.position),
     );
     final isPlaying = ref.watch(
-      playbackControllerProvider.select((s) => s.isPlaying),
+      playbackControllerProvider.select((s) => s.isAudible),
     );
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),

@@ -920,7 +920,7 @@ class _PlayerLyricsPage extends ConsumerWidget {
     final seekPreview = ref.watch(seekPreviewPositionProvider);
     final lyricPosition = seekPreview ?? position;
     final isPlaying = ref.watch(
-      playbackControllerProvider.select((s) => s.isPlaying),
+      playbackControllerProvider.select((s) => s.isAudible),
     );
     final showTranslation = ref.watch(lyricShowTranslationProvider);
     final showRoman = ref.watch(lyricShowRomanProvider);
