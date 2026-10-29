@@ -399,6 +399,16 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     _pendingAutoNext = false;
   }
 
+  /// 上一次收到的处理状态，用来区分「刚播到末尾」和「播完后的暂停/续播」。
+  ProcessingState? _lastProcessingState;
+
+  /// 用户主动播放 / 暂停的次数。
+  ///
+  /// 单曲队列播完时的停顿流程（seek(0) → pause）中间有 await，
+  /// 用户可能正好在这段时间点了播放按钮；停顿流程结束时据此判断
+  /// 是否该放手，避免把用户刚恢复的播放又停掉。
+  int _userPlayActionSeq = 0;
+
   PlaybackController(
     this._audioHandler,
     this._musicSourceManager,
@@ -650,6 +660,11 @@ class PlaybackController extends StateNotifier<PlaybackState> {
       // 极短窗口内跳过 completed 自动切歌逻辑，避免误触发。
       final processingState = playerState.processingState;
       final isLoading = processingState == ProcessingState.loading;
+      // 记住上一个处理状态：暂停 / 重新播放时播放器会连着发好几次
+      // completed（playing 翻转不改处理状态），只有真正「播到末尾」
+      // 那一次才应该自动切下一首。
+      final previousProcessingState = _lastProcessingState;
+      _lastProcessingState = processingState;
 
       if (isLoading) {
         _armStallWatchdog();
@@ -702,15 +717,22 @@ class PlaybackController extends StateNotifier<PlaybackState> {
         // isPlaying 不变（play()/playSongAt() 已乐观设置）
       } else if (processingState == ProcessingState.completed) {
         debugPrint('[PlaybackController] 歌曲播放完成');
-        _justCompleted = true;
-        // 换队列期间收到的 completed 属于上一首，setQueue 已经结算过，
-        // 这里不再重复记录。
-        if (!_settingQueue) _recordCompletedListen();
+        // 只有「刚播到末尾」那一次才算自然播完：播完后再暂停 / 续播都会让
+        // playing 翻转、处理状态仍是 completed，重复当成自然播完会重复结算
+        // 收听时长，还会自动 next() 把用户刚恢复的播放又停掉。
+        final isNaturalCompletion =
+            previousProcessingState != ProcessingState.completed;
+        if (isNaturalCompletion) {
+          _justCompleted = true;
+          // 换队列期间收到的 completed 属于上一首，setQueue 已经结算过，
+          // 这里不再重复记录。
+          if (!_settingQueue) _recordCompletedListen();
+        }
         state = state.copyWith(isPlaying: false, isLoading: false);
         // 使用 Future.microtask 延迟 next() 到所有 pending 的
         // playerStateStream 事件（idle/loading 等）处理完毕之后。
         // 直接调用 next() 可能与之竞态，导致 playSongAt 被中断。
-        if (!_settingQueue && !_pendingAutoNext) {
+        if (isNaturalCompletion && !_settingQueue && !_pendingAutoNext) {
           _pendingAutoNext = true;
           Future.microtask(() {
             if (mounted && _pendingAutoNext) {
@@ -1173,8 +1195,23 @@ class PlaybackController extends StateNotifier<PlaybackState> {
       // 直接调用 pause() 在 STATE_ENDED 下可能被忽略。
       // 必须先 seek(0) 让播放器离开 ENDED(→READY)，
       // 再 pause() 才能真正停止播放。
-      await _seekWithoutCounting(Duration.zero);
-      await _audioHandler.pause();
+      //
+      // 两步各自兜底：seek 失败也不能跳过 pause，否则播放器内部的
+      // playing 会一直挂着 true，之后点播放按钮会被 just_audio 直接忽略。
+      final actionSeq = _userPlayActionSeq;
+      try {
+        await _seekWithoutCounting(Duration.zero);
+      } catch (e) {
+        debugPrint('[PlaybackController] 停止前 seek(0) 失败: $e');
+      }
+      // 这段 await 期间用户点了播放 / 暂停：以用户操作为准，不再停顿。
+      if (_userPlayActionSeq != actionSeq) return;
+      try {
+        await _audioHandler.pause();
+      } catch (e) {
+        debugPrint('[PlaybackController] 暂停失败: $e');
+      }
+      if (_userPlayActionSeq != actionSeq) return;
       // 排空 seek/pause 触发的 playerStateStream 微任务事件
       await Future.microtask(() {});
       // 清除 completed 标记 & 强制同步 UI 状态
@@ -1249,6 +1286,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
 
   Future<void> play() async {
     _cancelPendingAutoNext();
+    _userPlayActionSeq++;
     // 用户主动播放，清除 completed 标记
     _justCompleted = false;
     // 播完后用户又点了播放：这是一次新的收听，重新允许结算。
@@ -1261,26 +1299,47 @@ class PlaybackController extends StateNotifier<PlaybackState> {
       }
       _needsSourceLoad = false;
     }
-    // 上一首自然播完（进度停在最末尾）时，部分后端直接 play() 不会重新出声
-    //（Windows 的 media_kit 尤其明显：completed 后 play 只是置 playWhenReady，
-    // 播放器仍停在末尾）。先回到开头再播，语义就是「重新播放这首歌曲」。
-    try {
-      final duration = _audioHandler.currentDuration;
-      if (duration != null &&
-          duration > Duration.zero &&
-          _audioHandler.currentPosition >= duration) {
-        await _seekWithoutCounting(Duration.zero);
+    // 上一首自然播完（播放器停在末尾）时再次点播放，就是要「重新播放这首」。
+    // 但 Windows 的 media_kit 后端在播完后有两个坑：
+    // 1. 内部 playWhenReady 仍为 true，而 just_audio 的 play() 看到 playing
+    //    已为 true 会直接返回，播放器依旧停在末尾——表现为点了播放按钮毫无反应；
+    // 2. media_kit 在 completed 事件里把上报进度重置成 0，
+    //    「进度 >= 时长」永远不成立（上一次就栽在这里），必须看处理状态。
+    // 所以先把内部 playing 归位、再回到开头，最后才下发真正的播放请求。
+    final atEnd =
+        _audioHandler.processingState == ProcessingState.completed ||
+        _isPositionAtEnd();
+    // 加载中不插手：此时播放请求本来就会被在途的 setAudioSource 接管，
+    // 暂停只会把上一首的声音再放出来一下。
+    if (_audioHandler.playing && !state.isLoading) {
+      try {
+        await _audioHandler.pause();
+      } catch (_) {
+        // 暂停失败也继续，下面照常下发播放请求。
       }
-    } catch (_) {
-      // 读不到进度就按原路径播，别让播放按钮卡死。
+    }
+    if (atEnd) {
+      try {
+        await _seekWithoutCounting(Duration.zero);
+      } catch (_) {
+        // 读不到进度 / seek 失败就按原路径播，别让播放按钮卡死。
+      }
     }
     await _audioHandler.play();
     // 遵循 CeruMusic：不乐观设 isPlaying=true。
     // 由 _playerStateSub 的 ready(playing=true) 或微任务兜底同步。
   }
 
+  bool _isPositionAtEnd() {
+    final duration = _audioHandler.currentDuration;
+    return duration != null &&
+        duration > Duration.zero &&
+        _audioHandler.currentPosition >= duration;
+  }
+
   Future<void> pause() async {
     _cancelPendingAutoNext();
+    _userPlayActionSeq++;
     // 遵循 CeruMusic stop()：先立即设 isPlay=false，再调 audio.pause()。
     // 这样即使 audio.pause() 异步延迟或失败，UI 状态也已正确更新。
     _justCompleted = false;
