@@ -11,6 +11,7 @@ import '../../../core/storage/app_database.dart';
 import '../../../core/storage/app_preferences.dart';
 import '../../../shared/services/cover_cache_service.dart';
 import '../../player/domain/models/song.dart';
+import '../../player/domain/services/lyric_parser.dart';
 import 'local_metadata_reader.dart';
 
 class ScanProgress {
@@ -402,6 +403,13 @@ class LocalMusicRepository {
             ? metadata.album!
             : '未知专辑';
 
+        // 内嵌歌词：记下「有没有」「是不是逐字」，快速匹配页据此筛选，
+        // 不用为了看状态把每个文件再读一遍。
+        final embeddedLyric = metadata.lyrics?.trim() ?? '';
+        final hasEmbeddedLyric = embeddedLyric.isNotEmpty;
+        final hasEmbeddedWordLyric =
+            hasEmbeddedLyric && detectWordLyricFormat(embeddedLyric) != null;
+
         final song = Song(
           id: id,
           title: title,
@@ -415,6 +423,10 @@ class LocalMusicRepository {
           coverKey: _genCoverKey(filePath),
           bitrate: _inferBitrateFromExtension(filePath),
           year: metadata.year,
+          genre: metadata.genre,
+          comment: metadata.comment,
+          hasLyric: hasEmbeddedLyric,
+          hasWordLyric: hasEmbeddedWordLyric,
         );
 
         final existing = _songsMap[id];
@@ -632,6 +644,10 @@ class LocalMusicRepository {
       channels: a.channels ?? b.channels,
       year: a.year ?? b.year,
       mediaStoreId: a.mediaStoreId ?? b.mediaStoreId,
+      genre: a.genre ?? b.genre,
+      comment: a.comment ?? b.comment,
+      hasLyric: a.hasLyric || b.hasLyric,
+      hasWordLyric: a.hasWordLyric || b.hasWordLyric,
     );
   }
 

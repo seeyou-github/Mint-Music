@@ -22,6 +22,18 @@ class Song {
   final Map<String, String>? sourceHeaders;
   final String? sourceQuality;
 
+  /// 流派（本地歌曲扫描时从标签里读出来的 TCON / GENRE）。
+  final String? genre;
+
+  /// 注释 / 备注（ID3 的 COMM、Vorbis 的 COMMENT）。
+  final String? comment;
+
+  /// 扫描时文件里是否带内嵌歌词（不含歌词缓存、也不含播放时的在线歌词）。
+  final bool hasLyric;
+
+  /// 扫描时的内嵌歌词是否逐字歌词（YRC / QRC / KRC 等）。
+  final bool hasWordLyric;
+
   /// 从收藏 / 歌单播放时优先使用的插件音源（`平台id@插件id`）。
   ///
   /// 收藏搜索结果时把「当时是哪个插件」记下来：播放时先用它解析地址，
@@ -66,6 +78,10 @@ class Song {
     this.lx,
     this.sourceHeaders,
     this.sourceQuality,
+    this.genre,
+    this.comment,
+    this.hasLyric = false,
+    this.hasWordLyric = false,
     this.preferredSource,
     this.isVipExclusive = false,
     this.partsCount = 0,
@@ -121,6 +137,10 @@ class Song {
     Map<String, dynamic>? lx,
     Map<String, String>? sourceHeaders,
     String? sourceQuality,
+    String? genre,
+    String? comment,
+    bool? hasLyric,
+    bool? hasWordLyric,
     String? preferredSource,
     bool? isVipExclusive,
     int? partsCount,
@@ -158,6 +178,10 @@ class Song {
       sourceQuality: clearSourceQuality
           ? null
           : sourceQuality ?? this.sourceQuality,
+      genre: genre ?? this.genre,
+      comment: comment ?? this.comment,
+      hasLyric: hasLyric ?? this.hasLyric,
+      hasWordLyric: hasWordLyric ?? this.hasWordLyric,
       preferredSource: clearPreferredSource
           ? null
           : preferredSource ?? this.preferredSource,
@@ -224,6 +248,10 @@ class Song {
       'lx': _sanitizeLx(lx),
       'sourceHeaders': sourceHeaders,
       'sourceQuality': sourceQuality,
+      'genre': genre,
+      'comment': comment,
+      'hasLyric': hasLyric,
+      'hasWordLyric': hasWordLyric,
       'preferredSource': preferredSource,
       'isVipExclusive': isVipExclusive,
       'partsCount': partsCount,
@@ -277,6 +305,10 @@ class Song {
             )
           : null,
       sourceQuality: json['sourceQuality']?.toString(),
+      genre: json['genre']?.toString(),
+      comment: json['comment']?.toString(),
+      hasLyric: json['hasLyric'] == true,
+      hasWordLyric: json['hasWordLyric'] == true,
       preferredSource: json['preferredSource']?.toString(),
       isVipExclusive: json['isVipExclusive'] == true,
       partsCount: (json['partsCount'] as num?)?.toInt() ?? 0,

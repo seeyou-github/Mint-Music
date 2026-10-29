@@ -2,9 +2,11 @@ import 'dart:async';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:file_picker/file_picker.dart';
+import '../../../core/constants/app_routes.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
@@ -310,6 +312,14 @@ class _LocalPageState extends ConsumerState<LocalPage> {
             context.tr('扫描本地音乐'),
             () => _scanLibrary(),
             active: scanProgress.running,
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          // 快速匹配：按字段筛选整库，再逐个在线匹配信息 / 封面 / 歌词。
+          _buildHeaderIconButton(
+            colors,
+            Icons.auto_fix_high,
+            context.tr('快速匹配本地歌曲'),
+            () => context.push(AppRoutes.quickMatch),
           ),
         ],
       ),

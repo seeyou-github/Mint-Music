@@ -16,6 +16,7 @@ abstract class AppRoutes {
   static const String collectionDetail = '/collection';
   static const String recognize = '/recognize';
   static const String tagEditor = '/tag-editor';
+  static const String quickMatch = '/quick-match';
   static const String pluginManagement = '/plugin-management';
   static const String fullPlayer = '/player/full';
   static const String lyric = '/player/lyric';

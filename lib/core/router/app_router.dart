@@ -15,6 +15,7 @@ import '../../features/library/domain/models/recently_played.dart';
 import '../../features/library/presentation/recently_played_page.dart';
 import '../../features/discover/presentation/recognize_page.dart';
 import '../../features/local/presentation/tag_editor_page.dart';
+import '../../features/local/presentation/quick_match_page.dart';
 import '../../features/settings/presentation/plugin_management_page.dart';
 import '../../features/local/presentation/local_page.dart';
 import '../../features/mine/presentation/mine_page.dart';
@@ -326,6 +327,27 @@ final appRouter = GoRouter(
           },
         );
       },
+    ),
+    GoRoute(
+      path: AppRoutes.quickMatch,
+      pageBuilder: (context, state) => CustomTransitionPage(
+        key: state.pageKey,
+        child: const QuickMatchPage(),
+        transitionDuration: const Duration(milliseconds: 220),
+        reverseTransitionDuration: const Duration(milliseconds: 180),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          return SlideTransition(
+            position: Tween<Offset>(begin: const Offset(1, 0), end: Offset.zero)
+                .animate(
+                  CurvedAnimation(
+                    parent: animation,
+                    curve: Curves.easeOutCubic,
+                  ),
+                ),
+            child: child,
+          );
+        },
+      ),
     ),
     GoRoute(
       path: AppRoutes.fullPlayer,

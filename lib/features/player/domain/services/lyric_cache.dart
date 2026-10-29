@@ -114,6 +114,41 @@ class LyricCache {
     }
   }
 
+  /// 批量读取多首歌的缓存（返回值以 [keyFor] 的结果为键）。
+  ///
+  /// 「快速匹配」页要一次性看整库歌词状态，逐首查会发几千条 SQL；这里按
+  /// 每 400 个键一批用 `IN (...)` 查完。
+  static Future<Map<String, LyricCacheEntry>> readMany(List<Song> songs) async {
+    final result = <String, LyricCacheEntry>{};
+    if (songs.isEmpty) return result;
+    try {
+      await _ensureMigrated();
+      final db = await AppDatabase.cacheDatabase();
+      final keys = <String>[for (final song in songs) keyFor(song)];
+      const chunk = 400;
+      for (var i = 0; i < keys.length; i += chunk) {
+        final end = i + chunk > keys.length ? keys.length : i + chunk;
+        final slice = keys.sublist(i, end);
+        final placeholders = List.filled(slice.length, '?').join(',');
+        final rows = await db.query(
+          'lyrics',
+          where: 'cache_key IN ($placeholders)',
+          whereArgs: slice,
+        );
+        for (final row in rows) {
+          final key = row['cache_key'];
+          if (key is! String) continue;
+          final entry = LyricCacheEntry.fromRow(row);
+          if (entry.isEmpty) continue;
+          result[key] = entry;
+        }
+      }
+    } catch (e) {
+      debugPrint('[LyricCache] 批量读取缓存失败: $e');
+    }
+    return result;
+  }
+
   /// 写入缓存（内容为空时忽略）。
   static Future<void> write(
     Song song, {
