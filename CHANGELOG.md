@@ -20,6 +20,10 @@
 - 酷狗（及其它 MusicFree 插件音源）搜索的歌曲没有年份：适配器把插件 musicItem
   展平时丢掉了 `albumId`，按专辑查发行年份的链路断了。现在适配器透传
   `albumId` / `albumMid` / `artistId`，Dart 侧再从 `extra.musicItem` 兜底一次
+  - 仅补 `albumId` 还不够：酷狗插件的专辑详情把发行日期映射成 `publish_time`，
+    而酷狗接口返回的字段是 `publish_date`，`albumItem.date` 始终为空 →
+    年份仍然查不到。插件副本改为 `date: _.publish_date || ...` 后恢复正常
+    （已验证：晴天 → 2003-07-31，孤勇者 → 2021-11-08）
 - 落雪插件 `require('crypto-js')` / `require('axios')` 拿到的是空对象：加载落雪脚本前
   也注入 MusicFree 兼容运行时与它声明的依赖，适配器不再覆盖全局 require，
   酷狗（crypto-js 签名）/ 酷我（axios 请求）类脚本初始化与请求不再报错
