@@ -22,6 +22,8 @@ import '../application/hot_board_providers.dart';
 import '../domain/models/hot_board.dart';
 import '../domain/models/playlist.dart';
 import '../domain/models/leaderboard.dart';
+import '../../custom_sheet/application/custom_sheet_providers.dart';
+import '../../custom_sheet/presentation/custom_sheet_edit_page.dart';
 import '../../library/application/playlist_providers.dart';
 import '../../library/domain/models/playlist.dart' as local;
 import '../../library/domain/models/recently_played.dart';
@@ -85,6 +87,16 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
 
   /// 正在拉取完整榜单并收藏的热榜（按榜单 id）。
   final Set<String> _favoritingHotBoards = {};
+
+  /// 自定义歌单在分类栏里的 tag id：「全部自定义歌单」与「某个分类」。
+  static const String _customAllTagId = 'custom_all';
+  static const String _customCategoryPrefix = 'custom_cat:';
+
+  static bool _isCustomTag(String tagId) =>
+      tagId == _customAllTagId || tagId.startsWith(_customCategoryPrefix);
+
+  static String _customCategoryTag(String categoryId) =>
+      '$_customCategoryPrefix$categoryId';
 
   /// 歌单列表分页：每页 10 行（每行多少列 × 10 就是每页条数）。
   static const int _playlistPageRows = 10;
@@ -636,6 +648,18 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
     final activeTagId = ref.watch(activeTagIdProvider);
     final activeCategoryName = ref.watch(activeCategoryNameProvider);
     final playlistsAsync = ref.watch(categoryPlaylistsProvider);
+    final sourceId = ref.watch(discoverSourceIdProvider);
+    final supportsCustomSheets = ref.watch(
+      sourceSupportsCustomSheetsProvider(sourceId),
+    );
+    final customData = ref.watch(customSheetProvider);
+    // 自定义分类：选「我的歌单」看全部，选某个分类只看该分类。
+    final customSheets = activeTagId.startsWith(_customCategoryPrefix)
+        ? customData.sheetsOfCategory(
+            sourceId,
+            activeTagId.substring(_customCategoryPrefix.length),
+          )
+        : customData.sheetsOfSource(sourceId);
 
     return Column(
       children: [
@@ -648,64 +672,79 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
         ),
         const SizedBox(height: AppSpacing.md),
         Expanded(
-          child: playlistsAsync.when(
-            data: (playlists) {
-              if (playlists.isEmpty) {
-                // 插件音源可能只提供搜索 / 播放地址，不提供歌单与榜单，
-                // 这时给出说明，避免用户以为是加载失败。
-                final sourceId = ref.read(discoverSourceIdProvider);
-                final hasDiscoverContent = ref
-                    .read(musicSourceManagerProvider)
-                    .sourceHasDiscoverContent(sourceId);
-                return Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.library_music_outlined,
-                        size: 48,
-                        color: colors.textHint,
-                      ),
-                      const SizedBox(height: AppSpacing.md),
-                      Text(
-                        hasDiscoverContent
-                            ? context.tr('暂无歌单数据')
-                            : context.tr('该音源不提供歌单和榜单'),
-                        style: TextStyle(color: colors.textHint),
-                      ),
-                      if (hasDiscoverContent) ...[
+          child: _isCustomTag(activeTagId)
+              ? _buildCustomSheetGrid(colors, customSheets, sourceId: sourceId)
+              : playlistsAsync.when(
+                  data: (playlists) {
+                    if (playlists.isEmpty) {
+                      // 支持自定义歌单的音源：直接显示自定义歌单（没有时给出新建入口），
+                      // 不要显示「暂无歌单数据」。
+                      if (supportsCustomSheets) {
+                        return _buildCustomSheetGrid(
+                          colors,
+                          customSheets,
+                          sourceId: sourceId,
+                        );
+                      }
+                      // 插件音源可能只提供搜索 / 播放地址，不提供歌单与榜单，
+                      // 这时给出说明，避免用户以为是加载失败。
+                      final hasDiscoverContent = ref
+                          .read(musicSourceManagerProvider)
+                          .sourceHasDiscoverContent(sourceId);
+                      return Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.library_music_outlined,
+                              size: 48,
+                              color: colors.textHint,
+                            ),
+                            const SizedBox(height: AppSpacing.md),
+                            Text(
+                              hasDiscoverContent
+                                  ? context.tr('暂无歌单数据')
+                                  : context.tr('该音源不提供歌单和榜单'),
+                              style: TextStyle(color: colors.textHint),
+                            ),
+                            if (hasDiscoverContent) ...[
+                              const SizedBox(height: AppSpacing.md),
+                              TextButton(
+                                onPressed: () => _loadPlaylists(),
+                                child: Text(context.tr('重试')),
+                              ),
+                            ],
+                          ],
+                        ),
+                      );
+                    }
+                    return _buildPlaylistGrid(colors, playlists);
+                  },
+                  loading: () =>
+                      const Center(child: CircularProgressIndicator()),
+                  error: (_, __) => Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.error_outline,
+                          size: 48,
+                          color: colors.textHint,
+                        ),
+                        const SizedBox(height: AppSpacing.md),
+                        Text(
+                          context.tr('加载失败'),
+                          style: TextStyle(color: colors.textHint),
+                        ),
                         const SizedBox(height: AppSpacing.md),
                         TextButton(
                           onPressed: () => _loadPlaylists(),
                           child: Text(context.tr('重试')),
                         ),
                       ],
-                    ],
+                    ),
                   ),
-                );
-              }
-              return _buildPlaylistGrid(colors, playlists);
-            },
-            loading: () => const Center(child: CircularProgressIndicator()),
-            error: (_, __) => Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.error_outline, size: 48, color: colors.textHint),
-                  const SizedBox(height: AppSpacing.md),
-                  Text(
-                    context.tr('加载失败'),
-                    style: TextStyle(color: colors.textHint),
-                  ),
-                  const SizedBox(height: AppSpacing.md),
-                  TextButton(
-                    onPressed: () => _loadPlaylists(),
-                    child: Text(context.tr('重试')),
-                  ),
-                ],
-              ),
-            ),
-          ),
+                ),
         ),
       ],
     );
@@ -719,6 +758,12 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
     String activeCategoryName,
   ) {
     final hotTags = hotTagsAsync.valueOrNull ?? const <PlaylistTag>[];
+    final sourceId = ref.watch(discoverSourceIdProvider);
+    final supportsCustomSheets = ref.watch(
+      sourceSupportsCustomSheetsProvider(sourceId),
+    );
+    final customData = ref.watch(customSheetProvider);
+    final customSheets = customData.sheetsOfSource(sourceId);
     // 置顶分类（插件可用 `__pinned__` 前缀标记）排在「热门」之前。
     final pinnedTags = hotTags
         .where((tag) => tag.isPinned)
@@ -754,6 +799,33 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
                     colors: colors,
                     onTap: () => _onSelectTag('', '热门'),
                   ),
+                  // 自定义歌单：App 侧建歌单，内容用当前音源按关键字搜索。
+                  if (supportsCustomSheets && customSheets.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(left: AppSpacing.sm),
+                      child: _buildTagChip(
+                        label: context.tr('我的歌单'),
+                        isActive: activeTagId == _customAllTagId,
+                        colors: colors,
+                        onTap: () =>
+                            _onSelectTag(_customAllTagId, context.tr('我的歌单')),
+                      ),
+                    ),
+                  if (supportsCustomSheets)
+                    for (final category in customData.categories)
+                      Padding(
+                        padding: const EdgeInsets.only(left: AppSpacing.sm),
+                        child: _buildTagChip(
+                          label: category.name,
+                          isActive:
+                              activeTagId == _customCategoryTag(category.id),
+                          colors: colors,
+                          onTap: () => _onSelectTag(
+                            _customCategoryTag(category.id),
+                            category.name,
+                          ),
+                        ),
+                      ),
                   for (final tag in normalTags)
                     Padding(
                       padding: const EdgeInsets.only(left: AppSpacing.sm),
@@ -768,6 +840,12 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
               ),
             ),
           ),
+          // 新增歌单（仅图标，仅支持自定义歌单的音源），放在「更多分类」左侧。
+          if (supportsCustomSheets)
+            Padding(
+              padding: const EdgeInsets.only(left: AppSpacing.sm),
+              child: _buildAddSheetButton(colors, sourceId),
+            ),
           // 「更多分类」固定在最右侧，分类过多时也不会被挤出可视区域。
           Padding(
             padding: const EdgeInsets.only(
@@ -832,6 +910,317 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
           ),
         ),
       ),
+    );
+  }
+
+  /// 「新增歌单」按钮（仅图标）：只有支持自定义歌单的音源才显示。
+  Widget _buildAddSheetButton(ThemeColors colors, String sourceId) {
+    return Tooltip(
+      message: context.tr('新增歌单'),
+      child: GestureDetector(
+        onTap: () => _openSheetEditor(sourceId: sourceId),
+        child: Container(
+          width: 26,
+          height: 26,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: colors.surface,
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Icon(Icons.add, size: 18, color: colors.textSecondary),
+        ),
+      ),
+    );
+  }
+
+  /// 打开新增 / 编辑歌单页；保存后切到「我的歌单」让用户立刻看到结果。
+  Future<void> _openSheetEditor({
+    required String sourceId,
+    CustomSheet? sheet,
+    String categoryId = '',
+  }) async {
+    final name = ref
+        .read(discoverSupportedSourcesProvider)
+        .where((item) => item.id == sourceId)
+        .map((item) => item.name)
+        .firstOrNull;
+    final saved = await showCustomSheetEditor(
+      context,
+      sourceId: sourceId,
+      sourceName: name ?? '',
+      sheet: sheet,
+      categoryId: categoryId,
+    );
+    if (!mounted || saved != true) return;
+    final current = ref.read(activeTagIdProvider);
+    if (!_isCustomTag(current)) {
+      _onSelectTag(_customAllTagId, context.tr('我的歌单'));
+    }
+  }
+
+  /// 删除自定义歌单（带确认）。
+  Future<void> _deleteSheet(CustomSheet sheet) async {
+    final colors = ref.read(themeColorsProvider);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: colors.surface,
+        title: Text(
+          context.tr('删除歌单'),
+          style: TextStyle(fontSize: 17, color: colors.textPrimary),
+        ),
+        content: Text(
+          context.tr('确定删除「${sheet.name}」？歌单内容会一起消失，音频文件不受影响。'),
+          style: TextStyle(fontSize: 14, color: colors.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(
+              context.tr('取消'),
+              style: TextStyle(color: colors.textHint),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(
+              context.tr('删除'),
+              style: TextStyle(color: colors.error),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await ref.read(customSheetProvider.notifier).removeSheet(sheet.id);
+  }
+
+  /// 自定义歌单卡片长按：编辑 / 删除。
+  void _showSheetMenu(CustomSheet sheet) {
+    final colors = ref.read(themeColorsProvider);
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: colors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(AppRadius.xl)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.lg,
+                AppSpacing.md,
+                AppSpacing.lg,
+                AppSpacing.xs,
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      sheet.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        color: colors.textPrimary,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            ListTile(
+              leading: Icon(Icons.edit_outlined, color: colors.textSecondary),
+              title: Text(
+                context.tr('编辑歌单'),
+                style: TextStyle(fontSize: 14, color: colors.textPrimary),
+              ),
+              onTap: () {
+                Navigator.pop(ctx);
+                unawaited(
+                  _openSheetEditor(
+                    sourceId: sheet.sourceId,
+                    sheet: sheet,
+                    categoryId: sheet.categoryId,
+                  ),
+                );
+              },
+            ),
+            ListTile(
+              leading: Icon(Icons.delete_outline, color: colors.error),
+              title: Text(
+                context.tr('删除歌单'),
+                style: TextStyle(fontSize: 14, color: colors.error),
+              ),
+              onTap: () {
+                Navigator.pop(ctx);
+                unawaited(_deleteSheet(sheet));
+              },
+            ),
+            const SizedBox(height: AppSpacing.sm),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 自定义歌单网格（App 侧数据，不分页）。
+  Widget _buildCustomSheetGrid(
+    ThemeColors colors,
+    List<CustomSheet> sheets, {
+    String? sourceId,
+  }) {
+    if (sheets.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.queue_music_outlined, size: 48, color: colors.textHint),
+            const SizedBox(height: AppSpacing.md),
+            Text(
+              context.tr('还没有歌单，点右上角的 + 新建一个'),
+              style: TextStyle(color: colors.textHint),
+            ),
+            const SizedBox(height: AppSpacing.md),
+            if (sourceId != null)
+              TextButton.icon(
+                onPressed: () => _openSheetEditor(sourceId: sourceId),
+                icon: const Icon(Icons.add, size: 18),
+                label: Text(context.tr('新增歌单')),
+              ),
+          ],
+        ),
+      );
+    }
+
+    final crossAxisCount = ResponsiveLayout.gridCrossAxisCount(context);
+    final isTablet = ResponsiveLayout.isTablet(context);
+    return CustomScrollView(
+      controller: _scrollController,
+      slivers: [
+        SliverPadding(
+          padding: EdgeInsets.only(
+            left: ResponsiveLayout.horizontalPadding(context),
+            right: ResponsiveLayout.horizontalPadding(context),
+            bottom: AppSpacing.xxxl,
+          ),
+          sliver: SliverGrid(
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: crossAxisCount,
+              mainAxisSpacing: isTablet ? 16 : AppSpacing.md,
+              crossAxisSpacing: isTablet ? 16 : AppSpacing.md,
+              childAspectRatio: isTablet ? 0.88 : 0.82,
+            ),
+            delegate: SliverChildBuilderDelegate((context, index) {
+              return _buildCustomSheetCard(colors, sheets[index]);
+            }, childCount: sheets.length),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCustomSheetCard(ThemeColors colors, CustomSheet sheet) {
+    return GestureDetector(
+      onTap: () => context.push('/playlist/${sheet.playlistId}'),
+      onLongPress: () => _showSheetMenu(sheet),
+      child: Container(
+        decoration: BoxDecoration(
+          color: colors.surface,
+          borderRadius: BorderRadius.circular(AppRadius.lg),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  _buildSheetCover(colors, sheet),
+                  // 自定义歌单角标，和插件歌单区分开。
+                  Positioned(
+                    left: 6,
+                    top: 6,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.45),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        context.tr('自定义'),
+                        style: const TextStyle(
+                          fontSize: 10,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.sm,
+                AppSpacing.xs,
+                AppSpacing.sm,
+                AppSpacing.sm,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    sheet.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                      color: colors.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    sheet.keyword,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 11, color: colors.textHint),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSheetCover(ThemeColors colors, CustomSheet sheet) {
+    final cover = sheet.displayCover.trim();
+    Widget fallback() => Container(
+      color: colors.surfaceVariant,
+      child: Icon(Icons.queue_music, size: 32, color: colors.textHint),
+    );
+    if (cover.isEmpty) return fallback();
+    if (cover.startsWith('http')) {
+      return Image.network(
+        cover,
+        fit: BoxFit.cover,
+        errorBuilder: (_, _, _) => fallback(),
+      );
+    }
+    return Image.file(
+      File(cover),
+      fit: BoxFit.cover,
+      errorBuilder: (_, _, _) => fallback(),
     );
   }
 
@@ -941,6 +1330,8 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
     _playlistPager.reset();
     ref.read(activeTagIdProvider.notifier).state = tagId;
     ref.read(activeCategoryNameProvider.notifier).state = name;
+    // 自定义歌单是 App 侧数据，不需要向插件请求分类歌单。
+    if (_isCustomTag(tagId)) return;
     final srcId = ref.read(discoverSourceIdProvider);
     ref
         .read(categoryPlaylistsProvider.notifier)

@@ -102,6 +102,17 @@ final searchSupportedSourcesProvider = Provider<List<SourceInfo>>((ref) {
   return sources;
 });
 
+/// 某个音源是否支持「自定义歌单」（插件声明 customSheets 后由 App 建歌单）。
+final sourceSupportsCustomSheetsProvider = Provider.family<bool, String>((
+  ref,
+  sourceId,
+) {
+  ref.watch(pluginSupportedSourcesProvider);
+  return ref
+      .watch(musicSourceManagerProvider)
+      .sourceSupportsCustomSheets(sourceId);
+});
+
 /// 插件自带音源的启用 / 关闭状态。
 ///
 /// 一个插件文件可能同时提供多个音源（落雪脚本常有五六个），用户可以在

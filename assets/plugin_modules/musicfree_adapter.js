@@ -203,12 +203,24 @@ function __mfSourceId() {
 function __mfPluginMeta() {
   if (__mfInfoCache) return __mfInfoCache;
   var plugin = __mfPluginObject();
+  var customSheets =
+    plugin.customSheets === true ||
+    (plugin.pluginInfo && plugin.pluginInfo.customSheets === true);
   __mfInfoCache = {
     name: __mfText(plugin.platform, 'MusicFree 音源'),
     version: __mfText(plugin.version, '1.0.0'),
     author: __mfText(plugin.author, '未知作者'),
     description: __mfLimitText(__mfText(plugin.description, ''), 200),
     homepage: __mfText(plugin.srcUrl, ''),
+    // 插件图标（站点 favicon / logo），宿主导入时下载并缓存成 PNG。
+    iconUrl: __mfText(
+      plugin.iconUrl ||
+        plugin.icon ||
+        (plugin.pluginInfo && plugin.pluginInfo.iconUrl),
+      ''
+    ),
+    // 声明支持「自定义歌单」：歌单内容由插件按关键字搜索得到。
+    customSheets: customSheets,
   };
   return __mfInfoCache;
 }
@@ -1353,6 +1365,10 @@ function __mfCapabilities() {
     sheetDetail: typeof plugin.getMusicSheetInfo === 'function',
     /** 搜索歌单：supportedSearchType 里带 sheet 才支持。 */
     playlistSearch: __mfSupportsSheetSearch(plugin),
+    /** 自定义歌单：插件声明后用「关键字搜索」当歌单内容，不需要歌单接口。 */
+    customSheets:
+      plugin.customSheets === true ||
+      (plugin.pluginInfo && plugin.pluginInfo.customSheets === true),
   };
 }
 

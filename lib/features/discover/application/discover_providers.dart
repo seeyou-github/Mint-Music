@@ -4,13 +4,19 @@ import '../domain/models/playlist.dart';
 import '../domain/models/playlist_page.dart';
 import '../domain/models/leaderboard.dart';
 import '../../player/domain/models/song.dart';
+import '../../custom_sheet/application/custom_sheet_providers.dart';
 import '../../plugin/application/plugin_providers.dart';
 import '../../plugin/domain/plugin_types.dart';
 import '../../settings/application/settings_providers.dart';
 
 final discoverRepositoryProvider = Provider<DiscoverRepository>((ref) {
   final manager = ref.watch(musicSourceManagerProvider);
-  return DiscoverRepository(manager);
+  // 自定义歌单存在 App 侧（provider 里），仓库按需读取；读的时候不走 ref，
+  // 避免歌单列表变化把仓库实例重建、连带清掉它的分页缓存。
+  return DiscoverRepository(
+    manager,
+    customSheets: () => ref.read(customSheetProvider).sheets,
+  );
 });
 
 final discoverSourceIdProvider = StateProvider<String>(

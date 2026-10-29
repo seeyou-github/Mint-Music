@@ -55,6 +55,11 @@ class PluginHost {
   /// 插件是否支持搜索歌单（MusicFree 的 sheet 类型搜索）。
   bool get supportsPlaylistSearch => _capabilities['playlistSearch'] == true;
 
+  /// 插件是否声明支持「自定义歌单」（歌单内容由它的搜索接口提供）。
+  bool get supportsCustomSheets =>
+      _capabilities['customSheets'] == true ||
+      (_pluginInfo?.customSheets ?? false);
+
   /// 插件支持的搜索类型（music / album / artist）。
   List<String> get supportedSearchTypes => _searchTypes;
 
@@ -62,9 +67,12 @@ class PluginHost {
   bool get supportsAlbumSearch => _searchTypes.contains('album');
   bool get supportsArtistSearch => _searchTypes.contains('artist');
 
-  /// 插件是否能在发现页提供内容（榜单或推荐歌单）。
+  /// 插件是否能在发现页提供内容（榜单 / 推荐歌单 / 自定义歌单）。
   bool get supportsDiscover =>
-      supportsTopLists || supportsRecommendSheets || supportsSheetDetail;
+      supportsTopLists ||
+      supportsRecommendSheets ||
+      supportsSheetDetail ||
+      supportsCustomSheets;
 
   /// Stream of update notices emitted by this plugin's JS engine.
   /// Each event is the raw notice map from the engine (with `type` and `data`).

@@ -50,6 +50,10 @@ class PluginMetadata {
   final String? description;
   final String? homepage;
 
+  /// 插件是否支持「自定义歌单」：歌单由 App 侧新建（封面 / 名称 / 搜索关键字），
+  /// 内容用插件自己的搜索接口按关键字分页取，插件不需要提供歌单接口。
+  final bool customSheets;
+
   /// 插件图标地址（站点 favicon / logo 的 http 地址，可空）。
   ///
   /// 导入插件时会下载并转成 PNG 缓存到插件目录，音源切换按钮与音源列表用它
@@ -70,6 +74,7 @@ class PluginMetadata {
     this.description,
     this.homepage,
     this.iconUrl,
+    this.customSheets = false,
     this.isDataSource = false,
   });
 
@@ -81,6 +86,7 @@ class PluginMetadata {
       description: json['description'] as String?,
       homepage: json['homepage'] as String?,
       iconUrl: (json['iconUrl'] ?? json['icon']) as String?,
+      customSheets: json['customSheets'] == true,
       isDataSource: json['isDataSource'] == true,
     );
   }
@@ -92,6 +98,7 @@ class PluginMetadata {
     'description': description,
     if (homepage != null) 'homepage': homepage,
     if (iconUrl != null) 'iconUrl': iconUrl,
+    if (customSheets) 'customSheets': true,
     if (isDataSource) 'isDataSource': true,
   };
 }

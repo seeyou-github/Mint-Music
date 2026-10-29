@@ -675,8 +675,16 @@ class PluginService {
       final plugins = await loadPlugins();
       var changed = false;
       for (var i = 0; i < plugins.length; i++) {
-        final plugin = plugins[i];
-        if ((plugin.iconUrl ?? '').trim().isEmpty) continue;
+        var plugin = plugins[i];
+        // 老插件（装插件时还没记 iconUrl）从运行中的宿主补一次：
+        // MusicFree / 落雪脚本刚支持 iconUrl 时，已安装的插件靠这里补图标。
+        if ((plugin.iconUrl ?? '').trim().isEmpty) {
+          final declared = _loadedPlugins[plugin.id]?.pluginInfo?.iconUrl ?? '';
+          if (declared.trim().isEmpty) continue;
+          plugin = plugin.copyWith(iconUrl: declared);
+          plugins[i] = plugin;
+          changed = true;
+        }
         final current = plugin.iconPath;
         if (current != null &&
             current.isNotEmpty &&

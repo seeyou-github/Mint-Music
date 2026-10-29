@@ -2985,6 +2985,22 @@ class MusicSourceManager {
     return null;
   }
 
+  /// 该音源是否支持「自定义歌单」。
+  ///
+  /// 插件声明 `customSheets: true` 后，App 可以自己建歌单（封面 / 名称 /
+  /// 搜索关键字），歌单内容用插件自己的搜索接口按关键字分页获取；
+  /// 插件本身不需要实现任何歌单接口。
+  bool sourceSupportsCustomSheets(String sourceId) {
+    final (baseId, _) = splitSourceId(sourceId);
+    if (baseId.isEmpty) return false;
+    for (final host in _findPluginHostsForSource(sourceId)) {
+      if (!host.supportsCustomSheets) continue;
+      if (_getSourceIdForHost(host, baseId) == null) continue;
+      return true;
+    }
+    return false;
+  }
+
   /// 该音源是否提供歌单 / 榜单内容。
   ///
   /// 插件只提供搜索与播放地址（落雪脚本就是这样）时没有浏览内容，发现页会
