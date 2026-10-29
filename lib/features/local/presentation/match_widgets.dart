@@ -1,9 +1,14 @@
+import 'dart:ui' as ui;
+
+import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
+import '../../../shared/services/cover_cache_service.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../../player/domain/models/song.dart';
 
@@ -359,19 +364,90 @@ class _SideBox extends StatelessWidget {
   }
 }
 
-/// 封面预览。
-class _CoverPreview extends StatelessWidget {
+/// 封面预览（底部叠加显示图片分辨率；本地封面与网络封面都要显示）。
+class _CoverPreview extends StatefulWidget {
   const _CoverPreview({required this.colors, required this.song});
 
   final ThemeColors colors;
   final Song song;
 
+  @override
+  State<_CoverPreview> createState() => _CoverPreviewState();
+}
+
+class _CoverPreviewState extends State<_CoverPreview> {
   static const double _size = 132;
+
+  /// 分辨率缓存（url / 本地封面 → 「宽 × 高」），换候选时不用重复下载解码。
+  static final Map<String, String> _resolutionCache = {};
+
+  String? _resolution;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadResolution();
+  }
+
+  @override
+  void didUpdateWidget(covariant _CoverPreview oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.song.id != widget.song.id ||
+        oldWidget.song.coverUrl != widget.song.coverUrl ||
+        oldWidget.song.hasCover != widget.song.hasCover) {
+      _loadResolution();
+    }
+  }
+
+  /// 当前封面的缓存键：网络封面用地址，本地封面用歌曲 id。
+  String get _cacheKey {
+    final url = widget.song.coverUrl ?? '';
+    return url.isNotEmpty ? 'url:$url' : 'local:${widget.song.id}';
+  }
+
+  Future<void> _loadResolution() async {
+    final key = _cacheKey;
+    final cached = _resolutionCache[key];
+    if (cached != null) {
+      if (mounted && key == _cacheKey) {
+        setState(() => _resolution = cached);
+      }
+      return;
+    }
+    if (mounted) setState(() => _resolution = null);
+    try {
+      Uint8List? bytes;
+      final url = widget.song.coverUrl ?? '';
+      if (url.isNotEmpty) {
+        final response = await Dio().get<List<int>>(
+          url,
+          options: Options(responseType: ResponseType.bytes),
+        );
+        final data = response.data;
+        if (data != null && data.isNotEmpty) bytes = Uint8List.fromList(data);
+      } else if (widget.song.hasCover) {
+        bytes = await CoverCacheService().getArtwork(
+          widget.song.id,
+          mediaStoreId: widget.song.mediaStoreId,
+        );
+      }
+      if (bytes == null || bytes.isEmpty) return;
+      final codec = await ui.instantiateImageCodec(bytes);
+      final frame = await codec.getNextFrame();
+      final text = '${frame.image.width} × ${frame.image.height}';
+      _resolutionCache[key] = text;
+      if (!mounted) return;
+      if (key == _cacheKey) setState(() => _resolution = text);
+    } catch (_) {
+      // 分辨率拿不到（下载失败 / 解码失败）就不显示，不影响封面本身。
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final hasRemote = (song.coverUrl ?? '').isNotEmpty;
-    if (!hasRemote && !song.hasCover) {
+    final colors = widget.colors;
+    final hasRemote = (widget.song.coverUrl ?? '').isNotEmpty;
+    if (!hasRemote && !widget.song.hasCover) {
       return Align(
         alignment: Alignment.centerLeft,
         child: Container(
@@ -389,18 +465,50 @@ class _CoverPreview extends StatelessWidget {
       alignment: Alignment.centerLeft,
       child: ClipRRect(
         borderRadius: BorderRadius.circular(AppRadius.md),
-        child: MusicCoverImage(
-          url: song.coverUrl,
-          songId: song.id,
-          mediaStoreId: song.mediaStoreId,
+        child: SizedBox(
           width: _size,
           height: _size,
-          fit: BoxFit.cover,
-          errorWidget: Container(
-            width: _size,
-            height: _size,
-            color: colors.surfaceVariant,
-            child: Icon(Icons.music_note, size: 32, color: colors.textHint),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              MusicCoverImage(
+                url: widget.song.coverUrl,
+                songId: widget.song.id,
+                mediaStoreId: widget.song.mediaStoreId,
+                width: _size,
+                height: _size,
+                fit: BoxFit.cover,
+                errorWidget: Container(
+                  width: _size,
+                  height: _size,
+                  color: colors.surfaceVariant,
+                  child: Icon(
+                    Icons.music_note,
+                    size: 32,
+                    color: colors.textHint,
+                  ),
+                ),
+              ),
+              if (_resolution != null)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  child: Container(
+                    color: Colors.black.withValues(alpha: 0.55),
+                    padding: const EdgeInsets.symmetric(vertical: 2),
+                    child: Text(
+                      _resolution!,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 10,
+                        color: Colors.white,
+                        fontFeatures: [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                  ),
+                ),
+            ],
           ),
         ),
       ),

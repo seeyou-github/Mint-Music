@@ -1117,10 +1117,8 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
       if (selectedId == null || selectedId == currentId) return;
       final id = selectedId;
       setState(() => _searchSourceId = id);
-      // 已经搜过的话，换音源后直接用新音源重搜一次。
-      if (_searchResults.isNotEmpty) {
-        unawaited(_handleSearch());
-      }
+      // 换音源后自动重新搜索一次（上次没结果也照样换源再搜）。
+      unawaited(_handleSearch());
     });
   }
 
