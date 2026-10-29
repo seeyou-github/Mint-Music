@@ -379,6 +379,21 @@ function __mfMapMusicItem(item, sourceId) {
     img: pic,
     picUrl: pic,
     artwork: pic,
+    // 专辑 / 歌手 id：本项目按它查专辑发行年份（resolveSongYear），
+    // 插件的播放 / 歌词接口也常认这几个字段。undefined 在 JSON 序列化时
+    // 会被丢掉，插件没给就不占字段。
+    albumId:
+      item.albumId !== undefined && item.albumId !== null
+        ? String(item.albumId)
+        : undefined,
+    albumMid:
+      item.albumMid !== undefined && item.albumMid !== null
+        ? String(item.albumMid)
+        : undefined,
+    artistId:
+      item.artistId !== undefined && item.artistId !== null
+        ? String(item.artistId)
+        : undefined,
     source: sourceId,
     // 原始 musicItem：解析播放地址 / 歌词时原样回传给插件，避免二次请求。
     extra: { musicItem: item },

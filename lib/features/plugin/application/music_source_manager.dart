@@ -1423,6 +1423,30 @@ class MusicSourceManager {
     }
   }
 
+  /// 从展平的插件 musicItem 里取专辑 id。
+  ///
+  /// 优先读顶层字段；拿不到再翻 `extra.musicItem`（适配器把插件原始
+  /// musicItem 原样放在这里）。酷狗等插件的搜索结果带 albumId，
+  /// 「取歌曲发行年份」就靠它查专辑详情，丢了就永远拿不到年份。
+  static String? _albumIdOf(Map<String, dynamic> info) {
+    String? pick(dynamic value) {
+      if (value == null) return null;
+      final text = value.toString().trim();
+      return text.isEmpty ? null : text;
+    }
+
+    final direct = pick(info['albumId']) ?? pick(info['albumid']);
+    if (direct != null) return direct;
+    final extra = info['extra'];
+    if (extra is Map) {
+      final item = extra['musicItem'];
+      if (item is Map) {
+        return pick(item['albumId']) ?? pick(item['albumid']);
+      }
+    }
+    return null;
+  }
+
   Song _musicInfoToSong(Map<String, dynamic> info, String sourceId) {
     String? songId;
     final pluginSongId = info['songId'] ?? info['songid'];
@@ -1543,7 +1567,7 @@ class MusicSourceManager {
       'songid': pluginSongId,
       'hash': info['hash']?.toString(),
       'albumName': album ?? '',
-      'albumId': info['albumId']?.toString() ?? info['albumid']?.toString(),
+      'albumId': _albumIdOf(info),
       'img': coverUrl,
       'name': title ?? '',
       'singer': artist ?? '',
