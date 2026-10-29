@@ -65,8 +65,17 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
   final GlobalKey _sourceButtonKey = GlobalKey();
   bool _hasInitialized = false;
 
-  /// 榜单分类，默认「热榜」；每次进入榜单页都会回到「热榜」。
+  /// 榜单分类。
+  ///
+  /// 每次进入榜单页都会重新决定默认值：当前音源有热榜数据就选「热榜」，
+  /// 没有（还没添加过）就直接选「所有」。
   _LeaderboardCategory _leaderboardCategory = _LeaderboardCategory.hot;
+
+  /// 用户手动点过榜单分类：之后不再用「默认值」覆盖他的选择。
+  bool _leaderboardCategoryPicked = false;
+
+  /// 首帧就停在「榜单」页时，默认分类只算一次。
+  bool _leaderboardDefaultApplied = false;
 
   /// 「所有」榜单里的分组过滤（null = 全部）。切音源后分组消失时自动视为全部。
   String? _selectedLeaderboardGroup;
@@ -229,18 +238,63 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
       }
     });
 
-    // 每次进入「榜单」都默认打开「热榜」分类。
+    // 每次进入「榜单」都重新决定默认分类：有热榜数据选「热榜」，没有选「所有」。
     ref.listen<DiscoverTab>(discoverTabProvider, (previous, next) {
       if (next == DiscoverTab.leaderboards &&
           previous != DiscoverTab.leaderboards) {
-        _leaderboardCategory = _LeaderboardCategory.hot;
+        _leaderboardCategoryPicked = false;
+        final category = _defaultLeaderboardCategory();
+        if (category != _leaderboardCategory) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) setState(() => _leaderboardCategory = category);
+          });
+        }
       }
+    });
+
+    // 首帧就停在「榜单」（比如从其它页面进来后重建）时，上面的 listen 不会触发，
+    // 这里补一次默认分类判断。
+    if (!_leaderboardDefaultApplied) {
+      _leaderboardDefaultApplied = true;
+      if (tab == DiscoverTab.leaderboards) {
+        final category = _defaultLeaderboardCategory();
+        if (category != _leaderboardCategory) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) setState(() => _leaderboardCategory = category);
+          });
+        }
+      }
+    }
+
+    // 热榜数据是异步读的：读出来发现当前音源没有热榜时，自动从「热榜」切到「所有」
+    // （用户自己点过分类就不动）。
+    ref.listen<AsyncValue<List<HotBoard>>>(currentHotBoardsProvider, (
+      previous,
+      next,
+    ) {
+      final boards = next.valueOrNull;
+      if (boards == null || boards.isNotEmpty) return;
+      if (_leaderboardCategoryPicked) return;
+      if (ref.read(discoverTabProvider) != DiscoverTab.leaderboards) return;
+      if (_leaderboardCategory != _LeaderboardCategory.hot) return;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        setState(() => _leaderboardCategory = _LeaderboardCategory.all);
+      });
     });
 
     // 监听源切换，自动重新加载歌单
     ref.listen<String>(discoverSourceIdProvider, (previous, next) {
       if (previous != null && previous != next) {
         _leaderboardPager.reset();
+        // 换了音源：热榜数据也换了，重新按新音源决定默认分类。
+        _leaderboardCategoryPicked = false;
+        final category = _defaultLeaderboardCategory();
+        if (category != _leaderboardCategory) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) setState(() => _leaderboardCategory = category);
+          });
+        }
         WidgetsBinding.instance.addPostFrameCallback((_) {
           unawaited(_reloadAfterSourceChange(next));
         });
@@ -1106,10 +1160,13 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
                           label: context.tr('所有'),
                           isActive: !isHot && effectiveGroup == null,
                           colors: colors,
-                          onTap: () => setState(() {
-                            _leaderboardCategory = _LeaderboardCategory.all;
-                            _selectedLeaderboardGroup = null;
-                          }),
+                          onTap: () {
+                            _leaderboardCategoryPicked = true;
+                            setState(() {
+                              _leaderboardCategory = _LeaderboardCategory.all;
+                              _selectedLeaderboardGroup = null;
+                            });
+                          },
                         ),
                       ),
                       for (final group in groups)
@@ -1119,10 +1176,13 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
                             label: group,
                             isActive: !isHot && effectiveGroup == group,
                             colors: colors,
-                            onTap: () => setState(() {
-                              _leaderboardCategory = _LeaderboardCategory.all;
-                              _selectedLeaderboardGroup = group;
-                            }),
+                            onTap: () {
+                              _leaderboardCategoryPicked = true;
+                              setState(() {
+                                _leaderboardCategory = _LeaderboardCategory.all;
+                                _selectedLeaderboardGroup = group;
+                              });
+                            },
                           ),
                         ),
                     ],
@@ -1162,7 +1222,18 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
     return groups;
   }
 
+  /// 进入榜单 / 切音源时的默认分类。
+  ///
+  /// 当前音源还没有热榜数据时不选中「热榜」（那是空页面），直接落到「所有」。
+  _LeaderboardCategory _defaultLeaderboardCategory() {
+    final boards = ref.read(currentHotBoardsProvider).valueOrNull;
+    // 还在读热榜：先按「热榜」，读出来是空的话下面的监听会再切到「所有」。
+    if (boards == null) return _LeaderboardCategory.hot;
+    return boards.isEmpty ? _LeaderboardCategory.all : _LeaderboardCategory.hot;
+  }
+
   void _selectLeaderboardCategory(_LeaderboardCategory category) {
+    _leaderboardCategoryPicked = true;
     if (_leaderboardCategory == category) return;
     setState(() => _leaderboardCategory = category);
   }
