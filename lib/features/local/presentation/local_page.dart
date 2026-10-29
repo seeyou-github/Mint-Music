@@ -19,7 +19,6 @@ import '../application/local_providers.dart';
 import '../../player/application/playback_context.dart';
 import '../../library/domain/models/recently_played.dart';
 import '../data/local_music_repository.dart';
-import 'widgets/accurate_match_sheet.dart';
 import '../../player/application/playback_controller.dart';
 import '../../player/domain/models/song.dart';
 import '../../library/application/playlist_providers.dart';
@@ -849,8 +848,6 @@ class _LocalPageState extends ConsumerState<LocalPage> {
         playlistSongs: songs,
         showDownload: false,
         showEditTag: true,
-        showAccurateMatch: true,
-        onAccurateMatch: () => _showAccurateMatch(song),
         showDelete: true,
         onDelete: () => _confirmDeleteSong(song),
       ),
@@ -932,22 +929,6 @@ class _LocalPageState extends ConsumerState<LocalPage> {
         ),
       ),
     );
-  }
-
-  /// 精准匹配：按当前音源在线搜索候选歌曲。
-  ///
-  /// 弹窗里可以切换音源，默认与发现页 / 插件管理里正在使用的音源一致。
-  void _showAccurateMatch(Song song) {
-    // 选择候选后弹窗会被关掉，对比弹窗要用页面的 context，
-    // 否则拿到的是已经失效的弹窗 context（共享弹层内部已处理）。
-    unawaited(
-      showAccurateMatchSheet(context, song: song, onApply: _applyMatchedSong),
-    );
-  }
-
-  /// 应用匹配结果：写回本地歌曲库，并同步播放队列。
-  Future<void> _applyMatchedSong(Song updated) {
-    return applyAccurateMatchResult(context, ref, updated);
   }
 
   void _showAddToPlaylistSheet(

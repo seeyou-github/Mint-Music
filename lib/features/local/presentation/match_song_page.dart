@@ -10,13 +10,14 @@ import '../../../core/theme/theme_provider.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../../../shared/widgets/source_icon.dart';
 import '../../discover/application/search_providers.dart';
+import '../../player/application/playback_controller.dart';
 import '../../player/domain/models/song.dart';
 import '../../plugin/application/plugin_providers.dart';
 import '../../settings/application/settings_providers.dart';
 import '../../plugin/domain/plugin_types.dart';
+import '../application/local_providers.dart';
 import '../data/local_metadata_reader.dart';
 import '../domain/local_song_filter.dart';
-import 'widgets/accurate_match_sheet.dart';
 
 /// 「快速匹配」的匹配界面（整页）。
 ///
@@ -333,16 +334,39 @@ class _MatchSongPageState extends ConsumerState<MatchSongPage> {
     );
   }
 
+  /// 保存匹配结果：写回本地曲库，并同步播放队列（界面随之刷新）。
+  Future<void> _applyMatchedResult(Song updated) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await ref
+          .read(localMusicNotifierProvider.notifier)
+          .upsertSong(updated, forceOverwrite: true);
+      // 同步更新播放队列里的这首歌，迷你播放器 / 播放页的封面与歌词即时刷新。
+      ref.read(playbackControllerProvider.notifier).updateSongInQueue(updated);
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(context.tr('已应用匹配结果')),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(context.tr('保存失败: $e')),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
   Future<void> _save() async {
     final candidate = _currentCandidate;
     if (candidate == null || _saving) return;
     setState(() => _saving = true);
     try {
-      await applyAccurateMatchResult(
-        context,
-        ref,
-        _merged(_original, candidate),
-      );
+      await _applyMatchedResult(_merged(_original, candidate));
       if (!mounted) return;
       Navigator.of(context).pop();
     } finally {

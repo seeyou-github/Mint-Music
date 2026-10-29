@@ -21,7 +21,6 @@ import '../application/sleep_timer_provider.dart';
 import '../application/playback_ui_providers.dart';
 import '../application/root_overlay_tracker.dart';
 import '../application/lyric_controller.dart';
-import '../../local/presentation/widgets/accurate_match_sheet.dart';
 import '../../radio/application/radio_session.dart';
 import '../domain/models/song.dart';
 import '../domain/services/cover_color_extractor.dart';
@@ -1290,17 +1289,7 @@ class _PlayerActions extends ConsumerWidget {
           : () => SongActionSheet.showPlayerMenu(
               context,
               song: song,
-              // 本地歌曲：菜单里「搜索歌词」换成「精准匹配」「编辑标签」。
-              onAccurateMatch: song.isLocal
-                  ? () => unawaited(
-                      showAccurateMatchSheet(
-                        context,
-                        song: song,
-                        onApply: (updated) =>
-                            applyAccurateMatchResult(context, ref, updated),
-                      ),
-                    )
-                  : null,
+              // 本地歌曲：菜单里「搜索歌词」换成「编辑标签」。
               onEditTag: song.isLocal
                   ? () =>
                         context.push('${AppRoutes.tagEditor}?songId=${song.id}')

@@ -131,8 +131,6 @@ class SongActionSheet extends ConsumerStatefulWidget {
   final List<Song>? playlistSongs;
   final bool showDownload;
   final bool showEditTag;
-  final bool showAccurateMatch;
-  final VoidCallback? onAccurateMatch;
   final bool showDelete;
   final VoidCallback? onDelete;
 
@@ -163,8 +161,6 @@ class SongActionSheet extends ConsumerStatefulWidget {
     this.playlistSongs,
     this.showDownload = true,
     this.showEditTag = false,
-    this.showAccurateMatch = false,
-    this.onAccurateMatch,
     this.showDelete = false,
     this.onDelete,
     this.showRemove = false,
@@ -180,8 +176,6 @@ class SongActionSheet extends ConsumerStatefulWidget {
     List<Song>? playlistSongs,
     bool showDownload = true,
     bool showEditTag = false,
-    bool showAccurateMatch = false,
-    VoidCallback? onAccurateMatch,
     bool showDelete = false,
     VoidCallback? onDelete,
     bool showRemove = false,
@@ -200,8 +194,6 @@ class SongActionSheet extends ConsumerStatefulWidget {
         playlistSongs: playlistSongs,
         showDownload: showDownload,
         showEditTag: showEditTag,
-        showAccurateMatch: showAccurateMatch,
-        onAccurateMatch: onAccurateMatch,
         showDelete: showDelete,
         onDelete: onDelete,
         showRemove: showRemove,
@@ -217,7 +209,6 @@ class SongActionSheet extends ConsumerStatefulWidget {
   static Future<void> showPlayerMenu(
     BuildContext context, {
     required Song song,
-    VoidCallback? onAccurateMatch,
     VoidCallback? onEditTag,
   }) {
     return showModalBottomSheet(
@@ -230,7 +221,6 @@ class SongActionSheet extends ConsumerStatefulWidget {
         song: song,
         showDownload: true,
         compactMode: true,
-        onAccurateMatch: onAccurateMatch,
         onEditTag: onEditTag,
       ),
     );
@@ -478,7 +468,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                   // 「下载」「启用桌面歌词」「定时」已经挪到播放页的图标按钮上了。
                   // Android 端的倍速也挪到播放页，这里不再重复。
                   if (!Platform.isAndroid) _buildSpeedItem(colors),
-                  // 本地歌曲没有在线歌词可搜：改为「精准匹配」「编辑标签」。
+                  // 本地歌曲没有在线歌词可搜：改为「编辑标签」。
                   if (widget.song.isLocal)
                     ..._buildLocalSongItems(colors)
                   else
@@ -535,13 +525,6 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                       onTap: widget.onDelete!,
                       iconColor: colors.error,
                       labelColor: colors.error,
-                    ),
-                  if (widget.showAccurateMatch)
-                    _buildActionItem(
-                      colors: colors,
-                      icon: Icons.search,
-                      label: context.tr('精准匹配'),
-                      onTap: widget.onAccurateMatch ?? () {},
                     ),
                   if (widget.showEditTag)
                     _buildActionItem(
@@ -1047,19 +1030,11 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
     } catch (_) {}
   }
 
-  /// 本地歌曲专属项（播放页更多菜单）：精准匹配、编辑标签。
+  /// 本地歌曲专属项（播放页更多菜单）：编辑标签。
   ///
-  /// 对应本地歌曲列表项「更多」里的同名两项；回调由播放页传入，弹层关闭后
-  /// 由页面去跳转 / 打开弹层。
+  /// 回调由播放页传入，弹层关闭后由页面去跳转。
   List<Widget> _buildLocalSongItems(ThemeColors colors) {
     return [
-      if (widget.onAccurateMatch != null)
-        _buildActionItem(
-          colors: colors,
-          icon: Icons.search,
-          label: context.tr('精准匹配'),
-          onTap: widget.onAccurateMatch!,
-        ),
       if (widget.onEditTag != null)
         _buildActionItem(
           colors: colors,
