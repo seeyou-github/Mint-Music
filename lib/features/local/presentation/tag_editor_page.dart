@@ -55,6 +55,17 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
   /// 强制它重建并重新取图。
   int _coverVersion = 0;
 
+  /// 打开页面时各字段的原始值。
+  ///
+  /// 保存时用它判断「到底有没有改过」：没改就不动音频文件。
+  String _baseTitle = '';
+  String _baseArtist = '';
+  String _baseAlbum = '';
+  String _baseYear = '';
+  String _baseGenre = '';
+  String _baseComment = '';
+  String _baseLrc = '';
+
   /// 在线搜索使用的音源 id。
   ///
   /// 空串表示用户还没手动选过：默认跟随当前音源（见 [_resolvedSearchSourceId]）。
@@ -125,10 +136,32 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
         // 搜索词带上歌手名，匹配更准。
         _searchController.text = _searchKeywordFor(song);
       });
+      _captureBaseline();
       // 索引里没有年份 / 歌词时，现读文件里的标签补上。
       _loadFileMetadata(song);
     }
   }
+
+  /// 把当前输入框内容记成「原始值」（用于判断有没有修改）。
+  void _captureBaseline() {
+    _baseTitle = _titleController.text;
+    _baseArtist = _artistController.text;
+    _baseAlbum = _albumController.text;
+    _baseYear = _yearController.text;
+    _baseGenre = _genreController.text;
+    _baseComment = _commentController.text;
+    _baseLrc = _lrcController.text;
+  }
+
+  /// 输入框内容是否跟打开时不一样（真的改过）。
+  bool get _hasChanges =>
+      _titleController.text != _baseTitle ||
+      _artistController.text != _baseArtist ||
+      _albumController.text != _baseAlbum ||
+      _yearController.text != _baseYear ||
+      _genreController.text != _baseGenre ||
+      _commentController.text != _baseComment ||
+      _lrcController.text != _baseLrc;
 
   /// 读取本地文件里的标签（年份 / 内嵌歌词），补齐索引里没有的信息。
   Future<void> _loadFileMetadata(Song song) async {
@@ -156,6 +189,8 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
             _commentController.text = comment;
           }
         }
+        // 这些值是从文件里读出来的，也算「原始值」，不算用户修改。
+        _captureBaseline();
       });
     } catch (e) {
       debugPrint('[TagEditor] 读取文件标签失败: $e');
@@ -1224,36 +1259,81 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
   }
 
   Future<void> _handleSave() async {
-    if (_song == null) return;
+    final song = _song;
+    if (song == null) return;
 
     setState(() => _saving = true);
 
     try {
-      final updated = _song!.copyWith(
-        title: _titleController.text.trim().isEmpty
-            ? null
-            : _titleController.text.trim(),
-        artist: _artistController.text.trim().isEmpty
-            ? null
-            : _artistController.text.trim(),
-        album: _albumController.text.trim().isEmpty
-            ? null
-            : _albumController.text.trim(),
-        year: int.tryParse(_yearController.text.trim()),
-        genre: _genreController.text.trim(),
-        comment: _commentController.text.trim(),
-        lrc: _lrcController.text.trim().isEmpty
-            ? null
-            : _lrcController.text.trim(),
-      );
+      final title = _titleController.text.trim();
+      final artist = _artistController.text.trim();
+      final album = _albumController.text.trim();
+      final yearText = _yearController.text.trim();
+      final genre = _genreController.text.trim();
+      final comment = _commentController.text.trim();
+      final lyric = _lrcController.text;
+      final year = int.tryParse(yearText);
+      final changed = _hasChanges;
 
-      await ref.read(localMusicNotifierProvider.notifier).upsertSong(updated);
+      // 1) 有修改就必须写回音频文件（标题 / 歌手 / 专辑 / 年份 / 流派 / 注释 / 歌词）。
+      //    清空的字段也一起删掉，别让旧标签留在文件里。
+      final path = song.filePath ?? '';
+      var fileWritten = false;
+      var fileSupported = false;
+      if (changed && path.isNotEmpty) {
+        fileSupported = AudioTagWriter.supports(path);
+        if (fileSupported) {
+          fileWritten = await AudioTagWriter.write(
+            path,
+            title: title,
+            artist: artist,
+            album: album,
+            year: yearText,
+            genre: genre,
+            comment: comment,
+            lyrics: lyric.trim(),
+            removeEmptyFields: true,
+          );
+        }
+      }
+
+      // 2) 再更新曲库索引（整条覆盖：清空的字段也要清掉）。
+      final updated = song.copyWith(
+        title: title,
+        artist: artist,
+        album: album,
+        year: year,
+        clearYear: year == null,
+        genre: genre,
+        comment: comment,
+        lrc: lyric.trim().isEmpty ? null : lyric.trim(),
+        clearLrc: lyric.trim().isEmpty,
+      );
+      await ref
+          .read(localMusicNotifierProvider.notifier)
+          .upsertSong(updated, forceOverwrite: true);
 
       if (mounted) {
+        final String message;
+        Color? background;
+        if (!changed) {
+          message = context.tr('标签已保存');
+        } else if (fileWritten) {
+          message = context.tr('标签已保存，并写入歌曲文件');
+        } else if (path.isEmpty) {
+          message = context.tr('标签已保存到曲库（找不到歌曲文件，未写入文件）');
+          background = Colors.orange;
+        } else {
+          message = fileSupported
+              ? context.tr('标签已保存到曲库，但写入歌曲文件失败')
+              : context.tr('标签已保存到曲库，该音频格式暂不支持写入文件');
+          background = Colors.orange;
+        }
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(context.tr('标签已保存')),
-            duration: const Duration(seconds: 2),
+            content: Text(message),
+            duration: const Duration(seconds: 3),
+            backgroundColor: background,
           ),
         );
         context.pop();

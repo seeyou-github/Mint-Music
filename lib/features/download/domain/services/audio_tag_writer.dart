@@ -31,9 +31,13 @@ class AudioTagWriter {
     String? artist,
     String? album,
     String? albumArtist,
+    String? year,
+    String? genre,
+    String? comment,
     String? lyrics,
     Uint8List? artwork,
     bool removeArtwork = false,
+    bool removeEmptyFields = false,
   }) async {
     final ext = _extOf(filePath);
     try {
@@ -44,9 +48,13 @@ class AudioTagWriter {
           artist: artist,
           album: album,
           albumArtist: albumArtist,
+          year: year,
+          genre: genre,
+          comment: comment,
           lyrics: lyrics,
           artwork: artwork,
           removeArtwork: removeArtwork,
+          removeEmptyFields: removeEmptyFields,
         );
       }
       if (ext == '.flac') {
@@ -56,9 +64,13 @@ class AudioTagWriter {
           artist: artist,
           album: album,
           albumArtist: albumArtist,
+          year: year,
+          genre: genre,
+          comment: comment,
           lyrics: lyrics,
           artwork: artwork,
           removeArtwork: removeArtwork,
+          removeEmptyFields: removeEmptyFields,
         );
       }
       debugPrint('[AudioTagWriter] 不支持的格式，跳过: $ext');
@@ -66,6 +78,12 @@ class AudioTagWriter {
       debugPrint('[AudioTagWriter] 写入标签失败 ($ext): $e');
     }
     return false;
+  }
+
+  /// 这个文件能不能写标签（目前实现了 mp3 / flac）。
+  static bool supports(String filePath) {
+    final ext = _extOf(filePath);
+    return ext == '.mp3' || ext == '.flac';
   }
 
   static String _extOf(String filePath) {
@@ -87,9 +105,13 @@ class AudioTagWriter {
     String? artist,
     String? album,
     String? albumArtist,
+    String? year,
+    String? genre,
+    String? comment,
     String? lyrics,
     Uint8List? artwork,
     bool removeArtwork = false,
+    bool removeEmptyFields = false,
   }) async {
     final file = File(filePath);
     if (!await file.exists()) return false;
@@ -123,12 +145,36 @@ class AudioTagWriter {
       await raf.close();
     }
 
-    _putText(frames, 'TIT2', title);
-    _putText(frames, 'TPE1', artist);
-    _putText(frames, 'TALB', album);
-    _putText(frames, 'TPE2', albumArtist);
-    if (lyrics != null && lyrics.isNotEmpty) {
-      frames['USLT'] = _buildUsltFrame(lyrics);
+    _putText(frames, 'TIT2', title, removeWhenEmpty: removeEmptyFields);
+    _putText(frames, 'TPE1', artist, removeWhenEmpty: removeEmptyFields);
+    _putText(frames, 'TALB', album, removeWhenEmpty: removeEmptyFields);
+    _putText(frames, 'TPE2', albumArtist, removeWhenEmpty: removeEmptyFields);
+    // 年份：ID3v2.3 用 TYER；清空时把 v2.4 的 TDRC 也一起删掉。
+    if (year == null) {
+      // 不动
+    } else if (year.isEmpty) {
+      if (removeEmptyFields) {
+        frames.remove('TYER');
+        frames.remove('TDRC');
+      }
+    } else {
+      _putText(frames, 'TYER', year);
+      frames.remove('TDRC');
+    }
+    _putText(frames, 'TCON', genre, removeWhenEmpty: removeEmptyFields);
+    if (comment != null) {
+      if (comment.isEmpty) {
+        if (removeEmptyFields) frames.remove('COMM');
+      } else {
+        frames['COMM'] = _buildCommentFrame(comment);
+      }
+    }
+    if (lyrics != null) {
+      if (lyrics.isEmpty) {
+        if (removeEmptyFields) frames.remove('USLT');
+      } else {
+        frames['USLT'] = _buildUsltFrame(lyrics);
+      }
     }
     if (removeArtwork) {
       // 删除封面：APIC 可能在原标签里存在，必须显式移除，否则会被原样保留。
@@ -156,9 +202,14 @@ class AudioTagWriter {
   static void _putText(
     Map<String, Uint8List> frames,
     String id,
-    String? value,
-  ) {
-    if (value == null || value.isEmpty) return;
+    String? value, {
+    bool removeWhenEmpty = false,
+  }) {
+    if (value == null) return;
+    if (value.isEmpty) {
+      if (removeWhenEmpty) frames.remove(id);
+      return;
+    }
     frames[id] = _buildTextFrame(value);
   }
 
@@ -178,6 +229,18 @@ class AudioTagWriter {
     bytes[0] = 1;
     bytes.setRange(1, 4, ascii.encode('chi'));
     // 描述符为空：UTF-16 的终止符是两个 0 字节
+    bytes[4] = 0;
+    bytes[5] = 0;
+    bytes.setRange(6, 6 + text.length, text);
+    return bytes;
+  }
+
+  /// COMM 帧：[编码][语言 3 字节][描述符（空）][注释文本]
+  static Uint8List _buildCommentFrame(String value) {
+    final text = _utf16LeWithBom(value);
+    final bytes = Uint8List(1 + 3 + 2 + text.length);
+    bytes[0] = 1;
+    bytes.setRange(1, 4, ascii.encode('eng'));
     bytes[4] = 0;
     bytes[5] = 0;
     bytes.setRange(6, 6 + text.length, text);
@@ -302,9 +365,13 @@ class AudioTagWriter {
     String? artist,
     String? album,
     String? albumArtist,
+    String? year,
+    String? genre,
+    String? comment,
     String? lyrics,
     Uint8List? artwork,
     bool removeArtwork = false,
+    bool removeEmptyFields = false,
   }) async {
     final file = File(filePath);
     if (!await file.exists()) return false;
@@ -339,8 +406,14 @@ class AudioTagWriter {
     final audioStart = offset;
 
     final newBlocks = <_FlacBlock>[];
+    List<int>? oldComment;
     for (final block in blocks) {
-      if (block.type == 4) continue; // 旧的 Vorbis Comment，稍后重建
+      if (block.type == 4) {
+        // 旧的 Vorbis Comment：先记下来，重建时保留没被改动的字段
+        // （GENRE / TRACKNUMBER / 其它自定义字段）。
+        oldComment = block.data;
+        continue;
+      }
       if (block.type == 6 &&
           (removeArtwork || (artwork != null && artwork.isNotEmpty))) {
         continue; // 旧的图片：删除封面，或者稍后用新封面重建
@@ -351,11 +424,16 @@ class AudioTagWriter {
       _FlacBlock(
         4,
         _buildVorbisComment(
+          existing: oldComment,
           title: title,
           artist: artist,
           album: album,
           albumArtist: albumArtist,
+          year: year,
+          genre: genre,
+          comment: comment,
           lyrics: lyrics,
+          removeEmptyFields: removeEmptyFields,
         ),
       ),
     );
@@ -381,24 +459,101 @@ class AudioTagWriter {
     return true;
   }
 
+  /// 解析已有的 Vorbis Comment 块（取每个 key 的第一个值）。
+  static Map<String, String> _parseVorbisEntries(List<int>? data) {
+    final result = <String, String>{};
+    if (data == null || data.length < 8) return result;
+    try {
+      var pos = 0;
+      final vendorLength = _u32le(data, pos);
+      pos += 4 + vendorLength;
+      if (pos + 4 > data.length) return result;
+      final count = _u32le(data, pos);
+      pos += 4;
+      for (var i = 0; i < count && pos + 4 <= data.length; i++) {
+        final length = _u32le(data, pos);
+        pos += 4;
+        if (length <= 0 || pos + length > data.length) break;
+        final entry = utf8.decode(
+          data.sublist(pos, pos + length),
+          allowMalformed: true,
+        );
+        pos += length;
+        final eq = entry.indexOf('=');
+        if (eq <= 0) continue;
+        final key = entry.substring(0, eq).toUpperCase();
+        if (result.containsKey(key)) continue;
+        result[key] = entry.substring(eq + 1);
+      }
+    } catch (e) {
+      debugPrint('[AudioTagWriter] 解析 FLAC 标签失败: $e');
+    }
+    return result;
+  }
+
+  /// 重建 Vorbis Comment 块。
+  ///
+  /// [existing] 是文件里原有的块：这次没改的字段（TRACKNUMBER、自定义字段等）
+  /// 原样保留，避免「编辑一次标签把其它字段全冲掉」。
   static Uint8List _buildVorbisComment({
+    List<int>? existing,
     String? title,
     String? artist,
     String? album,
     String? albumArtist,
+    String? year,
+    String? genre,
+    String? comment,
     String? lyrics,
+    bool removeEmptyFields = false,
   }) {
-    final entries = <String>[];
-    void add(String key, String? value) {
-      if (value == null || value.isEmpty) return;
-      entries.add('$key=$value');
+    // 保留原有字段，再按本次修改覆盖 / 删除。
+    final fields = _parseVorbisEntries(existing);
+
+    void apply(String key, String? value, {List<String> aliases = const []}) {
+      if (value == null) return;
+      if (value.isEmpty) {
+        if (!removeEmptyFields) return;
+        fields.remove(key);
+        for (final alias in aliases) {
+          fields.remove(alias);
+        }
+        return;
+      }
+      fields[key] = value;
+      for (final alias in aliases) {
+        fields.remove(alias);
+      }
     }
 
-    add('TITLE', title);
-    add('ARTIST', artist);
-    add('ALBUM', album);
-    add('ALBUMARTIST', albumArtist);
-    add('LYRICS', lyrics);
+    apply('TITLE', title);
+    apply('ARTIST', artist);
+    apply('ALBUM', album);
+    apply('ALBUMARTIST', albumArtist);
+    apply('DATE', year, aliases: const ['YEAR', 'ORIGINALDATE']);
+    apply('GENRE', genre);
+    apply('COMMENT', comment, aliases: const ['DESCRIPTION', 'COMMENTS']);
+    apply('LYRICS', lyrics, aliases: const ['UNSYNCEDLYRICS']);
+
+    // 固定顺序输出常用字段，其余字段按原顺序跟在后面。
+    const order = [
+      'TITLE',
+      'ARTIST',
+      'ALBUM',
+      'ALBUMARTIST',
+      'DATE',
+      'GENRE',
+      'COMMENT',
+      'LYRICS',
+    ];
+    final entries = <String>[];
+    for (final key in order) {
+      final value = fields.remove(key);
+      if (value != null && value.isNotEmpty) entries.add('$key=$value');
+    }
+    fields.forEach((key, value) {
+      if (value.isNotEmpty) entries.add('$key=$value');
+    });
 
     final vendor = utf8.encode('Mint Music');
     final out = BytesBuilder();
@@ -485,12 +640,18 @@ class AudioTagWriter {
   static Future<void> _replaceFile(File temp, File target) async {
     try {
       await temp.rename(target.path);
+      return;
     } catch (_) {
-      // 某些平台上 rename 不能覆盖已存在的文件，退化为先删后改名
-      if (await target.exists()) {
-        await target.delete();
-      }
-      await temp.rename(target.path);
+      // 某些平台上 rename 不能覆盖已存在的文件。
+    }
+    // 退一步：把新内容直接写进目标文件（文件正被播放器占用时通常仍可写）。
+    // 这里故意不「先删目标再改名」——那样一旦改名失败，原文件就没了。
+    final bytes = await temp.readAsBytes();
+    await target.writeAsBytes(bytes, flush: true);
+    try {
+      await temp.delete();
+    } catch (_) {
+      // 临时文件删不掉不影响结果，下次写同一个文件会覆盖它。
     }
   }
 
@@ -507,6 +668,14 @@ class AudioTagWriter {
     target[offset + 1] = (value >> 14) & 0x7F;
     target[offset + 2] = (value >> 7) & 0x7F;
     target[offset + 3] = value & 0x7F;
+  }
+
+  static int _u32le(List<int> bytes, int offset) {
+    if (offset + 4 > bytes.length) return 0;
+    return bytes[offset] |
+        (bytes[offset + 1] << 8) |
+        (bytes[offset + 2] << 16) |
+        (bytes[offset + 3] << 24);
   }
 
   static int _be32(List<int> bytes, [int offset = 0]) {

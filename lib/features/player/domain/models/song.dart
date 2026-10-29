@@ -148,6 +148,7 @@ class Song {
     bool clearSourceHeaders = false,
     bool clearSourceQuality = false,
     bool clearLrc = false,
+    bool clearYear = false,
     bool clearCover = false,
     bool clearPreferredSource = false,
   }) {
@@ -168,7 +169,7 @@ class Song {
       bitrate: bitrate ?? this.bitrate,
       sampleRate: sampleRate ?? this.sampleRate,
       channels: channels ?? this.channels,
-      year: year ?? this.year,
+      year: clearYear ? null : year ?? this.year,
       mediaStoreId: mediaStoreId ?? this.mediaStoreId,
       hash: hash ?? this.hash,
       lx: lx ?? this.lx,
