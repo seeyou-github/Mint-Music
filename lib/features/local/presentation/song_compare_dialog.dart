@@ -54,6 +54,12 @@ class _SongCompareDialogState extends ConsumerState<_SongCompareDialog> {
   int? _originalYear;
   bool _loadingOriginal = true;
 
+  /// 候选歌曲的发行年份。
+  ///
+  /// 插件搜索里有的直接给，没有的（酷狗 / 酷我等）按专辑 id 现查一次。
+  int? _candidateYear;
+  bool _loadingCandidateYear = false;
+
   /// 每一项是否采用下载版本：封面 / 歌曲信息 / 歌词。
   bool _useCandidateCover = true;
   bool _useCandidateInfo = true;
@@ -64,6 +70,7 @@ class _SongCompareDialogState extends ConsumerState<_SongCompareDialog> {
     super.initState();
     _fetchCandidateLyric();
     _loadOriginalMetadata();
+    _resolveCandidateYear();
   }
 
   /// 拉取下载版本的歌词。
@@ -91,6 +98,29 @@ class _SongCompareDialogState extends ConsumerState<_SongCompareDialog> {
         _loadingLyric = false;
       });
     }
+  }
+
+  /// 补查候选歌曲的发行年份（搜索没给年份时按专辑查一次）。
+  Future<void> _resolveCandidateYear() async {
+    final candidate = widget.candidate;
+    if (candidate.year != null && candidate.year! > 0) {
+      _candidateYear = candidate.year;
+      return;
+    }
+    if (mounted) setState(() => _loadingCandidateYear = true);
+    int? year;
+    try {
+      year = await ref
+          .read(musicSourceManagerProvider)
+          .resolveSongYear(candidate);
+    } catch (_) {
+      year = null;
+    }
+    if (!mounted) return;
+    setState(() {
+      _candidateYear = year;
+      _loadingCandidateYear = false;
+    });
   }
 
   /// 读取原歌曲文件里的标签：年份与内嵌歌词。
@@ -141,8 +171,9 @@ class _SongCompareDialogState extends ConsumerState<_SongCompareDialog> {
         candidateLyric != null && candidateLyric.isNotEmpty;
     final originalLyric = _originalLyricText;
 
+    final candidateYear = _candidateYear ?? candidate.year;
     final year = _useCandidateInfo
-        ? (candidate.year ?? original.year ?? _originalYear)
+        ? (candidateYear ?? original.year ?? _originalYear)
         : (original.year ?? _originalYear);
 
     return original.copyWith(
@@ -189,7 +220,11 @@ class _SongCompareDialogState extends ConsumerState<_SongCompareDialog> {
         year: _originalYearText,
         loading: _loadingOriginal,
       ),
-      candidate: _InfoBox(song: candidate, year: candidate.year),
+      candidate: _InfoBox(
+        song: candidate,
+        year: _candidateYear ?? candidate.year,
+        yearLoading: _loadingCandidateYear && _candidateYear == null,
+      ),
       useCandidate: _useCandidateInfo,
       sideBySide: sideBySide,
       onSelect: (useCandidate) =>
@@ -533,11 +568,15 @@ class _InfoBox extends ConsumerWidget {
     required this.song,
     required this.year,
     this.loading = false,
+    this.yearLoading = false,
   });
 
   final Song song;
   final int? year;
   final bool loading;
+
+  /// 年份还在补查（显示「…」而不是「-」）。
+  final bool yearLoading;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -590,7 +629,7 @@ class _InfoBox extends ConsumerWidget {
         field(context.tr('歌曲'), song.title, strong: true),
         field(context.tr('歌手'), song.artist),
         field(context.tr('专辑'), song.album),
-        field(context.tr('年份'), year?.toString() ?? '-'),
+        field(context.tr('年份'), yearLoading ? '…' : (year?.toString() ?? '-')),
       ],
     );
   }

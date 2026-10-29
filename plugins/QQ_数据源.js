@@ -172,10 +172,26 @@ function songOf(item) {
     name: item.songname || item.name || item.title || '',
     singer: singersOf(item),
     albumName: albumNameOf(item),
+    albumId: albumMidOf(item) || '',
+    // 发行年份：搜索结果里是 pubtime（秒）/ time_public（字符串）
+    year: yearOfTimestamp(item.pubtime || item.publish_time || item.time_public),
     artwork: coverOfAlbumMid(albumMidOf(item)),
     duration: interval > 0 ? interval : 0,
     source: 'tx'
   };
+}
+
+/** 时间戳（秒 / 毫秒）或 'YYYY-MM-DD' → 年份；取不到返回 0。 */
+function yearOfTimestamp(value) {
+  if (value === undefined || value === null || value === '') return 0;
+  var text = String(value).trim();
+  var dateMatch = /^(\d{4})[-/]/.exec(text);
+  if (dateMatch) return Number(dateMatch[1]) || 0;
+  var num = Number(text);
+  if (!num || num <= 0) return 0;
+  if (num < 100000000000) num = num * 1000; // 秒 → 毫秒
+  var year = new Date(num).getFullYear();
+  return year > 1900 && year < 3000 ? year : 0;
 }
 
 function songsOf(list) {
@@ -782,7 +798,7 @@ function fetchQrc(songId, songInfo) {
 
 module.exports = {
   pluginInfo: {
-    name: '数据源-QQ',
+    name: 'QQ_数据源',
     version: '1.7.0',
     author: 'MintMusic',
     description:
@@ -797,7 +813,7 @@ module.exports = {
 
   sources: {
     tx: {
-      name: 'QQ音乐',
+      name: 'QQ',
       qualitys: ['128k', '320k', 'flac', 'flac24bit', 'hires', 'atmos', 'master'],
       actions: ['musicSearch']
     }

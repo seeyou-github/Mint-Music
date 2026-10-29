@@ -59,6 +59,10 @@ class _MatchSongPageState extends ConsumerState<MatchSongPage> {
   String? _candidateLyric;
   bool _loadingLyric = false;
 
+  /// 选中候选的发行年份（搜索没给时按专辑补查）。
+  int? _candidateYear;
+  bool _loadingCandidateYear = false;
+
   /// 原歌曲文件里的标签（扫描时只存了部分字段，这里现读一次）。
   LocalAudioMetadata? _originalMeta;
 
@@ -192,11 +196,14 @@ class _MatchSongPageState extends ConsumerState<MatchSongPage> {
       _selectedIndex = index;
       _candidateLyric = null;
       _loadingLyric = true;
+      _candidateYear = null;
+      _loadingCandidateYear = false;
       _useCandidateCover = true;
       _useCandidateInfo = true;
       _useCandidateLyric = true;
     });
     unawaited(_fetchCandidateLyric(_results[index]));
+    unawaited(_resolveCandidateYear(_results[index]));
   }
 
   Future<void> _fetchCandidateLyric(Song candidate) async {
@@ -221,6 +228,35 @@ class _MatchSongPageState extends ConsumerState<MatchSongPage> {
     setState(() {
       _candidateLyric = lyric;
       _loadingLyric = false;
+    });
+  }
+
+  /// 补查候选的发行年份：搜索里带年份直接用，否则按专辑 id 查一次。
+  Future<void> _resolveCandidateYear(Song candidate) async {
+    final own = candidate.year;
+    if (own != null && own > 0) {
+      if (!mounted) return;
+      setState(() {
+        _candidateYear = own;
+        _loadingCandidateYear = false;
+      });
+      return;
+    }
+    if (mounted) setState(() => _loadingCandidateYear = true);
+    int? year;
+    try {
+      year = await ref
+          .read(musicSourceManagerProvider)
+          .resolveSongYear(candidate);
+    } catch (_) {
+      year = null;
+    }
+    if (!mounted) return;
+    final current = _currentCandidate;
+    if (current == null || current.id != candidate.id) return;
+    setState(() {
+      _candidateYear = year;
+      _loadingCandidateYear = false;
     });
   }
 
@@ -273,8 +309,9 @@ class _MatchSongPageState extends ConsumerState<MatchSongPage> {
     final album = _useCandidateInfo && candidate.album.trim().isNotEmpty
         ? candidate.album
         : original.album;
+    final candidateYear = _candidateYear ?? candidate.year;
     final year = _useCandidateInfo
-        ? (candidate.year ?? original.year)
+        ? (candidateYear ?? original.year)
         : original.year;
 
     final useCover = _useCandidateCover;
@@ -635,7 +672,12 @@ class _MatchSongPageState extends ConsumerState<MatchSongPage> {
             useCandidate: _useCandidateInfo,
             onSelect: (use) => setState(() => _useCandidateInfo = use),
             originalChild: _InfoPreview(colors: colors, song: original),
-            candidateChild: _InfoPreview(colors: colors, song: candidate),
+            candidateChild: _InfoPreview(
+              colors: colors,
+              song: candidate,
+              year: _candidateYear ?? candidate.year,
+              yearLoading: _loadingCandidateYear && _candidateYear == null,
+            ),
           ),
           const SizedBox(height: AppSpacing.md),
           _buildCompareRow(
@@ -986,10 +1028,21 @@ class _CoverPreview extends StatelessWidget {
 
 /// 歌曲信息预览（歌曲 / 歌手 / 专辑 / 年份 / 流派）。
 class _InfoPreview extends StatelessWidget {
-  const _InfoPreview({required this.colors, required this.song});
+  const _InfoPreview({
+    required this.colors,
+    required this.song,
+    this.year,
+    this.yearLoading = false,
+  });
 
   final ThemeColors colors;
   final Song song;
+
+  /// 年份（补查结果优先于歌曲自带的）。
+  final int? year;
+
+  /// 年份还在补查：显示「…」。
+  final bool yearLoading;
 
   @override
   Widget build(BuildContext context) {
@@ -1032,7 +1085,10 @@ class _InfoPreview extends StatelessWidget {
         field(context.tr('歌曲'), song.title, strong: true),
         field(context.tr('歌手'), song.artist),
         field(context.tr('专辑'), song.album),
-        field(context.tr('年份'), song.year?.toString() ?? ''),
+        field(
+          context.tr('年份'),
+          yearLoading ? '…' : ((year ?? song.year)?.toString() ?? ''),
+        ),
         field(context.tr('流派'), song.genre ?? ''),
       ],
     );

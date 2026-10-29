@@ -39,6 +39,7 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
   late TextEditingController _albumController;
   late TextEditingController _yearController;
   late TextEditingController _genreController;
+  late TextEditingController _commentController;
   late TextEditingController _lrcController;
   late TextEditingController _searchController;
 
@@ -73,6 +74,7 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
     _albumController = TextEditingController();
     _yearController = TextEditingController();
     _genreController = TextEditingController();
+    _commentController = TextEditingController();
     _lrcController = TextEditingController();
     _searchController = TextEditingController();
     // 监听放在控制器创建之后：回调里会读这些输入框的内容。
@@ -117,7 +119,8 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
         _artistController.text = song.artist;
         _albumController.text = song.album;
         _yearController.text = song.year?.toString() ?? '';
-        _genreController.text = '';
+        _genreController.text = song.genre ?? '';
+        _commentController.text = song.comment ?? '';
         _lrcController.text = song.lrc ?? '';
         // 搜索词带上歌手名，匹配更准。
         _searchController.text = _searchKeywordFor(song);
@@ -143,6 +146,16 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
           final lrc = song.lrc ?? metadata.lyrics;
           if (lrc != null && lrc.isNotEmpty) _lrcController.text = lrc;
         }
+        if (_genreController.text.trim().isEmpty) {
+          final genre = song.genre ?? metadata.genre;
+          if (genre != null && genre.isNotEmpty) _genreController.text = genre;
+        }
+        if (_commentController.text.trim().isEmpty) {
+          final comment = song.comment ?? metadata.comment;
+          if (comment != null && comment.isNotEmpty) {
+            _commentController.text = comment;
+          }
+        }
       });
     } catch (e) {
       debugPrint('[TagEditor] 读取文件标签失败: $e');
@@ -159,6 +172,7 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
     _albumController.dispose();
     _yearController.dispose();
     _genreController.dispose();
+    _commentController.dispose();
     _lrcController.dispose();
     _searchController.dispose();
     super.dispose();
@@ -344,6 +358,13 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
                 ),
               ),
             ],
+          ),
+          _buildField(
+            context.tr('注释'),
+            _commentController,
+            colors,
+            Icons.notes,
+            maxLines: 3,
           ),
           const SizedBox(height: AppSpacing.md),
           _buildLrcSection(colors),
@@ -605,8 +626,9 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
     String label,
     TextEditingController controller,
     ThemeColors colors,
-    IconData icon,
-  ) {
+    IconData icon, {
+    int maxLines = 1,
+  }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: AppSpacing.md),
       child: Column(
@@ -623,6 +645,7 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
           const SizedBox(height: AppSpacing.xs),
           TextField(
             controller: controller,
+            maxLines: maxLines,
             style: TextStyle(fontSize: 15, color: colors.textPrimary),
             decoration: InputDecoration(
               prefixIcon: Icon(icon, size: 18, color: colors.textHint),
@@ -1164,6 +1187,13 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
         });
       }
 
+      if (merged.year != null && merged.year! > 0) {
+        _yearController.text = merged.year.toString();
+      }
+      if ((merged.genre ?? '').isNotEmpty) {
+        _genreController.text = merged.genre!;
+      }
+
       final lyric = merged.lrc;
       if (lyric != null && lyric.isNotEmpty) {
         _lrcController.text = lyric;
@@ -1210,6 +1240,8 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
             ? null
             : _albumController.text.trim(),
         year: int.tryParse(_yearController.text.trim()),
+        genre: _genreController.text.trim(),
+        comment: _commentController.text.trim(),
         lrc: _lrcController.text.trim().isEmpty
             ? null
             : _lrcController.text.trim(),

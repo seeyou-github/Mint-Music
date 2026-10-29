@@ -6,6 +6,7 @@ import '../../discover/domain/models/playlist.dart';
 import '../../discover/domain/models/playlist_page.dart';
 import '../../discover/domain/models/leaderboard.dart';
 import '../domain/plugin_types.dart';
+import '../domain/song_year.dart';
 import '../../discover/domain/models/search_collection.dart';
 import '../domain/source_id_mapping.dart';
 import '../domain/plugin_source_states.dart';
@@ -1423,6 +1424,7 @@ class MusicSourceManager {
       'songid': pluginSongId,
       'hash': info['hash']?.toString(),
       'albumName': album ?? '',
+      'albumId': info['albumId']?.toString() ?? info['albumid']?.toString(),
       'img': coverUrl,
       'name': title ?? '',
       'singer': artist ?? '',
@@ -1441,6 +1443,9 @@ class MusicSourceManager {
           ? _parseDurationSeconds(info['duration'])
           : 0,
       hash: info['hash']?.toString(),
+      year: parseSongYear(
+        info['year'] ?? info['publishTime'] ?? info['pubtime'],
+      ),
       lx: lxMeta,
       isVipExclusive: info['vipExclusive'] == true,
       partsCount: info['parts'] is num ? (info['parts'] as num).toInt() : 0,
@@ -2250,6 +2255,52 @@ class MusicSourceManager {
       isEnd: map['isEnd'] != false,
       total: _pluginTotalOf(map),
     );
+  }
+
+  /// 专辑发行年份缓存：`音源|专辑id → 年份`。
+  ///
+  /// 「歌曲信息对比」会随着切换候选反复问年份，同一张专辑只查一次。
+  static final Map<String, int?> _albumYearCache = <String, int?>{};
+
+  /// 取一首歌的发行年份。
+  ///
+  /// * 歌曲自带年份（插件搜索里给了）直接用；
+  /// * 否则用插件给的专辑 id 拉一次专辑详情，从发行日期里取年份（有缓存）；
+  /// * 拿不到（没有专辑 id / 请求超时 / 插件不支持专辑详情）返回 null。
+  Future<int?> resolveSongYear(Song song) async {
+    final own = song.year;
+    if (own != null && own > 0) return own;
+    final albumId = (song.lx?['albumId'] ?? '').toString().trim();
+    final sourceId = (song.displaySource ?? song.source ?? '').trim();
+    if (albumId.isEmpty || sourceId.isEmpty) return null;
+    final key = '$sourceId|$albumId';
+    if (_albumYearCache.containsKey(key)) return _albumYearCache[key];
+    try {
+      final detail = await getCollectionDetail(
+        SearchCollection(
+          id: albumId,
+          title: song.album,
+          type: CollectionType.album,
+          source: sourceId,
+          artist: song.artist,
+          raw: {
+            'id': albumId,
+            'albumid': albumId,
+            'albumMID': albumId,
+            'mid': albumId,
+            'title': song.album,
+            'artist': song.artist,
+          },
+        ),
+      ).timeout(const Duration(seconds: 6));
+      final year = yearFromDateText(detail.item.date);
+      if (year != null) _albumYearCache[key] = year;
+      return year;
+    } catch (e) {
+      // 失败不缓存：网络恢复后再问一次还能拿到。
+      print('[MusicSourceManager] 取专辑年份失败（$key）: $e');
+      return null;
+    }
   }
 
   Future<LyricResult?> getLyricResult(Song song) async {

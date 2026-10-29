@@ -188,6 +188,10 @@ function songOf(item) {
     songmid: String(hash),
     // 带上专辑 id：封面补全失败时 getPic 还能按专辑再查一次
     albumId: item.album_id ? String(item.album_id) : '',
+    // 发行年份：有的接口给 publish_time，没有就留空（对比界面再按专辑查）
+    year: yearOfTimestamp(
+      item.publish_time || item.publishtime || albumInfo.publish_time
+    ),
     // 没有 songname 时用 filename（「歌手 - 歌名」），去掉歌手前缀
     name: (function () {
       var name = item.SongName || item.songname;
@@ -202,6 +206,19 @@ function songOf(item) {
     duration: Math.floor(duration),
     source: 'kg'
   };
+}
+
+/** 时间戳（秒 / 毫秒）或 'YYYY-MM-DD' → 年份；取不到返回 0。 */
+function yearOfTimestamp(value) {
+  if (value === undefined || value === null || value === '') return 0;
+  var text = String(value).trim();
+  var dateMatch = /^(\d{4})[-/]/.exec(text);
+  if (dateMatch) return Number(dateMatch[1]) || 0;
+  var num = Number(text);
+  if (!num || num <= 0) return 0;
+  if (num < 100000000000) num = num * 1000; // 秒 → 毫秒
+  var year = new Date(num).getFullYear();
+  return year > 1900 && year < 3000 ? year : 0;
 }
 
 function songsOf(list) {
@@ -719,7 +736,7 @@ function fetchLyric(hash, duration) {
 
 module.exports = {
   pluginInfo: {
-    name: '数据源-酷狗',
+    name: '酷狗_数据源',
     version: '1.7.0',
     author: 'MintMusic',
     description:
@@ -733,7 +750,7 @@ module.exports = {
 
   sources: {
     kg: {
-      name: '酷狗音乐',
+      name: '酷狗',
       qualitys: ['128k', '320k', 'flac', 'flac24bit', 'hires'],
       actions: ['musicSearch']
     }

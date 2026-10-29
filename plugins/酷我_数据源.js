@@ -167,10 +167,26 @@ function songOf(item) {
     name: decodeName(item.SONGNAME || item.songname || item.name),
     singer: decodeName(item.ARTIST || item.artist || item.singer),
     albumName: decodeName(item.ALBUM || item.album),
+    albumId: item.ALBUMID || item.albumid ? String(item.ALBUMID || item.albumid) : '',
+    // 发行年份：搜索接口没有，个别接口（专辑 / 榜单）里有
+    year: yearOfTimestamp(item.pub || item.RELEASEDATE || item.releaseDate),
     artwork: cover,
     duration: Math.floor(duration),
     source: 'kw'
   };
+}
+
+/** 时间戳（秒 / 毫秒）或 'YYYY-MM-DD' → 年份；取不到返回 0。 */
+function yearOfTimestamp(value) {
+  if (value === undefined || value === null || value === '') return 0;
+  var text = String(value).trim();
+  var dateMatch = /^(\d{4})[-/]/.exec(text);
+  if (dateMatch) return Number(dateMatch[1]) || 0;
+  var num = Number(text);
+  if (!num || num <= 0) return 0;
+  if (num < 100000000000) num = num * 1000; // 秒 → 毫秒
+  var year = new Date(num).getFullYear();
+  return year > 1900 && year < 3000 ? year : 0;
 }
 
 function songsOf(list) {
@@ -544,7 +560,7 @@ function lrcFromList(list) {
 
 module.exports = {
   pluginInfo: {
-    name: '数据源-酷我',
+    name: '酷我_数据源',
     version: '1.5.0',
     author: 'MintMusic',
     description:
@@ -558,7 +574,7 @@ module.exports = {
 
   sources: {
     kw: {
-      name: '酷我音乐',
+      name: '酷我',
       qualitys: ['128k', '320k', 'flac', 'flac24bit', 'hires'],
       actions: ['musicSearch']
     }
