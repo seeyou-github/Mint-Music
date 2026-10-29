@@ -1391,9 +1391,12 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
   Future<void> _handleSearch() async {
     final keyword = _queryText();
     if (keyword.isEmpty || _searching) return;
+    // 换了搜索词才算新搜索：重新允许精确过滤。同一个词重搜（比如点了
+    // 「显示全部结果」后）要保留用户放行全部结果的选择，否则按钮不生效。
+    if (_splitSearchFields && keyword != _lastSearchKeyword) {
+      _ignoreExactMatch = false;
+    }
     _lastSearchKeyword = keyword;
-    // 两个框里改了内容就是一次新搜索：重新允许精确过滤。
-    if (_splitSearchFields) _ignoreExactMatch = false;
 
     setState(() {
       _searching = true;
