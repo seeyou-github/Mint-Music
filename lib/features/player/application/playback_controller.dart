@@ -1261,6 +1261,19 @@ class PlaybackController extends StateNotifier<PlaybackState> {
       }
       _needsSourceLoad = false;
     }
+    // 上一首自然播完（进度停在最末尾）时，部分后端直接 play() 不会重新出声
+    //（Windows 的 media_kit 尤其明显：completed 后 play 只是置 playWhenReady，
+    // 播放器仍停在末尾）。先回到开头再播，语义就是「重新播放这首歌曲」。
+    try {
+      final duration = _audioHandler.currentDuration;
+      if (duration != null &&
+          duration > Duration.zero &&
+          _audioHandler.currentPosition >= duration) {
+        await _seekWithoutCounting(Duration.zero);
+      }
+    } catch (_) {
+      // 读不到进度就按原路径播，别让播放按钮卡死。
+    }
     await _audioHandler.play();
     // 遵循 CeruMusic：不乐观设 isPlaying=true。
     // 由 _playerStateSub 的 ready(playing=true) 或微任务兜底同步。
@@ -1280,7 +1293,13 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     // 不依赖可能滞后的 state.isPlaying。
     // CeruMusic 的 togglePlayPause:
     //   const isActuallyPlaying = a ? !a.paused : Audio.value.isPlay
-    final isActuallyPlaying = _audioHandler.playing;
+    //
+    // 但要同时看 state.isPlaying：歌曲自然播完后部分后端（Windows 的
+    // media_kit）的 playWhenReady 仍为 true，此时 state.isPlaying=false、
+    // 按钮显示「播放」——若只看 handler 会误走 pause()，点击就没反应。
+    // 两个都为 true 才算「正在播放」，否则一律按「要播放」处理（重复 play
+    // 是幂等的，不会引入新问题）。
+    final isActuallyPlaying = _audioHandler.playing && state.isPlaying;
     if (isActuallyPlaying && !_needsSourceLoad) {
       await pause();
     } else {
