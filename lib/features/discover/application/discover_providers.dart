@@ -18,7 +18,9 @@ final discoverSourceIdProvider = StateProvider<String>(
 );
 
 final discoverSupportedSourcesProvider = Provider<List<SourceInfo>>((ref) {
-  return ref.watch(pluginSupportedSourcesProvider);
+  // 落雪（LX）格式插件没有歌单 / 榜单接口，列在主页切换列表里只会是空页面，
+  // 所以统一用「可切换音源」（已过滤落雪格式）。
+  return ref.watch(switchableSourcesProvider);
 });
 
 final hotPlaylistsProvider = FutureProvider<List<Playlist>>((ref) async {

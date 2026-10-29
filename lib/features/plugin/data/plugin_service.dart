@@ -100,6 +100,12 @@ class PluginService {
 
   final Map<String, PluginHost> _loadedPlugins = {};
   final Map<String, JsEngineService> _engines = {};
+
+  /// 插件 id → 插件格式（`cr` / `lx` / `mf`）。
+  ///
+  /// 落雪（LX）格式只解析播放地址（没有歌单 / 榜单，多数也没有搜索），
+  /// 界面上的音源切换列表要把它们排除掉，所以这里缓存一份格式信息。
+  final Map<String, String> _pluginTypes = {};
   List<String> _pluginOrder = [];
 
   /// 插件自动重载的冷却时间（同一个插件两次重载的最小间隔）。
@@ -560,6 +566,7 @@ class PluginService {
       }
 
       final pluginId = DateTime.now().millisecondsSinceEpoch.toRadixString(16);
+      _pluginTypes[pluginId] = type;
       final safeName = pluginName.replaceAll(RegExp(r'[^\w\d-]'), '_');
       final pluginsDir = await _getPluginsDir();
       final destPath = '$pluginsDir/${pluginId}_$safeName';
@@ -620,6 +627,9 @@ class PluginService {
   Future<void> initializePlugins() async {
     final plugins = await _normalizeEnabledPlugins(await loadPlugins());
     _pluginOrder = plugins.map((plugin) => plugin.id).toList();
+    _pluginTypes
+      ..clear()
+      ..addAll({for (final plugin in plugins) plugin.id: plugin.type});
     _unloadAllPlugins();
     print('[PluginService] 开始初始化插件，共 ${plugins.length} 个插件');
 
@@ -813,6 +823,7 @@ class PluginService {
   }
 
   Future<void> uninstallPlugin(String id) async {
+    _pluginTypes.remove(id);
     final plugins = await loadPlugins();
     final plugin = plugins.where((p) => p.id == id).firstOrNull;
 
@@ -1099,6 +1110,9 @@ class PluginService {
       return null;
     }
   }
+
+  /// 这个插件是不是落雪（LX）格式。
+  bool isLxPlugin(String pluginId) => _pluginTypes[pluginId] == 'lx';
 
   List<PluginHost> get enabledPlugins {
     final faultedIds = _loadedPlugins.entries

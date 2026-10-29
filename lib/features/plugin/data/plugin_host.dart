@@ -6,6 +6,12 @@ import '../domain/plugin_types.dart';
 class PluginHost {
   final JsEngineService _engine;
   PluginMetadata? _pluginInfo;
+
+  /// 运行时是否识别为落雪（LX）适配器（适配器会暴露 `__lxInited`）。
+  ///
+  /// 混淆过的落雪脚本无法靠静态关键字判断，安装时记下的 `PluginInfo.type`
+  /// 万一不准，这里还能兜住；音源切换列表据此把落雪音源过滤掉。
+  bool _isLxAdapter = false;
   List<PluginSourceInfo> _sources = [];
   Map<String, List<String>> _sourceActions = {};
   Map<String, bool> _capabilities = const {};
@@ -27,6 +33,9 @@ class PluginHost {
   bool get isLoaded => _loaded;
   bool get isRuntimeHealthy => _engine.isRuntimeHealthy;
   PluginMetadata? get pluginInfo => _pluginInfo;
+
+  /// 运行时是否识别为落雪（LX）格式的适配器。
+  bool get isLxAdapter => _isLxAdapter;
   List<PluginSourceInfo> get sources => _sources;
   Map<String, List<String>> get sourceActions => _sourceActions;
   Map<String, bool> get capabilities => _capabilities;
@@ -191,6 +200,7 @@ class PluginHost {
         }
         await Future.delayed(const Duration(milliseconds: 100));
       }
+      _isLxAdapter = isLxAdapter;
       print('[PluginHost] 插件初始化完成，解析到 $sourceCount 个源');
 
       // 洛雪脚本必须在运行时注册 request 事件，否则无法解析播放地址。

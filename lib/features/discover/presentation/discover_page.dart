@@ -388,7 +388,18 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
     final tab = ref.watch(discoverTabProvider);
     final sourceId = ref.watch(discoverSourceIdProvider);
     final sources = ref.watch(discoverSupportedSourcesProvider);
-    final currentSource = sources.where((s) => s.id == sourceId).firstOrNull;
+    // 之前选中的音源如果已经不在可切换列表里（例如它是落雪格式插件提供的），
+    // 退回列表第一个，避免主页一直停在空数据上。
+    final currentSource =
+        sources.where((s) => s.id == sourceId).firstOrNull ??
+        (sources.isEmpty ? null : sources.first);
+    if (currentSource != null && currentSource.id != sourceId) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        if (ref.read(discoverSourceIdProvider) == currentSource.id) return;
+        ref.read(discoverSourceIdProvider.notifier).state = currentSource.id;
+      });
+    }
 
     return Padding(
       padding: EdgeInsets.symmetric(
@@ -439,7 +450,12 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
           // 切换音源（插件）按钮：放在搜索框右侧，高度与搜索框一致，图标铺满圆形
           GestureDetector(
             key: _sourceButtonKey,
-            onTap: () => _showSourceMenu(context, colors, sources, sourceId),
+            onTap: () => _showSourceMenu(
+              context,
+              colors,
+              sources,
+              currentSource?.id ?? sourceId,
+            ),
             child: Container(
               width: _searchBarHeight,
               height: _searchBarHeight,

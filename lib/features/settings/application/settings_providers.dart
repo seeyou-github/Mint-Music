@@ -81,7 +81,14 @@ final defaultSourceIdSettingProvider = StateProvider<String>((ref) => '');
 /// 音源（插件就绪后会自动切换过去）。
 final defaultSourceIdProvider = Provider<String>((ref) {
   final persisted = ref.watch(defaultSourceIdSettingProvider);
-  if (persisted.isNotEmpty) return persisted;
+  if (persisted.isNotEmpty) {
+    final switchable = ref.watch(switchableSourcesProvider);
+    // 插件还没加载完时不做判断；加载完发现这个音源已不在可切换列表里
+    // （例如卸载了，或它是落雪格式插件提供的），退回第一个可切换音源。
+    if (switchable.isEmpty || switchable.any((s) => s.id == persisted)) {
+      return persisted;
+    }
+  }
   return ref.watch(firstEnabledSourceIdProvider);
 });
 

@@ -342,6 +342,41 @@ class MusicSourceManager {
     return sources;
   }
 
+  /// 这个音源是不是落雪（LX）格式插件提供的。
+  ///
+  /// 落雪脚本只解析播放地址（`musicUrl` / `lyric` / `pic`），没有歌单与榜单，
+  /// 多数连搜索都没有；列在音源切换列表里，用户选中后只能得到空结果。
+  /// 界面上的切换按钮据此把它们过滤掉（播放地址仍然照常由这个插件解析）。
+  ///
+  /// 这里按 [getPluginSupportedSources] 的同一套顺序 / 去重规则反推 id 归属，
+  /// 避免「同一个平台既有 MF 插件又有落雪插件时把两个都当成落雪」。
+  bool isLxFormatSource(String sourceId) {
+    if (sourceId.trim().isEmpty) return false;
+    final plugins = _pluginService.enabledPlugins;
+    final orderedPlugins = [
+      ...plugins.where((host) => host.isDataSource),
+      ...plugins.where((host) => !host.isDataSource),
+    ];
+    final seenIds = <String>{};
+    for (final host in orderedPlugins) {
+      final pluginId = _pluginService.getPluginIdForHost(host);
+      for (final source in host.sources) {
+        final baseId = SourceIdMapping.deriveId(source.name);
+        if (!isPluginSourceEnabled(pluginId, baseId)) continue;
+        final id = _uniqueSourceId(baseId, pluginId, seenIds);
+        seenIds.add(id);
+        if (id != sourceId) continue;
+        // 数据源插件（只提供元数据、播放交给别的音源）不参与过滤：
+        // 它的价值就是搜索 / 浏览，藏起来反而没法用。
+        if (host.isDataSource) return false;
+        // 安装时记下的格式 + 运行时识别（混淆脚本靠后者兜底）。
+        if (host.isLxAdapter) return true;
+        return pluginId != null && _pluginService.isLxPlugin(pluginId);
+      }
+    }
+    return false;
+  }
+
   /// 插件音源是否支持搜索。
   ///
   /// 变体 id（`wy@插件id`）只认对应插件提供的音源。

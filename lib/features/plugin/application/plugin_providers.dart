@@ -60,11 +60,30 @@ final pluginSupportedSourcesProvider = Provider<List<SourceInfo>>((ref) {
   return sources;
 });
 
-/// 插件管理里第一个启用的音源 id。
+/// 音源切换按钮里可以列出的音源（主页 / 搜索页 / 歌词搜索 / 在线搜索 /
+/// 快速匹配都用它）。
+///
+/// 落雪（LX）格式插件只解析播放地址：没有歌单与榜单，多数也没有搜索，
+/// 列进切换列表里用户选中它只会得到空结果，所以在这些入口统一不显示。
+/// 播放地址解析不受影响（按歌曲自己记着的 source 走）。
+///
+/// 万一装的全是落雪格式插件（过滤后一个都不剩），退回完整列表，
+/// 否则界面会变成「一个音源都没有」。
+final switchableSourcesProvider = Provider<List<SourceInfo>>((ref) {
+  final sources = ref.watch(pluginSupportedSourcesProvider);
+  final manager = ref.watch(musicSourceManagerProvider);
+  final switchable = [
+    for (final source in sources)
+      if (!manager.isLxFormatSource(source.id)) source,
+  ];
+  return switchable.isEmpty ? sources : switchable;
+});
+
+/// 插件管理里第一个启用的音源 id（跳过落雪格式）。
 ///
 /// 没有任何插件音源时返回空字符串，由调用方提示「请先安装音源」。
 final firstEnabledSourceIdProvider = Provider<String>((ref) {
-  final sources = ref.watch(pluginSupportedSourcesProvider);
+  final sources = ref.watch(switchableSourcesProvider);
   if (sources.isNotEmpty) return sources.first.id;
   return '';
 });
@@ -73,12 +92,18 @@ final searchSupportedSourcesProvider = Provider<List<SourceInfo>>((ref) {
   ref.watch(pluginSupportedSourcesProvider);
 
   final manager = ref.watch(musicSourceManagerProvider);
-  final sources = manager.getSearchSupportedSources();
-  print('[PluginProviders] 获取支持搜索的源数量: ${sources.length}');
-  for (final source in sources) {
+  final all = manager.getSearchSupportedSources();
+  final sources = [
+    for (final source in all)
+      if (!manager.isLxFormatSource(source.id)) source,
+  ];
+  // 只有落雪格式插件时不至于一个音源都不给（它们本来就搜不出东西）。
+  final result = sources.isEmpty ? all : sources;
+  print('[PluginProviders] 获取支持搜索的源数量: ${result.length}');
+  for (final source in result) {
     print('[PluginProviders]   - ${source.id}: ${source.name}');
   }
-  return sources;
+  return result;
 });
 
 /// 插件自带音源的启用 / 关闭状态。
