@@ -93,6 +93,7 @@ class _CandidateCard extends StatelessWidget {
               child: MusicCoverImage(
                 url: song.coverUrl,
                 songId: song.id,
+                filePath: song.filePath,
                 width: 56,
                 height: 56,
                 errorWidget: Container(

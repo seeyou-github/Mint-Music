@@ -994,6 +994,7 @@ class _LocalPlaylistDetailPageState
         child: MusicCoverImage(
           key: ValueKey('lps_cover_${song.id}'),
           songId: song.id,
+          filePath: song.filePath,
           mediaStoreId: song.mediaStoreId,
           fit: BoxFit.cover,
           errorWidget: Icon(Icons.music_note, size: 20, color: colors.primary),

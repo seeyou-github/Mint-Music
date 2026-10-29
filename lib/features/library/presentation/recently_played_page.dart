@@ -806,6 +806,7 @@ class _SongCard extends ConsumerWidget {
                         child: MusicCoverImage(
                           url: song.coverUrl,
                           songId: song.id,
+                          filePath: song.filePath,
                           mediaStoreId: song.mediaStoreId,
                           fit: BoxFit.cover,
                           errorWidget: Container(
@@ -1076,6 +1077,7 @@ class _RankRowState extends ConsumerState<_RankRow> {
                 child: MusicCoverImage(
                   url: song.coverUrl,
                   songId: song.id,
+                  filePath: song.filePath,
                   mediaStoreId: song.mediaStoreId,
                   width: 48,
                   height: 48,

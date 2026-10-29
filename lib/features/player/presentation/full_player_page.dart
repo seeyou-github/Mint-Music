@@ -875,6 +875,7 @@ class _PlayerCoverPage extends ConsumerWidget {
       return MusicCoverImage(
         key: ValueKey('fp_cover_${song.id}'),
         songId: song.id,
+        filePath: song.filePath,
         mediaStoreId: song.mediaStoreId,
         fit: BoxFit.cover,
         cacheWidth: 1536,

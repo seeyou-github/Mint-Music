@@ -260,6 +260,7 @@ class _PlayQueueSheetContentState
                                       child: MusicCoverImage(
                                         url: queueSong.coverUrl,
                                         songId: queueSong.id,
+                                        filePath: queueSong.filePath,
                                         mediaStoreId: queueSong.mediaStoreId,
                                         fit: BoxFit.cover,
                                         errorWidget: Icon(

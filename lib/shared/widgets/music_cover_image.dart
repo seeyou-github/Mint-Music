@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import '../services/cover_cache_service.dart';
+import '../../features/local/data/local_metadata_reader.dart';
 import '../services/discovery_image_cache.dart';
 
 /// 统一的封面图片组件，支持：
@@ -16,6 +17,13 @@ class MusicCoverImage extends StatefulWidget {
   final String? url;
   final String? songId;
   final int? mediaStoreId;
+
+  /// 本地歌曲的音频文件路径（可选）。
+  ///
+  /// 封面缓存未命中时（扫描发生在标签写入之前 / 缓存被清理），用它现场
+  /// 从音频文件里提取内嵌封面并回填缓存——否则「文件明明有封面，播放页
+  /// 却不显示」。
+  final String? filePath;
   final double? width;
   final double? height;
   final BoxFit fit;
@@ -39,6 +47,7 @@ class MusicCoverImage extends StatefulWidget {
     this.url,
     this.songId,
     this.mediaStoreId,
+    this.filePath,
     this.width,
     this.height,
     this.fit = BoxFit.cover,
@@ -136,7 +145,8 @@ class _MusicCoverImageState extends State<MusicCoverImage> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.url != widget.url ||
         oldWidget.songId != widget.songId ||
-        oldWidget.mediaStoreId != widget.mediaStoreId) {
+        oldWidget.mediaStoreId != widget.mediaStoreId ||
+        oldWidget.filePath != widget.filePath) {
       _load();
       return;
     }
@@ -287,7 +297,25 @@ class _MusicCoverImageState extends State<MusicCoverImage> {
   Future<void> _fetchFromCoverCache(String songId, int? mediaStoreId) async {
     try {
       final cache = CoverCacheService();
-      final bytes = await cache.getArtwork(songId, mediaStoreId: mediaStoreId);
+      var bytes = await cache.getArtwork(songId, mediaStoreId: mediaStoreId);
+
+      // 缓存未命中但有本地文件：现场提取内嵌封面并回填缓存。
+      // 典型场景是「在线歌曲播放中点了下载，随即在本地音乐页播放」——
+      // 扫描可能发生在封面写入文件之前，索引里 hasCover=false 且缓存为空。
+      if ((bytes == null || bytes.isEmpty) &&
+          widget.filePath != null &&
+          widget.filePath!.isNotEmpty) {
+        try {
+          final metadata = await LocalMetadataReader.read(widget.filePath!);
+          final artwork = metadata.artwork;
+          if (artwork != null && artwork.isNotEmpty) {
+            unawaited(cache.putArtwork(songId, artwork));
+            bytes = artwork;
+          }
+        } catch (e) {
+          debugPrint('[MusicCoverImage] 从音频文件提取封面失败: $e');
+        }
+      }
 
       if (bytes != null && bytes.isNotEmpty) {
         _putCache(songId, bytes);

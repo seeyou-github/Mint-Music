@@ -1466,6 +1466,7 @@ class _LocalSongItem extends ConsumerWidget {
                         child: MusicCoverImage(
                           key: ValueKey('local_cover_${song.id}'),
                           songId: song.id,
+                          filePath: song.filePath,
                           // 桌面端没有 MediaStore，封面来自扫描时写入的封面缓存
                           mediaStoreId: song.mediaStoreId,
                           fit: BoxFit.cover,

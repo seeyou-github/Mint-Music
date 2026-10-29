@@ -502,6 +502,7 @@ class _QuickMatchPageState extends ConsumerState<QuickMatchPage> {
               child: MusicCoverImage(
                 url: song.coverUrl,
                 songId: song.id,
+                filePath: song.filePath,
                 width: _coverSize,
                 height: _coverSize,
                 errorWidget: Container(

@@ -213,6 +213,7 @@ class SidebarPlayer extends ConsumerWidget {
       return MusicCoverImage(
         key: ValueKey('sidebar_cover_img_${song.id}'),
         songId: song.id,
+        filePath: song.filePath,
         mediaStoreId: song.mediaStoreId,
         fit: BoxFit.cover,
         errorWidget: Icon(Icons.music_note, size: 32, color: colors.primary),
