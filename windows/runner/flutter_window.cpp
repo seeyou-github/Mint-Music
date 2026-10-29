@@ -337,6 +337,29 @@ void FlutterWindow::HandleDesktopLyricCall(
           line.text = Utf8ToWide(GetStringUtf8(line_map, "text"));
           line.translation = Utf8ToWide(GetStringUtf8(line_map, "translation"));
           line.roman = Utf8ToWide(GetStringUtf8(line_map, "roman"));
+          // 逐字时间轴（逐字歌词才有）：原生侧按每个字的时间 + 实测字宽
+          // 换算已唱宽度，与播放详情页的逐字高亮保持一致。
+          const auto* words_value = MapValue(line_map, "words");
+          if (words_value != nullptr) {
+            const auto* words_list =
+                std::get_if<flutter::EncodableList>(words_value);
+            if (words_list != nullptr) {
+              for (const auto& word_item : *words_list) {
+                const auto* word_map =
+                    std::get_if<flutter::EncodableMap>(&word_item);
+                if (word_map == nullptr) {
+                  continue;
+                }
+                mintmusic::DesktopLyricWord word;
+                word.text = Utf8ToWide(GetStringUtf8(word_map, "t"));
+                word.start_ms = GetInt(word_map, "s", 0);
+                word.end_ms = GetInt(word_map, "e", 0);
+                if (!word.text.empty()) {
+                  line.words.push_back(word);
+                }
+              }
+            }
+          }
           lines.push_back(line);
         }
       }

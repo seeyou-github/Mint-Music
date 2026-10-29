@@ -374,6 +374,57 @@ double DesktopLyricWindow::ActiveLineProgress() const {
          static_cast<double>(end - start);
 }
 
+double DesktopLyricWindow::ActiveSungFraction() const {
+  if (active_index_ < 0 ||
+      active_index_ >= static_cast<int>(lines_.size())) {
+    return 0.0;
+  }
+  const DesktopLyricLine& line = lines_[active_index_];
+  if (line.words.empty()) {
+    return ActiveLineProgress();
+  }
+  const long long position = CurrentPositionMs();
+  // 逐字歌词：按「每个字的时间 + 实测字宽」累计已唱宽度再除以整行宽度。
+  // 与播放详情页的逐字高亮保持一致；整行线性插值会无视字与字之间的停顿，
+  // 表现为桌面歌词比详情页唱得快。
+  HDC dc = ::CreateCompatibleDC(nullptr);
+  double total_width = 0.0;
+  double sung_width = 0.0;
+  if (dc != nullptr) {
+    const HFONT old_font = static_cast<HFONT>(::SelectObject(dc, font_));
+    for (const auto& word : line.words) {
+      const double word_width = std::max(
+          1.0, static_cast<double>(MeasureTextWidth(dc, word.text)));
+      total_width += word_width;
+      long long start = word.start_ms;
+      long long end = word.end_ms;
+      if (end <= start) {
+        end = start + 1;
+      }
+      if (position <= start) {
+        continue;  // 这个字还没唱到
+      }
+      if (position >= end) {
+        sung_width += word_width;  // 整个字唱完
+      } else {
+        // 唱到这个字的中间：按时间在字宽里线性推进，后面的一律没唱。
+        sung_width += word_width * static_cast<double>(position - start) /
+                      static_cast<double>(end - start);
+        break;
+      }
+    }
+    ::SelectObject(dc, old_font);
+    ::DeleteDC(dc);
+  }
+  if (total_width <= 0.0) {
+    return ActiveLineProgress();
+  }
+  double fraction = sung_width / total_width;
+  if (fraction < 0.0) fraction = 0.0;
+  if (fraction > 1.0) fraction = 1.0;
+  return fraction;
+}
+
 bool DesktopLyricWindow::NeedsAnimationFrame() const {
   if (!is_playing_ || dragging_ || window_ == nullptr) {
     return false;
@@ -385,7 +436,7 @@ bool DesktopLyricWindow::NeedsAnimationFrame() const {
   if (marquee_overflow_px_ > 0) {
     return true;
   }
-  return ActiveLineProgress() != last_painted_progress_;
+  return ActiveSungFraction() != last_painted_progress_;
 }
 
 void DesktopLyricWindow::EnsureFont() {
@@ -734,7 +785,9 @@ void DesktopLyricWindow::Paint() {
   };
 
   // 当前行的播放进度（0 ~ 1），用于逐字填充。
-  const double active_progress = ActiveLineProgress();
+  // 逐字歌词按每个字的时间 + 字宽换算，与播放详情页一致；普通 LRC
+  // 没有逐字时间轴，退回整行线性插值。
+  const double active_progress = ActiveSungFraction();
   last_painted_progress_ = active_progress;
 
   // 固定两个槽位：当前播放行在 active_index_ % 2 对应的槽位，另一个槽位

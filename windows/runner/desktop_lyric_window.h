@@ -9,7 +9,14 @@
 
 namespace mintmusic {
 
-/// 一行歌词（时间 + 文本 + 翻译 + 罗马音）。
+/// 逐字时间轴里的一个字 / 词。
+struct DesktopLyricWord {
+  std::wstring text;
+  long long start_ms = 0;
+  long long end_ms = 0;
+};
+
+/// 一行歌词（时间 + 文本 + 翻译 + 罗马音 + 逐字时间轴）。
 struct DesktopLyricLine {
   long long time_ms = 0;
   /// 这一行唱完的时间（普通 LRC 就是下一行的起始时间）。为 0 时由原生侧
@@ -18,6 +25,8 @@ struct DesktopLyricLine {
   std::wstring text;
   std::wstring translation;
   std::wstring roman;
+  /// 逐字时间轴（逐字歌词才有；普通 LRC 为空，退回整行线性插值）。
+  std::vector<DesktopLyricWord> words;
 };
 
 /// 一个要绘制的歌词槽位（固定两行，按当前行奇偶交替）。
@@ -112,6 +121,11 @@ class DesktopLyricWindow {
   /// 普通 LRC 只有行级时间戳，这里用「本行开始 → 本行结束」这段区间做线性
   /// 插值，估算这一句唱到了哪个位置，用于逐字填充已播放颜色。
   double ActiveLineProgress() const;
+  /// 当前行已唱到的比例（0 ~ 1），优先按逐字时间轴换算。
+  ///
+  /// 逐字歌词按「每个字的时间 + 实测字宽」累计已唱宽度再除以整行宽度，
+  /// 与播放详情页的逐字高亮一致；没有逐字时间轴时退回 [ActiveLineProgress]。
+  double ActiveSungFraction() const;
   /// 是否还需要逐帧重绘（跑马灯滚动 / 逐字填充还没走完）。
   bool NeedsAnimationFrame() const;
   void Paint();

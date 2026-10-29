@@ -154,6 +154,17 @@ class DesktopLyricOverlay {
                 'text': line.plainText.trim(),
                 'translation': line.translatedLyric?.trim(),
                 'roman': line.romanLyric?.trim(),
+                // 逐字时间轴:原生侧按每个字的时间 + 实测字宽换算已唱宽度，
+                // 与播放详情页的逐字高亮保持一致；普通 LRC 这里是空列表，
+                // 原生侧退回整行线性插值。
+                'words': [
+                  for (final word in line.words)
+                    {
+                      't': word.word,
+                      's': word.startTimeMs,
+                      'e': word.endTimeMs,
+                    },
+                ],
               },
             )
             .toList(growable: false),
