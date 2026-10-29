@@ -104,6 +104,15 @@ class PluginHost {
         await _engine.ensurePluginModules(modules);
       }
 
+      // 落雪格式插件：原脚本同样会 require('crypto-js') / require('axios') 之类
+      // 的依赖（例如酷狗源用 crypto-js 签名、酷我源用 axios 发请求）。也把运行时
+      // 与所需模块注入进来，否则脚本在初始化或请求时会因为拿不到模块而报错。
+      final lxOriginalCode = originalPluginCode?.trim();
+      if (lxOriginalCode != null && lxOriginalCode.isNotEmpty) {
+        final modules = JsEngineService.detectRequiredModules(lxOriginalCode);
+        await _engine.ensurePluginModules(modules);
+      }
+
       print('[PluginHost] 开始加载插件...');
       _engine.evaluate('var module = { exports: {} };');
       _engine.evaluate('var exports = module.exports;');

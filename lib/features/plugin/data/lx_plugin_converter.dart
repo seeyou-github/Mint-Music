@@ -594,7 +594,12 @@ function initializePluginEnvironment() {
     __runtimeGlobal.clearInterval = __lxClearInterval;
     __runtimeGlobal.Buffer = Buffer;
     __runtimeGlobal.process = { env: { NODE_ENV: 'production' } };
-    __runtimeGlobal.require = function() { return {}; };
+    // require：宿主在加载落雪插件前会注入 MusicFree 兼容运行时（含 crypto-js /
+    // axios 等模块注册表），此时全局 require 已经是可用实现，不能再覆盖成空实现；
+    // 没有运行时（旧路径 / 单独评估适配器）才退回空模块，插件把缺失依赖当可选能力。
+    if (typeof __runtimeGlobal.require !== 'function') {
+      __runtimeGlobal.require = function() { return {}; };
+    }
   } catch(error) {
     __lxInitError = __lxSafeError(error);
     __lxInitDone = true;
