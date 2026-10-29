@@ -90,6 +90,14 @@ dependency_overrides:
   # url_launcher_android >= 6.3.26 requires AGP 8.9.1+ (androidx.core 1.17.0 / browser 1.9.0),
   # which exceeds this project's AGP 8.6.0 / Android Studio support range.
   url_launcher_android: 6.3.25
+  # 本地补丁版（vendor 在 third_party/，基于 2.1.0，版本 2.1.0+mint.1）：
+  # mpv 会自动加载同目录同名文件当外部字幕 / 封面，`.lrc` 侧栏歌词打不开时报
+  # `Can not open external file`，media_kit 把这类错误当致命错误，正在加载的
+  # 媒体被判失败且 setAudioSource 永不返回（带 .lrc 的本地歌曲无法播放）。
+  # 补丁关闭了 mpv 的 sub-auto / cover-art-auto，并忽略外部文件错误。
+  # 详见 third_party/just_audio_media_kit/CHANGELOG.md；上游修复后可移除此 override。
+  just_audio_media_kit:
+    path: third_party/just_audio_media_kit
 
 flutter:
   uses-material-design: true

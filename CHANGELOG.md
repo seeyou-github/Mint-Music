@@ -17,6 +17,13 @@
   补一次 iconUrl 并缓存图标）
 
 ### 修复
+- 本地歌曲带同名 `.lrc` 侧栏歌词时无法播放（提示「播放失败：播放歌曲失败，
+  已停止播放」）：mpv 默认会把同目录同名的文件当作外部字幕 / 封面自动加载，
+  `.lrc` 不是它能解析的格式，于是报 `Can not open external file`；media_kit 又把
+  这类 cplayer 错误日志当成致命错误，把播放器处理状态改回 idle，导致
+  `just_audio` 的 `setAudioSource` 永远不会返回，最终被 10 秒超时判成失败。
+  现在使用本地打补丁的 `third_party/just_audio_media_kit`：关掉 mpv 的
+  `sub-auto` / `cover-art-auto`（歌词由 App 自己解析），并忽略外部文件错误
 - 队列仅一首时播完自动停止后，点播放按钮没有任何反应（Windows 的 media_kit
   后端）：播完后 `playWhenReady` 仍为 true，`just_audio` 的 `play()` 看到
   playing 已为 true 直接返回，播放器一直停在末尾。现在点播放会先把内部 playing

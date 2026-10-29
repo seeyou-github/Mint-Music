@@ -9,6 +9,12 @@
 # packages, and plugins designed to encourage good coding practices.
 include: package:flutter_lints/flutter.yaml
 
+analyzer:
+  exclude:
+    # vendored 的第三方补丁包（third_party/just_audio_media_kit）保持上游
+    # 原貌，不参与项目级 lint；单独检查可运行 dart analyze third_party/...
+    - third_party/**
+
 linter:
   # The lint rules applied to this project can be customized in the
   # section below to disable rules from the `package:flutter_lints/flutter.yaml`
