@@ -182,15 +182,30 @@ function songOf(item) {
     '';
   var duration = Number(item.Duration || item.duration || 0);
   if (isNaN(duration)) duration = 0;
+  // 各接口字段大小写不一致：song_search_v2 给 AlbumID / PublishDate，
+  // album_audio 给 album_id / publish_time。少读一套专辑 id 就是空，
+  // 「按专辑查年份」也无从谈起。
+  var albumId =
+    item.album_id ||
+    item.AlbumID ||
+    albumInfo.album_id ||
+    albumInfo.albumid ||
+    '';
   return {
     id: String(hash),
     songId: String(hash),
     songmid: String(hash),
     // 带上专辑 id：封面补全失败时 getPic 还能按专辑再查一次
-    albumId: item.album_id ? String(item.album_id) : '',
-    // 发行年份：有的接口给 publish_time，没有就留空（对比界面再按专辑查）
+    albumId: albumId ? String(albumId) : '',
+    // 发行年份：优先用搜索接口直接给的发行日期，没有就留空（对比界面再按专辑查）
     year: yearOfTimestamp(
-      item.publish_time || item.publishtime || albumInfo.publish_time
+      item.PublishDate ||
+        item.PublishTime ||
+        item.publish_time ||
+        item.publishtime ||
+        albumInfo.publish_time ||
+        albumInfo.publish_date ||
+        albumInfo.publishDate
     ),
     // 没有 songname 时用 filename（「歌手 - 歌名」），去掉歌手前缀
     name: (function () {
