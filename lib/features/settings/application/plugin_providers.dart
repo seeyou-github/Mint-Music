@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../data/plugin_repository.dart';
 import '../domain/models/plugin_info.dart';
+import '../../discover/application/hot_board_providers.dart';
 import '../../plugin/application/plugin_providers.dart';
 import '../../plugin/data/plugin_service.dart' show PluginTypeUnknownException;
 
@@ -121,6 +122,9 @@ class PluginsNotifier extends AsyncNotifier<List<PluginInfo>> {
   Future<void> uninstallPlugin(String id) async {
     final pluginService = ref.read(pluginServiceProvider);
     await pluginService.uninstallPlugin(id);
+    // 插件卸载 / 删除后它带来的音源都不存在了：清掉它们的「有热榜」标志位
+    // （热榜数据本身保留，重装后仍能看到；只是不再参与默认分类判断）。
+    await ref.read(hotBoardSourceIdsProvider.notifier).clearPlugin(id);
     ref.invalidate(pluginInitializedProvider);
     ref.invalidateSelf();
   }

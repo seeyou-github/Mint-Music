@@ -50,6 +50,12 @@ class AppPreferences {
     }
   }
 
+  /// 已经初始化过的实例（还没初始化时为 null）。
+  ///
+  /// 少数「必须当场给出结果」的场景（例如切换音源时判断某个音源有没有热榜）
+  /// 需要同步读设置：应用启动时已经 [getInstance] 过，这里直接给出内存里那份。
+  static AppPreferences? get maybeInstance => _instance;
+
   final Map<String, Object> _values;
 
   /// Windows 上保存设置的文件；其它平台为 null。

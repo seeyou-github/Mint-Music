@@ -13,6 +13,13 @@ class HotBoardStore {
   static const String _key = 'hot_boards_v2';
   static const String _legacyKey = 'hot_board_v1';
 
+  /// 「哪些音源有用户新增的热榜」标志位：只存音源 id。
+  ///
+  /// 单独存一份而不是每次去数热榜数据，是为了切换音源时能**同步**判断：
+  /// 榜单默认分类只依赖它，不用等整份热榜（里面带着所有歌曲）解析完，
+  /// 也就不会出现「切过去先判成所有、数据回来又不纠正」。
+  static const String _sourcesKey = 'hot_board_sources_v1';
+
   Future<List<HotBoard>> load() async {
     try {
       final prefs = await AppPreferences.getInstance();
@@ -45,8 +52,28 @@ class HotBoardStore {
       final prefs = await AppPreferences.getInstance();
       await prefs.remove(_key);
       await prefs.remove(_legacyKey);
+      await prefs.remove(_sourcesKey);
     } catch (e) {
       debugPrint('[HotBoardStore] 清除热榜失败: $e');
+    }
+  }
+
+  /// 同步读「有热榜的音源」标志位。
+  ///
+  /// 返回 null 表示还没记录过（首次启动 / 从老版本升级上来），调用方需要
+  /// 按已有榜单数据补写一次；空集合表示确实一个音源都没有热榜。
+  Set<String>? loadSourceIdsSync() {
+    final prefs = AppPreferences.maybeInstance;
+    if (prefs == null) return null;
+    return prefs.getStringList(_sourcesKey)?.toSet();
+  }
+
+  Future<void> saveSourceIds(Set<String> sourceIds) async {
+    try {
+      final prefs = await AppPreferences.getInstance();
+      await prefs.setStringList(_sourcesKey, sourceIds.toList()..sort());
+    } catch (e) {
+      debugPrint('[HotBoardStore] 保存热榜标志位失败: $e');
     }
   }
 
