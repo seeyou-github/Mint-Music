@@ -1,4 +1,5 @@
 import 'dart:convert';
+import '../../../shared/utils/display_name_sanitizer.dart';
 import '../../../shared/pagination/page_result.dart';
 import '../../player/domain/models/song.dart';
 import '../../player/domain/models/lyric_line.dart';
@@ -228,8 +229,12 @@ class MusicSourceManager {
   /// * 单音源插件：直接用平台名（平台名本身就是插件名，再加会重复）；
   /// * 多音源插件：平台名 + 插件名（如「酷我音乐-星海音乐源」）。
   String _sourceDisplayName(String sourceName, String pluginName) {
-    if (pluginName.isEmpty) return sourceName;
-    return '$sourceName-$pluginName';
+    // 花体 Unicode 混排的名字（𝖧౿ᥣᥣ𝗈 Ԝ𝗈𝗋ᥣᑯ 这类）应用字体没有对应
+    // 字形，音源列表 / 播放源下拉里全是豆腐块：展示前统一清洗。
+    final source = sanitizeDisplayName(sourceName);
+    final plugin = sanitizeDisplayName(pluginName);
+    if (plugin.isEmpty) return source;
+    return '$source-$plugin';
   }
 
   /// 插件音源在应用层的 id（`平台id@插件id`）。

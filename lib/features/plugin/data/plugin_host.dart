@@ -2,6 +2,7 @@ import 'dart:convert';
 import '../../player/domain/models/lyric_line.dart';
 import '../platform/js_engine_service.dart';
 import '../domain/plugin_types.dart';
+import '../../../shared/utils/display_name_sanitizer.dart';
 
 class PluginHost {
   final JsEngineService _engine;
@@ -386,7 +387,9 @@ JSON.stringify((function() {
     if (name == null || version == null || author == null) return null;
 
     return PluginMetadata(
-      name: name,
+      // 花体 Unicode 混排的插件名（𝖧౿ᥣᥣ𝗈 Ԝ𝗈𝗋ᥣᑯ 这类）应用字体没有
+      // 对应字形，界面上全是豆腐块：导入时统一清洗成常规字符。
+      name: sanitizeDisplayName(name),
       version: version,
       author: author,
       description: _safeString(data['description']),
