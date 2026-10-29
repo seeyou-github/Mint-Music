@@ -456,7 +456,7 @@ JSON.stringify((function() {
     String source,
     MusicInfoForPlugin musicInfo,
     String quality, {
-    Duration timeout = const Duration(seconds: 30),
+    Duration timeout = const Duration(seconds: 45),
   }) async {
     final result = await getMusicUrlResult(
       source,
@@ -471,17 +471,27 @@ JSON.stringify((function() {
     String source,
     MusicInfoForPlugin musicInfo,
     String quality, {
-    Duration timeout = const Duration(seconds: 30),
+    Duration timeout = const Duration(seconds: 45),
   }) async {
     _ensureLoaded();
 
     final infoJson = jsonEncode(musicInfo.toJson());
     final escapedInfo = _escapeForJs(infoJson);
 
-    final result = await _engine.callPluginMethod(
-      "module.exports.musicUrl('$source', JSON.parse('$escapedInfo'), '$quality')",
-      timeout: timeout,
-    );
+    // 解析播放地址是最慢的一步：不少音源的取地址接口要十几秒（尤其是走
+    // 第三方中转的 VIP 脚本），而插件里写死的 timeout 常常只有 8~10 秒，
+    // 会把「慢但能成功」的请求直接判成 HTTP 408。这里在解析期间把插件
+    // 请求的超时下限临时抬到 30 秒；搜索 / 歌单等其它调用不受影响。
+    _engine.setRequestTimeoutFloor(_playbackRequestTimeoutFloor);
+    final String? result;
+    try {
+      result = await _engine.callPluginMethod(
+        "module.exports.musicUrl('$source', JSON.parse('$escapedInfo'), '$quality')",
+        timeout: timeout,
+      );
+    } finally {
+      _engine.setRequestTimeoutFloor(Duration.zero);
+    }
 
     if (result == null || result.isEmpty) {
       throw Exception('Plugin returned empty result for musicUrl');
@@ -489,6 +499,9 @@ JSON.stringify((function() {
 
     return _parseMusicUrlResult(result, quality);
   }
+
+  /// 解析播放地址时插件 HTTP 请求的超时下限。
+  static const Duration _playbackRequestTimeoutFloor = Duration(seconds: 30);
 
   PluginMusicUrlResult _parseMusicUrlResult(String result, String quality) {
     try {

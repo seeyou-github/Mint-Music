@@ -781,7 +781,12 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   /// 串行请求多个接口（如「星海」先查自建后端、再换 GD API），两个 10 秒超时
   /// 叠加就超过 12 秒，看起来像「必超时」。这里给到 25 秒，正好覆盖「搜索 +
   /// 插件内部两次请求」的最坏情况。
-  static const Duration _urlFetchTimeout = Duration(seconds: 25);
+  /// 解析播放地址的总超时。
+  ///
+  /// 要留出插件内部的 30 秒请求超时（见 PluginHost 的解析期下限）；这里设
+  /// 50 秒，让「插件自己超时」的错误信息优先暴露，而不是被外层掐断成
+  /// 「获取播放地址超时」。
+  static const Duration _urlFetchTimeout = Duration(seconds: 50);
   static const Duration _audioSetTimeout = Duration(seconds: 10);
   static const Duration _musicSourceReadyTimeout = Duration(seconds: 12);
 

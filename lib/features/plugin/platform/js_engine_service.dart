@@ -24,6 +24,13 @@ class JsEngineService {
   bool _initialized = false;
   bool _runtimeFaulted = false;
 
+  /// 插件 HTTP 请求的超时下限（毫秒，0 表示不设下限）。
+  ///
+  /// 解析播放地址时由 [PluginHost] 临时调高：有些音源的接口很慢（十几秒），
+  /// 而插件自己写的 `timeout` 可能只有 8~10 秒，会被判成 HTTP 408 解析失败。
+  /// 搜索等其它调用不受影响，仍按插件自己写的超时。
+  int _requestTimeoutFloorMs = 0;
+
   static const String _apiVersion = '1.0.3';
   static const String _environment = 'nodejs';
   static const int _quickJsTimeoutMilliseconds = 5000;
@@ -32,6 +39,11 @@ class JsEngineService {
   static const int _maxTimerDelayMilliseconds = 24 * 60 * 60 * 1000;
 
   static int _resultVarSeq = 0;
+
+  /// 设置 / 清除插件请求的超时下限。传 zero 表示恢复「按插件自己的 timeout」。
+  void setRequestTimeoutFloor(Duration floor) {
+    _requestTimeoutFloorMs = floor.inMilliseconds;
+  }
 
   Future<void> init() async {
     if (_initialized) return;
@@ -42,8 +54,10 @@ class JsEngineService {
         createHttpClient: () => httpClient,
       )
       ..options = BaseOptions(
-        connectTimeout: const Duration(seconds: 15),
-        receiveTimeout: const Duration(seconds: 15),
+        // 插件请求可能很慢（第三方脚本解析地址要十几秒），连接 / 接收超时
+        // 不能卡得太死；单次请求的 timeout 仍由 _executeHttpRequest 覆盖。
+        connectTimeout: const Duration(seconds: 30),
+        receiveTimeout: const Duration(seconds: 30),
       );
 
     // flutter_js 的 QuickJS 默认 JS 栈上限仅 1MB（jsSetMaxStackSize），大型
@@ -1211,7 +1225,15 @@ function __zlibRequest(action, data) {
         });
       }
 
-      final timeout = (options['timeout'] as int?) ?? 10000;
+      // 插件没显式传 timeout 时的默认值。
+      // 有些音源（例如网易的第三方 VIP 脚本）解析地址要十几秒，10 秒会直接
+      // 判成 HTTP 408 超时、歌放不了；这里放宽到 30 秒。
+      final requested = (options['timeout'] as int?) ?? 30000;
+      // 解析播放地址期间会临时抬高下限（见 PluginHost.getMusicUrlResult）：
+      // 插件里写死的 8~10 秒超时对慢接口不够用。
+      final timeout = _requestTimeoutFloorMs > requested
+          ? _requestTimeoutFloorMs
+          : requested;
 
       Object? bodyData = options['body'];
       if (options['bodyBase64'] is String && bodyData == null) {
