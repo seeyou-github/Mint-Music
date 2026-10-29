@@ -64,7 +64,10 @@ class PlaybackState {
   /// 缓冲 / 加载时 [isPlaying] 仍可能是 true（播放器的 playWhenReady），
   /// 但播放器没有出声、进度也停在原地。靠进度补间推进的界面（歌词时钟）
   /// 必须用这个判断，否则缓冲期间会自己往前走。
-  bool get isAudible => isPlaying && !isBuffering;
+  ///
+  /// [isLoading] 也算没有出声：切换音质会先把播放器暂停、重新换音源再恢复，
+  /// 这段时间按钮在转圈、进度不动，歌词时钟同样不能往前走。
+  bool get isAudible => isPlaying && !isBuffering && !isLoading;
 
   PlaybackState copyWith({
     Song? currentSong,

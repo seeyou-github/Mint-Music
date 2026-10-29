@@ -315,6 +315,37 @@ void main() {
     expect(controller.playbackState.isAudible, isTrue);
   });
 
+  test('切换音质转圈期间 isAudible 为 false，切换完成后恢复', () async {
+    await startA();
+
+    final switching = controller.setQuality('flac');
+    // setQuality 先置加载中再暂停播放器：这段时间没出声、进度也不动。
+    expect(controller.playbackState.isLoading, isTrue);
+    expect(controller.playbackState.isPlaying, isTrue);
+    expect(
+      controller.playbackState.isAudible,
+      isFalse,
+      reason: '切换音质时播放器已暂停，歌词时钟不能继续推进',
+    );
+
+    await switching;
+    await pumpEventQueue();
+
+    expect(controller.playbackState.isLoading, isFalse);
+    expect(controller.playbackState.isPlaying, isTrue);
+    expect(controller.playbackState.isAudible, isTrue);
+  });
+
+  test('加载音源（loading）时 isAudible 为 false', () async {
+    await startA();
+
+    audio.emitState(PlayerState(true, ProcessingState.loading));
+    await pumpEventQueue();
+
+    expect(controller.playbackState.isLoading, isTrue);
+    expect(controller.playbackState.isAudible, isFalse);
+  });
+
   for (final mode in PlayMode.values) {
     test(
       '${mode.name}: playlist failure retries selected b, never a/c',

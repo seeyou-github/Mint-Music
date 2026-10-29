@@ -348,9 +348,9 @@ class DesktopLyricSyncController extends StateNotifier<DesktopLyricStatus>
   /// 推进。播放 / 暂停状态变化时必须下发,否则原生侧会一直按「正在播放」推进
   /// 歌词行,暂停后歌词仍在滚动。
   ///
-  /// 这里传的是 isAudible 而不是 isPlaying:缓冲时 playing 仍为 true,但播放器
-  /// 没出声、进度停在原地;若照常下发「正在播放」,原生侧会用自己的时钟继续
-  /// 推进歌词(拖动进度条缓冲时歌词仍在走)。
+  /// 这里传的是 isAudible 而不是 isPlaying:缓冲 / 加载(含切换音质)时 playing
+  /// 仍为 true,但播放器没出声、进度停在原地;若照常下发「正在播放」,原生侧
+  /// 会用自己的时钟继续推进歌词(拖动进度条缓冲、切换音质时歌词仍在走)。
   Future<void> pushPlayState({bool force = false}) async {
     if (!state.usingNativeOverlay) return;
     final playback = _ref.read(playbackControllerProvider);
@@ -492,10 +492,10 @@ final desktopLyricSyncProvider =
       ) {
         unawaited(controller.syncVisibility());
       });
-      // 缓冲开始 / 结束：原生侧要马上停 / 恢复自己的时钟，不能等下一秒的
-      // 周期同步，否则缓冲期间歌词已经往前走了。缓冲不改变显示与否，
-      // 所以只下发播放状态，不走 syncVisibility。
-      ref.listen(playbackControllerProvider.select((s) => s.isBuffering), (
+      // 缓冲 / 加载（含切换音质）开始与结束：原生侧要马上停 / 恢复自己的
+      // 时钟，不能等下一秒的周期同步，否则这段时间歌词已经往前走了。
+      // 这两种状态都不改变显示与否，所以只下发播放状态，不走 syncVisibility。
+      ref.listen(playbackControllerProvider.select((s) => s.isAudible), (
         _,
         __,
       ) {

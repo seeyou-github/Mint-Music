@@ -14,9 +14,9 @@ class LyricScrollView extends StatefulWidget {
 
   /// 歌词时钟是否应该继续推进。
   ///
-  /// 传播放状态里的 isAudible：缓冲时 `playing` 仍为 true，
+  /// 传播放状态里的 isAudible：缓冲 / 切换音质时 `playing` 仍为 true，
   /// 但播放器没出声、进度停在原地，而这里的补间时钟会自己往前走，
-  /// 歌词就会在缓冲期间抢跑。
+  /// 歌词就会在缓冲、换音质期间抢跑。
   final bool isPlaying;
 
   /// 当前时间来自进度条拖动预览，应直接定位，不播放滚动动画。
