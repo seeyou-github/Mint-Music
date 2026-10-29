@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
+import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -20,12 +22,15 @@ import '../../plugin/application/plugin_providers.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../../player/application/root_overlay_tracker.dart';
 import '../data/local_metadata_reader.dart';
-import 'song_compare_dialog.dart';
+import 'match_widgets.dart';
 
 class TagEditorPage extends ConsumerStatefulWidget {
-  const TagEditorPage({super.key, this.songId});
+  const TagEditorPage({super.key, this.songId, this.autoSearch = false});
 
   final String? songId;
+
+  /// 进来就切到「在线搜索」并自动搜一次（快速匹配页的「匹配」按钮用）。
+  final bool autoSearch;
 
   @override
   ConsumerState<TagEditorPage> createState() => _TagEditorPageState();
@@ -43,10 +48,49 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
   late TextEditingController _lrcController;
   late TextEditingController _searchController;
 
+  /// 在线搜索的歌曲名 / 歌手输入框（文件里两个标签都有时用两个框）。
+  late TextEditingController _searchTitleController;
+  late TextEditingController _searchArtistController;
+
   Song? _song;
   bool _saving = false;
   bool _searching = false;
-  List<Song> _searchResults = [];
+  String? _searchError;
+  List<Song> _searchResults = const <Song>[];
+
+  /// 当前选中的候选（默认第一个）。
+  int _selectedIndex = 0;
+  String? _candidateLyric;
+  bool _loadingCandidateLyric = false;
+  int? _candidateYear;
+
+  /// 对比里每一项是否采用匹配结果：封面 / 歌曲信息 / 歌词。
+  bool _useCandidateCover = true;
+  bool _useCandidateInfo = true;
+  bool _useCandidateLyric = true;
+
+  /// 文件里歌名 + 歌手都有标签：搜索框拆成两个，并按这两个字段精确过滤结果。
+  bool _splitSearchFields = false;
+
+  /// 本次搜索放弃精确过滤（过滤后一条都没有时，用户点「显示全部结果」）。
+  bool _ignoreExactMatch = false;
+
+  /// 精确过滤把搜索结果全滤掉了（界面给出「显示全部结果」的出口）。
+  bool _exactMatchBlocked = false;
+
+  /// 自动搜索只触发一次（从快速匹配页的「匹配」按钮进来时）。
+  bool _autoSearchTriggered = false;
+
+  /// 上一次实际用来搜索的关键词（编辑信息里改了歌名 / 歌手时据此同步输入框）。
+  String _lastSearchKeyword = '';
+
+  /// 文件里读出来的标签（内嵌歌词 / 年份，用于对比）。
+  LocalAudioMetadata? _fileMeta;
+
+  /// 从网络搜索「使用」过来的封面地址。
+  ///
+  /// 网络封面只是 URL，只有保存到文件时才会下载成图片写进 APIC / PICTURE。
+  String? _webCoverUrl;
 
   /// 正在写入封面（上传 / 删除），期间禁用封面按钮。
   bool _coverBusy = false;
@@ -88,6 +132,8 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
     _commentController = TextEditingController();
     _lrcController = TextEditingController();
     _searchController = TextEditingController();
+    _searchTitleController = TextEditingController();
+    _searchArtistController = TextEditingController();
     // 监听放在控制器创建之后：回调里会读这些输入框的内容。
     _tabController.addListener(_handleTabChanged);
 
@@ -103,9 +149,37 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
   void _handleTabChanged() {
     if (_tabController.indexIsChanging) return;
     if (_tabController.index != 1) return;
+    // 编辑信息里的歌名 / 歌手改过了：同步到搜索框（别用改之前的关键词去搜）。
     final keyword = _keywordFromFields();
-    if (keyword.isEmpty || keyword == _searchController.text) return;
-    setState(() => _searchController.text = keyword);
+    if (keyword.isNotEmpty && keyword != _lastSearchKeyword) {
+      setState(() {
+        _searchTitleController.text = _titleController.text;
+        _searchArtistController.text = _artistController.text;
+        _searchController.text = keyword;
+      });
+    }
+    _maybeAutoSearch();
+  }
+
+  /// 从快速匹配页的「匹配」按钮进来时，切到在线搜索后自动搜一次。
+  void _maybeAutoSearch() {
+    if (!widget.autoSearch || _autoSearchTriggered) return;
+    if (_song == null) return;
+    _autoSearchTriggered = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_autoSearch());
+    });
+  }
+
+  /// 等插件（音源）就绪后再自动搜索，避免刚进页面时音源列表还是空的。
+  Future<void> _autoSearch() async {
+    try {
+      await ref.read(pluginInitializedProvider.future);
+    } catch (_) {
+      // 插件初始化失败也照常尝试一次，失败时页面会显示原因。
+    }
+    if (!mounted) return;
+    await _handleSearch();
   }
 
   /// 由「歌曲名 + 歌手」输入框当前内容拼出的搜索关键词。
@@ -135,11 +209,30 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
         _lrcController.text = song.lrc ?? '';
         // 搜索词带上歌手名，匹配更准。
         _searchController.text = _searchKeywordFor(song);
+        _searchTitleController.text = song.title;
+        _searchArtistController.text = song.artist;
+        // 文件里歌名 + 歌手都有标签：搜索框拆成两个，并按两个字段精确过滤。
+        _splitSearchFields =
+            !_isUnknownTitle(song.title) && !_isUnknownArtist(song.artist);
       });
       _captureBaseline();
       // 索引里没有年份 / 歌词时，现读文件里的标签补上。
       _loadFileMetadata(song);
+      if (widget.autoSearch) {
+        _tabController.animateTo(1);
+        _maybeAutoSearch();
+      }
     }
+  }
+
+  static bool _isUnknownTitle(String? value) {
+    final text = (value ?? '').trim();
+    return text.isEmpty || text == '未知曲目';
+  }
+
+  static bool _isUnknownArtist(String? value) {
+    final text = (value ?? '').trim();
+    return text.isEmpty || text == '未知艺术家' || text == '未知歌手';
   }
 
   /// 把当前输入框内容记成「原始值」（用于判断有没有修改）。
@@ -171,6 +264,24 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
       final metadata = await LocalMetadataReader.read(path);
       if (!mounted) return;
       setState(() {
+        _fileMeta = metadata;
+        // 索引里缺歌名 / 歌手时用文件标签补（在线搜索要按这两个字段精确匹配）。
+        if (_isUnknownTitle(song.title) && !_isUnknownTitle(metadata.title)) {
+          _titleController.text = metadata.title!;
+          _baseTitle = _titleController.text;
+        }
+        if (_isUnknownArtist(song.artist) &&
+            !_isUnknownArtist(metadata.artist)) {
+          _artistController.text = metadata.artist!;
+          _baseArtist = _artistController.text;
+        }
+        if (!_splitSearchFields &&
+            !_isUnknownTitle(_titleController.text) &&
+            !_isUnknownArtist(_artistController.text)) {
+          _splitSearchFields = true;
+          _searchTitleController.text = _titleController.text;
+          _searchArtistController.text = _artistController.text;
+        }
         // 只给空字段补值，并把补进来的值也算成「原始值」——文件里本来就是这样，
         // 不算用户修改，保存时也就不会无谓地重写文件。
         if (_yearController.text.trim().isEmpty) {
@@ -220,6 +331,8 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
     _commentController.dispose();
     _lrcController.dispose();
     _searchController.dispose();
+    _searchTitleController.dispose();
+    _searchArtistController.dispose();
     super.dispose();
   }
 
@@ -330,7 +443,7 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
                       Icon(Icons.check, size: 16, color: colors.textOnPrimary),
                     const SizedBox(width: 4),
                     Text(
-                      context.tr('保存'),
+                      context.tr('保存到文件'),
                       style: TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w600,
@@ -616,6 +729,8 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
         forceOverwrite: true,
       );
       if (!mounted) return;
+      // 本地上传的图片已经写进文件了：别再把之前的网络封面写一遍。
+      _webCoverUrl = null;
       setState(() {
         _song = song.copyWith(hasCover: true, clearCover: true);
         _coverVersion++;
@@ -649,6 +764,7 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
         forceOverwrite: true,
       );
       if (!mounted) return;
+      _webCoverUrl = null;
       setState(() {
         _song = song.copyWith(hasCover: false, clearCover: true);
         _coverVersion++;
@@ -789,39 +905,110 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
         .watch(searchAvailableSourcesProvider)
         .toList(growable: false);
     final sourceId = _resolvedSearchSourceId(sources);
+    final candidate = _currentCandidate;
     return Column(
       children: [
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
           child: Row(
             children: [
-              Expanded(child: _buildSearchBar(colors)),
+              Expanded(child: _buildSearchFields(colors)),
+              const SizedBox(width: AppSpacing.sm),
+              _buildSearchButton(colors, sources),
               const SizedBox(width: AppSpacing.sm),
               _buildSourceButton(colors, sources, sourceId),
             ],
           ),
         ),
         const SizedBox(height: AppSpacing.md),
-        Expanded(
-          child: _searching
-              ? Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      CircularProgressIndicator(color: colors.primary),
-                      const SizedBox(height: AppSpacing.md),
-                      Text(
-                        context.tr('搜索中...'),
-                        style: TextStyle(color: colors.textHint, fontSize: 14),
-                      ),
-                    ],
-                  ),
-                )
-              : _searchResults.isNotEmpty
-              ? _buildSearchResults(colors)
-              : _buildSearchEmpty(colors),
-        ),
+        if (candidate != null) ...[
+          MatchCandidateStrip(
+            colors: colors,
+            results: _searchResults,
+            selectedIndex: _selectedIndex,
+            onSelect: _selectCandidate,
+          ),
+          const SizedBox(height: AppSpacing.md),
+        ],
+        Expanded(child: _buildSearchBody(colors, candidate)),
+        _buildSearchBottomBar(colors, candidate),
       ],
+    );
+  }
+
+  /// 搜索区主体：加载中 / 空状态 / 三行对比。
+  Widget _buildSearchBody(ThemeColors colors, Song? candidate) {
+    if (_searching) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(color: colors.primary),
+            const SizedBox(height: AppSpacing.md),
+            Text(
+              context.tr('搜索中...'),
+              style: TextStyle(color: colors.textHint, fontSize: 14),
+            ),
+          ],
+        ),
+      );
+    }
+    if (candidate == null) return _buildSearchEmpty(colors);
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.lg,
+        0,
+        AppSpacing.lg,
+        AppSpacing.lg,
+      ),
+      child: MatchCompareView(
+        colors: colors,
+        original: _originalSong,
+        candidate: candidate,
+        originalYear: _originalYear,
+        candidateYear: _candidateYear ?? candidate.year,
+        originalLyric: _originalLyric,
+        candidateLyric: _candidateLyric,
+        loadingCandidateLyric: _loadingCandidateLyric,
+        useCover: _useCandidateCover,
+        useInfo: _useCandidateInfo,
+        useLyric: _useCandidateLyric,
+        onUseCover: (use) => setState(() => _useCandidateCover = use),
+        onUseInfo: (use) => setState(() => _useCandidateInfo = use),
+        onUseLyric: (use) => setState(() => _useCandidateLyric = use),
+      ),
+    );
+  }
+
+  /// 底部「取消 / 使用」：使用只把选中数据填进「编辑信息」，不写文件。
+  Widget _buildSearchBottomBar(ThemeColors colors, Song? candidate) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.lg,
+        AppSpacing.sm,
+        AppSpacing.lg,
+        AppSpacing.sm,
+      ),
+      decoration: BoxDecoration(
+        border: Border(top: BorderSide(color: colors.divider)),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          TextButton(
+            onPressed: () => _tabController.animateTo(0),
+            child: Text(
+              context.tr('取消'),
+              style: TextStyle(color: colors.textHint),
+            ),
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          FilledButton(
+            onPressed: candidate == null ? null : _applySelected,
+            child: Text(context.tr('使用')),
+          ),
+        ],
+      ),
     );
   }
 
@@ -937,9 +1124,48 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
     });
   }
 
-  Widget _buildSearchBar(ThemeColors colors) {
+  /// 搜索输入区：文件里歌名 + 歌手都有标签时是两个框（按这两个字段精确匹配），
+  /// 否则一个关键词框。
+  Widget _buildSearchFields(ThemeColors colors) {
+    if (_splitSearchFields) {
+      return Row(
+        children: [
+          Expanded(
+            child: _buildSearchInput(
+              colors,
+              controller: _searchTitleController,
+              label: context.tr('歌曲'),
+              hint: context.tr('歌曲名'),
+            ),
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(
+            child: _buildSearchInput(
+              colors,
+              controller: _searchArtistController,
+              label: context.tr('歌手'),
+              hint: context.tr('歌手'),
+            ),
+          ),
+        ],
+      );
+    }
+    return _buildSearchInput(
+      colors,
+      controller: _searchController,
+      icon: Icons.search,
+      hint: context.tr('输入关键词搜索 (歌曲名 歌手)'),
+    );
+  }
+
+  Widget _buildSearchInput(
+    ThemeColors colors, {
+    required TextEditingController controller,
+    String? label,
+    String? hint,
+    IconData? icon,
+  }) {
     return Container(
-      // 与右侧音源按钮等高，视觉上是一条完整的搜索栏。
       height: _searchBarHeight,
       padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
       decoration: BoxDecoration(
@@ -948,14 +1174,20 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
       ),
       child: Row(
         children: [
-          Icon(Icons.search, size: 18, color: colors.textHint),
-          const SizedBox(width: AppSpacing.sm),
+          if (label != null) ...[
+            Text(label, style: TextStyle(fontSize: 12, color: colors.textHint)),
+            const SizedBox(width: AppSpacing.sm),
+          ],
+          if (icon != null) ...[
+            Icon(icon, size: 18, color: colors.textHint),
+            const SizedBox(width: AppSpacing.sm),
+          ],
           Expanded(
             child: TextField(
-              controller: _searchController,
+              controller: controller,
               onSubmitted: (_) => _handleSearch(),
               decoration: InputDecoration(
-                hintText: context.tr('输入关键词搜索 (歌曲名 歌手)'),
+                hintText: hint,
                 border: InputBorder.none,
                 filled: false,
                 isDense: true,
@@ -964,157 +1196,53 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
               style: TextStyle(color: colors.textPrimary, fontSize: 14),
             ),
           ),
-          if (_searchController.text.isNotEmpty)
+          if (controller.text.isNotEmpty)
             GestureDetector(
-              onTap: () {
-                _searchController.clear();
-              },
+              onTap: () => setState(controller.clear),
               child: Icon(Icons.close, size: 18, color: colors.textHint),
             ),
-          const SizedBox(width: AppSpacing.xs),
-          GestureDetector(
-            onTap: _searching ? null : _handleSearch,
-            child: Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: AppSpacing.md,
-                vertical: AppSpacing.xs,
-              ),
-              decoration: BoxDecoration(
-                color: colors.primary,
-                borderRadius: BorderRadius.circular(AppRadius.full),
-              ),
-              child: Text(
-                context.tr('搜索'),
-                style: TextStyle(
-                  fontSize: 13,
-                  color: colors.textOnPrimary,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ),
-          ),
         ],
       ),
     );
   }
 
-  Widget _buildSearchResults(ThemeColors colors) {
-    return ListView.separated(
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
-      itemCount: _searchResults.length,
-      separatorBuilder: (_, __) => Divider(height: 1, color: colors.divider),
-      itemBuilder: (context, index) {
-        final item = _searchResults[index];
-        return _buildSearchResultItem(colors, item);
-      },
-    );
-  }
-
-  Widget _buildSearchResultItem(ThemeColors colors, Song item) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
-      child: Row(
-        children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: colors.surfaceVariant,
-              borderRadius: BorderRadius.circular(AppRadius.sm),
-              image: item.coverUrl != null
-                  ? DecorationImage(
-                      image: NetworkImage(item.coverUrl!),
-                      fit: BoxFit.cover,
-                    )
-                  : null,
-            ),
-            child: item.coverUrl == null
-                ? Icon(Icons.music_note, size: 20, color: colors.textHint)
-                : null,
-          ),
-          const SizedBox(width: AppSpacing.md),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        item.title,
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                          color: colors.textPrimary,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    const SizedBox(width: AppSpacing.xs),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 1,
-                      ),
-                      decoration: BoxDecoration(
-                        color: colors.primary.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(AppRadius.xs),
-                      ),
-                      child: Text(
-                        // 显示这条结果真正来自哪个音源（不再写死 WY）。
-                        SourceInfo.baseIdOf(
-                          (item.source ?? '').isEmpty
-                              ? _searchSourceId
-                              : item.source!,
-                        ).toUpperCase(),
-                        style: TextStyle(
-                          fontSize: 9,
-                          fontWeight: FontWeight.w600,
-                          color: colors.primary,
-                        ),
-                      ),
-                    ),
-                  ],
+  Widget _buildSearchButton(ThemeColors colors, List<SourceInfo> sources) {
+    final enabled = sources.isNotEmpty && !_searching;
+    return GestureDetector(
+      onTap: enabled ? () => unawaited(_handleSearch()) : null,
+      child: Container(
+        height: _searchBarHeight,
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: enabled
+              ? colors.primary
+              : colors.primary.withValues(alpha: 0.4),
+          borderRadius: BorderRadius.circular(AppRadius.full),
+        ),
+        child: _searching
+            ? SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: colors.textOnPrimary,
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  '${item.artist}${item.album.isNotEmpty ? ' · ${item.album}' : ''}',
-                  style: TextStyle(fontSize: 12, color: colors.textHint),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: AppSpacing.sm),
-          GestureDetector(
-            onTap: () => _applyResult(item),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: colors.primary.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(AppRadius.full),
-                border: Border.all(
-                  color: colors.primary.withValues(alpha: 0.3),
-                ),
-              ),
-              child: Text(
-                context.tr('使用'),
+              )
+            : Text(
+                context.tr('搜索'),
                 style: TextStyle(
-                  fontSize: 12,
-                  color: colors.primary,
-                  fontWeight: FontWeight.w500,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: colors.textOnPrimary,
                 ),
               ),
-            ),
-          ),
-        ],
       ),
     );
   }
 
   Widget _buildSearchEmpty(ThemeColors colors) {
+    final keyword = _queryText();
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -1126,29 +1254,160 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
           ),
           const SizedBox(height: AppSpacing.md),
           Text(
-            context.tr(
-              _searchController.text.isEmpty ? '输入关键词开始搜索' : '未找到相关结果',
-            ),
+            keyword.isEmpty
+                ? context.tr('输入关键词开始搜索')
+                : _exactMatchBlocked
+                ? context.tr('没有精确匹配的结果')
+                : context.tr('未找到相关结果'),
             style: TextStyle(color: colors.textHint, fontSize: 14),
           ),
+          if (_searchError != null) ...[
+            const SizedBox(height: AppSpacing.xs),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xl),
+              child: Text(
+                context.tr('搜索失败: $_searchError'),
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 12, color: colors.textHint),
+              ),
+            ),
+          ],
+          if (_exactMatchBlocked) ...[
+            const SizedBox(height: AppSpacing.sm),
+            TextButton(
+              onPressed: () {
+                setState(() {
+                  _ignoreExactMatch = true;
+                  _exactMatchBlocked = false;
+                });
+                unawaited(_handleSearch());
+              },
+              child: Text(context.tr('显示全部结果')),
+            ),
+          ],
         ],
       ),
     );
   }
 
-  Future<void> _handleSearch() async {
-    // 关键词以搜索框为准；框里是空的就用「歌曲名 + 歌手」输入框的最新内容
-    // （用户可能刚改过歌名 / 歌手）。
-    var keyword = _searchController.text.trim();
-    if (keyword.isEmpty) {
-      keyword = _keywordFromFields();
-      if (keyword.isNotEmpty) {
-        setState(() => _searchController.text = keyword);
-      }
-    }
-    if (keyword.isEmpty) return;
+  // ------------------------------------------------------------ 搜索
 
-    setState(() => _searching = true);
+  /// 当前搜索词：两个输入框时是「歌曲名 + 歌手」，否则是关键词框。
+  String _queryText() {
+    if (_splitSearchFields) {
+      final title = _searchTitleController.text.trim();
+      final artist = _searchArtistController.text.trim();
+      if (title.isEmpty) return artist;
+      if (artist.isEmpty) return title;
+      return '$title $artist';
+    }
+    return _searchController.text.trim();
+  }
+
+  /// 是否按「歌曲名 + 歌手」精确过滤结果。
+  bool get _exactMatchActive => _splitSearchFields && !_ignoreExactMatch;
+
+  /// 精确匹配时要去掉的字符：空白与常见标点 / 括号（全角半角都算），
+  /// 「你的样子（女版）」与「你的样子 (女版)」这种排版差异不该影响匹配。
+  static const String _matchNoiseChars =
+      ' \u3000（）()[]【】{}<>《》「」『』"“”\'‘’·、,，.。!！?？:：;；_-—–/\\|&+~';
+
+  static String _normalizeForMatch(String value) {
+    final buffer = StringBuffer();
+    for (final rune in value.toLowerCase().runes) {
+      final ch = String.fromCharCode(rune);
+      if (_matchNoiseChars.contains(ch)) continue;
+      buffer.write(ch);
+    }
+    return buffer.toString();
+  }
+
+  /// 搜索结果是否与文件里的歌名 + 歌手精确对应。
+  ///
+  /// 歌名要求完全一致（忽略排版差异）；歌手允许「包含」——很多结果把
+  /// 合作歌手拼在一起（「三妹、苗小青」），要求完全相等会把它们全过滤掉。
+  bool _matchesExactly(Song song, String title, String artist) {
+    if (_normalizeForMatch(song.title) != title) return false;
+    final resultArtist = _normalizeForMatch(song.artist);
+    if (resultArtist.isEmpty) return false;
+    return resultArtist == artist ||
+        resultArtist.contains(artist) ||
+        artist.contains(resultArtist);
+  }
+
+  List<Song> _filterExactMatches(List<Song> results) {
+    if (!_exactMatchActive) return results;
+    final title = _normalizeForMatch(_searchTitleController.text);
+    final artist = _normalizeForMatch(_searchArtistController.text);
+    if (title.isEmpty || artist.isEmpty) return results;
+    return [
+      for (final song in results)
+        if (_matchesExactly(song, title, artist)) song,
+    ];
+  }
+
+  Song? get _currentCandidate {
+    if (_searchResults.isEmpty) return null;
+    if (_selectedIndex < 0 || _selectedIndex >= _searchResults.length) {
+      return null;
+    }
+    return _searchResults[_selectedIndex];
+  }
+
+  /// 原歌曲（用编辑信息里**当前**的内容，改了歌名 / 歌手后对比的是改后的）。
+  Song get _originalSong {
+    final song = _song;
+    if (song == null) {
+      return Song(
+        id: '',
+        title: _titleController.text,
+        artist: _artistController.text,
+        album: '',
+        duration: 0,
+      );
+    }
+    return song.copyWith(
+      title: _titleController.text,
+      artist: _artistController.text,
+      album: _albumController.text,
+      year: int.tryParse(_yearController.text.trim()) ?? song.year,
+      genre: _genreController.text,
+    );
+  }
+
+  int? get _originalYear =>
+      int.tryParse(_yearController.text.trim()) ??
+      _song?.year ??
+      _fileMeta?.year;
+
+  String? get _originalLyric {
+    final lyric = _lrcController.text;
+    if (lyric.trim().isNotEmpty) return lyric;
+    final embedded = _fileMeta?.lyrics;
+    if (embedded != null && embedded.trim().isNotEmpty) return embedded;
+    return null;
+  }
+
+  Future<void> _handleSearch() async {
+    final keyword = _queryText();
+    if (keyword.isEmpty || _searching) return;
+    _lastSearchKeyword = keyword;
+    // 两个框里改了内容就是一次新搜索：重新允许精确过滤。
+    if (_splitSearchFields) _ignoreExactMatch = false;
+
+    setState(() {
+      _searching = true;
+      _searchError = null;
+      _exactMatchBlocked = false;
+      _searchResults = const <Song>[];
+      _selectedIndex = 0;
+      _candidateLyric = null;
+      _candidateYear = null;
+      _loadingCandidateLyric = false;
+      _useCandidateCover = true;
+      _useCandidateInfo = true;
+      _useCandidateLyric = true;
+    });
 
     // 用户没手动选过音源时，要按当前音源搜，而不是某个写死的平台。
     final sourceId = _resolvedSearchSourceId(
@@ -1174,23 +1433,87 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
         sourceId: sourceId,
         limit: 30,
       );
-      if (mounted) {
-        setState(() {
-          _searchResults = results;
-          _searching = false;
-        });
-      }
+      if (!mounted) return;
+      final filtered = _filterExactMatches(results);
+      setState(() {
+        _searching = false;
+        _searchResults = filtered;
+        _selectedIndex = 0;
+        // 精确过滤把结果全滤掉了：给用户一个「显示全部结果」的出口。
+        _exactMatchBlocked =
+            filtered.isEmpty && results.isNotEmpty && _exactMatchActive;
+      });
+      if (filtered.isNotEmpty) _selectCandidate(0);
     } catch (e) {
-      if (mounted) {
-        setState(() => _searching = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(context.tr('搜索失败: $e')),
-            duration: const Duration(seconds: 2),
-          ),
-        );
-      }
+      if (!mounted) return;
+      setState(() {
+        _searching = false;
+        _searchError = e.toString().replaceFirst('Exception: ', '');
+      });
     }
+  }
+
+  /// 选中某个候选，并拉取它的歌词 / 年份。
+  void _selectCandidate(int index) {
+    if (index < 0 || index >= _searchResults.length) return;
+    setState(() {
+      _selectedIndex = index;
+      _candidateLyric = null;
+      _loadingCandidateLyric = true;
+      _candidateYear = null;
+      _useCandidateCover = true;
+      _useCandidateInfo = true;
+      _useCandidateLyric = true;
+    });
+    unawaited(_fetchCandidateLyric(_searchResults[index]));
+    unawaited(_resolveCandidateYear(_searchResults[index]));
+  }
+
+  Future<void> _fetchCandidateLyric(Song candidate) async {
+    String? lyric;
+    try {
+      // 用 getLyricResult：逐字歌词在 crlyric 里，getLyric 只会给整行时间轴。
+      final result = await ref
+          .read(musicSourceManagerProvider)
+          .getLyricResult(candidate);
+      final word = result?.crlyric?.trim() ?? '';
+      final plain = result?.lrc?.trim() ?? '';
+      lyric = word.isNotEmpty
+          ? result!.crlyric
+          : (plain.isNotEmpty ? plain : null);
+    } catch (_) {
+      lyric = null;
+    }
+    if (!mounted) return;
+    // 期间又点了别的候选：丢弃这次结果。
+    final current = _currentCandidate;
+    if (current == null || current.id != candidate.id) return;
+    setState(() {
+      _candidateLyric = lyric;
+      _loadingCandidateLyric = false;
+    });
+  }
+
+  /// 补查候选的发行年份：搜索里带年份直接用，否则按专辑 id 查一次。
+  Future<void> _resolveCandidateYear(Song candidate) async {
+    final own = candidate.year;
+    if (own != null && own > 0) {
+      if (!mounted) return;
+      setState(() => _candidateYear = own);
+      return;
+    }
+    int? year;
+    try {
+      year = await ref
+          .read(musicSourceManagerProvider)
+          .resolveSongYear(candidate);
+    } catch (_) {
+      year = null;
+    }
+    if (!mounted) return;
+    final current = _currentCandidate;
+    if (current == null || current.id != candidate.id) return;
+    setState(() => _candidateYear = year);
   }
 
   /// 搜索关键词：歌曲名 + 歌手名。
@@ -1202,70 +1525,50 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
     return '$title $artist';
   }
 
-  Future<void> _applyResult(Song result) async {
-    // 弹出「歌曲信息对比」页：左边原歌曲、右边下载的版本，
-    // 中间的箭头逐项选择采用哪一版（封面 / 歌曲信息 / 歌词）。
-    final original = _song;
-    final merged = await showSongCompareDialog(
-      context,
-      original: original ?? result,
-      candidate: result,
-    );
-    if (merged == null || !mounted) return;
+  /// 底部「使用」：把选中的匹配结果填进「编辑信息」并切过去。
+  ///
+  /// **不写歌曲文件**——这里只是把数据搬进编辑表单，用户确认后再点右上角
+  /// 「保存到文件」才真正写盘。
+  void _applySelected() {
+    final candidate = _currentCandidate;
+    final song = _song;
+    if (candidate == null || song == null) return;
 
-    setState(() => _saving = true);
-
-    try {
-      _titleController.text = merged.title.isNotEmpty
-          ? merged.title
-          : _titleController.text;
-      _artistController.text = merged.artist.isNotEmpty
-          ? merged.artist
-          : _artistController.text;
-      _albumController.text = merged.album.isNotEmpty
-          ? merged.album
-          : _albumController.text;
-
-      if (merged.coverUrl != null && merged.coverUrl!.isNotEmpty) {
-        setState(() {
-          _song = _song?.copyWith(coverUrl: merged.coverUrl, hasCover: true);
-        });
+    setState(() {
+      if (_useCandidateInfo) {
+        if (candidate.title.trim().isNotEmpty) {
+          _titleController.text = candidate.title;
+        }
+        if (candidate.artist.trim().isNotEmpty) {
+          _artistController.text = candidate.artist;
+        }
+        if (candidate.album.trim().isNotEmpty) {
+          _albumController.text = candidate.album;
+        }
+        final year = _candidateYear ?? candidate.year;
+        if (year != null && year > 0) _yearController.text = year.toString();
+        final genre = (candidate.genre ?? '').trim();
+        if (genre.isNotEmpty) _genreController.text = genre;
       }
+      if (_useCandidateCover) {
+        final url = candidate.coverUrl ?? '';
+        if (url.isNotEmpty) {
+          // 网络封面先记下来：保存到文件时再下载并写进 APIC / PICTURE。
+          _webCoverUrl = url;
+          _song = song.copyWith(coverUrl: url, hasCover: true);
+          _coverVersion++;
+        }
+      }
+      if (_useCandidateLyric) {
+        final lyric = _candidateLyric;
+        if (lyric != null && lyric.trim().isNotEmpty) {
+          _lrcController.text = lyric;
+        }
+      }
+    });
 
-      if (merged.year != null && merged.year! > 0) {
-        _yearController.text = merged.year.toString();
-      }
-      if ((merged.genre ?? '').isNotEmpty) {
-        _genreController.text = merged.genre!;
-      }
-
-      final lyric = merged.lrc;
-      if (lyric != null && lyric.isNotEmpty) {
-        _lrcController.text = lyric;
-      }
-
-      _tabController.animateTo(0);
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(context.tr('已应用元数据，请检查后保存')),
-            duration: const Duration(seconds: 2),
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(context.tr('应用失败: $e')),
-            duration: const Duration(seconds: 2),
-          ),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _saving = false);
-    }
+    _tabController.animateTo(0);
+    _toast(context.tr('已应用到编辑信息，点右上角「保存到文件」写入歌曲文件'));
   }
 
   Future<void> _handleSave() async {
@@ -1284,13 +1587,23 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
       final lyric = _lrcController.text;
       final year = int.tryParse(yearText);
       final changed = _hasChanges;
-
-      // 1) 有修改就必须写回音频文件（标题 / 歌手 / 专辑 / 年份 / 流派 / 注释 / 歌词）。
-      //    清空的字段也一起删掉，别让旧标签留在文件里。
+      final coverUrl = _webCoverUrl;
       final path = song.filePath ?? '';
+
+      // 网络封面要在写标签前先下载成图片，才能一起写进 APIC / PICTURE。
+      Uint8List? artwork;
+      if (changed || coverUrl != null) {
+        if (coverUrl != null && path.isNotEmpty) {
+          artwork = await _downloadImage(coverUrl);
+        }
+      }
+
+      // 1) 有修改就必须写回音频文件（标题 / 歌手 / 专辑 / 年份 / 流派 / 注释 /
+      //    歌词，以及从网络搜索带过来的封面）。清空的字段也一起删掉，
+      //    别让旧标签留在文件里。
       var fileWritten = false;
       var fileSupported = false;
-      if (changed && path.isNotEmpty) {
+      if ((changed || artwork != null) && path.isNotEmpty) {
         fileSupported = AudioTagWriter.supports(path);
         if (fileSupported) {
           fileWritten = await AudioTagWriter.write(
@@ -1302,13 +1615,14 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
             genre: genre,
             comment: comment,
             lyrics: lyric.trim(),
+            artwork: artwork,
             removeEmptyFields: true,
           );
         }
       }
 
       // 2) 再更新曲库索引（整条覆盖：清空的字段也要清掉）。
-      final updated = song.copyWith(
+      var updated = song.copyWith(
         title: title,
         artist: artist,
         album: album,
@@ -1319,6 +1633,21 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
         lrc: lyric.trim().isEmpty ? null : lyric.trim(),
         clearLrc: lyric.trim().isEmpty,
       );
+
+      // 封面已经写进文件了：之后统一走本地封面缓存，不再依赖网络地址。
+      if (fileWritten && artwork != null) {
+        await CoverCacheService().putArtwork(song.id, artwork);
+        MusicCoverImage.refresh(song.id);
+        updated = updated.copyWith(hasCover: true, clearCover: true);
+        _webCoverUrl = null;
+        if (mounted) {
+          setState(() {
+            _song = updated;
+            _coverVersion++;
+          });
+        }
+      }
+
       await ref
           .read(localMusicNotifierProvider.notifier)
           .upsertSong(updated, forceOverwrite: true);
@@ -1326,7 +1655,7 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
       if (mounted) {
         final String message;
         Color? background;
-        if (!changed) {
+        if (!changed && artwork == null) {
           message = context.tr('标签已保存');
         } else if (fileWritten) {
           message = context.tr('标签已保存，并写入歌曲文件');
@@ -1353,12 +1682,28 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(context.tr('保存失败: $e')),
-            duration: Duration(seconds: 2),
+            duration: const Duration(seconds: 2),
           ),
         );
       }
     } finally {
       if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  /// 下载网络封面，转成可写进标签的图片字节；失败返回 null。
+  Future<Uint8List?> _downloadImage(String url) async {
+    try {
+      final response = await Dio().get<List<int>>(
+        url,
+        options: Options(responseType: ResponseType.bytes),
+      );
+      final bytes = response.data;
+      if (bytes == null || bytes.isEmpty) return null;
+      return Uint8List.fromList(bytes);
+    } catch (e) {
+      debugPrint('[TagEditor] 下载封面失败: $e');
+      return null;
     }
   }
 }

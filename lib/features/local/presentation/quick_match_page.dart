@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -13,7 +14,6 @@ import '../../player/domain/models/song.dart';
 import '../../player/domain/services/lyric_cache.dart';
 import '../application/local_providers.dart';
 import '../domain/local_song_filter.dart';
-import 'match_song_page.dart';
 
 /// 「快速匹配本地歌曲」页面。
 ///
@@ -111,6 +111,36 @@ class _QuickMatchPageState extends ConsumerState<QuickMatchPage> {
     await _loadLyricStatus(songs);
   }
 
+  /// 打开「编辑标签 - 在线搜索」并自动搜索一次。
+  ///
+  /// 匹配界面已经并入编辑标签页，这里不再单独开一个匹配页。
+  Future<void> _openMatch(Song song, List<Song> all) async {
+    await context.push('${AppRoutes.tagEditor}?songId=${song.id}&autoSearch=1');
+    if (!mounted) return;
+    await _refreshAfterMatch(all);
+  }
+
+  /// 目录为空时引导用户添加一个扫描目录。
+  Future<void> _addDirectory() async {
+    final result = await FilePicker.platform.getDirectoryPath(
+      dialogTitle: context.tr('选择音乐目录'),
+    );
+    if (result == null || result.isEmpty) return;
+    final dirs = [
+      ...(ref.read(scannedDirectoriesProvider).valueOrNull ?? const <String>[]),
+    ];
+    if (!dirs.contains(result)) {
+      dirs.add(result);
+      await ref.read(localMusicNotifierProvider.notifier).setDirectories(dirs);
+      await ref.read(localMusicNotifierProvider.notifier).scanAll();
+    }
+    if (!mounted) return;
+    setState(() {
+      _dir = result;
+      _dirInitialized = true;
+    });
+  }
+
   // ------------------------------------------------------------ 过滤
 
   /// 当前是否有任何筛选条件（用于显示「清空筛选」）。
@@ -175,7 +205,7 @@ class _QuickMatchPageState extends ConsumerState<QuickMatchPage> {
                 data: (_) => _loadingStatus && songs.isEmpty
                     ? const Center(child: CircularProgressIndicator())
                     : songs.isEmpty
-                    ? _buildEmpty(colors)
+                    ? _buildEmpty(colors, dirs, allSongs)
                     : _buildSongList(colors, songs, allSongs),
                 loading: () => const Center(child: CircularProgressIndicator()),
                 error: (e, _) => Center(
@@ -441,11 +471,7 @@ class _QuickMatchPageState extends ConsumerState<QuickMatchPage> {
 
     return InkWell(
       // 点整行也进匹配界面；回来同样重算歌词状态（可能刚写入了歌词）。
-      onTap: () async {
-        await MatchSongPage.show(context, song);
-        if (!mounted) return;
-        await _refreshAfterMatch(all);
-      },
+      onTap: () => unawaited(_openMatch(song, all)),
       child: Container(
         padding: const EdgeInsets.symmetric(
           horizontal: AppSpacing.lg,
@@ -531,11 +557,7 @@ class _QuickMatchPageState extends ConsumerState<QuickMatchPage> {
                     colors,
                     icon: Icons.auto_fix_high,
                     tooltip: context.tr('匹配'),
-                    onTap: () async {
-                      await MatchSongPage.show(context, song);
-                      if (!mounted) return;
-                      await _refreshAfterMatch(all);
-                    },
+                    onTap: () => unawaited(_openMatch(song, all)),
                   ),
                 ],
               ),
@@ -609,7 +631,34 @@ class _QuickMatchPageState extends ConsumerState<QuickMatchPage> {
     );
   }
 
-  Widget _buildEmpty(ThemeColors colors) {
+  Widget _buildEmpty(ThemeColors colors, List<String> dirs, List<Song> all) {
+    // 还没有扫描目录、曲库也是空的：提示先添加一个（否则匹配无从谈起）。
+    if (dirs.isEmpty && all.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.folder_off_outlined, size: 44, color: colors.textHint),
+            const SizedBox(height: AppSpacing.md),
+            Text(
+              context.tr('还没有添加扫描目录'),
+              style: TextStyle(color: colors.textHint),
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            Text(
+              context.tr('先添加一个音乐目录，扫描后才能匹配本地歌曲'),
+              style: TextStyle(fontSize: 12, color: colors.textHint),
+            ),
+            const SizedBox(height: AppSpacing.md),
+            FilledButton.icon(
+              onPressed: () => unawaited(_addDirectory()),
+              icon: const Icon(Icons.create_new_folder_outlined, size: 18),
+              label: Text(context.tr('添加扫描目录')),
+            ),
+          ],
+        ),
+      );
+    }
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,

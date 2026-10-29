@@ -305,9 +305,11 @@ final appRouter = GoRouter(
       path: AppRoutes.tagEditor,
       pageBuilder: (context, state) {
         final songId = state.uri.queryParameters['songId'];
+        // 快速匹配页的「匹配」按钮：进来直接切到在线搜索并自动搜一次。
+        final autoSearch = state.uri.queryParameters['autoSearch'] == '1';
         return CustomTransitionPage(
           key: state.pageKey,
-          child: TagEditorPage(songId: songId),
+          child: TagEditorPage(songId: songId, autoSearch: autoSearch),
           transitionDuration: const Duration(milliseconds: 220),
           reverseTransitionDuration: const Duration(milliseconds: 180),
           transitionsBuilder: (context, animation, secondaryAnimation, child) {

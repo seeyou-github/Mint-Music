@@ -193,6 +193,19 @@ class LocalMetadataReader {
           case 'APIC':
             artwork = _decodeApicFrame(content);
             break;
+          case 'TXXX': // 自定义文本帧：歌词可能写在 TXXX:LYRICS 里
+            final custom = _decodeUserTextFrame(content);
+            if (custom != null) {
+              final key = custom.$1.toUpperCase();
+              if (key == 'LYRICS' ||
+                  key == 'LYRIC' ||
+                  key == 'UNSYNCEDLYRICS') {
+                lyrics ??= custom.$2;
+              } else if (key == 'COMMENT' || key == 'COMMENTS') {
+                comment ??= custom.$2;
+              }
+            }
+            break;
         }
         offset += 10 + size;
       }
@@ -487,7 +500,10 @@ class LocalMetadataReader {
         year ??= _parseYear(
           comments['DATE'] ?? comments['YEAR'] ?? comments['ORIGINALDATE'],
         );
-        lyrics ??= comments['LYRICS'] ?? comments['UNSYNCEDLYRICS'];
+        lyrics ??=
+            comments['LYRICS'] ??
+            comments['LYRIC'] ??
+            comments['UNSYNCEDLYRICS'];
         genre ??= comments['GENRE'];
         comment ??=
             comments['COMMENT'] ??
@@ -932,7 +948,10 @@ class LocalMetadataReader {
         year = _parseYear(
           comments['DATE'] ?? comments['YEAR'] ?? comments['ORIGINALDATE'],
         );
-        lyrics = comments['LYRICS'] ?? comments['UNSYNCEDLYRICS'];
+        lyrics =
+            comments['LYRICS'] ??
+            comments['LYRIC'] ??
+            comments['UNSYNCEDLYRICS'];
         genre = comments['GENRE'];
         comment = comments['COMMENT'] ?? comments['DESCRIPTION'];
         break;
@@ -1088,6 +1107,44 @@ class LocalMetadataReader {
     final text = _decodeTextByEncoding(encoding, content.sublist(pos));
     if (text == null || text.trim().isEmpty) return null;
     return text;
+  }
+
+  /// 解析 ID3 TXXX（自定义文本）帧，返回（描述符, 内容）。
+  ///
+  /// 结构：[编码 1 字节][描述符（以 0 结尾）][内容]。歌词帧没有统一标准，
+  /// 有的工具写 `LYRICS`、有的写 `Lyrics`，读取时统一转成大写再比较。
+  static (String, String)? _decodeUserTextFrame(List<int> content) {
+    if (content.length < 2) return null;
+    final encoding = content[0];
+    final wide = encoding == 1 || encoding == 2;
+    var pos = 1;
+    var descEnd = -1;
+    if (wide) {
+      while (pos + 1 < content.length) {
+        if (content[pos] == 0 && content[pos + 1] == 0) {
+          descEnd = pos;
+          pos += 2;
+          break;
+        }
+        pos += 2;
+      }
+    } else {
+      while (pos < content.length && content[pos] != 0) {
+        pos++;
+      }
+      descEnd = pos;
+      pos++;
+    }
+    if (descEnd < 1 || pos >= content.length) return null;
+    final description = _decodeTextByEncoding(
+      encoding,
+      content.sublist(1, descEnd),
+    );
+    final value = _decodeTextByEncoding(encoding, content.sublist(pos));
+    if (description == null || value == null || value.trim().isEmpty) {
+      return null;
+    }
+    return (description.trim(), value);
   }
 
   /// 从日期 / 年份文本里解析出年份（`2023`、`2023-05-01` 都取前 4 位）。
