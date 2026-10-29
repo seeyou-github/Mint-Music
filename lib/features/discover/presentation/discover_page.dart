@@ -255,12 +255,10 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
       if (next == DiscoverTab.leaderboards &&
           previous != DiscoverTab.leaderboards) {
         _leaderboardCategoryPicked = false;
-        final category = _defaultLeaderboardCategory();
-        if (category != _leaderboardCategory) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) setState(() => _leaderboardCategory = category);
-          });
-        }
+        _selectedLeaderboardGroup = null;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _applyLeaderboardDefault();
+        });
       }
     });
 
@@ -269,29 +267,26 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
     if (!_leaderboardDefaultApplied) {
       _leaderboardDefaultApplied = true;
       if (tab == DiscoverTab.leaderboards) {
-        final category = _defaultLeaderboardCategory();
-        if (category != _leaderboardCategory) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) setState(() => _leaderboardCategory = category);
-          });
-        }
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _applyLeaderboardDefault();
+        });
       }
     }
 
-    // 热榜数据是异步读的：读出来发现当前音源没有热榜时，自动从「热榜」切到「所有」
-    // （用户自己点过分类就不动）。
+    // 热榜数据变化（首次读完 / 新增 / 删除 / 换音源后重新过滤）时决定分类：
+    // 有数据选「热榜」，没有选「所有」。用户在当前音源下手动点过分类就不动。
+    //
+    // 这里不能再只处理「从热榜切到所有」——换音源时读到的可能还是上一个音源
+    // 的数据（空），先被判成「所有」，等新音源的热榜数据回来时又不会纠正，
+    // 表现就是「这个音源明明有热榜，却默认停在所有」。
     ref.listen<AsyncValue<List<HotBoard>>>(currentHotBoardsProvider, (
       previous,
       next,
     ) {
-      final boards = next.valueOrNull;
-      if (boards == null || boards.isNotEmpty) return;
-      if (_leaderboardCategoryPicked) return;
+      if (next.hasError) return;
       if (ref.read(discoverTabProvider) != DiscoverTab.leaderboards) return;
-      if (_leaderboardCategory != _LeaderboardCategory.hot) return;
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        setState(() => _leaderboardCategory = _LeaderboardCategory.all);
+        _applyLeaderboardDefault();
       });
     });
 
@@ -299,14 +294,13 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
     ref.listen<String>(discoverSourceIdProvider, (previous, next) {
       if (previous != null && previous != next) {
         _leaderboardPager.reset();
-        // 换了音源：热榜数据也换了，重新按新音源决定默认分类。
+        // 换了音源：分类 / 分组都不记住，按新音源重新决定默认分类
+        // （有热榜数据选「热榜」，没有选「所有」）。
         _leaderboardCategoryPicked = false;
-        final category = _defaultLeaderboardCategory();
-        if (category != _leaderboardCategory) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) setState(() => _leaderboardCategory = category);
-          });
-        }
+        _selectedLeaderboardGroup = null;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _applyLeaderboardDefault(optimisticHot: true);
+        });
         WidgetsBinding.instance.addPostFrameCallback((_) {
           unawaited(_reloadAfterSourceChange(next));
         });
@@ -1629,14 +1623,29 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
     return groups;
   }
 
-  /// 进入榜单 / 切音源时的默认分类。
+  /// 按「当前音源的热榜数据」决定榜单分类：有数据选「热榜」，没有选「所有」。
   ///
-  /// 当前音源还没有热榜数据时不选中「热榜」（那是空页面），直接落到「所有」。
-  _LeaderboardCategory _defaultLeaderboardCategory() {
+  /// * 进入榜单页 / 切换音源后都会调用（切换音源时不记住上一次的选中的分类）；
+  /// * 用户在**当前音源**下手动点过分类（[_leaderboardCategoryPicked]）就不动，
+  ///   这样在没有热榜时点「热榜」去新增数据不会被弹回「所有」；
+  /// * [optimisticHot] 用于切音源的瞬间：此时热榜数据可能还是上一个音源的，
+  ///   先乐观选「热榜」，等新数据回来再按实际结果纠正（空 → 「所有」）。
+  void _applyLeaderboardDefault({bool optimisticHot = false}) {
+    if (!mounted) return;
+    if (_leaderboardCategoryPicked) return;
     final boards = ref.read(currentHotBoardsProvider).valueOrNull;
-    // 还在读热榜：先按「热榜」，读出来是空的话下面的监听会再切到「所有」。
-    if (boards == null) return _LeaderboardCategory.hot;
-    return boards.isEmpty ? _LeaderboardCategory.all : _LeaderboardCategory.hot;
+    if (boards == null) {
+      // 数据还没读到：切音源时先乐观选「热榜」，其余情况保持现状，等监听纠正。
+      if (optimisticHot && _leaderboardCategory != _LeaderboardCategory.hot) {
+        setState(() => _leaderboardCategory = _LeaderboardCategory.hot);
+      }
+      return;
+    }
+    final category = boards.isEmpty
+        ? _LeaderboardCategory.all
+        : _LeaderboardCategory.hot;
+    if (category == _leaderboardCategory) return;
+    setState(() => _leaderboardCategory = category);
   }
 
   void _selectLeaderboardCategory(_LeaderboardCategory category) {
