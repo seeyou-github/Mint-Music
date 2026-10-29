@@ -139,7 +139,11 @@ class PluginHost {
           '{\n$originalPluginCode\n}\n;void 0;',
         );
         if (originalEvalResult.isError) {
-          throw Exception('原始 LX 插件执行失败: ${originalEvalResult.stringResult}');
+          // MusicFree 插件的原脚本也走这里，报错别一律写成「LX」误导排查。
+          final kind = JsEngineService.isMusicFreeAdapterCode(pluginCode)
+              ? '插件脚本'
+              : '原始 LX 插件';
+          throw Exception('$kind 执行失败: ${originalEvalResult.stringResult}');
         }
         // Keep the mobile LX contract intact without putting the large source
         // back into the adapter or a nested Function constructor. The result
