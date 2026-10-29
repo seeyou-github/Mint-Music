@@ -600,14 +600,42 @@ class MusicSourceManager {
   String? dataSourcePluginIdForSong(Song song) {
     final preferred = song.preferredSource?.trim() ?? '';
     if (preferred.isNotEmpty) {
-      final (_, preferredPlugin) = splitSourceId(preferred);
+      final (preferredBase, preferredPlugin) = splitSourceId(preferred);
       if (preferredPlugin != null && isDataSourcePlugin(preferredPlugin)) {
         return preferredPlugin;
       }
+      // 插件卸载 / 重装会换 id：老歌曲记的还是旧数据源 id。找一个同平台、
+      // 已经在用（配了播放源）的数据源插件顶上，否则这批老歌会直接放不了。
+      if (preferredPlugin != null && !_isPluginIdLive(preferredPlugin)) {
+        final replacement = _liveDataSourcePluginFor(preferredBase);
+        if (replacement != null) return replacement;
+      }
     }
     final source = song.source?.trim() ?? '';
-    final (_, pluginId) = splitSourceId(source);
+    final (sourceBase, pluginId) = splitSourceId(source);
     if (pluginId != null && isDataSourcePlugin(pluginId)) return pluginId;
+    if (pluginId != null &&
+        sourceBase.isNotEmpty &&
+        !_isPluginIdLive(pluginId)) {
+      return _liveDataSourcePluginFor(sourceBase);
+    }
+    return null;
+  }
+
+  /// 同一平台上仍在用（并且配了播放源）的数据源插件。
+  ///
+  /// 只用于「歌曲里记着的数据源插件已经不在了」这种兜底场景。
+  String? _liveDataSourcePluginFor(String baseId) {
+    if (baseId.isEmpty) return null;
+    for (final host in _pluginService.enabledPlugins) {
+      if (!host.isDataSource) continue;
+      final pluginId = _pluginService.getPluginIdForHost(host);
+      if (pluginId == null || pluginId.isEmpty) continue;
+      // 得支持这个平台，而且用户给它指定了播放源，换过去才有意义。
+      if (_getSourceIdForHost(host, baseId) == null) continue;
+      if (dataSourcePlaybackSource(pluginId) == null) continue;
+      return pluginId;
+    }
     return null;
   }
 
@@ -683,6 +711,62 @@ class MusicSourceManager {
     }
     // 没有可用插件：保留原 id，播放时会提示安装对应音源。
     return sourceId;
+  }
+
+  /// 这个插件 id 是否还对得上一个已启用的插件。
+  ///
+  /// 插件 id 是安装时间戳：卸载 / 重装（哪怕文件只改了名字）就会换一个新的，
+  /// 老的 id 从此不存在。
+  bool _isPluginIdLive(String pluginId) {
+    if (pluginId.isEmpty) return false;
+    for (final host in _pluginService.enabledPlugins) {
+      if (_pluginService.getPluginIdForHost(host) == pluginId) return true;
+    }
+    return false;
+  }
+
+  /// 清理音源 id 里已经失效的插件后缀。
+  ///
+  /// 歌曲（尤其是收藏 / 播放队列里存下来的老歌）会记住 `平台id@插件id`，
+  /// 插件卸载重装换了 id 之后，直接按这个 id 找插件会一个都找不到，
+  /// 表现为「该音源不可用（插件未启用或已卸载）」。这里退回平台 id，
+  /// 让解析走「任意可用插件」。
+  String _liveSourceId(String sourceId) {
+    final trimmed = sourceId.trim();
+    if (trimmed.isEmpty) return trimmed;
+    final (baseId, pluginId) = splitSourceId(trimmed);
+    if (pluginId == null || baseId.isEmpty) return trimmed;
+    return _isPluginIdLive(pluginId) ? trimmed : baseId;
+  }
+
+  /// 取 `平台id@插件id` 里的插件部分（没有返回空串）。
+  String _pluginIdOf(String sourceId) {
+    final (_, pluginId) = splitSourceId(sourceId);
+    return pluginId ?? '';
+  }
+
+  /// 指定的播放源失效时的兜底：当前可用的同平台音源。
+  ///
+  /// 优先用设置里的「优先音源」，其次任意能解析播放地址的同平台插件。
+  String? _fallbackPlaybackSource(Song song, {String? exclude}) {
+    final (baseId, _) = splitSourceId(song.source ?? '');
+    if (baseId.isEmpty) return null;
+
+    final preferred = _preferredSources[baseId]?.trim() ?? '';
+    if (preferred.isNotEmpty &&
+        preferred != exclude &&
+        _pluginSourceCanResolveUrls(preferred)) {
+      return preferred;
+    }
+    for (final host in _findPluginHostsForSource(baseId)) {
+      final pluginSourceId = _getSourceIdForHost(host, baseId);
+      if (pluginSourceId == null) continue;
+      final appId = _pluginSourceAppId(host, pluginSourceId);
+      if (appId == exclude) continue;
+      if (!_pluginSourceCanResolveUrls(appId)) continue;
+      return appId;
+    }
+    return null;
   }
 
   /// 解析播放地址时使用的 host 顺序：优先插件排在最前面。
@@ -1550,8 +1634,10 @@ class MusicSourceManager {
     List<PluginHost>? pluginHosts,
     void Function(String message)? onResolveError,
   }) async {
-    final sourceId = song.source;
-    if (sourceId == null) return const <PluginMusicUrlResult>[];
+    // 插件重装后 id 会变：歌曲里存的旧插件 id 直接丢掉，退回平台 id，
+    // 否则会被判成「该音源不可用（插件未启用或已卸载）」。
+    final sourceId = _liveSourceId(song.source ?? '');
+    if (sourceId.isEmpty) return const <PluginMusicUrlResult>[];
 
     // 数据源（只提供元数据）的歌曲：播放地址交给用户为它指定的播放源解析。
     final dataSourcePluginId = dataSourcePluginIdForSong(song);
@@ -1666,15 +1752,39 @@ class MusicSourceManager {
       throw DataSourcePlaybackException(message);
     }
 
-    final playbackName = sourceDisplayName(playbackSourceId);
     if (isDataSourceSource(playbackSourceId)) {
-      final message = fail(playbackName, '指定的播放源本身也是数据源，无法解析播放地址');
+      final message = fail(
+        sourceDisplayName(playbackSourceId),
+        '指定的播放源本身也是数据源，无法解析播放地址',
+      );
       onResolveError?.call(message);
       throw DataSourcePlaybackException(message);
     }
 
     // 指定的播放源必须仍然可用（插件没被卸载 / 关闭）。
-    final hosts = _findPluginHostsForSource(playbackSourceId);
+    //
+    // 插件卸载后重装会换一个新的 id，老歌曲里记的还是旧 id：这种情况不能直接
+    // 判「音源不可用」，否则收藏里那批老歌永远放不了。退一步用当前可用的同平台
+    // 音源继续解析，实在没有才报错。
+    var effectivePlaybackId = _liveSourceId(playbackSourceId);
+    var hosts = _findPluginHostsForSource(effectivePlaybackId);
+    // 只有「插件已经不在了」（卸载 / 重装换 id）才自动换一个音源兜底；
+    // 插件还在、只是这个音源被用户关掉了，仍然如实报错，不偷偷换。
+    if (hosts.isEmpty && !_isPluginIdLive(_pluginIdOf(playbackSourceId))) {
+      final fallback = _fallbackPlaybackSource(
+        song,
+        exclude: effectivePlaybackId,
+      );
+      if (fallback != null) {
+        print(
+          '[MusicSourceManager] 数据源指定的播放源 $playbackSourceId 已失效，'
+          '改用 $fallback',
+        );
+        effectivePlaybackId = fallback;
+        hosts = _findPluginHostsForSource(effectivePlaybackId);
+      }
+    }
+    final playbackName = sourceDisplayName(effectivePlaybackId);
     if (hosts.isEmpty) {
       final message = fail(playbackName, '该音源不可用（插件未启用或已卸载）');
       onResolveError?.call(message);
@@ -1682,7 +1792,7 @@ class MusicSourceManager {
     }
 
     final (dataBaseId, _) = splitSourceId(song.source ?? '');
-    final (playbackBaseId, _) = splitSourceId(playbackSourceId);
+    final (playbackBaseId, _) = splitSourceId(effectivePlaybackId);
     Song? matched;
     if (dataBaseId.isNotEmpty && dataBaseId == playbackBaseId) {
       if (song.id.trim().isEmpty) {
@@ -1692,7 +1802,7 @@ class MusicSourceManager {
       }
       // 清掉数据源绑定，避免递归进入数据源委托；原歌曲仍保留该绑定。
       matched = song.copyWith(
-        source: playbackSourceId,
+        source: effectivePlaybackId,
         clearPreferredSource: true,
       );
     } else {
@@ -1700,7 +1810,7 @@ class MusicSourceManager {
         final keyword = '${song.title} ${song.artist}'.trim();
         final candidates = await search(
           keyword,
-          sourceId: playbackSourceId,
+          sourceId: effectivePlaybackId,
           page: 1,
           limit: 20,
         );

@@ -1672,6 +1672,24 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
         type: type,
       );
 
+      // 插件 id 是安装时间戳，更新后必然换一个新 id：把旧的「数据源 → 播放源」
+      // 配置搬到新插件上（并清掉旧的那条），否则更新完数据源就变成「未设置」，
+      // 收藏里的歌直接放不了。
+      final oldMapping =
+          ref.read(dataSourcePlaybackSourcesProvider)[result.plugin.id] ?? '';
+      if (oldMapping.isNotEmpty) {
+        await setDataSourcePlaybackSource(
+          ref,
+          pluginId: newPlugin.id,
+          sourceId: oldMapping,
+        );
+        await setDataSourcePlaybackSource(
+          ref,
+          pluginId: result.plugin.id,
+          sourceId: '',
+        );
+      }
+
       ref.invalidate(pluginInitializedProvider);
       ref.invalidate(pluginsProvider);
 
