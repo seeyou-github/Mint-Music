@@ -522,12 +522,89 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     }
   }
 
+  /// 数据源歌曲的失败播放源集合 key。
+  String _failedSourceKey(Song song) => '${song.id}|${song.source ?? ''}';
+
+  /// 数据源歌曲：多播放源自动切换取地址（需求 4）。
+  ///
+  /// 与普通歌曲的区别：
+  /// * 逐个源串行尝试，每个源 10 秒预算（跨平台换源时搜索也在这个预算内）；
+  /// * 失败的源记进 [_failedPlaybackSources]，本次播放不再重复尝试；
+  /// * 全部失败 → 返回空列表（由调用方停止播放），错误文案是逐源汇总。
+  Future<List<PluginMusicUrlResult>> _resolveDataSourceCandidates(
+    Song song, {
+    required String quality,
+    required int requestId,
+    required Set<String> excludedUrls,
+  }) async {
+    final key = _failedSourceKey(song);
+    final failed = _failedPlaybackSources.putIfAbsent(key, () => <String>{});
+    var attemptedCount = 0;
+    try {
+      final outcome = await _musicSourceManager.resolveViaDataSource(
+        song,
+        quality: quality,
+        excludedUrls: excludedUrls,
+        excludedSources: failed,
+        perSourceTimeout: _dataSourceSourceTimeout,
+        onAttempt: (attempt) {
+          attemptedCount++;
+          if (attempt.success) {
+            failed.clear();
+            return;
+          }
+          failed.add(attempt.sourceId);
+          if (_currentPlayRequestId != requestId) return;
+          onMessage?.call(
+            tr(
+              '播放源「${attempt.sourceName}」不可用（${attempt.error ?? '未知错误'}），正在尝试下一个…',
+            ),
+            backgroundColor: Colors.orange,
+          );
+        },
+        onResolveError: (message) {
+          if (_currentPlayRequestId == requestId) _lastResolveError = message;
+        },
+      );
+      if (_currentPlayRequestId != requestId) {
+        return const <PluginMusicUrlResult>[];
+      }
+      if (attemptedCount > 1) {
+        onMessage?.call(
+          tr('已切换到可用的播放源「${_musicSourceManager.sourceDisplayName(outcome.playbackSourceId)}」'),
+        );
+      }
+      return [outcome.result];
+    } on DataSourcePlaybackException catch (e) {
+      if (_currentPlayRequestId == requestId) _lastResolveError = e.message;
+      // 全部失败：清空记录，下次播放（或用户点重播）重新给每个源机会。
+      failed.clear();
+      return const <PluginMusicUrlResult>[];
+    } catch (e) {
+      if (_currentPlayRequestId == requestId) {
+        _lastResolveError = e.toString().replaceFirst(RegExp(r'^Exception://s*'), '');
+      }
+      failed.clear();
+      return const <PluginMusicUrlResult>[];
+    }
+  }
+
   Future<List<PluginMusicUrlResult>> _resolveCurrentSourceUrlCandidates(
     Song song, {
     required String quality,
     required int requestId,
     Set<String> excludedUrls = const <String>{},
   }) async {
+    // 数据源歌曲：走多播放源自动切换，不再用「单源 + 重试一次」的逻辑。
+    if (_musicSourceManager.dataSourcePluginIdForSong(song) != null) {
+      return _resolveDataSourceCandidates(
+        song,
+        quality: quality,
+        requestId: requestId,
+        excludedUrls: excludedUrls,
+      );
+    }
+
     // 数据源（只提供元数据）解析失败属于「配置问题」，重试没有意义：还会让
     // 用户多等一轮搜索 + 取地址。
     var dataSourceFailure = false;
@@ -961,6 +1038,9 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     _lastResolveError = null;
     final requestId = ++_currentPlayRequestId;
     final song = state.queue[index];
+    // 开始播放这首歌：清掉它上次记录的「失败播放源」，重新给每个源一次机会
+    // （否则上次全部失败的歌，再点播放会立刻报「都已失败」）。
+    _failedPlaybackSources.remove(_failedSourceKey(song));
     // 切歌时要清掉上一首解析出来的真实时长：actualDuration 只会在拿到新
     // 时长时被覆盖，不清就会在「新歌时长未知」的窗口里显示上一首的长度
     // （酷狗等没有时长元数据的歌尤其明显）。同一首歌重播则保留。
@@ -1129,6 +1209,55 @@ class PlaybackController extends StateNotifier<PlaybackState> {
         await _startPlayback();
       } catch (_) {
         if (_currentPlayRequestId != requestId) return;
+
+        // 数据源歌曲：这个播放源给的地址放不出来 → 标记该源失败，换下一个源。
+        if (_musicSourceManager.dataSourcePluginIdForSong(song) != null) {
+          final failedSource = resolvedUrlCandidates.isEmpty
+              ? null
+              : resolvedUrlCandidates.first.source;
+          if (failedSource != null && failedSource.isNotEmpty) {
+            _failedPlaybackSources
+                .putIfAbsent(_failedSourceKey(song), () => <String>{})
+                .add(failedSource);
+          }
+          final nextCandidates = await _resolveCurrentSourceUrlCandidates(
+            song,
+            quality: state.currentQuality,
+            requestId: requestId,
+            excludedUrls: {playUrl},
+          );
+          if (_currentPlayRequestId != requestId) return;
+          if (nextCandidates.isNotEmpty) {
+            final next = nextCandidates.first;
+            final nextSong = currentSongToPlay.copyWith(
+              sourceUrl: next.url,
+              sourceHeaders: next.headers.isEmpty ? null : next.headers,
+              sourceQuality: quality,
+              source: next.source ?? currentSongToPlay.source,
+              clearSourceHeaders: next.headers.isEmpty,
+              clearSourceQuality: false,
+            );
+            try {
+              await _audioHandler
+                  .setAudioSource(next.url, song: nextSong)
+                  .timeout(_audioSetTimeout);
+              await _startPlayback();
+              currentSongToPlay = nextSong;
+              _replaceSongInQueue(index, nextSong);
+              state = state.copyWith(isLoading: false, currentSong: nextSong);
+              _errorListenerSub = _mountOneTimeErrorListener(
+                requestId,
+                index,
+                nextSong,
+              );
+              return;
+            } catch (_) {
+              // 下一个源也放不出来：按「全部失败」处理（下面统一停止播放）。
+            }
+          }
+          await _stopPlaybackOnFailure(_playbackFailureReason(song));
+          return;
+        }
 
         // 地址不可播放时，只尝试同音质的其它候选地址。
         final failedUrls = <String>{playUrl};

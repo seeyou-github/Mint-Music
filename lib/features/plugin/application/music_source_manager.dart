@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import '../../../shared/utils/display_name_sanitizer.dart';
 import '../../../shared/pagination/page_result.dart';
@@ -15,6 +16,51 @@ import '../domain/plugin_source_states.dart';
 import '../data/plugin_source_preferences.dart';
 import '../data/plugin_service.dart';
 import '../data/plugin_host.dart';
+
+/// 一次「数据源 → 播放源」尝试的结果。
+///
+/// 失败尝试也会被记录下来：全失败时用它拼出「哪个源、为什么失败」的汇总，
+/// 顺带给界面提供逐步提示（「1/3 失败，正在尝试 XXX…」）。
+class DataSourceAttempt {
+  /// 播放源 id（`平台id@插件id`）。
+  final String sourceId;
+
+  /// 界面上显示的播放源名。
+  final String sourceName;
+  final bool success;
+
+  /// 这个源耗时（含超时的 10 秒）。
+  final Duration elapsed;
+
+  /// 失败原因摘要（成功时为 null）。
+  final String? error;
+
+  const DataSourceAttempt({
+    required this.sourceId,
+    required this.sourceName,
+    required this.success,
+    required this.elapsed,
+    this.error,
+  });
+}
+
+/// 数据源歌曲解析成功的结果。
+class DataSourceResolveOutcome {
+  /// 拿到的播放地址（`source` 为实际成功的播放源）。
+  final PluginMusicUrlResult result;
+
+  /// 实际成功的播放源 id（`平台id@插件id`）。
+  final String playbackSourceId;
+
+  /// 本次尝试过的所有源（最后一条是成功的那个）。
+  final List<DataSourceAttempt> attempts;
+
+  const DataSourceResolveOutcome({
+    required this.result,
+    required this.playbackSourceId,
+    required this.attempts,
+  });
+}
 
 class _CacheEntry<T> {
   final T data;
@@ -962,36 +1008,6 @@ class MusicSourceManager {
     return _isPluginIdLive(pluginId) ? trimmed : baseId;
   }
 
-  /// 取 `平台id@插件id` 里的插件部分（没有返回空串）。
-  String _pluginIdOf(String sourceId) {
-    final (_, pluginId) = splitSourceId(sourceId);
-    return pluginId ?? '';
-  }
-
-  /// 指定的播放源失效时的兜底：当前可用的同平台音源。
-  ///
-  /// 优先用设置里的「优先音源」，其次任意能解析播放地址的同平台插件。
-  String? _fallbackPlaybackSource(Song song, {String? exclude}) {
-    final (baseId, _) = splitSourceId(song.source ?? '');
-    if (baseId.isEmpty) return null;
-
-    final preferred = _preferredSources[baseId]?.trim() ?? '';
-    if (preferred.isNotEmpty &&
-        preferred != exclude &&
-        _pluginSourceCanResolveUrls(preferred)) {
-      return preferred;
-    }
-    for (final host in _findPluginHostsForSource(baseId)) {
-      final pluginSourceId = _getSourceIdForHost(host, baseId);
-      if (pluginSourceId == null) continue;
-      final appId = _pluginSourceAppId(host, pluginSourceId);
-      if (appId == exclude) continue;
-      if (!_pluginSourceCanResolveUrls(appId)) continue;
-      return appId;
-    }
-    return null;
-  }
-
   /// 解析播放地址时使用的 host 顺序：优先插件排在最前面。
   ///
   /// 优先级（从高到低）：
@@ -1880,6 +1896,7 @@ class MusicSourceManager {
     Set<String> excludedUrls = const <String>{},
     List<PluginHost>? pluginHosts,
     void Function(String message)? onResolveError,
+    bool allowMultiHost = false,
   }) async {
     // 插件重装后 id 会变：歌曲里存的旧插件 id 直接丢掉，退回平台 id，
     // 否则会被判成「该音源不可用（插件未启用或已卸载）」。
@@ -1908,7 +1925,13 @@ class MusicSourceManager {
     //
     // 数据源插件没有 musicUrl，取地址时必须排除：否则会拿「musicUrl 不是函数」
     // 这类无关错误盖掉真正的原因（只装了数据源时尤其明显）。
-    final hosts =
+    // 自动换源只属于数据源：非数据源歌曲只用「歌曲绑定的那个插件」，
+    // 不再按平台把同平台的其它插件依次试一遍（结果不可预期）。
+    //
+    // 唯一保留的容错：插件被卸载 / 重装换了 id 时，`_liveSourceId` 已经退回
+    // 平台 id，这里取到的第一个 host 是同平台的存活插件——那是「原插件找不到」，
+    // 不是换源。
+    var hosts =
         (pluginHosts ??
                 _orderedHostsForSource(
                   sourceId,
@@ -1916,6 +1939,9 @@ class MusicSourceManager {
                 ))
             .where((host) => !host.isDataSource)
             .toList(growable: false);
+    if (!allowMultiHost && hosts.length > 1) {
+      hosts = hosts.take(1).toList(growable: false);
+    }
     for (final host in hosts) {
       final pluginSourceId = _getSourceIdForHost(host, sourceId);
       if (pluginSourceId == null) continue;
@@ -1968,7 +1994,235 @@ class MusicSourceManager {
     return results;
   }
 
-  // 同平台共享歌曲标识，只有跨平台才需要搜索匹配。
+  // ---------------------------------------------------------------------
+  // 数据源歌曲：多播放源自动切换（需求 4）
+  // ---------------------------------------------------------------------
+
+  /// 数据源歌曲按播放源列表逐个取地址；全部失败才抛异常。
+  ///
+  /// 行为约定（与用户确认过的规则一致）：
+  /// * **串行**尝试，不并发：同时打多个插件既浪费，也容易把地址串台；
+  /// * 每个源 [perSourceTimeout]（默认 10 秒）整体预算，跨平台换源时
+  ///   「搜索 + 取地址」共用这个预算；
+  /// * 某个源失败只记 [DataSourceAttempt]，继续下一个；
+  /// * [excludedSources] 里的是本次播放已经确认失败的源，直接跳过，
+  ///   避免「失败 → 切下一个 → 又切回失败的」来回打转；
+  /// * 全部失败 → 抛 [DataSourcePlaybackException]，消息里带最多 3 条明细。
+  Future<DataSourceResolveOutcome> resolveViaDataSource(
+    Song song, {
+    required String quality,
+    Set<String> excludedUrls = const <String>{},
+    Set<String> excludedSources = const <String>{},
+    Duration perSourceTimeout = const Duration(seconds: 10),
+    void Function(DataSourceAttempt attempt)? onAttempt,
+    void Function(String message)? onResolveError,
+  }) async {
+    final dataSourcePluginId = dataSourcePluginIdForSong(song);
+    if (dataSourcePluginId == null) {
+      const message = '这首歌没有绑定数据源音源，无法解析播放地址。';
+      onResolveError?.call(message);
+      throw const DataSourcePlaybackException(message);
+    }
+    final dataSourceName = dataSourceDisplayName(dataSourcePluginId);
+
+    var candidates = dataSourcePlaybackSourcesFor(dataSourcePluginId);
+    if (candidates.isEmpty) {
+      // 配置项全失效（刚装 / 刚启用插件）：即时再发现一次。
+      candidates = autoDiscoverPlaybackSourcesFor(dataSourcePluginId);
+    }
+    final usable = [
+      for (final id in candidates)
+        if (!excludedSources.contains(id)) id,
+    ];
+
+    if (usable.isEmpty) {
+      final message = candidates.isEmpty
+          ? '此$dataSourceName没有可用的播放源，请在插件管理中安装或启用能播放的音源插件。'
+          : '此$dataSourceName的播放源本次都已失败'
+                '（共 ${candidates.length} 个），已停止播放。';
+      onResolveError?.call(message);
+      throw DataSourcePlaybackException(message);
+    }
+
+    final attempts = <DataSourceAttempt>[];
+    for (final playbackSourceId in usable) {
+      final name = sourceDisplayName(playbackSourceId);
+      final watch = Stopwatch()..start();
+      try {
+        final result = await _resolveWithPlaybackSource(
+          song,
+          playbackSourceId: playbackSourceId,
+          quality: quality,
+          excludedUrls: excludedUrls,
+        ).timeout(perSourceTimeout);
+        watch.stop();
+        final attempt = DataSourceAttempt(
+          sourceId: playbackSourceId,
+          sourceName: name,
+          success: true,
+          elapsed: watch.elapsed,
+        );
+        attempts.add(attempt);
+        onAttempt?.call(attempt);
+        return DataSourceResolveOutcome(
+          result: result,
+          playbackSourceId: playbackSourceId,
+          attempts: List<DataSourceAttempt>.unmodifiable(attempts),
+        );
+      } on TimeoutException {
+        watch.stop();
+        final attempt = DataSourceAttempt(
+          sourceId: playbackSourceId,
+          sourceName: name,
+          success: false,
+          elapsed: watch.elapsed,
+          error: '请求超时（${perSourceTimeout.inSeconds} 秒）',
+        );
+        attempts.add(attempt);
+        onAttempt?.call(attempt);
+      } catch (e) {
+        watch.stop();
+        final attempt = DataSourceAttempt(
+          sourceId: playbackSourceId,
+          sourceName: name,
+          success: false,
+          elapsed: watch.elapsed,
+          error: _shortError(e),
+        );
+        attempts.add(attempt);
+        onAttempt?.call(attempt);
+      }
+    }
+
+    final message = _summarizeDataSourceFailure(dataSourceName, attempts);
+    onResolveError?.call(message);
+    throw DataSourcePlaybackException(message);
+  }
+
+  /// 用指定的**一个**播放源解析地址（不跨插件兜底、不重试）。
+  ///
+  /// 同平台歌曲直接用歌曲自己的标识；跨平台歌曲先搜一次再按歌名 / 歌手
+  /// 匹配（搜索失败也算该源失败）。
+  Future<PluginMusicUrlResult> _resolveWithPlaybackSource(
+    Song song, {
+    required String playbackSourceId,
+    required String quality,
+    required Set<String> excludedUrls,
+  }) async {
+    if (isDataSourceSource(playbackSourceId)) {
+      throw Exception('该播放源本身也是数据源，无法解析播放地址');
+    }
+    final playbackName = sourceDisplayName(playbackSourceId);
+
+    final hosts = _findPluginHostsForSource(playbackSourceId);
+    if (hosts.isEmpty) {
+      throw Exception('该音源不可用（插件未启用或已卸载）');
+    }
+    // 只认这一个插件：同平台还有别的插件也不自动换（换源只属于数据源）。
+    final host = hosts.first;
+    final pluginSourceId = _getSourceIdForHost(host, playbackSourceId);
+    if (pluginSourceId == null) {
+      throw Exception('该音源不提供这个平台');
+    }
+
+    final (dataBaseId, _) = splitSourceId(song.source ?? '');
+    final (playbackBaseId, _) = splitSourceId(playbackSourceId);
+    late final Song matched;
+    if (dataBaseId.isNotEmpty && dataBaseId == playbackBaseId) {
+      if (song.id.trim().isEmpty) {
+        throw Exception('歌曲缺少同平台解析所需的标识');
+      }
+      // 清掉数据源绑定，避免解析时又递归回数据源委托；原歌曲仍保留绑定。
+      matched = song.copyWith(
+        source: playbackSourceId,
+        clearPreferredSource: true,
+      );
+    } else {
+      final keyword = '${song.title} ${song.artist}'.trim();
+      final candidates = await search(
+        keyword,
+        sourceId: playbackSourceId,
+        page: 1,
+        limit: 20,
+      );
+      Song? found;
+      for (final item in candidates) {
+        if (_isSameSong(song, item)) {
+          found = item;
+          break;
+        }
+      }
+      found ??= _bestTitleMatch(song, candidates);
+      if (found == null) {
+        throw Exception('在$playbackName里没有搜到这首歌');
+      }
+      matched = found.copyWith(source: playbackSourceId, clearPreferredSource: true);
+    }
+
+    final musicInfo = _buildPluginMusicInfo(matched, playbackSourceId);
+    final result = await host.getMusicUrlResult(
+      pluginSourceId,
+      musicInfo,
+      quality,
+    );
+
+    if (result.quality.trim().isNotEmpty &&
+        musicQualityKey(result.quality) != musicQualityKey(quality)) {
+      throw Exception(
+        '该音源只提供 ${result.quality}，不是请求的 $quality',
+      );
+    }
+    final url = result.url.trim();
+    if (url.isEmpty || !_isValidAudioUrl(url)) {
+      throw Exception('插件未返回可用的播放地址');
+    }
+    // 酷我免费曲会返回「试听提示音」，不是真正的歌曲音频。
+    if (musicInfo.source == 'kw' && _isKuwoPromptUrl(url)) {
+      throw Exception('音源返回的是试听提示音');
+    }
+    if (excludedUrls.contains(url)) {
+      throw Exception('返回的地址本次已经失败过');
+    }
+
+    return PluginMusicUrlResult(
+      url: url,
+      quality: quality,
+      headers: result.headers,
+      source: playbackSourceId,
+    );
+  }
+
+  /// 错误摘要：去掉 Exception 前缀、压成一行、限长，便于塞进汇总文案。
+  String _shortError(Object error) {
+    var text = '$error'.replaceFirst(RegExp(r'^Exception:\s*'), '');
+    text = text.replaceAll('"', "'").replaceAll('\n', ' ').trim();
+    if (text.isEmpty) text = '未知错误';
+    if (text.length > 60) text = '${text.substring(0, 60)}…';
+    return text;
+  }
+
+  /// 全部播放源失败时的汇总文案（最多 3 条明细 + 「等 N 个」）。
+  String _summarizeDataSourceFailure(
+    String dataSourceName,
+    List<DataSourceAttempt> attempts,
+  ) {
+    final buffer = StringBuffer(
+      '此$dataSourceName没有可用的播放源（已尝试 ${attempts.length} 个）：',
+    );
+    for (final attempt in attempts.take(3)) {
+      buffer.write('\n · ${attempt.sourceName}：${attempt.error ?? '未知错误'}');
+    }
+    if (attempts.length > 3) {
+      buffer.write('\n · 等 ${attempts.length - 3} 个');
+    }
+    buffer.write('\n请在插件管理中检查播放源顺序或凭据。');
+    return buffer.toString();
+  }
+
+  /// 旧调用路径（`getMusicUrlResultCandidates` 的数据源分支）。
+  ///
+  /// 复用多源自动切换，只取第一个成功结果；不写 `source` 字段，让歌曲继续
+  /// 归属数据源插件（收藏 / 队列绑定不变）。
   Future<List<PluginMusicUrlResult>> _resolveViaDataSourcePlayback(
     Song song, {
     required String dataSourcePluginId,
@@ -1976,141 +2230,19 @@ class MusicSourceManager {
     required Set<String> excludedUrls,
     void Function(String message)? onResolveError,
   }) async {
-    final dataSourceName = dataSourceDisplayName(dataSourcePluginId);
-    final playbackSourceId = dataSourcePlaybackSource(dataSourcePluginId);
-
-    String fail(String playbackName, Object? error) {
-      var detail = error == null ? '' : '$error';
-      detail = detail
-          .replaceFirst(RegExp(r'^Exception:\s*'), '')
-          .replaceAll('"', "'")
-          .replaceAll('\n', ' ')
-          .trim();
-      if (detail.isEmpty) detail = '未知错误';
-      return '此$dataSourceName指定的 $playbackName音源失效，错误："$detail" '
-          '请在插件管理中设置其他音源。';
-    }
-
-    if (playbackSourceId == null) {
-      final message =
-          '此$dataSourceName未指定播放源，错误："未设置播放源" '
-          '请在插件管理中设置其他音源。';
-      onResolveError?.call(message);
-      throw DataSourcePlaybackException(message);
-    }
-
-    if (isDataSourceSource(playbackSourceId)) {
-      final message = fail(
-        sourceDisplayName(playbackSourceId),
-        '指定的播放源本身也是数据源，无法解析播放地址',
-      );
-      onResolveError?.call(message);
-      throw DataSourcePlaybackException(message);
-    }
-
-    // 指定的播放源必须仍然可用（插件没被卸载 / 关闭）。
-    //
-    // 插件卸载后重装会换一个新的 id，老歌曲里记的还是旧 id：这种情况不能直接
-    // 判「音源不可用」，否则收藏里那批老歌永远放不了。退一步用当前可用的同平台
-    // 音源继续解析，实在没有才报错。
-    var effectivePlaybackId = _liveSourceId(playbackSourceId);
-    var hosts = _findPluginHostsForSource(effectivePlaybackId);
-    // 只有「插件已经不在了」（卸载 / 重装换 id）才自动换一个音源兜底；
-    // 插件还在、只是这个音源被用户关掉了，仍然如实报错，不偷偷换。
-    if (hosts.isEmpty && !_isPluginIdLive(_pluginIdOf(playbackSourceId))) {
-      final fallback = _fallbackPlaybackSource(
-        song,
-        exclude: effectivePlaybackId,
-      );
-      if (fallback != null) {
-        print(
-          '[MusicSourceManager] 数据源指定的播放源 $playbackSourceId 已失效，'
-          '改用 $fallback',
-        );
-        effectivePlaybackId = fallback;
-        hosts = _findPluginHostsForSource(effectivePlaybackId);
-      }
-    }
-    final playbackName = sourceDisplayName(effectivePlaybackId);
-    if (hosts.isEmpty) {
-      final message = fail(playbackName, '该音源不可用（插件未启用或已卸载）');
-      onResolveError?.call(message);
-      throw DataSourcePlaybackException(message);
-    }
-
-    final (dataBaseId, _) = splitSourceId(song.source ?? '');
-    final (playbackBaseId, _) = splitSourceId(effectivePlaybackId);
-    Song? matched;
-    if (dataBaseId.isNotEmpty && dataBaseId == playbackBaseId) {
-      if (song.id.trim().isEmpty) {
-        final message = fail(playbackName, '歌曲缺少同平台解析所需的标识');
-        onResolveError?.call(message);
-        throw DataSourcePlaybackException(message);
-      }
-      // 清掉数据源绑定，避免递归进入数据源委托；原歌曲仍保留该绑定。
-      matched = song.copyWith(
-        source: effectivePlaybackId,
-        clearPreferredSource: true,
-      );
-    } else {
-      try {
-        final keyword = '${song.title} ${song.artist}'.trim();
-        final candidates = await search(
-          keyword,
-          sourceId: effectivePlaybackId,
-          page: 1,
-          limit: 20,
-        );
-        for (final item in candidates) {
-          if (_isSameSong(song, item)) {
-            matched = item;
-            break;
-          }
-        }
-        matched ??= _bestTitleMatch(song, candidates);
-      } catch (e) {
-        final message = fail(playbackName, e);
-        onResolveError?.call(message);
-        throw DataSourcePlaybackException(message);
-      }
-
-      if (matched == null) {
-        final message = fail(playbackName, '在$playbackName里没有搜到这首歌');
-        onResolveError?.call(message);
-        throw DataSourcePlaybackException(message);
-      }
-    }
-
-    final resolved = <PluginMusicUrlResult>[];
-    String? lastError;
-    try {
-      final results = await getMusicUrlResultCandidates(
-        matched,
-        quality: quality,
-        excludedUrls: excludedUrls,
-        onResolveError: (message) => lastError = message,
-      );
-      for (final result in results) {
-        if (result.url.isEmpty) continue;
-        // 不写 result.source：歌曲仍然归属数据源，收藏 / 队列继续绑定数据源插件。
-        resolved.add(
-          PluginMusicUrlResult(
-            url: result.url,
-            quality: result.quality,
-            headers: result.headers,
-          ),
-        );
-      }
-    } catch (e) {
-      lastError = '$e';
-    }
-
-    if (resolved.isEmpty) {
-      final message = fail(playbackName, lastError ?? '播放源未返回可用的播放地址');
-      onResolveError?.call(message);
-      throw DataSourcePlaybackException(message);
-    }
-    return resolved;
+    final outcome = await resolveViaDataSource(
+      song,
+      quality: quality,
+      excludedUrls: excludedUrls,
+      onResolveError: onResolveError,
+    );
+    return [
+      PluginMusicUrlResult(
+        url: outcome.result.url,
+        quality: outcome.result.quality,
+        headers: outcome.result.headers,
+      ),
+    ];
   }
 
   /// 歌名完全一致（忽略大小写 / 空白）的候选中取第一个；没有则返回 null。
