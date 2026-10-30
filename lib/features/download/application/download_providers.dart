@@ -103,9 +103,10 @@ final downloadRepositoryProvider = Provider<DownloadRepository>((ref) {
     }
   });
 
-  // 设置音质验证器
+  // 设置音质验证器：只允许插件**为自己声明过**的下载音质，避免下载任务
+  // 拿到一个插件根本给不了的档位（表现为「下载完发现是 128k」）。
   repo.setQualityValidator((sourceId) {
-    return musicSourceManager.getSupportedQualitiesForSourceId(sourceId);
+    return musicSourceManager.getDownloadQualitiesForSourceId(sourceId);
   });
 
   // 下载通知回调

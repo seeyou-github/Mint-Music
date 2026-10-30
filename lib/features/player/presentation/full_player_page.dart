@@ -1390,6 +1390,9 @@ class _PlayerProgressBar extends ConsumerWidget {
     final availableQualities = ref.watch(
       playbackControllerProvider.select((s) => s.availableQualities),
     );
+    final gatedQualities = ref.watch(
+      playbackControllerProvider.select((s) => s.gatedQualities),
+    );
 
     return PlayerProgressBar(
       compact: compact,
@@ -1402,6 +1405,7 @@ class _PlayerProgressBar extends ConsumerWidget {
       duration: duration,
       currentQuality: currentQuality,
       availableQualities: availableQualities,
+      gatedQualities: gatedQualities,
       onQualityTap: (quality) =>
           ref.read(playbackControllerProvider.notifier).setQuality(quality),
       onSeekPreview: (value) {

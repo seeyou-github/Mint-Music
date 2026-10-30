@@ -357,6 +357,16 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   Map<String, String> _preferredSources = const {};
   Timer? _loadingTimer;
 
+  /// 本次播放已经失败过的数据源播放源（key = `songId|songSource`）。
+  ///
+  /// 作用：自动换源时跳过已经确认失败的源，避免在「重试 → 失败 → 重试」
+  /// 之间打转。换歌、手动重播、播放源顺序变化时清空。
+  final Map<String, Set<String>> _failedPlaybackSources = {};
+
+  /// 每个数据源播放源单独的超时预算（跨平台换源要「搜索 + 取地址」，
+  /// 都算在这 10 秒里）。
+  static const Duration _dataSourceSourceTimeout = Duration(seconds: 10);
+
   /// 看门狗武装时记录的播放位置，用于判断是否真的「没有进度」。
   Duration? _stallBaselinePosition;
   static const Duration _loadingTimeout = Duration(seconds: 30);
@@ -424,11 +434,15 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     _musicSourceManager.setPreferredSources(_preferredSources);
   }
 
-  /// 更新「数据源 → 指定播放源」映射。
+  /// 更新「数据源 → 播放源有序列表」映射。
   ///
-  /// 数据源插件只提供元数据，播放地址由这里指定的播放源解析。
-  void setDataSourcePlaybackSources(Map<String, String> map) {
+  /// 数据源插件只提供元数据，播放地址由这里列出的播放源按顺序解析；
+  /// 前一个失败会自动尝试下一个（见 `resolveViaDataSource`）。
+  void setDataSourcePlaybackSources(Map<String, List<String>> map) {
     _musicSourceManager.setDataSourcePlaybackSources(map);
+    // 顺序变了，之前记下的「这个源放过这首但失败了」全部作废：用户可能
+    // 刚把新的源拖到了最前面，需要重新有机会被尝试。
+    _failedPlaybackSources.clear();
   }
 
   void setAudioEffects(AudioEffectsConfig config) {
@@ -993,9 +1007,18 @@ class PlaybackController extends StateNotifier<PlaybackState> {
         ? _getQualityFromSong(song)
         : (getQualityForSource?.call(SourceInfo.baseIdOf(sourceId)) ??
               _getQualityFromSong(song));
+    // 音质列表要跟着「真正出面解析地址的那个源」走：数据源歌曲的 source 是
+    // 数据源插件（它不提供播放），真正的音质声明在它的播放源上。
+    final qualitySourceId = isLocal
+        ? sourceId
+        : (_musicSourceManager.effectivePlaybackSourceForSong(song) ?? sourceId);
     final availableQualities = isLocal
         ? <String>[quality]
-        : _musicSourceManager.getSupportedQualitiesForSourceId(sourceId);
+        : _musicSourceManager.getQualitiesForSourceId(qualitySourceId);
+    // 需要登录才能用的档位：仍然显示，但置灰（不隐藏，用户才知道有这个音质）。
+    final gatedQualities = isLocal
+        ? const <String>{}
+        : _musicSourceManager.getLoginGatedQualities(qualitySourceId);
     state = state.copyWith(
       currentIndex: index,
       currentSong: song,
@@ -1005,6 +1028,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
       isLoading: true,
       currentQuality: quality,
       availableQualities: availableQualities,
+      gatedQualities: gatedQualities,
     );
 
     try {
@@ -1595,6 +1619,26 @@ class PlaybackController extends StateNotifier<PlaybackState> {
 
     final currentSong = state.currentSong;
     if (currentSong == null) return;
+
+    // 只允许切到「当前音源声明过」的档位：请求一个插件根本不支持的音质，
+    // 结果要么报错、要么被静默降级（界面显示 flac、实际播 320k），都不如
+    // 直接说清楚。
+    final declared = state.availableQualities;
+    if (declared.isNotEmpty && !declared.contains(quality)) {
+      onMessage?.call(
+        tr('当前音源不支持该音质'),
+        backgroundColor: Colors.red,
+      );
+      return;
+    }
+    // 需要登录的档位：说明原因，别让用户以为「点了没反应」。
+    if (state.gatedQualities.contains(quality)) {
+      onMessage?.call(
+        tr('该音质需要先在 插件管理 → 该插件 → 凭据 里填写登录信息'),
+        backgroundColor: Colors.orange,
+      );
+      return;
+    }
 
     final requestId = ++_currentPlayRequestId;
     _qualitySwitchRequestId = requestId;

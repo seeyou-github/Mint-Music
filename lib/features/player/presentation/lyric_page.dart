@@ -707,6 +707,7 @@ class _LyricProgressBar extends ConsumerWidget {
           duration: state.duration,
           currentQuality: state.currentQuality,
           availableQualities: state.availableQualities,
+          gatedQualities: state.gatedQualities,
         ),
       ),
     );
@@ -722,6 +723,7 @@ class _LyricProgressBar extends ConsumerWidget {
       duration: playback.duration,
       currentQuality: playback.currentQuality,
       availableQualities: playback.availableQualities,
+      gatedQualities: playback.gatedQualities,
       onQualityTap: controller.setQuality,
       onSeekPreview: (value) {
         ref

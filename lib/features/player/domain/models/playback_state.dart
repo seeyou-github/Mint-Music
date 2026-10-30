@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart' show setEquals;
+
 import 'song.dart';
 import 'play_mode.dart';
 
@@ -16,6 +18,12 @@ class PlaybackState {
   final bool isBuffering;
   final String currentQuality;
   final List<String> availableQualities;
+
+  /// 当前歌曲所在音源里「需要登录才能用」的档位。
+  ///
+  /// 这些档位仍然出现在音质菜单里（让用户知道有这个音质、只是缺登录），
+  /// 但置灰不可选，点击提示去插件管理填写凭据。
+  final Set<String> gatedQualities;
 
   const PlaybackState({
     this.currentSong,
@@ -38,6 +46,7 @@ class PlaybackState {
       'atmos',
       'master',
     ],
+    this.gatedQualities = const {},
   });
 
   Duration get duration {
@@ -82,6 +91,7 @@ class PlaybackState {
     bool? isBuffering,
     String? currentQuality,
     List<String>? availableQualities,
+    Set<String>? gatedQualities,
     bool forceCurrentSong = false,
   }) {
     final newCurrentSong = forceCurrentSong
@@ -98,6 +108,7 @@ class PlaybackState {
     final newIsBuffering = isBuffering ?? this.isBuffering;
     final newCurrentQuality = currentQuality ?? this.currentQuality;
     final newAvailableQualities = availableQualities ?? this.availableQualities;
+    final newGatedQualities = gatedQualities ?? this.gatedQualities;
 
     if (!forceCurrentSong &&
         newCurrentSong == this.currentSong &&
@@ -111,7 +122,8 @@ class PlaybackState {
         newIsLoading == this.isLoading &&
         newIsBuffering == this.isBuffering &&
         newCurrentQuality == this.currentQuality &&
-        identical(newAvailableQualities, this.availableQualities)) {
+        identical(newAvailableQualities, this.availableQualities) &&
+        setEquals(newGatedQualities, this.gatedQualities)) {
       return this;
     }
 
@@ -128,6 +140,7 @@ class PlaybackState {
       isBuffering: newIsBuffering,
       currentQuality: newCurrentQuality,
       availableQualities: newAvailableQualities,
+      gatedQualities: newGatedQualities,
     );
   }
 }

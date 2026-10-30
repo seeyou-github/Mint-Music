@@ -310,25 +310,44 @@ Future<void> setPreferredSource(
   }
 }
 
-/// 数据源 → 指定播放源（数据源插件 id → 音源 id）。
+/// 数据源 → 播放源**有序列表**（数据源插件 id → [平台id@插件id, ...]）。
 ///
 /// 数据源插件只提供元数据（搜索 / 歌单 / 榜单 / 专辑 / 作者），不解析播放地址；
-/// 这里记录用户在「插件管理 → 数据源」里为它选的播放源，播放时用它取地址。
-final dataSourcePlaybackSourcesProvider = StateProvider<Map<String, String>>(
-  (ref) => const {},
-);
+/// 这里记录它可用的播放源顺序，播放时按顺序尝试、失败自动切换下一个。
+///
+/// 顺序来源：自动发现（同平台、已启用、能解析地址，按安装时间升序）+ 用户
+/// 在插件管理页拖动后的覆盖结果。列表为空表示「还没发现到可用的播放源」，
+/// 播放时会即时重新发现一次。
+final dataSourcePlaybackSourcesProvider =
+    StateProvider<Map<String, List<String>>>((ref) => const {});
 
 /// 解析持久化的「数据源 → 播放源」JSON。
-Map<String, String> _decodeDataSourcePlaybackSources(String raw) {
+///
+/// 兼容两种历史格式（旧版本只存单个字符串）：
+/// * `{"pid": "wy@xxx"}` → `{"pid": ["wy@xxx"]}`
+/// * `{"pid": ["a", "b"]}` → 原样
+///
+/// 解析失败 / 非法项直接丢弃，绝不抛异常（旧数据不能让启动崩掉）。
+Map<String, List<String>> _decodeDataSourcePlaybackSources(String raw) {
   if (raw.trim().isEmpty) return const {};
   try {
     final decoded = jsonDecode(raw);
     if (decoded is! Map) return const {};
-    final result = <String, String>{};
+    final result = <String, List<String>>{};
     decoded.forEach((key, value) {
       final k = '$key'.trim();
-      final v = '$value'.trim();
-      if (k.isNotEmpty && v.isNotEmpty) result[k] = v;
+      if (k.isEmpty) return;
+      final list = <String>[];
+      if (value is String) {
+        final single = value.trim();
+        if (single.isNotEmpty) list.add(single);
+      } else if (value is List) {
+        for (final item in value) {
+          final id = '$item'.trim();
+          if (id.isNotEmpty && !list.contains(id)) list.add(id);
+        }
+      }
+      if (list.isNotEmpty) result[k] = list;
     });
     return result;
   } catch (_) {
@@ -336,21 +355,25 @@ Map<String, String> _decodeDataSourcePlaybackSources(String raw) {
   }
 }
 
-/// 给某个数据源指定播放源（[sourceId] 为空表示清除）。
-Future<void> setDataSourcePlaybackSource(
+/// 保存某个数据源的播放源顺序（[sourceIds] 为空表示清除，回到自动发现）。
+Future<void> setDataSourcePlaybackSources(
   WidgetRef ref, {
   required String pluginId,
-  required String sourceId,
+  required List<String> sourceIds,
 }) async {
   final key = pluginId.trim();
   if (key.isEmpty) return;
-  final current = Map<String, String>.from(
+  final current = Map<String, List<String>>.from(
     ref.read(dataSourcePlaybackSourcesProvider),
   );
-  if (sourceId.trim().isEmpty) {
+  final cleaned = [
+    for (final id in sourceIds)
+      if (id.trim().isNotEmpty) id.trim(),
+  ];
+  if (cleaned.isEmpty) {
     current.remove(key);
   } else {
-    current[key] = sourceId.trim();
+    current[key] = cleaned;
   }
   ref.read(dataSourcePlaybackSourcesProvider.notifier).state = current;
   try {
@@ -359,6 +382,22 @@ Future<void> setDataSourcePlaybackSource(
   } catch (e) {
     debugPrint('[Settings] 保存数据源播放源失败: $e');
   }
+}
+
+/// 给某个数据源指定单个播放源（[sourceId] 为空表示清除）。
+///
+/// 保留这个旧入口是为了兼容已有调用点；新代码请用
+/// [setDataSourcePlaybackSources] 传完整顺序。
+Future<void> setDataSourcePlaybackSource(
+  WidgetRef ref, {
+  required String pluginId,
+  required String sourceId,
+}) {
+  return setDataSourcePlaybackSources(
+    ref,
+    pluginId: pluginId,
+    sourceIds: sourceId.trim().isEmpty ? const [] : [sourceId.trim()],
+  );
 }
 
 /// 歌词字体颜色（hex ARGB 字符串，空表示使用默认/沉浸色）

@@ -396,8 +396,10 @@ Future<void> showBatchDownloadSheet(
     return;
   }
   final manager = ref.read(musicSourceManagerProvider);
-  final qualities = manager.getSupportedQualitiesForSourceId(
-    candidates.first.source ?? 'wy',
+  // 批量下载用「下载音质」声明（与单曲下载菜单一致，避免下到插件给不了的档位）。
+  final first = candidates.first;
+  final qualities = manager.getDownloadQualitiesForSourceId(
+    manager.effectivePlaybackSourceForSong(first) ?? first.source ?? 'wy',
   );
   if (qualities.isEmpty) {
     _snack(context, '当前音源无可下载音质');

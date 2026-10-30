@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../../core/l10n/l10n.dart';
 import '../../domain/models/play_mode.dart';
 import '../../../settings/application/settings_providers.dart';
 
@@ -38,6 +39,9 @@ class PlayerProgressBar extends StatefulWidget {
   final ValueChanged<double?>? onSeekPreview;
   final String currentQuality;
   final List<String> availableQualities;
+
+  /// 需要登录才能使用的档位：菜单里照常列出但置灰，点击给出「去填凭据」提示。
+  final Set<String> gatedQualities;
   final ValueChanged<String>? onQualityTap;
 
   /// 紧凑模式：用于手机横屏等高度受限的场景，压缩内边距。
@@ -52,6 +56,7 @@ class PlayerProgressBar extends StatefulWidget {
     this.onSeekPreview,
     this.currentQuality = '320k',
     this.availableQualities = const [],
+    this.gatedQualities = const {},
     this.onQualityTap,
     this.compact = false,
   });
@@ -92,8 +97,12 @@ class _PlayerProgressBarState extends State<PlayerProgressBar> {
       color: const Color(0xFF282828),
       elevation: 8,
       items: widget.availableQualities.map((q) {
+        final gated = widget.gatedQualities.contains(q);
         final displayName = getQualityDisplayName(q);
-        final sizeStr = _estimateSize(q, widget.duration.inSeconds);
+        final subtitle = gated
+            ? tr('需登录')
+            : _estimateSize(q, widget.duration.inSeconds);
+        final active = q == widget.currentQuality;
         return PopupMenuItem<String>(
           value: q,
           height: 40,
@@ -107,25 +116,27 @@ class _PlayerProgressBarState extends State<PlayerProgressBar> {
                     displayName,
                     style: TextStyle(
                       fontSize: 13,
-                      color: q == widget.currentQuality
-                          ? Colors.white
-                          : Colors.white.withValues(alpha: 0.7),
-                      fontWeight: q == widget.currentQuality
-                          ? FontWeight.w600
-                          : FontWeight.normal,
+                      color: gated
+                          ? Colors.white.withValues(alpha: 0.35)
+                          : (active
+                                ? Colors.white
+                                : Colors.white.withValues(alpha: 0.7)),
+                      fontWeight: active ? FontWeight.w600 : FontWeight.normal,
                     ),
                   ),
-                  if (sizeStr.isNotEmpty)
+                  if (subtitle.isNotEmpty)
                     Text(
-                      sizeStr,
+                      subtitle,
                       style: TextStyle(
                         fontSize: 10,
-                        color: Colors.white.withValues(alpha: 0.4),
+                        color: gated
+                            ? Colors.orange.withValues(alpha: 0.8)
+                            : Colors.white.withValues(alpha: 0.4),
                       ),
                     ),
                 ],
               ),
-              if (q == widget.currentQuality)
+              if (active)
                 Padding(
                   padding: const EdgeInsets.only(left: 8),
                   child: Icon(Icons.check, size: 14, color: Colors.white),
@@ -135,9 +146,22 @@ class _PlayerProgressBarState extends State<PlayerProgressBar> {
         );
       }).toList(),
     ).then((selected) {
-      if (selected != null && selected != widget.currentQuality) {
-        widget.onQualityTap?.call(selected);
+      if (selected == null || selected == widget.currentQuality) return;
+      // 需要登录的档位：不静默忽略，明确告诉用户为什么不能用、去哪里解决。
+      if (widget.gatedQualities.contains(selected)) {
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+          SnackBar(
+            content: Text(
+              tr(
+                '「${getQualityDisplayName(selected)}」需要先在插件管理 → 该插件 → 凭据 里填写登录信息',
+              ),
+            ),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+        return;
       }
+      widget.onQualityTap?.call(selected);
     });
   }
 

@@ -10,6 +10,7 @@ import '../domain/plugin_types.dart';
 import '../domain/song_year.dart';
 import '../../discover/domain/models/search_collection.dart';
 import '../domain/source_id_mapping.dart';
+import '../domain/source_login_state.dart';
 import '../domain/plugin_source_states.dart';
 import '../data/plugin_source_preferences.dart';
 import '../data/plugin_service.dart';
@@ -427,34 +428,118 @@ class MusicSourceManager {
     return false;
   }
 
-  List<String> getSupportedQualitiesForSourceId(String sourceId) {
+  /// 音质的用途：播放菜单与下载菜单用的是两套插件声明。
+  ///
+  /// 插件可以只声明 `qualitys`（播放），下载沿用同一份；也可以额外声明
+  /// `downloadQualitys`，让下载菜单只列「真的能下」的档位。
+  List<String> getSupportedQualitiesForSourceId(String sourceId) =>
+      getQualitiesForSourceId(sourceId);
+
+  /// 播放音质列表（音质切换菜单用）。
+  List<String> getQualitiesForSourceId(
+    String sourceId, {
+    QualityUsage usage = QualityUsage.play,
+  }) {
     final (baseId, _) = splitSourceId(sourceId);
-    // 插件优先：返回 JS 插件定义的 qualities 列表
-    final host = _findPluginForSource(sourceId);
-    if (host != null) {
+    final declared = _declaredSourceFor(sourceId);
+    if (declared != null) {
+      final list = usage == QualityUsage.download
+          ? declared.$2.downloadQualities
+          : declared.$2.qualities;
+      if (list.isNotEmpty) return list;
+    }
+
+    // 插件没有声明这个源的音质（老插件 / 只有 action 没有 source info）：
+    // 回退到平台默认档位，保持旧行为。界面上会标注「音源未声明音质」，
+    // 不会假装这是插件真实支持的档位。
+    return _defaultQualities[baseId] ?? const ['128k', '320k', 'flac'];
+  }
+
+  /// 下载音质列表（下载菜单 / 下载音质校验用）。
+  List<String> getDownloadQualitiesForSourceId(String sourceId) =>
+      getQualitiesForSourceId(sourceId, usage: QualityUsage.download);
+
+  /// 该音源当前是否真的声明了音质（用于界面标注「未声明」）。
+  bool sourceDeclaresQualities(String sourceId) {
+    final declared = _declaredSourceFor(sourceId);
+    return declared != null && declared.$2.qualities.isNotEmpty;
+  }
+
+  /// 需要登录才能使用的档位（界面置灰用）。
+  ///
+  /// 返回空集合代表两种情况：插件没有登录门槛，或者已经确认登录。
+  /// 只有**明确未登录 / 登录失效**的插件才返回非空集合——登录态未知时
+  /// 不置灰（用户可能已填凭据，只是插件不支持检测）。
+  Set<String> getLoginGatedQualities(
+    String sourceId, {
+    QualityUsage usage = QualityUsage.play,
+  }) {
+    final declared = _declaredSourceFor(sourceId);
+    if (declared == null) return const {};
+    final login = declared.$2.login;
+    if (login == null || !login.required) return const {};
+    final state = _loginStateForDeclared(declared.$1, sourceId);
+    if (!state.isRejected) return const {};
+
+    final all = usage == QualityUsage.download
+        ? declared.$2.downloadQualities
+        : declared.$2.qualities;
+    return {
+      for (final quality in all)
+        if (!login.freeAllows(quality)) quality,
+    };
+  }
+
+  /// 该音源声明的凭据（没有返回空列表）。
+  List<SourceCredentialSpec> credentialsForSource(String sourceId) {
+    final declared = _declaredSourceFor(sourceId);
+    return declared?.$2.credentials ?? const [];
+  }
+
+  /// 该音源当前的登录态。
+  SourceLoginState loginStateForSourceId(String sourceId) {
+    final declared = _declaredSourceFor(sourceId);
+    if (declared == null) return SourceLoginState.unknown;
+    return _loginStateForDeclared(declared.$1, sourceId);
+  }
+
+  /// 该音源所属的插件 id（找不到返回 null）。
+  String? pluginIdForSource(String sourceId) {
+    final declared = _declaredSourceFor(sourceId);
+    if (declared == null) return null;
+    return _pluginService.getPluginIdForHost(declared.$1);
+  }
+
+  SourceLoginState _loginStateForDeclared(PluginHost host, String sourceId) {
+    final pluginSourceId = _getSourceIdForHost(host, sourceId);
+    if (pluginSourceId == null) return SourceLoginState.unknown;
+    final pluginId = _pluginService.getPluginIdForHost(host);
+    if (pluginId == null || pluginId.isEmpty) {
+      return host.loginStateOf(pluginSourceId);
+    }
+    return _pluginService.loginStateOf(pluginId, pluginSourceId);
+  }
+
+  /// 找到 [sourceId] 对应的插件宿主与它声明的音源信息。
+  ///
+  /// 找不到（插件未安装 / 该源只是静态推断出来的）返回 null。
+  (PluginHost, PluginSourceInfo)? _declaredSourceFor(String sourceId) {
+    final (baseId, _) = splitSourceId(sourceId);
+    if (baseId.isEmpty) return null;
+    for (final host in _findPluginHostsForSource(sourceId)) {
       final pluginSourceId = _getSourceIdForHost(host, sourceId);
-      if (pluginSourceId != null) {
-        for (final source in host.sources) {
-          final effectiveId = SourceIdMapping.deriveId(source.name);
-          if (effectiveId == pluginSourceId && source.qualities.isNotEmpty) {
-            return source.qualities;
-          }
-        }
-        // 插件有该源的 action 但没有 source info，尝试通过 host.actionKeys 查找
-        for (final entry in host.sourceActions.entries) {
-          if (entry.key == pluginSourceId) {
-            final actions = entry.value;
-            if (actions
-                .map((action) => action.toLowerCase())
-                .any((action) => action == 'musicurl')) {
-              return _defaultQualities[baseId] ?? ['128k', '320k', 'flac'];
-            }
-          }
+      if (pluginSourceId == null) continue;
+      // 优先按插件声明的键匹配，其次按展示名推导出的平台 id 匹配。
+      for (final source in host.sources) {
+        if ((source.id ?? '') == pluginSourceId) return (host, source);
+      }
+      for (final source in host.sources) {
+        if (SourceIdMapping.deriveId(source.name) == baseId) {
+          return (host, source);
         }
       }
     }
-    // 插件没声明音质时按平台默认档位。
-    return _defaultQualities[baseId] ?? ['128k', '320k', 'flac'];
+    return null;
   }
 
   static const Map<String, List<String>> _defaultQualities = {
@@ -662,6 +747,19 @@ class MusicSourceManager {
     return null;
   }
 
+  /// 歌曲实际生效的播放源 id（`平台id@插件id`）。
+  ///
+  /// * 数据源歌曲（元数据来自数据源插件）→ 该数据源播放源列表的**第一个**，
+  ///   界面据此显示「这个源声明了哪些音质」。真正播放时若它失败会自动换到
+  ///   下一个，届时音质列表由播放器按实际成功的源重算。
+  /// * 非数据源歌曲 → null（音质直接看歌曲自己的 source）。
+  String? effectivePlaybackSourceForSong(Song song) {
+    final dataSourcePluginId = dataSourcePluginIdForSong(song);
+    if (dataSourcePluginId == null) return null;
+    final list = dataSourcePlaybackSourcesFor(dataSourcePluginId);
+    return list.isEmpty ? null : list.first;
+  }
+
   /// 同一平台上仍在用（并且配了播放源）的数据源插件。
   ///
   /// 只用于「歌曲里记着的数据源插件已经不在了」这种兜底场景。
@@ -671,9 +769,9 @@ class MusicSourceManager {
       if (!host.isDataSource) continue;
       final pluginId = _pluginService.getPluginIdForHost(host);
       if (pluginId == null || pluginId.isEmpty) continue;
-      // 得支持这个平台，而且用户给它指定了播放源，换过去才有意义。
+      // 得支持这个平台，而且能解析地址（自动发现即可得出播放源）。
       if (_getSourceIdForHost(host, baseId) == null) continue;
-      if (dataSourcePlaybackSource(pluginId) == null) continue;
+      if (dataSourcePlaybackSourcesFor(pluginId).isEmpty) continue;
       return pluginId;
     }
     return null;
@@ -695,21 +793,106 @@ class MusicSourceManager {
     return '数据源';
   }
 
-  /// 数据源 → 指定播放源（`平台id@插件id`）。
+  /// 数据源 → **有序的**播放源列表（`平台id@插件id`）。
   ///
-  /// 由设置页 / 插件管理页维护：数据源只提供元数据，播放地址由这里指定的
-  /// 播放源解析。
-  Map<String, String> _dataSourcePlaybackSources = const {};
+  /// 数据源只提供元数据，播放地址要由播放源解析。列表由「自动发现」得到，
+  /// 用户在插件管理页拖动调整后覆盖自动顺序；靠前的优先使用，失败自动切换
+  /// 到下一个（见 `resolveViaDataSource`）。
+  Map<String, List<String>> _dataSourcePlaybackSources = const {};
 
-  void setDataSourcePlaybackSources(Map<String, String> map) {
-    _dataSourcePlaybackSources = Map<String, String>.from(map);
+  void setDataSourcePlaybackSources(Map<String, List<String>> map) {
+    _dataSourcePlaybackSources = {
+      for (final entry in map.entries)
+        if (entry.key.trim().isNotEmpty && entry.value.isNotEmpty)
+          entry.key.trim(): List<String>.from(entry.value),
+    };
   }
 
-  /// 某个数据源当前指定的播放源 id（未指定返回 null）。
+  /// 用户手动排过的播放源列表（原样返回，不做存活过滤；界面排序时用）。
+  List<String> configuredPlaybackSourcesFor(String pluginId) =>
+      List<String>.from(_dataSourcePlaybackSources[pluginId] ?? const []);
+
+  /// 某个数据源**实际生效**的播放源列表（已剔除卸载 / 停用的源）。
+  ///
+  /// 顺序：用户排过的顺序（过滤失效项）> 自动发现（按安装时间升序）。
+  List<String> dataSourcePlaybackSourcesFor(String pluginId) {
+    final configured = [
+      for (final id in _dataSourcePlaybackSources[pluginId] ?? const <String>[])
+        if (_isPlaybackSourceUsable(id)) id,
+    ];
+    if (configured.isNotEmpty) return configured;
+    return autoDiscoverPlaybackSourcesFor(pluginId);
+  }
+
+  /// 某个数据源当前优先使用的播放源 id（未配置且自动发现为空时返回 null）。
   String? dataSourcePlaybackSource(String pluginId) {
-    final value = _dataSourcePlaybackSources[pluginId]?.trim() ?? '';
-    return value.isEmpty ? null : value;
+    final list = dataSourcePlaybackSourcesFor(pluginId);
+    return list.isEmpty ? null : list.first;
   }
+
+  /// 自动发现：数据源支持的每个平台 × 已启用且能解析地址的插件。
+  ///
+  /// 排序规则：插件安装时间升序（先装的排前面），同插件内按数据源平台顺序。
+  /// 已卸载 / 已关闭 / 不支持该平台的插件不会出现在结果里。
+  List<String> autoDiscoverPlaybackSourcesFor(String pluginId) {
+    final platforms = _platformsOfDataSource(pluginId);
+    if (platforms.isEmpty) return const [];
+
+    final discovered = <({String sourceId, int order, DateTime installed})>[];
+    var order = 0;
+    for (final host in _pluginService.enabledPlugins) {
+      if (host.isDataSource) continue;
+      final hostPluginId = _pluginService.getPluginIdForHost(host);
+      if (hostPluginId == null || hostPluginId.isEmpty) continue;
+      final installed =
+          _pluginService.installTimeOf(hostPluginId) ??
+          DateTime.fromMillisecondsSinceEpoch(0);
+      for (final baseId in platforms) {
+        final pluginSourceId = _getSourceIdForHost(host, baseId);
+        if (pluginSourceId == null) continue;
+        final appId = _pluginSourceAppId(host, pluginSourceId);
+        if (!_pluginSourceCanResolveUrls(appId)) continue;
+        discovered.add(
+          (sourceId: appId, order: order++, installed: installed),
+        );
+      }
+    }
+
+    discovered.sort((a, b) {
+      final byTime = a.installed.compareTo(b.installed);
+      return byTime != 0 ? byTime : a.order.compareTo(b.order);
+    });
+    return [for (final item in discovered) item.sourceId];
+  }
+
+  /// 数据源插件声明的平台 id 集合。
+  Set<String> _platformsOfDataSource(String pluginId) {
+    for (final host in _pluginService.enabledPlugins) {
+      if (_pluginService.getPluginIdForHost(host) != pluginId) continue;
+      final result = <String>{};
+      for (final source in host.sources) {
+        final id = SourceIdMapping.deriveId(source.name);
+        if (id.isNotEmpty) result.add(id);
+      }
+      for (final key in host.sourceActions.keys) {
+        final id = SourceIdMapping.deriveId(key);
+        if (id.isNotEmpty) result.add(id);
+      }
+      return result;
+    }
+    return const {};
+  }
+
+  /// 播放源是否还能用：插件活着，且这个源的 action 里有 musicUrl。
+  bool isPlaybackSourceUsable(String sourceId) {
+    final (baseId, pluginId) = splitSourceId(sourceId.trim());
+    if (baseId.isEmpty || pluginId == null) return false;
+    if (!_isPluginIdLive(pluginId)) return false;
+    return _pluginSourceCanResolveUrls(sourceId);
+  }
+
+  bool _isPlaybackSourceUsable(String sourceId) =>
+      isPlaybackSourceUsable(sourceId);
 
   /// 把一个音源 id 落成「能真正解析播放地址」的具体插件音源。
   ///

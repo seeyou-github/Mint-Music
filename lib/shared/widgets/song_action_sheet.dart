@@ -28,6 +28,7 @@ import '../../features/settings/application/font_providers.dart';
 import '../../features/settings/application/settings_providers.dart';
 import '../../features/settings/data/settings_service.dart';
 import '../../features/plugin/application/plugin_providers.dart';
+import '../../features/plugin/domain/plugin_types.dart';
 
 const _sheetAnimationStyle = AnimationStyle(
   duration: Duration(milliseconds: 220),
@@ -235,11 +236,21 @@ class SongActionSheet extends ConsumerStatefulWidget {
   ///
   /// 播放页顶部的下载按钮直接调用这个（不经过 ActionSheet）。
   static void showDownloadQualityPicker(BuildContext context, Song song) {
-    final sourceId = song.source ?? 'wy';
     final manager = ProviderScope.containerOf(
       context,
     ).read(musicSourceManagerProvider);
-    final qualities = manager.getSupportedQualitiesForSourceId(sourceId);
+    // 数据源歌曲的 source 是数据源插件（不提供播放），下载音质要看真正
+    // 出面解析地址的那个播放源。
+    final sourceId =
+        manager.effectivePlaybackSourceForSong(song) ??
+        song.source ??
+        'wy';
+    // 下载音质与播放音质是两套声明：插件可能「能播 320k、只能下 128k」。
+    final qualities = manager.getDownloadQualitiesForSourceId(sourceId);
+    final gated = manager.getLoginGatedQualities(
+      sourceId,
+      usage: QualityUsage.download,
+    );
 
     showModalBottomSheet(
       context: context,
@@ -279,7 +290,14 @@ class SongActionSheet extends ConsumerStatefulWidget {
                     ),
                   ),
                   const SizedBox(height: 8),
-                  ...qualities.map((q) => _buildQualityItem(ctx, q, song)),
+                  ...qualities.map(
+                    (q) => _buildQualityItem(
+                      ctx,
+                      q,
+                      song,
+                      gated: gated.contains(q),
+                    ),
+                  ),
                   const SizedBox(height: 16),
                 ],
               ),
@@ -290,10 +308,33 @@ class SongActionSheet extends ConsumerStatefulWidget {
     );
   }
 
-  static Widget _buildQualityItem(BuildContext ctx, String q, Song song) {
+  /// 一个下载音质选项。
+  ///
+  /// [gated] 为 true 表示该档位需要登录才能用：照常列出但置灰（让用户知道
+  /// 有这个音质、只是缺登录），点击给出「去哪里填凭据」的提示，而不是静默
+  /// 降级到低音质。
+  static Widget _buildQualityItem(
+    BuildContext ctx,
+    String q,
+    Song song, {
+    bool gated = false,
+  }) {
     return InkWell(
-      // startDownload 内部会关闭这个弹层，这里不要再 pop 一次。
       onTap: () {
+        if (gated) {
+          ScaffoldMessenger.maybeOf(ctx)?.showSnackBar(
+            SnackBar(
+              content: Text(
+                ctx.tr(
+                  '「${getQualityDisplayName(q)}」需要先在插件管理 → 该插件 → 凭据 里填写登录信息',
+                ),
+              ),
+              duration: const Duration(seconds: 3),
+            ),
+          );
+          return;
+        }
+        // startDownload 内部会关闭这个弹层，这里不要再 pop 一次。
         startDownload(ctx, song, q);
       },
       borderRadius: BorderRadius.circular(8),
@@ -307,17 +348,23 @@ class SongActionSheet extends ConsumerStatefulWidget {
                 children: [
                   Text(
                     getQualityDisplayName(q),
-                    style: const TextStyle(
-                      color: Colors.white,
+                    style: TextStyle(
+                      color: gated
+                          ? Colors.white.withValues(alpha: 0.35)
+                          : Colors.white,
                       fontSize: 15,
                       fontWeight: FontWeight.w500,
                     ),
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    '${ctx.tr(kQualityDescription[q] ?? '')}  ${_estimateSize(q, song.duration)}',
+                    gated
+                        ? ctx.tr('需登录')
+                        : '${ctx.tr(kQualityDescription[q] ?? '')}  ${_estimateSize(q, song.duration)}',
                     style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.5),
+                      color: gated
+                          ? Colors.orange.withValues(alpha: 0.7)
+                          : Colors.white.withValues(alpha: 0.5),
                       fontSize: 12,
                     ),
                   ),
@@ -325,7 +372,7 @@ class SongActionSheet extends ConsumerStatefulWidget {
               ),
             ),
             Icon(
-              Icons.download_outlined,
+              gated ? Icons.lock_outline : Icons.download_outlined,
               color: Colors.white.withValues(alpha: 0.4),
               size: 20,
             ),

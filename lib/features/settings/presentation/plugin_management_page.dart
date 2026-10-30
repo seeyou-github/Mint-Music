@@ -10,7 +10,9 @@ import '../../../../core/l10n/l10n.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/theme_provider.dart';
 import '../../plugin/data/plugin_service.dart';
+import '../../plugin/application/music_source_manager.dart';
 import '../../plugin/domain/plugin_source_states.dart';
+import '../../plugin/domain/source_login_state.dart';
 import '../../plugin/domain/source_id_mapping.dart';
 import '../application/plugin_providers.dart';
 import '../application/settings_providers.dart';
@@ -48,7 +50,6 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
   final Set<String> _checkingPluginUpdateIds = {};
 
   /// 数据源卡片里「设置播放源」那一行的锚点（弹出菜单用它定位）。
-  final Map<String, GlobalKey> _dataSourcePlaybackKeys = {};
 
   StreamSubscription<Map<String, dynamic>>? _updateNoticeSubscription;
 
@@ -753,33 +754,49 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
     );
   }
 
-  /// 数据源卡片里的「设置播放源」入口。
+  /// 数据源卡片里的「播放源」区：自动匹配的同平台播放源**有序列表**。
   ///
-  /// 用和发现页音源切换一致的弹出菜单（`showMenu`）而不是 `DropdownButton`：
-  /// 卡片里可用宽度有限，DropdownButton 在窄容器里弹出的菜单经常渲染不出内容，
-  /// 而且「已失效」提示会把下拉框挤到中间。
+  /// 用户不需要手动挑播放源——列表由「已启用 + 能解析地址 + 支持该数据源平台」
+  /// 自动得出，按插件安装时间升序（先装的在前）。拖动调整后覆盖自动顺序，
+  /// 靠上的优先使用；播放失败自动切到下一个，全部失败才停止播放。
   Widget _buildDataSourcePlaybackRow(
     ThemeColors colors,
     PluginInfo plugin, {
     required WidgetRef ref,
   }) {
     final manager = ref.read(musicSourceManagerProvider);
-    final map = ref.watch(dataSourcePlaybackSourcesProvider);
+    ref.watch(dataSourcePlaybackSourcesProvider);
     ref.watch(pluginSupportedSourcesProvider);
-    final configuredId = map[plugin.id]?.trim() ?? '';
+    ref.watch(pluginSourceStateProvider);
 
-    // 可选的播放源：已安装、能解析播放地址的插件音源（数据源自己不参与）。
-    final options = manager.playbackPluginSources();
-    final available = options.any((source) => source.id == configuredId);
-    final configuredName = configuredId.isEmpty
-        ? null
-        : manager.sourceDisplayName(configuredId);
-    final invalid = configuredId.isNotEmpty && !available;
+    final sources = manager.dataSourcePlaybackSourcesFor(plugin.id);
 
-    final key = _dataSourcePlaybackKeys.putIfAbsent(
-      plugin.id,
-      () => GlobalKey(),
-    );
+    if (sources.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.only(
+          left: AppSpacing.md,
+          right: AppSpacing.md,
+          bottom: AppSpacing.xs,
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.info_outline, size: 14, color: colors.error),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                context.tr('没有可用的同平台播放源，请安装或启用对应的音源插件'),
+                style: TextStyle(fontSize: 12, color: colors.error),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final customized = manager
+        .configuredPlaybackSourcesFor(plugin.id)
+        .isNotEmpty;
 
     return Padding(
       padding: const EdgeInsets.only(
@@ -790,203 +807,212 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          InkWell(
-            key: key,
-            borderRadius: BorderRadius.circular(AppRadius.sm),
-            onTap: () =>
-                _showDataSourcePlaybackMenu(colors, plugin, configuredId),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 6),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.play_circle_outline,
-                    size: 16,
-                    color: colors.textHint,
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    context.tr('设置播放源'),
-                    style: TextStyle(fontSize: 12, color: colors.textSecondary),
-                  ),
-                  const SizedBox(width: AppSpacing.sm),
-                  // Expanded + 右对齐：名字占满剩余宽度，箭头始终贴在最右边，
-                  // 有没有「已失效」提示都不会让下拉框左右乱跑。
-                  Expanded(
+          Row(
+            children: [
+              Icon(
+                Icons.play_circle_outline,
+                size: 16,
+                color: colors.textHint,
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  context.tr('播放源（自动匹配，按优先级）'),
+                  style: TextStyle(fontSize: 12, color: colors.textSecondary),
+                ),
+              ),
+              if (customized)
+                InkWell(
+                  onTap: () => _resetDataSourcePlaybackSources(plugin),
+                  borderRadius: BorderRadius.circular(AppRadius.sm),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
                     child: Text(
-                      configuredName ?? context.tr('未设置'),
-                      textAlign: TextAlign.right,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: configuredId.isEmpty
-                            ? colors.textHint
-                            : (invalid ? colors.error : colors.primary),
-                      ),
+                      context.tr('恢复自动'),
+                      style: TextStyle(fontSize: 11, color: colors.primary),
                     ),
                   ),
-                  Icon(Icons.arrow_drop_down, size: 18, color: colors.textHint),
-                ],
-              ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 2),
+          ReorderableListView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            buildDefaultDragHandles: false,
+            itemCount: sources.length,
+            onReorder: (oldIndex, newIndex) =>
+                _reorderDataSourcePlaybackSources(
+                  plugin,
+                  sources,
+                  oldIndex,
+                  newIndex,
+                ),
+            itemBuilder: (context, index) {
+              final sourceId = sources[index];
+              return _buildPlaybackSourceTile(
+                colors,
+                manager,
+                sourceId: sourceId,
+                index: index,
+                key: ValueKey('${plugin.id}_$sourceId'),
+              );
+            },
+          ),
+          Padding(
+            padding: const EdgeInsets.only(left: 22, top: 2),
+            child: Text(
+              context.tr('拖动调整顺序，靠上优先；全部失败则停止播放'),
+              style: TextStyle(fontSize: 11, color: colors.textHint),
             ),
           ),
-          if (invalid)
-            Padding(
-              padding: const EdgeInsets.only(left: 22, bottom: 2),
-              child: Text(
-                context.tr('已失效，请重新选择播放源'),
-                style: TextStyle(fontSize: 11, color: colors.error),
-              ),
-            ),
         ],
       ),
     );
   }
 
-  /// 弹出「选择播放源」菜单（与发现页切换音源的菜单一致）。
-  Future<void> _showDataSourcePlaybackMenu(
+  /// 单个播放源条目：序号 + 名称 + 登录态 + 可用音质 + 拖动手柄。
+  Widget _buildPlaybackSourceTile(
     ThemeColors colors,
-    PluginInfo plugin,
-    String currentId,
-  ) async {
-    // 播放源列表在点击时才取：刚装完插件时页面不会因为插件引擎重载而重建，
-    // build 时缓存的列表会一直缺新插件。
-    if (ref.read(pluginInitializedProvider).isLoading) {
-      // 安装插件后会整体卸载重载插件引擎，期间列表是残缺的，等重载完成。
-      try {
-        await ref.read(pluginInitializedProvider.future);
-      } catch (_) {
-        // 初始化失败时仍用当前已加载的插件弹菜单。
-      }
-      if (!mounted) return;
-    }
+    MusicSourceManager manager, {
+    required String sourceId,
+    required int index,
+    required Key key,
+  }) {
+    final name = manager.sourceDisplayName(sourceId);
+    final loginState = manager.loginStateForSourceId(sourceId);
+    final qualities = manager.getQualitiesForSourceId(sourceId);
+    final playable = [
+      for (final quality in qualities)
+        if (!manager
+            .getLoginGatedQualities(sourceId)
+            .contains(quality))
+          quality,
+    ];
+    final qualityText = qualities.isEmpty
+        ? context.tr('音质未声明')
+        : (playable.length == qualities.length
+              ? qualities.join(' · ')
+              : '${playable.join(' · ')}（需登录：'
+                    '${qualities.length - playable.length} 档）');
 
-    final anchor =
-        _dataSourcePlaybackKeys[plugin.id]?.currentContext?.findRenderObject()
-            as RenderBox?;
-    if (anchor == null) return;
-    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
-    // 定位矩形取行右下角的一个窄条：left > right 时 showMenu 会向左生长、
-    // 右边缘对齐箭头（整行做锚点时 left < right，菜单会从行左侧弹出）。
-    // top 取行底部，让菜单在行的下方展开，而不是盖住整行。
-    final overlaySize = Offset.zero & overlay.size;
-    final rightEdge = anchor.localToGlobal(
-      Offset(anchor.size.width, anchor.size.height),
-      ancestor: overlay,
-    );
-    final position = RelativeRect.fromRect(
-      Rect.fromPoints(
-        rightEdge - const Offset(1, 0),
-        rightEdge + const Offset(0, 1),
-      ),
-      overlaySize,
-    );
+    final (Color? badgeColor, String? badgeText) = switch (loginState) {
+      SourceLoginState.loggedIn => (colors.primary, context.tr('已登录')),
+      SourceLoginState.loggedOut => (colors.textHint, context.tr('未登录')),
+      SourceLoginState.expired => (colors.error, context.tr('登录已失效')),
+      SourceLoginState.unknown => (null, null),
+    };
 
-    final manager = ref.read(musicSourceManagerProvider);
-    final options = manager.playbackPluginSources();
-    final selected = await showMenu<String>(
-      context: context,
-      position: position,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(AppRadius.md),
-      ),
-      color: colors.surface,
-      elevation: 8,
-      items: [
-        PopupMenuItem<String>(
-          value: '',
-          height: 42,
-          child: Row(
-            children: [
-              Icon(Icons.block, size: 16, color: colors.textHint),
-              const SizedBox(width: AppSpacing.sm),
-              Expanded(
-                child: Text(
-                  context.tr('未设置'),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 13, color: colors.textHint),
-                ),
-              ),
-              if (currentId.isEmpty)
-                Icon(Icons.check, size: 16, color: colors.primary),
-            ],
-          ),
-        ),
-        if (options.isEmpty)
-          PopupMenuItem<String>(
-            enabled: false,
-            height: 42,
+    return Padding(
+      key: key,
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 16,
             child: Text(
-              context.tr('还没有可用的播放源，请先安装能播放的音源插件'),
-              style: TextStyle(fontSize: 12, color: colors.textHint),
+              '${index + 1}',
+              style: TextStyle(fontSize: 11, color: colors.textHint),
             ),
           ),
-        for (final source in options)
-          PopupMenuItem<String>(
-            value: source.id,
-            height: 42,
-            child: Row(
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(
-                  Icons.music_note,
-                  size: 16,
-                  color: source.id == currentId
-                      ? colors.primary
-                      : colors.textHint,
-                ),
-                const SizedBox(width: AppSpacing.sm),
-                Expanded(
-                  child: Text(
-                    manager.sourceDisplayName(source.id),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: source.id == currentId
-                          ? colors.primary
-                          : colors.textPrimary,
-                      fontWeight: source.id == currentId
-                          ? FontWeight.w500
-                          : FontWeight.normal,
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: colors.textPrimary,
+                        ),
+                      ),
                     ),
-                  ),
+                    if (badgeText != null) ...[
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                          vertical: 1,
+                        ),
+                        decoration: BoxDecoration(
+                          color: badgeColor!.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(3),
+                        ),
+                        child: Text(
+                          badgeText,
+                          style: TextStyle(fontSize: 9, color: badgeColor),
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
-                if (source.id == currentId)
-                  Icon(Icons.check, size: 16, color: colors.primary),
+                Text(
+                  qualityText,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 10, color: colors.textHint),
+                ),
               ],
             ),
           ),
-      ],
+          ReorderableDragStartListener(
+            index: index,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+              child: Icon(
+                Icons.drag_handle,
+                size: 16,
+                color: colors.textHint,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
-    if (selected == null) return;
-    if (selected == currentId) return;
-    await _setDataSourcePlaybackSource(plugin, selected);
   }
 
-  Future<void> _setDataSourcePlaybackSource(
+  /// 拖动排序：保存完整顺序（覆盖自动发现结果）。
+  ///
+  /// 保存前过滤掉拖拽期间被卸载 / 关闭的插件，避免把失效 id 写进配置。
+  Future<void> _reorderDataSourcePlaybackSources(
     PluginInfo plugin,
-    String sourceId,
+    List<String> current,
+    int oldIndex,
+    int newIndex,
   ) async {
-    await setDataSourcePlaybackSource(
+    if (oldIndex == newIndex) return;
+    final list = List<String>.from(current);
+    final target = newIndex > oldIndex ? newIndex - 1 : newIndex;
+    final item = list.removeAt(oldIndex);
+    list.insert(target.clamp(0, list.length), item);
+
+    final manager = ref.read(musicSourceManagerProvider);
+    final cleaned = [
+      for (final id in list)
+        if (manager.isPlaybackSourceUsable(id)) id,
+    ];
+    if (cleaned.isEmpty) return;
+    await setDataSourcePlaybackSources(
       ref,
       pluginId: plugin.id,
-      sourceId: sourceId,
+      sourceIds: cleaned,
     );
-    if (!mounted) return;
-    final manager = ref.read(musicSourceManagerProvider);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          sourceId.isEmpty
-              ? context.tr('已清除「${plugin.name}」的播放源')
-              : context.tr(
-                  '「${plugin.name}」的播放源已设为 ${manager.sourceDisplayName(sourceId)}',
-                ),
-        ),
-        duration: const Duration(seconds: 2),
-      ),
+  }
+
+  /// 恢复自动顺序（清掉用户手动排序）。
+  Future<void> _resetDataSourcePlaybackSources(PluginInfo plugin) async {
+    await setDataSourcePlaybackSources(
+      ref,
+      pluginId: plugin.id,
+      sourceIds: const [],
     );
   }
 
@@ -1676,17 +1702,18 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
       // 配置搬到新插件上（并清掉旧的那条），否则更新完数据源就变成「未设置」，
       // 收藏里的歌直接放不了。
       final oldMapping =
-          ref.read(dataSourcePlaybackSourcesProvider)[result.plugin.id] ?? '';
+          ref.read(dataSourcePlaybackSourcesProvider)[result.plugin.id] ??
+          const <String>[];
       if (oldMapping.isNotEmpty) {
-        await setDataSourcePlaybackSource(
+        await setDataSourcePlaybackSources(
           ref,
           pluginId: newPlugin.id,
-          sourceId: oldMapping,
+          sourceIds: oldMapping,
         );
-        await setDataSourcePlaybackSource(
+        await setDataSourcePlaybackSources(
           ref,
           pluginId: result.plugin.id,
-          sourceId: '',
+          sourceIds: const [],
         );
       }
 
