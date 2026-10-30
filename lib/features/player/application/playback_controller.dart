@@ -947,6 +947,10 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     _lastResolveError = null;
     final requestId = ++_currentPlayRequestId;
     final song = state.queue[index];
+    // 切歌时要清掉上一首解析出来的真实时长：actualDuration 只会在拿到新
+    // 时长时被覆盖，不清就会在「新歌时长未知」的窗口里显示上一首的长度
+    // （酷狗等没有时长元数据的歌尤其明显）。同一首歌重播则保留。
+    final previousSongId = state.currentSong?.id;
 
     debugPrint(
       '[PlaybackController] playSongAt: ${song.title}, index=$index, requestId=$requestId',
@@ -996,6 +1000,8 @@ class PlaybackController extends StateNotifier<PlaybackState> {
       currentIndex: index,
       currentSong: song,
       position: Duration.zero,
+      // 换歌 → 时长归零（null 表示沿用，同歌重播不清）。
+      actualDuration: previousSongId == song.id ? null : Duration.zero,
       isLoading: true,
       currentQuality: quality,
       availableQualities: availableQualities,

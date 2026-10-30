@@ -241,7 +241,7 @@ class SidebarPlayer extends ConsumerWidget {
     );
   }
 
-  /// 播放进度条：可点击 / 拖动调整进度；下方显示歌曲总时长。
+  /// 播放进度条：可点击 / 拖动调整进度；拿到时长后下方显示歌曲总时长。
   Widget _buildProgress(
     BuildContext context,
     WidgetRef ref,
@@ -265,13 +265,21 @@ class SidebarPlayer extends ConsumerWidget {
           colors: colors,
           onSeek: (target) => controller.seek(target),
         ),
-        // 歌曲总时长（不再显示剩余时间）
-        Padding(
-          padding: const EdgeInsets.only(right: 2, top: 2),
-          child: Text(
-            _formatDuration(duration),
-            textAlign: TextAlign.right,
-            style: TextStyle(fontSize: 11, color: colors.textHint),
+        // 歌曲总时长（不再显示剩余时间）。
+        // 切换歌曲的加载窗口里时长还没拿到（duration == 0），此时不显示，
+        // 避免露出「--:--」；maintainSize 保留占位，时长到位时布局不会跳。
+        Visibility(
+          visible: duration > Duration.zero,
+          maintainState: true,
+          maintainAnimation: true,
+          maintainSize: true,
+          child: Padding(
+            padding: const EdgeInsets.only(right: 2, top: 2),
+            child: Text(
+              _formatDuration(duration),
+              textAlign: TextAlign.right,
+              style: TextStyle(fontSize: 11, color: colors.textHint),
+            ),
           ),
         ),
       ],

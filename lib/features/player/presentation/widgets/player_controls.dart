@@ -285,13 +285,21 @@ class _PlayerProgressBarState extends State<PlayerProgressBar> {
                     ),
                   ),
                 const Spacer(),
-                Text(
-                  _formatDuration(widget.duration),
-                  style: TextStyle(
-                    fontSize: compact ? 11 : 12,
-                    color: Colors.white.withValues(alpha: 0.6),
-                    fontWeight: FontWeight.w500,
-                    letterSpacing: 1,
+                // 时长还没拿到（切歌加载窗口）时不显示，避免露出「00:00」
+                // 或上一首残留的时长；maintainSize 保留占位，音质标签不位移。
+                Visibility(
+                  visible: widget.duration > Duration.zero,
+                  maintainState: true,
+                  maintainAnimation: true,
+                  maintainSize: true,
+                  child: Text(
+                    _formatDuration(widget.duration),
+                    style: TextStyle(
+                      fontSize: compact ? 11 : 12,
+                      color: Colors.white.withValues(alpha: 0.6),
+                      fontWeight: FontWeight.w500,
+                      letterSpacing: 1,
+                    ),
                   ),
                 ),
               ],
