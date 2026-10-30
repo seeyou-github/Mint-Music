@@ -14,6 +14,7 @@ import '../../../core/platform/media_scanner.dart';
 import '../../../core/platform/permission_helper.dart';
 import '../../../shared/services/cover_fetcher.dart';
 import '../domain/models/download_task.dart';
+import '../domain/services/download_speed_meter.dart';
 import '../domain/services/tag_write_service.dart';
 import '../../player/domain/models/song.dart';
 import '../../player/domain/models/lyric_line.dart';
@@ -67,8 +68,16 @@ class DownloadRepository {
   );
   final List<DownloadTask> _tasks = [];
   final Map<String, CancelToken> _cancelTokens = {};
-  final Map<String, DateTime> _lastProgressTime = {};
-  final Map<String, int> _lastProgressBytes = {};
+
+  /// 每个任务一个速度采样器（按时间窗口取平均，避免速度在「有值 / -」之间闪）。
+  final Map<String, DownloadSpeedMeter> _speedMeters = {};
+
+  /// 每个任务上次把进度推给 UI 的时间，用于节流（见 [_progressEmitIntervalMs]）。
+  final Map<String, DateTime> _lastProgressEmit = {};
+
+  /// 进度推送节流：分片回调可达每秒数百次，全推给 UI 会让整页列表反复重建。
+  static const int _progressEmitIntervalMs = 100;
+
   final StreamController<List<DownloadTask>> _taskController =
       StreamController<List<DownloadTask>>.broadcast();
 
@@ -434,8 +443,8 @@ class DownloadRepository {
     _fileLocks.remove(task.filePath);
     _cancelTokens[taskId]?.cancel();
     _cancelTokens.remove(taskId);
-    _lastProgressTime.remove(taskId);
-    _lastProgressBytes.remove(taskId);
+    _speedMeters.remove(taskId);
+    _lastProgressEmit.remove(taskId);
 
     if (task.status == DownloadStatus.downloading) {
       _activeDownloads--;
@@ -506,8 +515,8 @@ class DownloadRepository {
     if (task.status == DownloadStatus.downloading) {
       _cancelTokens[taskId]?.cancel();
       _cancelTokens.remove(taskId);
-      _lastProgressTime.remove(taskId);
-      _lastProgressBytes.remove(taskId);
+      _speedMeters.remove(taskId);
+      _lastProgressEmit.remove(taskId);
       _activeDownloads--;
 
       final tempFile = File('${task.filePath}.temp');
@@ -535,8 +544,8 @@ class DownloadRepository {
     if (task.status == DownloadStatus.downloading) {
       _cancelTokens[taskId]?.cancel();
       _cancelTokens.remove(taskId);
-      _lastProgressTime.remove(taskId);
-      _lastProgressBytes.remove(taskId);
+      _speedMeters.remove(taskId);
+      _lastProgressEmit.remove(taskId);
       _activeDownloads--;
     }
 
@@ -564,8 +573,8 @@ class DownloadRepository {
       if (task.status == DownloadStatus.downloading) {
         _cancelTokens[task.id]?.cancel();
         _cancelTokens.remove(task.id);
-        _lastProgressTime.remove(task.id);
-        _lastProgressBytes.remove(task.id);
+        _speedMeters.remove(task.id);
+        _lastProgressEmit.remove(task.id);
         _activeDownloads--;
         _initializingTasks.remove(task.id);
         _fileLocks.remove(task.filePath);
@@ -737,8 +746,7 @@ class DownloadRepository {
 
     final cancelToken = CancelToken();
     _cancelTokens[taskId] = cancelToken;
-    _lastProgressTime[taskId] = DateTime.now();
-    _lastProgressBytes[taskId] = 0;
+    _lastProgressEmit[taskId] = DateTime.fromMillisecondsSinceEpoch(0);
 
     try {
       // 检查是否有已下载的部分（支持断点续传）
@@ -749,6 +757,8 @@ class DownloadRepository {
         _tasks[index] = _tasks[index].copyWith(downloadedSize: startByte);
         _emitUpdate();
       }
+      // 采样起点落在续传点上，否则第一个窗口会把已有字节算成新流量。
+      _speedMeters[taskId] = DownloadSpeedMeter(startBytes: startByte);
 
       final headers = <String, String>{};
       if (startByte > 0) {
@@ -765,33 +775,20 @@ class DownloadRepository {
           final totalWithOffset = total > 0 ? total + startByte : 0;
           final receivedWithOffset = received + startByte;
 
-          // 计算速度
           final now = DateTime.now();
-          final lastTime = _lastProgressTime[taskId];
-          final lastBytes = _lastProgressBytes[taskId] ?? 0;
-
-          double speed = 0;
-          int? remainingTime;
-          if (lastTime != null && totalWithOffset > 0) {
-            final elapsed = now.difference(lastTime).inMilliseconds;
-            if (elapsed > 0) {
-              final bytesDiff = receivedWithOffset - lastBytes;
-              speed = bytesDiff * 1000 / elapsed; // bytes/s
-              final remaining = totalWithOffset - receivedWithOffset;
-              if (speed > 0) {
-                remainingTime = (remaining / speed).round();
-              }
-            }
-          }
-
-          _lastProgressTime[taskId] = now;
-          _lastProgressBytes[taskId] = receivedWithOffset;
+          final idx = _tasks.indexWhere((t) => t.id == taskId);
+          // 速度按时间窗口取平均：窗口没到就沿用上一次的值，不会归零，
+          // 界面上也就不会在「有值 / -」之间来回闪。
+          final speed =
+              _speedMeters[taskId]?.sample(receivedWithOffset, now) ?? 0.0;
+          final remainingTime = speed > 0 && totalWithOffset > 0
+              ? ((totalWithOffset - receivedWithOffset) / speed).round()
+              : null;
 
           final progress = totalWithOffset > 0
               ? receivedWithOffset / totalWithOffset
               : 0.0;
 
-          final idx = _tasks.indexWhere((t) => t.id == taskId);
           if (idx != -1) {
             _tasks[idx] = _tasks[idx].copyWith(
               progress: progress.clamp(0.0, 1.0),
@@ -800,7 +797,15 @@ class DownloadRepository {
               speed: speed,
               remainingTime: remainingTime,
             );
-            _emitUpdate();
+            // 数据每片都更新，但最快 100ms 才推一次 UI：分片回调可达每秒
+            // 数百次，全量推送会让整页列表反复重建，进度条看着也在抖。
+            final lastEmit = _lastProgressEmit[taskId];
+            if (lastEmit == null ||
+                now.difference(lastEmit).inMilliseconds >=
+                    _progressEmitIntervalMs) {
+              _lastProgressEmit[taskId] = now;
+              _emitUpdate();
+            }
           }
         },
       );
@@ -1004,8 +1009,8 @@ class DownloadRepository {
       }
     } finally {
       _cancelTokens.remove(taskId);
-      _lastProgressTime.remove(taskId);
-      _lastProgressBytes.remove(taskId);
+      _speedMeters.remove(taskId);
+      _lastProgressEmit.remove(taskId);
     }
   }
 
