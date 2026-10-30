@@ -1,25 +1,70 @@
+import '../../../plugin/domain/plugin_types.dart';
+
+/// 持久化到 `plugins.json` 的音源能力描述。
+///
+/// 字段含义与插件侧声明一一对应，详见 [PluginSourceInfo] 的文档注释
+/// （那里有完整的插件脚本示例）。这里只做持久化，不做业务判断。
 class PluginSource {
   /// 插件声明的音源 id（宿主解析出的键，例如 'wy' / 'qs'）。
   ///
   /// 旧版本保存的插件没有这个字段，此时按名称推导。
   final String? id;
   final String name;
+
+  /// 播放音质（对应插件 `qualitys`）。
   final List<String> qualities;
 
-  const PluginSource({this.id, required this.name, required this.qualities});
+  /// 下载音质（对应插件 `downloadQualitys`）。缺省等于 [qualities]。
+  final List<String> downloadQualities;
+
+  /// 登录门槛（对应插件 `login`）。null = 插件没声明，视为不做限制。
+  final SourceLoginSpec? login;
+
+  /// 需要用户填写的凭据（对应插件 `credentials`）。
+  final List<SourceCredentialSpec> credentials;
+
+  PluginSource({
+    this.id,
+    required this.name,
+    required this.qualities,
+    List<String>? downloadQualities,
+    this.login,
+    this.credentials = const [],
+  }) : downloadQualities =
+           (downloadQualities == null || downloadQualities.isEmpty)
+           ? List<String>.from(qualities)
+           : List<String>.from(downloadQualities);
 
   Map<String, dynamic> toJson() => {
     if (id != null) 'id': id,
     'name': name,
     'qualities': qualities,
+    'downloadQualities': downloadQualities,
+    if (login != null) 'login': login!.toJson(),
+    if (credentials.isNotEmpty)
+      'credentials': credentials.map((e) => e.toJson()).toList(),
   };
 
   factory PluginSource.fromJson(Map<String, dynamic> json) {
+    final qualities = _stringList(json['qualities'] ?? json['qualitys']);
     return PluginSource(
       id: json['id'] as String?,
-      name: json['name'] as String,
-      qualities: List<String>.from(json['qualities'] as List),
+      name: '${json['name'] ?? ''}',
+      qualities: qualities,
+      downloadQualities: _stringList(
+        json['downloadQualities'] ?? json['downloadQualitys'],
+      ),
+      login: SourceLoginSpec.fromJson(json['login']),
+      credentials: SourceCredentialSpec.listFromJson(json['credentials']),
     );
+  }
+
+  static List<String> _stringList(dynamic value) {
+    if (value is! List) return const [];
+    return value
+        .map((e) => '$e'.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
   }
 }
 

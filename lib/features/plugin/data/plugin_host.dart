@@ -2,6 +2,7 @@ import 'dart:convert';
 import '../../player/domain/models/lyric_line.dart';
 import '../platform/js_engine_service.dart';
 import '../domain/plugin_types.dart';
+import '../domain/source_login_state.dart';
 import '../../../shared/utils/display_name_sanitizer.dart';
 
 class PluginHost {
@@ -26,6 +27,15 @@ class PluginHost {
   /// `isDataSource` / `dataSource` 与 `pluginInfo.type === 'dataSource'`）。
   bool _isDataSource = false;
 
+  /// 每个音源最近一次的登录态检测结果（key = 插件内的源 id，如 `wy`）。
+  ///
+  /// 来源优先级：`loginStatus` action 的返回值 > `lx.send('loginStatus')`
+  /// 上报 > 插件 `sources[x].login.state` 静态声明。宿主只缓存，不做推断。
+  final Map<String, SourceLoginState> _loginStates = {};
+
+  /// 每个音源的账号信息（插件上报的昵称之类，可空），仅用于界面展示。
+  final Map<String, String> _loginAccounts = {};
+
   bool _loaded = false;
   bool _apiInjected = false;
 
@@ -40,6 +50,32 @@ class PluginHost {
   List<PluginSourceInfo> get sources => _sources;
   Map<String, List<String>> get sourceActions => _sourceActions;
   Map<String, bool> get capabilities => _capabilities;
+
+  /// 音源的登录态；没检测过、或插件不支持检测时返回 `unknown`。
+  SourceLoginState loginStateOf(String sourceId) =>
+      _loginStates[sourceId] ?? SourceLoginState.unknown;
+
+  /// 插件上报的账号昵称（没上报则为 null）。
+  String? loginAccountOf(String sourceId) => _loginAccounts[sourceId];
+
+  /// 宿主侧写入登录态（例如插件返回 401 后标记 `expired`）。
+  void setLoginState(String sourceId, SourceLoginState state, {String? account}) {
+    _loginStates[sourceId] = state;
+    if (account != null && account.trim().isNotEmpty) {
+      _loginAccounts[sourceId] = account.trim();
+    }
+  }
+
+  /// 把插件 `sources[x].login.state` 的静态声明灌进缓存（不覆盖已有结果）。
+  void _seedLoginStatesFromSources() {
+    for (final source in _sources) {
+      final id = source.id;
+      final login = source.login;
+      if (id == null || login == null) continue;
+      if (login.state == SourceLoginState.unknown) continue;
+      _loginStates.putIfAbsent(id, () => login.state);
+    }
+  }
 
   /// 插件是否声明自己是「数据源」。
   bool get isDataSource => _isDataSource;
@@ -86,8 +122,13 @@ class PluginHost {
   Future<void> loadPlugin(
     String pluginCode, {
     String? originalPluginCode,
+    Map<String, String> userVariables = const {},
   }) async {
     try {
+      // 用户凭据必须在插件脚本执行前注入：不少插件在初始化阶段就会用
+      // cookie 换 token，晚一步注入只能等下次重启生效。
+      _injectUserVariables(userVariables);
+
       if (!_apiInjected) {
         final apiEvalResult = _engine.injectCeruMusicApi();
         if (apiEvalResult.isError) {
@@ -294,6 +335,10 @@ JSON.stringify((function() {
           }
         }
 
+        // 插件静态声明的登录态（运行时检测结果会通过 setLoginState 覆盖）。
+        _seedLoginStatesFromSources();
+        _pullRuntimeLoginStates();
+
         print('[PluginHost] 解析插件信息: ${_pluginInfo?.name ?? "null"}');
         print('[PluginHost] 解析源数量: ${_sources.length}');
         for (final entry in _sourceActions.entries) {
@@ -419,6 +464,11 @@ JSON.stringify((function() {
     return value.toString();
   }
 
+  /// 解析 `module.exports.sources`，同时收集每个源支持的 action。
+  ///
+  /// 兼容 LX 的两种拼写（`qualitys` / `qualities`、`downloadQualitys` /
+  /// `downloadQualities`）；新字段缺失时按 [PluginSourceInfo] 的缺省规则归一，
+  /// **老插件（只有 name + qualitys）的行为完全不变**。
   Map<String, dynamic> _parseSourcesWithActions(dynamic data) {
     final sources = <PluginSourceInfo>[];
     final actions = <String, List<String>>{};
@@ -435,6 +485,14 @@ JSON.stringify((function() {
               _safeStringList(value['qualitys']) ??
               _safeStringList(value['qualities']) ??
               [];
+          final downloadQualitys =
+              _safeStringList(
+                value['downloadQualitys'] ?? value['downloadQualities'],
+              );
+          final login = SourceLoginSpec.fromJson(value['login']);
+          final credentials = SourceCredentialSpec.listFromJson(
+            value['credentials'],
+          );
           final sourceActions =
               (_safeStringList(value['actions']) ?? const ['musicUrl'])
                   .map((e) => e.toLowerCase())
@@ -445,6 +503,9 @@ JSON.stringify((function() {
               id: key.toString(),
               name: name,
               qualities: qualitys,
+              downloadQualities: downloadQualitys,
+              login: login,
+              credentials: credentials,
             ),
           );
           actions[key.toString()] = sourceActions;
@@ -453,6 +514,141 @@ JSON.stringify((function() {
     }
 
     return {'sources': sources, 'actions': actions};
+  }
+
+  /// 读取插件通过 `lx.send('loginStatus', ...)` 主动上报的登录态。
+  ///
+  /// 转换器会把上报写进 `__lxLoginStates`（见 `LxPluginConverter.mockLx`），
+  /// 非 LX 插件或读取失败时静默跳过，不影响插件加载。
+  void _pullRuntimeLoginStates() {
+    try {
+      final raw = _engine.evaluate('''
+JSON.stringify((function() {
+  var states = (typeof __lxLoginStates === 'object' && __lxLoginStates) || {};
+  return states;
+})() || {})
+''');
+      if (raw.isError) return;
+      final text = raw.stringResult;
+      if (text.isEmpty || text == 'undefined' || text == 'null') return;
+      final decoded = jsonDecode(text);
+      if (decoded is! Map) return;
+      decoded.forEach((key, value) {
+        final id = key.toString();
+        if (value is Map) {
+          final state = SourceLoginState.fromRaw(value['state'] ?? value['login']);
+          if (state != SourceLoginState.unknown) _loginStates[id] = state;
+          final account = value['account'] ?? value['nickname'];
+          if (account != null && '$account'.trim().isNotEmpty) {
+            _loginAccounts[id] = '$account'.trim();
+          }
+        } else {
+          final state = SourceLoginState.fromRaw(value);
+          if (state != SourceLoginState.unknown) _loginStates[id] = state;
+        }
+      });
+    } catch (_) {
+      // 插件没走 LX 适配器 / 引擎已释放：静默忽略。
+    }
+  }
+
+  /// 注入 / 更新用户凭据（cookie、api key 等）。
+  ///
+  /// 插件通过 `lx.getUserVariables()` 读取。支持两种时机：
+  /// * 加载前（[loadPlugin] 的 `userVariables` 参数）—— 插件初始化就能拿到；
+  /// * 运行中（用户在插件管理页保存凭据后）—— 立即生效，不必重启 App。
+  void _injectUserVariables(Map<String, String> values) {
+    final json = jsonEncode(_sanitizeUserVariables(values));
+    try {
+      // adapter 里 `var __lxUserVariables = __lxUserVariablesRaw || {}`，
+      // 必须在插件代码执行前写入才会被继承。
+      _engine.evaluate('var __lxUserVariablesRaw = $json;');
+      _engine.evaluate(
+        'if (typeof __lxSetUserVariables === "function") { __lxSetUserVariables($json); }',
+      );
+    } catch (_) {
+      // 引擎不可用时忽略：凭据只影响高音质，不能影响插件加载。
+    }
+  }
+
+  /// 公开的凭据更新入口（运行中保存凭据时调用）。
+  void setUserVariables(Map<String, String> values) =>
+      _injectUserVariables(values);
+
+  /// 清理凭据里的控制字符。
+  ///
+  /// cookie 从浏览器复制过来常带换行 / 零宽字符，直接拼进 JS 字符串字面量会
+  /// 造成语法错误；中文等内容本身是允许的（JSON 会正确转义）。
+  static Map<String, String> _sanitizeUserVariables(Map<String, String> values) {
+    final result = <String, String>{};
+    values.forEach((key, value) {
+      final cleaned = value
+          .replaceAll('\r', '')
+          .replaceAll('\n', '')
+          .replaceAll('\u0000', '')
+          .trim();
+      if (key.trim().isEmpty || cleaned.isEmpty) return;
+      result[key.trim()] = cleaned;
+    });
+    return result;
+  }
+
+  /// 主动向插件查询登录态（只在 `actions` 含 `loginStatus` 时可用）。
+  ///
+  /// 返回 true 表示拿到了明确状态（`loggedIn` / `loggedOut` / `expired`），
+  /// false 表示插件不支持、超时或返回了无法识别的值 —— 此时登录态保持
+  /// [unknown]，**绝不影响播放**，也不弹错误。
+  Future<bool> requestLoginStatus(
+    String sourceId, {
+    Duration timeout = const Duration(seconds: 5),
+  }) async {
+    if (!_loaded) return false;
+    final actions = _sourceActions[sourceId] ?? const <String>[];
+    if (!actions.contains('loginstatus')) return false;
+    try {
+      final result = await _engine.callPluginMethod(
+        "module.exports.requestLoginStatus('${_escapeForJs(sourceId)}')",
+        timeout: timeout,
+      );
+      if (result == null || result.isEmpty) return false;
+      final decoded = _decodeMaybeJson(result);
+      if (decoded == null) return false;
+      if (decoded is Map) {
+        final state = SourceLoginState.fromRaw(
+          decoded['state'] ?? decoded['status'] ?? decoded['login'],
+        );
+        if (state == SourceLoginState.unknown) return false;
+        final account = decoded['account'] ?? decoded['nickname'];
+        setLoginState(
+          sourceId,
+          state,
+          account: account == null ? null : '$account',
+        );
+        return true;
+      }
+      final state = SourceLoginState.fromRaw(decoded);
+      if (state == SourceLoginState.unknown) return false;
+      setLoginState(sourceId, state);
+      return true;
+    } catch (_) {
+      // 超时 / 插件抛错：保持 unknown。
+      return false;
+    }
+  }
+
+  /// 尝试把 JS 返回的字符串解析成 JSON，失败时原样返回。
+  static dynamic _decodeMaybeJson(String value) {
+    final text = value.trim();
+    if (text.isEmpty) return null;
+    if (text.startsWith('{') || text.startsWith('[') || text == 'true' ||
+        text == 'false' || text.startsWith('"')) {
+      try {
+        return jsonDecode(text);
+      } catch (_) {
+        return text;
+      }
+    }
+    return text;
   }
 
   /// Safely convert a dynamic value to List<String>.

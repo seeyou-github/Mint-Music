@@ -1,29 +1,274 @@
 import 'source_id_mapping.dart';
+import 'source_login_state.dart';
 
+/// 插件声明的「一个音源」的完整能力描述（对应 LX 脚本 `sources[id]`）。
+///
+/// 这个类是插件协议的唯一权威定义：**新增插件请照下面的字段填写**，
+/// 字段缺失时一律按「向后兼容」处理（见每个字段的缺省说明）。
+///
+/// ## 插件侧完整声明示例
+///
+/// ```js
+/// const sources = {
+///   wy: {
+///     // ---- 必填 ----
+///     name: '网易云音乐',
+///     type: 'music',
+///
+///     // ---- 能力声明 ----
+///     // 插件支持哪些 action。musicUrl 是播放/下载必需，其余按需。
+///     actions: ['musicUrl', 'musicSearch', 'lyric', 'loginStatus'],
+///
+///     // ---- 音质声明（本协议的重点）----
+///     // 播放音质：界面「音质切换」菜单只显示这里列出的档位，顺序即菜单顺序。
+///     // 键名语义固定：'64k' | '128k' | '192k' | '320k' | 'flac' | 'flac24bit'
+///     //             | 'hires' | 'atmos' | 'master' | '24bit' | 'sq' | 'dsd'
+///     // 这里写的档位必须是「插件真的能给出」的档位，不要为了好看全列上：
+///     // 宿主会按这个列表让用户选，插件返回的音质低于所选档位会被拒绝。
+///     qualitys: ['128k', '320k', 'flac', 'flac24bit'],
+///
+///     // 下载音质：下载菜单与「下载音质」校验用这个列表。
+///     // 缺省（不写）时等于 qualitys，老插件行为不变。
+///     downloadQualitys: ['128k', '320k', 'flac'],
+///
+///     // 登录门槛：高音质依赖登录态时声明，宿主据此把不可用档位置灰。
+///     login: {
+///       required: true,                  // 高音质是否依赖登录
+///       freeQualitys: ['128k', '320k'],  // 未登录时仍真实可用的档位
+///       state: 'loggedOut',              // 静态初始态，会被运行时检测覆盖
+///     },
+///
+///     // 需要用户填写的凭据（cookie / api key / 卡密…）。
+///     // 宿主会在插件管理页渲染输入框，并通过 lx.getUserVariables() 注入。
+///     credentials: [
+///       { key: 'MUSIC_U', label: 'MUSIC_U', secret: true,
+///         hint: '浏览器登录 music.163.com → F12 → Cookie 里复制 MUSIC_U' },
+///     ],
+///   },
+/// };
+/// ```
+///
+/// ## 插件侧读取凭据
+///
+/// ```js
+/// const vars = (typeof lx.getUserVariables === 'function' && lx.getUserVariables()) || {};
+/// const cookie = vars.MUSIC_U || '';
+/// ```
 class PluginSourceInfo {
   /// 插件声明的音源 id（宿主解析出的键，例如 'wy' / 'qs'）。
   final String? id;
   final String name;
+
+  /// 播放音质（对应插件 `qualitys` / `qualities` / `types`）。
+  ///
+  /// 顺序即音质菜单顺序；为空表示「插件没声明」，此时界面回退到平台默认
+  /// 档位并标注未声明，不会假装插件支持全部音质。
   final List<String> qualities;
 
-  const PluginSourceInfo({
+  /// 下载音质（对应插件 `downloadQualitys`，缺省 = [qualities]）。
+  ///
+  /// 很多站点「能播 320k、但下载只给 128k」，声明后就只在下载菜单显示
+  /// 真正能下的档位。
+  final List<String> downloadQualities;
+
+  /// 登录要求（对应插件 `login`）。null = 插件没声明，视为不做登录限制。
+  final SourceLoginSpec? login;
+
+  /// 需要用户填写的凭据（对应插件 `credentials`）。
+  final List<SourceCredentialSpec> credentials;
+
+  PluginSourceInfo({
     this.id,
     required this.name,
     required this.qualities,
-  });
+    List<String>? downloadQualities,
+    this.login,
+    this.credentials = const [],
+  }) : downloadQualities = _normalizeDownloadQualities(
+         downloadQualities,
+         qualities,
+       );
+
+  /// 下载音质缺省时跟随播放音质。
+  static List<String> _normalizeDownloadQualities(
+    List<String>? download,
+    List<String> qualities,
+  ) {
+    if (download == null || download.isEmpty) return List<String>.from(qualities);
+    return List<String>.from(download);
+  }
 
   Map<String, dynamic> toJson() => {
     if (id != null) 'id': id,
     'name': name,
     'qualities': qualities,
+    'downloadQualities': downloadQualities,
+    if (login != null) 'login': login!.toJson(),
+    if (credentials.isNotEmpty)
+      'credentials': credentials.map((e) => e.toJson()).toList(),
   };
 
   factory PluginSourceInfo.fromJson(Map<String, dynamic> json) {
+    final qualities = _stringList(json['qualities'] ?? json['qualitys']);
     return PluginSourceInfo(
       id: json['id'] as String?,
-      name: json['name'] as String,
-      qualities: List<String>.from(json['qualities'] as List),
+      name: '${json['name'] ?? ''}',
+      qualities: qualities,
+      downloadQualities: _stringListOrNull(
+        json['downloadQualities'] ?? json['downloadQualitys'],
+      ),
+      login: SourceLoginSpec.fromJson(json['login']),
+      credentials: SourceCredentialSpec.listFromJson(json['credentials']),
     );
+  }
+
+  static List<String> _stringList(dynamic value) =>
+      _stringListOrNull(value) ?? const [];
+
+  static List<String>? _stringListOrNull(dynamic value) {
+    if (value is! List) return null;
+    final result = value
+        .map((e) => '$e'.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+    return result;
+  }
+
+  PluginSourceInfo copyWith({
+    String? id,
+    String? name,
+    List<String>? qualities,
+    List<String>? downloadQualities,
+    SourceLoginSpec? login,
+    List<SourceCredentialSpec>? credentials,
+  }) {
+    return PluginSourceInfo(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      qualities: qualities ?? this.qualities,
+      downloadQualities: downloadQualities ?? this.downloadQualities,
+      login: login ?? this.login,
+      credentials: credentials ?? this.credentials,
+    );
+  }
+}
+
+/// 音源的登录门槛声明（对应插件 `login` 字段）。
+///
+/// 语义：**未登录时只有 [freeQualitys] 里的档位是真实可用的**，其余档位在
+/// 界面上显示但置灰（点击提示去填凭据），宿主也不会把请求发出去。
+///
+/// 缺省行为：
+/// * 插件不写 `login` → 宿主视为「不做登录限制」，所有声明档位都显示可用；
+/// * 写了 `login.required` 但没写 `freeQualitys` / 为空 → 视为「所有档位
+///   都需要登录」。
+class SourceLoginSpec {
+  /// 高音质是否依赖登录（false 表示声明了凭据但只是可选增强）。
+  final bool required;
+
+  /// 未登录（含登录失效）时仍然可用的档位。
+  final List<String> freeQualitys;
+
+  /// 插件在初始化时声明的静态登录态；运行时检测结果会覆盖它。
+  final SourceLoginState state;
+
+  const SourceLoginSpec({
+    this.required = false,
+    this.freeQualitys = const [],
+    this.state = SourceLoginState.unknown,
+  });
+
+  /// 未登录时可用的档位是否包含 [quality]。
+  bool freeAllows(String quality) => freeQualitys.contains(quality);
+
+  Map<String, dynamic> toJson() => {
+    'required': required,
+    'freeQualitys': freeQualitys,
+    'state': state.storageKey,
+  };
+
+  static SourceLoginSpec? fromJson(dynamic value) {
+    if (value == null) return null;
+    // 允许简写：login: true → 有登录门槛但没说哪些档位免费（视为全部需要）。
+    if (value is bool) return SourceLoginSpec(required: value);
+    if (value is! Map) return null;
+    return SourceLoginSpec(
+      required: value['required'] == true,
+      freeQualitys:
+          PluginSourceInfo._stringListOrNull(
+            value['freeQualitys'] ?? value['freeQualities'],
+          ) ??
+          const [],
+      state: SourceLoginState.fromRaw(value['state']),
+    );
+  }
+
+  SourceLoginSpec copyWith({
+    bool? required,
+    List<String>? freeQualitys,
+    SourceLoginState? state,
+  }) {
+    return SourceLoginSpec(
+      required: required ?? this.required,
+      freeQualitys: freeQualitys ?? this.freeQualitys,
+      state: state ?? this.state,
+    );
+  }
+}
+
+/// 一个需要用户填写的凭据（对应插件 `credentials[i]`）。
+///
+/// 宿主把用户填的值通过 `lx.getUserVariables()` 注入给插件，插件用
+/// `vars[key]` 读取。凭据存放在设置里（key `plugin_credentials`），
+/// **会随备份文件一起导出**，因此 `secret` 为 true 的输入框要做遮挡。
+class SourceCredentialSpec {
+  /// 注入给插件的变量名（插件里 `vars[key]`），例如 `'MUSIC_U'`。
+  final String key;
+
+  /// 界面上显示的标题，缺省用 [key]。
+  final String label;
+
+  /// 是否敏感（cookie / token）：输入框遮挡显示，日志里不打印值。
+  final bool secret;
+
+  /// 填写说明（去哪里复制、格式是什么）。
+  final String? hint;
+
+  const SourceCredentialSpec({
+    required this.key,
+    String? label,
+    this.secret = true,
+    this.hint,
+  }) : label = label ?? key;
+
+  Map<String, dynamic> toJson() => {
+    'key': key,
+    'label': label,
+    'secret': secret,
+    if (hint != null) 'hint': hint,
+  };
+
+  static SourceCredentialSpec? fromJson(dynamic value) {
+    if (value is! Map) return null;
+    final key = '${value['key'] ?? ''}'.trim();
+    if (key.isEmpty) return null;
+    return SourceCredentialSpec(
+      key: key,
+      label: '${value['label'] ?? key}',
+      secret: value['secret'] != false,
+      hint: value['hint'] == null ? null : '${value['hint']}',
+    );
+  }
+
+  /// 解析 `credentials` 数组，非法项直接丢弃（不抛异常）。
+  static List<SourceCredentialSpec> listFromJson(dynamic value) {
+    if (value is! List) return const [];
+    final result = <SourceCredentialSpec>[];
+    for (final item in value) {
+      final spec = fromJson(item);
+      if (spec != null) result.add(spec);
+    }
+    return result;
   }
 }
 

@@ -13,8 +13,10 @@ import '../../../core/storage/app_preferences.dart';
 import '../platform/js_engine_service.dart';
 import '../data/plugin_host.dart';
 import '../data/lx_plugin_converter.dart';
+import '../data/plugin_credential_store.dart';
 import '../../../shared/utils/ico_converter.dart';
 import '../domain/source_id_mapping.dart';
+import '../domain/source_login_state.dart';
 import '../../settings/domain/models/plugin_info.dart';
 
 /// 无法自动识别插件类型。
@@ -108,6 +110,13 @@ class PluginService {
   final Map<String, String> _pluginTypes = {};
   List<String> _pluginOrder = [];
 
+  /// 已安装插件的元数据缓存（[loadPlugins] / [savePlugins] 时同步）。
+  ///
+  /// 数据源播放源列表需要按「安装时间」排序，而它是在 Provider 里同步计算的，
+  /// 所以这里留一份内存快照，避免每次都要 await。
+  List<PluginInfo> _pluginInfos = const [];
+  List<PluginInfo> get pluginInfos => _pluginInfos;
+
   /// 插件自动重载的冷却时间（同一个插件两次重载的最小间隔）。
   static const Duration _reloadCooldown = Duration(seconds: 30);
 
@@ -152,11 +161,17 @@ class PluginService {
   Future<List<PluginInfo>> loadPlugins() async {
     final prefs = await AppPreferences.getInstance();
     final data = prefs.getString(_prefsKey);
-    if (data == null) return [];
+    if (data == null) {
+      _pluginInfos = const [];
+      return [];
+    }
     final list = jsonDecode(data) as List<dynamic>;
-    return list
+    final plugins = list
         .map((e) => PluginInfo.fromJson(e as Map<String, dynamic>))
         .toList();
+    // 缓存一份，供「数据源播放源自动发现」这类需要同步读取安装时间的场景。
+    _pluginInfos = plugins;
+    return plugins;
   }
 
   Future<void> savePlugins(List<PluginInfo> plugins) async {
@@ -164,6 +179,7 @@ class PluginService {
     final data = jsonEncode(plugins.map((p) => p.toJson()).toList());
     await prefs.setString(_prefsKey, data);
     _pluginOrder = plugins.map((plugin) => plugin.id).toList();
+    _pluginInfos = plugins;
   }
 
   Future<List<PluginInfo>> reorderPlugins(List<String> orderedIds) async {
@@ -578,7 +594,14 @@ class PluginService {
 
       final sources = host.sources
           .map(
-            (s) => PluginSource(id: s.id, name: s.name, qualities: s.qualities),
+            (s) => PluginSource(
+              id: s.id,
+              name: s.name,
+              qualities: s.qualities,
+              downloadQualities: s.downloadQualities,
+              login: s.login,
+              credentials: s.credentials,
+            ),
           )
           .toList();
 
@@ -819,6 +842,9 @@ class PluginService {
       await host.loadPlugin(
         prepared.code,
         originalPluginCode: prepared.originalCode,
+        // 用户填过的凭据要在脚本执行前注入（插件初始化阶段就可能用 cookie
+        // 换 token，晚注入只能等下次重启生效）。
+        userVariables: await PluginCredentialStore.load(plugin.id),
       );
       return PluginTestRuntime._isolated(host, engine);
     } on StackOverflowError catch (e) {
@@ -857,6 +883,8 @@ class PluginService {
 
     plugins.removeWhere((p) => p.id == id);
     await savePlugins(plugins);
+    // 凭据属于插件私有数据，插件卸载后一并清掉（重装需要重新填）。
+    await PluginCredentialStore.remove(id);
   }
 
   Future<void> togglePlugin(String id, bool isEnabled) async {
@@ -962,6 +990,9 @@ class PluginService {
       await host.loadPlugin(
         prepared.code,
         originalPluginCode: prepared.originalCode,
+        // 用户填过的凭据要在脚本执行前注入（插件初始化阶段就可能用 cookie
+        // 换 token，晚注入只能等下次重启生效）。
+        userVariables: await PluginCredentialStore.load(plugin.id),
       );
       _loadedPlugins[plugin.id] = host;
       _engines[plugin.id] = engine;
@@ -1121,6 +1152,60 @@ class PluginService {
 
   /// 这个插件是不是落雪（LX）格式。
   bool isLxPlugin(String pluginId) => _pluginTypes[pluginId] == 'lx';
+
+  /// 插件的安装时间（数据源播放源列表按它升序排列）；插件不存在返回 null。
+  DateTime? installTimeOf(String pluginId) {
+    for (final plugin in _pluginInfos) {
+      if (plugin.id == pluginId) return plugin.installTime;
+    }
+    return null;
+  }
+
+  /// 已安装插件的元数据（可能为空：还没加载过列表）。
+  PluginInfo? pluginInfoOf(String pluginId) {
+    for (final plugin in _pluginInfos) {
+      if (plugin.id == pluginId) return plugin;
+    }
+    return null;
+  }
+
+  /// 读取某个插件的凭据。
+  Future<Map<String, String>> loadCredentials(String pluginId) =>
+      PluginCredentialStore.load(pluginId);
+
+  /// 保存凭据并立即注入正在运行的插件（不必重启 App）。
+  ///
+  /// 注入之后插件内部的 `lx.getUserVariables()` 立刻能读到新值；下一次
+  /// `musicUrl` 请求就会用新 cookie。是否需要重新检测登录态由调用方决定。
+  Future<void> saveCredentials(
+    String pluginId,
+    Map<String, String> values,
+  ) async {
+    await PluginCredentialStore.save(pluginId, values);
+    _loadedPlugins[pluginId]?.setUserVariables(values);
+  }
+
+  /// 主动查询某个插件的登录态（只有声明了 `loginStatus` action 才有效）。
+  ///
+  /// 插件不支持时返回 `unknown`，不会抛异常。
+  Future<SourceLoginState> requestLoginStatus(
+    String pluginId,
+    String sourceId,
+  ) async {
+    final host = _loadedPlugins[pluginId];
+    if (host == null) return SourceLoginState.unknown;
+    await host.requestLoginStatus(sourceId);
+    return host.loginStateOf(sourceId);
+  }
+
+  /// 插件当前的登录态（可能来自静态声明 / 运行时上报 / 主动检测）。
+  SourceLoginState loginStateOf(String pluginId, String sourceId) =>
+      _loadedPlugins[pluginId]?.loginStateOf(sourceId) ??
+      SourceLoginState.unknown;
+
+  /// 插件上报的账号昵称。
+  String? loginAccountOf(String pluginId, String sourceId) =>
+      _loadedPlugins[pluginId]?.loginAccountOf(sourceId);
 
   List<PluginHost> get enabledPlugins {
     final faultedIds = _loadedPlugins.entries

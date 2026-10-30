@@ -66,6 +66,43 @@ var __lxPlatformNames = $platformNamesJson;
 var sources = {};
 var sourceActions = {};
 
+// 用户为插件填写的凭据（cookie / api key / 卡密），由宿主在执行插件代码前
+// 通过全局 `__lxUserVariablesRaw` 预注入；插件用 lx.getUserVariables() 读取。
+// 里面是敏感信息，不要写进日志、也不要塞进 rawScript。
+var __lxUserVariables = (typeof __lxUserVariablesRaw !== 'undefined' && __lxUserVariablesRaw) || {};
+
+// 插件通过 lx.send('loginStatus', ...) 主动上报的登录态，宿主加载完成后读走。
+var __lxLoginStates = {};
+
+function __lxSetUserVariables(values) {
+  __lxUserVariables = {};
+  if (values && typeof values === 'object') {
+    Object.keys(values).forEach(function(key) {
+      var value = values[key];
+      if (value == null) return;
+      __lxUserVariables[key] = String(value);
+    });
+  }
+  // currentScriptInfo 与 getUserVariables() 必须指向同一份数据，
+  // 否则老插件在 settings 变更后读到的还是旧凭据。
+  try {
+    if (typeof mockLx === 'object' && mockLx.currentScriptInfo) {
+      mockLx.currentScriptInfo.userVariables = __lxUserVariables;
+    }
+  } catch(e) {}
+}
+
+function __lxRecordLoginState(data) {
+  if (!data || typeof data !== 'object') return;
+  var sourceId = data.source || data.sourceId;
+  var state = data.state || data.status || data.login;
+  if (!sourceId || !state) return;
+  __lxLoginStates[String(sourceId)] = {
+    state: String(state),
+    account: data.account || data.nickname || ''
+  };
+}
+
 function __lxPlatformName(sourceId) {
   if (__lxPlatformNames[sourceId]) return __lxPlatformNames[sourceId];
   return sourceId;
@@ -145,13 +182,20 @@ function __lxNormalizeSources(data) {
     var item = nextSources[sourceId] || {};
     var qualities = item.qualitys || item.qualities || item.types || ['128k', '320k', 'flac'];
     var actions = item.actions || ['musicUrl'];
-    sources[sourceId] = {
+    var normalized = {
       name: item.name || __lxPlatformName(sourceId),
       type: item.type || 'music',
       qualitys: qualities,
       qualities: qualities,
       actions: actions
     };
+    // 协议扩展字段（downloadQualitys / login / credentials）必须原样透传给
+    // 宿主，否则宿主读不到「下载音质」和「登录门槛」，界面会退回显示全部档位。
+    var downloadQualitys = item.downloadQualitys || item.downloadQualities;
+    if (downloadQualitys) normalized.downloadQualitys = downloadQualitys;
+    if (item.login && typeof item.login === 'object') normalized.login = item.login;
+    if (item.credentials && item.credentials.length) normalized.credentials = item.credentials;
+    sources[sourceId] = normalized;
      sourceActions[sourceId] = (actions.slice ? actions.slice() : ['musicUrl'])
        .map(function(action) { return String(action).toLowerCase(); });
   });
@@ -410,6 +454,11 @@ function __lxRequest(url, options, callback) {
       }
       return Promise.resolve();
     }
+    // 登录态上报：插件在登录成功 / 失效时主动推，宿主加载后会读走。
+    if (normalizedEvent === 'loginstatus' || normalizedEvent === 'login') {
+      __lxRecordLoginState(data);
+      return Promise.resolve();
+    }
     return Promise.reject(new Error('The event is not supported: ' + eventName));
   },
   on: function(eventName, handler) {
@@ -448,8 +497,13 @@ function __lxRequest(url, options, callback) {
     author: pluginInfo.author,
     description: pluginInfo.description || '',
     homepage: pluginInfo.homepage || '',
-    rawScript: originalPluginCode
+    rawScript: originalPluginCode,
+    // 用户凭据：与 lx.getUserVariables() 同一份，老写法读这里也能拿到。
+    userVariables: __lxUserVariables
   },
+  // 用户为插件填写的凭据（cookie / api key / 卡密）。没填时返回空对象，
+  // 插件侧 `vars.MUSIC_U || ''` 可安全使用。
+  getUserVariables: function() { return __lxUserVariables || {}; },
   // Match the API contract used by CeruMusic and LX Music desktop plugins.
   version: '2.0.0',
   apiVersion: '2.0.0',
@@ -496,6 +550,22 @@ function search(source, keyword, page, limit) {
   return __lxCallRequest(payload).then(function(result) { return __lxNormalizeSearchResult(result, limit); }, function() {
     return { list: [], total: 0, isEnd: true };
   });
+}
+
+// 主动查询登录态：只有插件在 actions 里声明了 loginStatus 才会真正发请求，
+// 其余情况返回 unknown（宿主据此不显示登录徽标，也不会置灰任何音质）。
+function requestLoginStatus(source) {
+  if (!__lxHasAction(source, 'loginStatus')) {
+    return Promise.resolve({ state: 'unknown' });
+  }
+  return __lxCallRequest({ source: source, action: 'loginStatus', info: {} })
+    .then(function(result) {
+      if (result && typeof result === 'object') return result;
+      return { state: result == null ? 'unknown' : String(result) };
+    }, function(error) {
+      // 超时 / 插件抛错：返回 unknown，不影响播放。
+      return { state: 'unknown', message: __lxSafeError(error) };
+    });
 }
 
 function getPic(source, musicInfo) {
@@ -622,6 +692,10 @@ module.exports = {
   getPic: getPic,
   getLyric: getLyric,
   getLyricResult: getLyricResult,
+  // 供宿主主动查询登录态（插件没声明 loginStatus action 时返回 unknown）。
+  requestLoginStatus: requestLoginStatus,
+  // 宿主注入用户凭据（cookie / api key）；插件通过 lx.getUserVariables() 读取。
+  setUserVariables: __lxSetUserVariables,
   // 插件是否已经上报过 inited 事件（宿主据此判断还要不要再等音源列表）。
   isInited: function() { return __lxInited; }
 };
