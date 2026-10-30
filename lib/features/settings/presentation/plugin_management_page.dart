@@ -12,6 +12,7 @@ import '../../../../core/theme/theme_provider.dart';
 import '../../plugin/data/plugin_service.dart';
 import '../../plugin/application/music_source_manager.dart';
 import '../../plugin/domain/plugin_source_states.dart';
+import '../../plugin/domain/plugin_types.dart';
 import '../../plugin/domain/source_login_state.dart';
 import '../../plugin/domain/source_id_mapping.dart';
 import '../application/plugin_providers.dart';
@@ -1285,6 +1286,8 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
               ),
             ),
           ],
+          // 登录 / 凭据：插件声明了 credentials 或 login 时才出现。
+          _PluginCredentialSection(plugin: plugin, colors: colors),
           const SizedBox(height: AppSpacing.sm),
           ?footer,
           Divider(height: 1, color: colors.divider),
@@ -2187,6 +2190,279 @@ class _AddPluginSheetState extends State<_AddPluginSheet> {
         content: Text(PluginManagementPage.pluginErrorMessage(error)),
         backgroundColor: widget.colors.error,
         behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+}
+
+/// 插件「登录 / 凭据」区（需求 1）。
+///
+/// 只有在插件声明了 `credentials`（要用户填的 cookie / api key / 卡密）或
+/// `login`（高音质需要登录）时才渲染。字段完全由插件声明驱动：
+///
+/// ```js
+/// credentials: [{ key: 'MUSIC_U', label: 'MUSIC_U', secret: true, hint: '…' }]
+/// ```
+///
+/// 保存后立刻通过 `lx.getUserVariables()` 注入正在运行的插件（不用重启 App），
+/// 并自动检测一次登录态。
+class _PluginCredentialSection extends ConsumerStatefulWidget {
+  const _PluginCredentialSection({required this.plugin, required this.colors});
+
+  final PluginInfo plugin;
+  final ThemeColors colors;
+
+  @override
+  ConsumerState<_PluginCredentialSection> createState() =>
+      _PluginCredentialSectionState();
+}
+
+class _PluginCredentialSectionState
+    extends ConsumerState<_PluginCredentialSection> {
+  final Map<String, TextEditingController> _controllers = {};
+  bool _loading = true;
+  bool _saving = false;
+  bool _checking = false;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_load());
+  }
+
+  @override
+  void dispose() {
+    for (final controller in _controllers.values) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    final values = await ref
+        .read(pluginServiceProvider)
+        .loadCredentials(widget.plugin.id);
+    if (!mounted) return;
+    setState(() {
+      values.forEach((key, value) {
+        _controllers
+                .putIfAbsent(key, () => TextEditingController())
+                .text =
+            value;
+      });
+      _loading = false;
+    });
+  }
+
+  /// 这个插件所有音源声明的凭据字段（按 key 去重）。
+  ///
+  /// 优先读运行时声明（插件更新后立即生效），退回持久化的元数据。
+  List<SourceCredentialSpec> get _specs {
+    final manager = ref.read(musicSourceManagerProvider);
+    final result = <String, SourceCredentialSpec>{};
+    for (final source in widget.plugin.supportedSources) {
+      final key = source.id ?? SourceIdMapping.deriveId(source.name);
+      final sourceId = '$key@${widget.plugin.id}';
+      var declared = manager.credentialsForSource(sourceId);
+      if (declared.isEmpty) declared = source.credentials;
+      for (final spec in declared) {
+        result.putIfAbsent(spec.key, () => spec);
+      }
+    }
+    return result.values.toList();
+  }
+
+  /// 是否有音源声明「高音质需要登录」。
+  bool get _needsLogin =>
+      widget.plugin.supportedSources.any((s) => s.login?.required == true);
+
+  Future<void> _save() async {
+    final values = <String, String>{};
+    for (final spec in _specs) {
+      final text = _controllers[spec.key]?.text.trim() ?? '';
+      if (text.isNotEmpty) values[spec.key] = text;
+    }
+    setState(() => _saving = true);
+    try {
+      await ref
+          .read(pluginServiceProvider)
+          .saveCredentials(widget.plugin.id, values);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            values.isEmpty
+                ? context.tr('已清空凭据')
+                : context.tr('凭据已保存，并已重新注入插件'),
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      await _checkLoginStatus();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(context.tr('保存凭据失败：$e')),
+          backgroundColor: widget.colors.error,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  /// 主动检测登录态（只有把 `loginStatus` 写进 actions 的插件能真正检测）。
+  Future<void> _checkLoginStatus() async {
+    setState(() => _checking = true);
+    try {
+      final service = ref.read(pluginServiceProvider);
+      for (final source in widget.plugin.supportedSources) {
+        final key = source.id ?? SourceIdMapping.deriveId(source.name);
+        await service.requestLoginStatus(widget.plugin.id, key);
+      }
+    } finally {
+      if (mounted) setState(() => _checking = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = widget.colors;
+    final specs = _specs;
+    if (!_needsLogin && specs.isEmpty) return const SizedBox.shrink();
+
+    // 登录态变化（自动检测 / 手动检测）时重建，刷出新徽标。
+    ref.watch(pluginLoginStateRevisionProvider);
+    final service = ref.read(pluginServiceProvider);
+    final states = <String, SourceLoginState>{
+      for (final source in widget.plugin.supportedSources)
+        if (source.login != null || source.credentials.isNotEmpty)
+          (source.id ?? SourceIdMapping.deriveId(source.name)): service
+              .loginStateOf(
+                widget.plugin.id,
+                source.id ?? SourceIdMapping.deriveId(source.name),
+              ),
+    };
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.md,
+        AppSpacing.sm,
+        AppSpacing.md,
+        0,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.key_outlined, size: 14, color: colors.textHint),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(
+                  context.tr('登录 / 凭据'),
+                  style: TextStyle(fontSize: 11, color: colors.textHint),
+                ),
+              ),
+              if (_checking)
+                const SizedBox(
+                  width: 12,
+                  height: 12,
+                  child: CircularProgressIndicator(strokeWidth: 1.6),
+                )
+              else
+                GestureDetector(
+                  onTap: _checkLoginStatus,
+                  child: Text(
+                    context.tr('检测登录态'),
+                    style: TextStyle(fontSize: 11, color: colors.primary),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 2),
+          for (final entry in states.entries)
+            if (entry.value != SourceLoginState.unknown)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 2),
+                child: Text(
+                  '${SourceIdMapping.idToName[entry.key] ?? entry.key}：'
+                  '${entry.value.label}',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: entry.value == SourceLoginState.loggedIn
+                        ? colors.primary
+                        : (entry.value == SourceLoginState.expired
+                              ? colors.error
+                              : colors.textHint),
+                  ),
+                ),
+              ),
+          if (_loading)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Text(
+                context.tr('正在读取凭据…'),
+                style: TextStyle(fontSize: 11, color: colors.textHint),
+              ),
+            )
+          else ...[
+            for (final spec in specs) ...[
+              const SizedBox(height: 6),
+              TextField(
+                controller: _controllers.putIfAbsent(
+                  spec.key,
+                  () => TextEditingController(),
+                ),
+                obscureText: spec.secret,
+                style: TextStyle(fontSize: 12, color: colors.textPrimary),
+                decoration: InputDecoration(
+                  isDense: true,
+                  labelText: spec.label,
+                  labelStyle: TextStyle(fontSize: 12, color: colors.textHint),
+                  helperText: spec.hint,
+                  helperMaxLines: 2,
+                  helperStyle: TextStyle(
+                    fontSize: 10,
+                    color: colors.textHint,
+                  ),
+                  border: const OutlineInputBorder(),
+                ),
+              ),
+            ],
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    context.tr('凭据会包含在备份文件中，请勿分享备份'),
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: colors.textHint.withValues(alpha: 0.8),
+                    ),
+                  ),
+                ),
+                TextButton(
+                  onPressed: _saving ? null : _save,
+                  style: TextButton.styleFrom(
+                    minimumSize: Size.zero,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 4,
+                    ),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  child: Text(
+                    _saving ? context.tr('保存中…') : context.tr('保存'),
+                    style: TextStyle(fontSize: 12, color: colors.primary),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
       ),
     );
   }

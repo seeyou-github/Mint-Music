@@ -929,6 +929,9 @@ class MusicSourceManager {
     return const {};
   }
 
+  /// 插件 id 是否还对得上一个已启用的插件（卸载 / 重装会换新 id）。
+  bool isPluginAlive(String pluginId) => _isPluginIdLive(pluginId);
+
   /// 播放源是否还能用：插件活着，且这个源的 action 里有 musicUrl。
   bool isPlaybackSourceUsable(String sourceId) {
     final (baseId, pluginId) = splitSourceId(sourceId.trim());

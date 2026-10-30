@@ -12,7 +12,8 @@ export '../../plugin/application/plugin_providers.dart'
         pluginServiceProvider,
         pluginInitializedProvider,
         pluginSourceStateProvider,
-        pluginSupportedSourcesProvider;
+        pluginSupportedSourcesProvider,
+        pluginLoginStateRevisionProvider;
 
 final pluginRepositoryProvider = Provider<PluginRepository>((ref) {
   return PluginRepository();

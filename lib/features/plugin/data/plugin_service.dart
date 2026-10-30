@@ -110,6 +110,13 @@ class PluginService {
   final Map<String, String> _pluginTypes = {};
   List<String> _pluginOrder = [];
 
+  /// 登录态发生变化时广播（插件加载后的自动检测、用户点「检测登录态」）。
+  ///
+  /// UI 靠它触发重建——登录态存在宿主里，不是 Riverpod 状态。
+  final StreamController<void> _loginStateChanges =
+      StreamController<void>.broadcast();
+  Stream<void> get loginStateChanges => _loginStateChanges.stream;
+
   /// 已安装插件的元数据缓存（[loadPlugins] / [savePlugins] 时同步）。
   ///
   /// 数据源播放源列表需要按「安装时间」排序，而它是在 Provider 里同步计算的，
@@ -997,6 +1004,10 @@ class PluginService {
       _loadedPlugins[plugin.id] = host;
       _engines[plugin.id] = engine;
 
+      // 插件加载完成后自动检测一次登录态（只有把 loginStatus 写进 actions
+      // 的源才会真正发请求）。放在后台跑，不阻塞插件启用。
+      unawaited(_autoDetectLoginStates(plugin.id, host));
+
       // 老版本导入时还没有「数据源」「站点图标」这些字段（值都是空的），
       // 插件脚本更新后才声明：加载时以脚本为准同步一次，避免插件管理页里
       // 一直归错分类、音源列表里一直没有图标。字段一致时这里会直接返回。
@@ -1185,6 +1196,35 @@ class PluginService {
     _loadedPlugins[pluginId]?.setUserVariables(values);
   }
 
+  /// 插件加载后自动检测登录态。
+  ///
+  /// 只在 `actions` 含 `loginStatus` 的源上发请求；串行执行（同一个 JS 运行时
+  /// 并发调用容易互相干扰），单个源 5 秒超时，任何失败都只是保持 unknown。
+  Future<void> _autoDetectLoginStates(String pluginId, PluginHost host) async {
+    final targets = [
+      for (final entry in host.sourceActions.entries)
+        if (entry.value.contains('loginstatus')) entry.key,
+    ];
+    if (targets.isEmpty) return;
+    var changed = false;
+    for (final sourceId in targets) {
+      try {
+        final ok = await host.requestLoginStatus(
+          sourceId,
+          timeout: const Duration(seconds: 5),
+        );
+        if (ok) changed = true;
+      } catch (_) {
+        // 检测失败不影响插件使用。
+      }
+    }
+    if (changed) _notifyLoginStateChanged();
+  }
+
+  void _notifyLoginStateChanged() {
+    if (!_loginStateChanges.isClosed) _loginStateChanges.add(null);
+  }
+
   /// 主动查询某个插件的登录态（只有声明了 `loginStatus` action 才有效）。
   ///
   /// 插件不支持时返回 `unknown`，不会抛异常。
@@ -1194,7 +1234,8 @@ class PluginService {
   ) async {
     final host = _loadedPlugins[pluginId];
     if (host == null) return SourceLoginState.unknown;
-    await host.requestLoginStatus(sourceId);
+    final ok = await host.requestLoginStatus(sourceId);
+    if (ok) _notifyLoginStateChanged();
     return host.loginStateOf(sourceId);
   }
 
@@ -1247,6 +1288,7 @@ class PluginService {
   void dispose() {
     _unloadAllPlugins();
     _updateNoticeController.close();
+    _loginStateChanges.close();
   }
 }
 

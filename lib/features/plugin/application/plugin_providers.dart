@@ -33,6 +33,14 @@ final pluginInitializedProvider = FutureProvider<void>((ref) async {
   }
 });
 
+/// 登录态变化信号（每次检测完成 +1）。
+///
+/// 登录态存在插件宿主里（不是 Riverpod 状态），界面靠这个流触发重建，
+/// 从而让「已登录 / 未登录」徽标与高音质置灰状态实时更新。
+final pluginLoginStateRevisionProvider = StreamProvider<void>((ref) {
+  return ref.watch(pluginServiceProvider).loginStateChanges;
+});
+
 final musicSourceManagerProvider = Provider<MusicSourceManager>((ref) {
   final pluginService = ref.watch(pluginServiceProvider);
   final manager = MusicSourceManager(pluginService);

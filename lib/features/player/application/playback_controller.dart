@@ -117,6 +117,15 @@ final playbackControllerProvider =
       });
       ref.listen(dataSourcePlaybackSourcesProvider, (prev, next) {
         controller.setDataSourcePlaybackSources(next);
+        // 播放源顺序变了：音质列表可能跟着变（新源声明的档位不同）。
+        controller.refreshAvailability();
+      });
+      // 安装 / 卸载 / 开关插件、开关插件音源：实时同步到正在播放的界面。
+      ref.listen(pluginSupportedSourcesProvider, (prev, next) {
+        controller.refreshAvailability();
+      });
+      ref.listen(pluginSourceStateProvider, (prev, next) {
+        controller.refreshAvailability();
       });
       controller.onEnsureMusicSourcesReady = () =>
           ref.read(pluginInitializedProvider.future);
@@ -443,6 +452,74 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     // 顺序变了，之前记下的「这个源放过这首但失败了」全部作废：用户可能
     // 刚把新的源拖到了最前面，需要重新有机会被尝试。
     _failedPlaybackSources.clear();
+  }
+
+  /// 插件状态变化后刷新「当前歌曲可用的音质」与登录门槛（需求 6）。
+  ///
+  /// 触发时机：安装 / 卸载 / 开关插件、开关插件音源、调整数据源播放源顺序。
+  ///
+  /// 原则：**不打断正在播放的音频**。只在状态里更新可选项——用户正在听的
+  /// 这首已经拿到地址了，贸然重取只会造成卡顿或中断；变化的档位从下一首
+  /// （或用户主动切音质）开始生效，并用提示说明。
+  void refreshAvailability() {
+    final song = state.currentSong;
+    if (song == null || song.isLocal) return;
+
+    final sourceId = song.source ?? '';
+    if (sourceId.isEmpty) return;
+
+    // 当前歌曲绑定的插件被卸载 / 换成新 id：明确提示，不偷偷换源。
+    final (baseId, pluginId) = MusicSourceManager.splitSourceId(sourceId);
+    final isDataSource = _musicSourceManager.dataSourcePluginIdForSong(song) != null;
+    if (!isDataSource &&
+        pluginId != null &&
+        pluginId.isNotEmpty &&
+        !_musicSourceManager.isPluginAlive(pluginId) &&
+        !_musicSourceManager.hasPluginForPlatform(baseId)) {
+      onMessage?.call(
+        tr('当前歌曲的音源插件已卸载，切歌后将无法播放'),
+        backgroundColor: Colors.orange,
+      );
+    }
+
+    final qualitySourceId =
+        _musicSourceManager.effectivePlaybackSourceForSong(song) ?? sourceId;
+    final qualities = _musicSourceManager.getQualitiesForSourceId(qualitySourceId);
+    final gated = _musicSourceManager.getLoginGatedQualities(qualitySourceId);
+
+    final current = state.currentQuality;
+    if (qualities.isNotEmpty && !qualities.contains(current)) {
+      onMessage?.call(
+        tr('当前音源已不支持 $current 音质，切歌后生效'),
+        backgroundColor: Colors.orange,
+      );
+    }
+
+    if (_sameList(qualities, state.availableQualities) &&
+        _sameQualitySet(gated, state.gatedQualities)) {
+      return;
+    }
+    state = state.copyWith(
+      availableQualities: qualities,
+      gatedQualities: gated,
+    );
+  }
+
+  static bool _sameQualitySet(Set<String> a, Set<String> b) {
+    if (a.length != b.length) return false;
+    for (final item in a) {
+      if (!b.contains(item)) return false;
+    }
+    return true;
+  }
+
+  static bool _sameList(List<String> a, List<String> b) {
+    if (identical(a, b)) return true;
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 
   void setAudioEffects(AudioEffectsConfig config) {
