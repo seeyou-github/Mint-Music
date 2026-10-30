@@ -15,6 +15,7 @@ import '../../settings/application/settings_providers.dart';
 import '../application/download_providers.dart';
 import '../data/download_repository.dart';
 import '../domain/models/download_task.dart';
+import 'widgets/download_progress_info.dart';
 
 /// 下载管理页。
 ///
@@ -545,7 +546,11 @@ class _DownloadTaskItemState extends ConsumerState<_DownloadTaskItem> {
   }
 
   /// 下载中：进度条 + 进度 / 速度 / 大小信息。
+  ///
+  /// 右侧「速度:」标签的位置必须固定（见 [DownloadProgressInfo]），否则网速
+  /// 位数一变，标签就会跟着左右移动。
   Widget _buildProgress(ThemeColors colors) {
+    final totalSize = task.totalSize > 0 ? task.totalSize : task.downloadedSize;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -559,19 +564,11 @@ class _DownloadTaskItemState extends ConsumerState<_DownloadTaskItem> {
           ),
         ),
         const SizedBox(height: 4),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(
-              '${(task.progress * 100).toStringAsFixed(0)}%',
-              style: TextStyle(fontSize: 11, color: colors.textHint),
-            ),
-            Text(
-              '${context.tr('速度')}: ${_formatSpeed(task.speed)}   '
-              '${_formatSize(task.totalSize > 0 ? task.totalSize : task.downloadedSize)}',
-              style: TextStyle(fontSize: 11, color: colors.textHint),
-            ),
-          ],
+        DownloadProgressInfo(
+          progress: task.progress,
+          speedLabel: _formatSpeed(task.speed),
+          sizeLabel: _formatSize(totalSize),
+          color: colors.textHint,
         ),
       ],
     );
@@ -679,9 +676,10 @@ class _DownloadTaskItemState extends ConsumerState<_DownloadTaskItem> {
   String _formatSpeed(double bytesPerSec) {
     if (bytesPerSec <= 0) return '-';
     if (bytesPerSec < 1024) return '${bytesPerSec.toStringAsFixed(0)} B/s';
-    if (bytesPerSec < 1024 * 1024) {
-      return '${(bytesPerSec / 1024).toStringAsFixed(1)} KB/s';
-    }
+    final kb = bytesPerSec / 1024;
+    // 四舍五入后可能到 1024.0，这时提前进位到 MB/s，避免出现
+    // 「1024.0 KB/s」这种多一位、还会被数值区裁掉的文案。
+    if (kb < 1023.95) return '${kb.toStringAsFixed(1)} KB/s';
     return '${(bytesPerSec / (1024 * 1024)).toStringAsFixed(1)} MB/s';
   }
 }
