@@ -13,7 +13,9 @@ import '../../discover/domain/models/search_collection.dart';
 import '../domain/source_id_mapping.dart';
 import '../domain/source_login_state.dart';
 import '../domain/plugin_source_states.dart';
+import '../domain/source_health.dart';
 import '../data/plugin_source_preferences.dart';
+import '../data/source_health_store.dart';
 import '../data/plugin_service.dart';
 import '../data/plugin_host.dart';
 
@@ -864,7 +866,7 @@ class MusicSourceManager {
   List<String> dataSourcePlaybackSourcesFor(String pluginId) {
     final configured = [
       for (final id in _dataSourcePlaybackSources[pluginId] ?? const <String>[])
-        if (_isPlaybackSourceUsable(id)) id,
+        if (isAutoSwitchEligible(id)) id,
     ];
     if (configured.isNotEmpty) return configured;
     return autoDiscoverPlaybackSourcesFor(pluginId);
@@ -876,10 +878,14 @@ class MusicSourceManager {
     return list.isEmpty ? null : list.first;
   }
 
-  /// 自动发现：数据源支持的每个平台 × 已启用且能解析地址的插件。
+  /// 自动发现：数据源支持的每个平台 × 已启用且能解析地址的**落雪格式**插件。
   ///
   /// 排序规则：插件安装时间升序（先装的排前面），同插件内按数据源平台顺序。
   /// 已卸载 / 已关闭 / 不支持该平台的插件不会出现在结果里。
+  ///
+  /// **格式限制（用户明确要求）**：自动发现与自动换源只认落雪（lx）格式的
+  /// 解析源。MusicFree / 澜音插件是「全功能音源」，它们自己就是数据源，把
+  /// 它们塞进别人的播放源列表会绕开用户选择的数据源，行为不可预期。
   List<String> autoDiscoverPlaybackSourcesFor(String pluginId) {
     final platforms = _platformsOfDataSource(pluginId);
     if (platforms.isEmpty) return const [];
@@ -890,6 +896,7 @@ class MusicSourceManager {
       if (host.isDataSource) continue;
       final hostPluginId = _pluginService.getPluginIdForHost(host);
       if (hostPluginId == null || hostPluginId.isEmpty) continue;
+      if (!isPlaybackSourcePluginFormat(hostPluginId)) continue;
       final installed =
           _pluginService.installTimeOf(hostPluginId) ??
           DateTime.fromMillisecondsSinceEpoch(0);
@@ -910,6 +917,13 @@ class MusicSourceManager {
     });
     return [for (final item in discovered) item.sourceId];
   }
+
+  /// 这个格式的插件能不能当「数据源的播放源」（自动发现 + 自动换源）。
+  ///
+  /// 只放行落雪（lx）：它的定位就是纯解析播放地址，不提供歌单 / 榜单；
+  /// 澜音（cr）与 MusicFree（mf）自己就是全功能音源，不参与别人的换源。
+  bool isPlaybackSourcePluginFormat(String pluginId) =>
+      _pluginService.isLxPlugin(pluginId);
 
   /// 数据源插件声明的平台 id 集合。
   Set<String> _platformsOfDataSource(String pluginId) {
@@ -940,8 +954,17 @@ class MusicSourceManager {
     return _pluginSourceCanResolveUrls(sourceId);
   }
 
-  bool _isPlaybackSourceUsable(String sourceId) =>
-      isPlaybackSourceUsable(sourceId);
+  /// 能不能进「数据源播放源列表」（自动发现 + 手动排序 + 自动换源）。
+  ///
+  /// 在 [isPlaybackSourceUsable] 之上多一条**格式限制**：只认落雪（lx）。
+  /// 历史配置里混进来的 MusicFree / 澜音 源会被它过滤掉，用户重排时也会
+  /// 被剔出列表（见插件管理页的 `_reorderDataSourcePlaybackSources`）。
+  bool isAutoSwitchEligible(String sourceId) {
+    if (!isPlaybackSourceUsable(sourceId)) return false;
+    final (_, pluginId) = splitSourceId(sourceId.trim());
+    if (pluginId == null) return false;
+    return isPlaybackSourcePluginFormat(pluginId);
+  }
 
   /// 把一个音源 id 落成「能真正解析播放地址」的具体插件音源。
   ///
@@ -1981,6 +2004,11 @@ class MusicSourceManager {
             !excludedUrls.contains(url) &&
             !results.any((item) => item.url == url)) {
           results.add(normalized);
+          // 取地址成功 → 这个音源不再是「失败 / 超时」状态（没有标记时是 no-op）。
+          final appId = normalized.source;
+          if (appId != null && appId.isNotEmpty) {
+            unawaited(SourceHealthStore.clear(appId));
+          }
         }
       } catch (e) {
         print(
@@ -2067,6 +2095,8 @@ class MusicSourceManager {
         );
         attempts.add(attempt);
         onAttempt?.call(attempt);
+        // 这个源真的解析出了地址：清掉它之前留下的「失败 / 超时」标记。
+        unawaited(SourceHealthStore.clear(playbackSourceId));
         return DataSourceResolveOutcome(
           result: result,
           playbackSourceId: playbackSourceId,
@@ -2083,6 +2113,15 @@ class MusicSourceManager {
         );
         attempts.add(attempt);
         onAttempt?.call(attempt);
+        // 打红标：插件管理页的插件卡片上会显示「超时」，播放成功 / 测试通过 /
+        // 用户手动清除后消失。
+        unawaited(
+          SourceHealthStore.markFailed(
+            playbackSourceId,
+            status: SourceHealthStatus.timeout,
+            reason: attempt.error,
+          ),
+        );
       } catch (e) {
         watch.stop();
         final attempt = DataSourceAttempt(
@@ -2094,6 +2133,13 @@ class MusicSourceManager {
         );
         attempts.add(attempt);
         onAttempt?.call(attempt);
+        unawaited(
+          SourceHealthStore.markFailed(
+            playbackSourceId,
+            status: SourceHealthStatus.failed,
+            reason: attempt.error,
+          ),
+        );
       }
     }
 
@@ -2114,6 +2160,12 @@ class MusicSourceManager {
   }) async {
     if (isDataSourceSource(playbackSourceId)) {
       throw Exception('该播放源本身也是数据源，无法解析播放地址');
+    }
+    final (_, playbackPluginId) = splitSourceId(playbackSourceId);
+    if (playbackPluginId == null ||
+        !isPlaybackSourcePluginFormat(playbackPluginId)) {
+      // 兜底：手动配置里混进来的 MusicFree / 澜音 源不参与自动换源。
+      throw Exception('该音源不是落雪格式，不能作为数据源的播放源');
     }
     final playbackName = sourceDisplayName(playbackSourceId);
 

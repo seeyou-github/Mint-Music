@@ -14,6 +14,7 @@ import '../platform/js_engine_service.dart';
 import '../data/plugin_host.dart';
 import '../data/lx_plugin_converter.dart';
 import '../data/plugin_credential_store.dart';
+import '../data/source_health_store.dart';
 import '../../../shared/utils/ico_converter.dart';
 import '../domain/source_id_mapping.dart';
 import '../domain/source_login_state.dart';
@@ -892,6 +893,8 @@ class PluginService {
     await savePlugins(plugins);
     // 凭据属于插件私有数据，插件卸载后一并清掉（重装需要重新填）。
     await PluginCredentialStore.remove(id);
+    // 音源健康红标同理：插件都没了，残留的「失败 / 超时」标记只会误导。
+    unawaited(SourceHealthStore.clearForPlugin(id));
   }
 
   Future<void> togglePlugin(String id, bool isEnabled) async {

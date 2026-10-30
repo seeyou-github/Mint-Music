@@ -13,7 +13,9 @@ import '../../../core/l10n/l10n.dart';
 import '../../../core/services/audio_service_init.dart';
 import '../../plugin/application/music_source_manager.dart';
 import '../../plugin/application/plugin_providers.dart';
+import '../../plugin/data/source_health_store.dart';
 import '../../plugin/domain/plugin_types.dart';
+import '../../plugin/domain/source_health.dart';
 import '../../blacklist/application/blacklist_providers.dart';
 import '../../settings/application/settings_providers.dart';
 import 'play_progress_providers.dart';
@@ -1284,7 +1286,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
             .setAudioSource(playUrl, song: currentSongToPlay)
             .timeout(_audioSetTimeout);
         await _startPlayback();
-      } catch (_) {
+      } catch (error) {
         if (_currentPlayRequestId != requestId) return;
 
         // 数据源歌曲：这个播放源给的地址放不出来 → 标记该源失败，换下一个源。
@@ -1296,6 +1298,17 @@ class PlaybackController extends StateNotifier<PlaybackState> {
             _failedPlaybackSources
                 .putIfAbsent(_failedSourceKey(song), () => <String>{})
                 .add(failedSource);
+            // 地址拿到了却放不出来，同样是「这个源现在不能用」：打红标让用户
+            // 在插件管理页能看到，测试通过 / 后续播放成功 / 手动清除后消失。
+            unawaited(
+              SourceHealthStore.markFailed(
+                failedSource,
+                status: error is TimeoutException
+                    ? SourceHealthStatus.timeout
+                    : SourceHealthStatus.failed,
+                reason: error is TimeoutException ? '音频加载超时' : '音频加载失败',
+              ),
+            );
           }
           final nextCandidates = await _resolveCurrentSourceUrlCandidates(
             song,
@@ -1328,8 +1341,22 @@ class PlaybackController extends StateNotifier<PlaybackState> {
                 nextSong,
               );
               return;
-            } catch (_) {
+            } catch (nextError) {
               // 下一个源也放不出来：按「全部失败」处理（下面统一停止播放）。
+              final nextSource = next.source;
+              if (nextSource != null && nextSource.isNotEmpty) {
+                unawaited(
+                  SourceHealthStore.markFailed(
+                    nextSource,
+                    status: nextError is TimeoutException
+                        ? SourceHealthStatus.timeout
+                        : SourceHealthStatus.failed,
+                    reason: nextError is TimeoutException
+                        ? '音频加载超时'
+                        : '音频加载失败',
+                  ),
+                );
+              }
             }
           }
           await _stopPlaybackOnFailure(_playbackFailureReason(song));

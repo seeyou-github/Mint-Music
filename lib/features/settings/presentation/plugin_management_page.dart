@@ -10,9 +10,11 @@ import '../../../../core/l10n/l10n.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/theme_provider.dart';
 import '../../plugin/data/plugin_service.dart';
+import '../../plugin/data/source_health_store.dart';
 import '../../plugin/application/music_source_manager.dart';
 import '../../plugin/domain/plugin_source_states.dart';
 import '../../plugin/domain/plugin_types.dart';
+import '../../plugin/domain/source_health.dart';
 import '../../plugin/domain/source_login_state.dart';
 import '../../plugin/domain/source_id_mapping.dart';
 import '../application/plugin_providers.dart';
@@ -786,7 +788,7 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
             const SizedBox(width: 6),
             Expanded(
               child: Text(
-                context.tr('没有可用的同平台播放源，请安装或启用对应的音源插件'),
+                context.tr('没有可用的同平台播放源，请安装或启用对应的洛雪格式音源插件'),
                 style: TextStyle(fontSize: 12, color: colors.error),
               ),
             ),
@@ -866,7 +868,9 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
           Padding(
             padding: const EdgeInsets.only(left: 22, top: 2),
             child: Text(
-              context.tr('拖动调整顺序，靠上优先；全部失败则停止播放'),
+              context.tr(
+                '拖动调整顺序，靠上优先；全部失败则停止播放（只统计洛雪格式音源）',
+              ),
               style: TextStyle(fontSize: 11, color: colors.textHint),
             ),
           ),
@@ -998,7 +1002,9 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
     final manager = ref.read(musicSourceManagerProvider);
     final cleaned = [
       for (final id in list)
-        if (manager.isPlaybackSourceUsable(id)) id,
+        // 只保留「还能用 + 落雪格式」的源：拖动期间被卸载 / 关闭的、以及
+        // 历史配置里混进来的 MusicFree / 澜音 源都要剔掉。
+        if (manager.isAutoSwitchEligible(id)) id,
     ];
     if (cleaned.isEmpty) return;
     await setDataSourcePlaybackSources(
@@ -1082,6 +1088,18 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
     Widget? footer,
   }) {
     final sourceStates = ref.watch(pluginSourceStateProvider);
+    // 音源健康红标：数据存在 SourceHealthStore（不是 Riverpod 状态），
+    // watch 版本号才能在标记变化后重建这张卡片。
+    ref.watch(pluginSourceHealthRevisionProvider);
+    final healthEntries = SourceHealthStore.entriesForPlugin(plugin.id);
+    final healthTimeouts = [
+      for (final entry in healthEntries)
+        if (entry.status == SourceHealthStatus.timeout) entry,
+    ];
+    final healthFailures = [
+      for (final entry in healthEntries)
+        if (entry.status == SourceHealthStatus.failed) entry,
+    ];
     final typeLabel = PluginService.pluginTypeLabel(plugin.type);
     final typeColor = switch (plugin.type) {
       'lx' => const Color(0xFF4FC3F7),
@@ -1145,63 +1163,81 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
+                          // Wrap：名称太长时红标自动换到下一行，不会挤出屏幕。
                           Flexible(
-                            child: Text(
-                              plugin.name,
-                              style: TextStyle(
-                                fontSize: 15,
-                                fontWeight: FontWeight.w600,
-                                color: colors.textPrimary,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                            child: Wrap(
+                              spacing: 6,
+                              runSpacing: 4,
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              children: [
+                                Text(
+                                  plugin.name,
+                                  style: TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w600,
+                                    color: colors.textPrimary,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 2,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: typeColor.withValues(alpha: 0.15),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Text(
+                                    context.tr(typeLabel),
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w500,
+                                      color: typeColor,
+                                    ),
+                                  ),
+                                ),
+                                if (updateResult != null)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 6,
+                                      vertical: 2,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: const Color(
+                                        0xFF4CAF50,
+                                      ).withValues(alpha: 0.15),
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: Text(
+                                      context.tr(
+                                        '可更新 v${updateResult.remoteVersion}',
+                                      ),
+                                      style: const TextStyle(
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w500,
+                                        color: Color(0xFF4CAF50),
+                                      ),
+                                    ),
+                                  ),
+                                if (healthTimeouts.isNotEmpty)
+                                  _buildSourceHealthChip(
+                                    plugin,
+                                    SourceHealthStatus.timeout,
+                                    healthTimeouts,
+                                  ),
+                                if (healthFailures.isNotEmpty)
+                                  _buildSourceHealthChip(
+                                    plugin,
+                                    SourceHealthStatus.failed,
+                                    healthFailures,
+                                  ),
+                              ],
                             ),
                           ),
-                          const SizedBox(width: AppSpacing.sm),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 2,
-                            ),
-                            decoration: BoxDecoration(
-                              color: typeColor.withValues(alpha: 0.15),
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: Text(
-                              context.tr(typeLabel),
-                              style: TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.w500,
-                                color: typeColor,
-                              ),
-                            ),
-                          ),
-                          if (updateResult != null) ...[
-                            const SizedBox(width: AppSpacing.sm),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 2,
-                              ),
-                              decoration: BoxDecoration(
-                                color: const Color(
-                                  0xFF4CAF50,
-                                ).withValues(alpha: 0.15),
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: Text(
-                                context.tr(
-                                  '可更新 v${updateResult.remoteVersion}',
-                                ),
-                                style: const TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w500,
-                                  color: Color(0xFF4CAF50),
-                                ),
-                              ),
-                            ),
-                          ],
                         ],
                       ),
                       const SizedBox(height: 2),
@@ -1404,6 +1440,133 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
       ),
       builder: (ctx) => _AddPluginSheet(colors: colors, ref: ref),
     );
+  }
+
+  /// 音源健康红标（「失败」/「超时」）。
+  ///
+  /// 同一状态的音源合并成一个标，超过 1 个时带数量；点击弹窗列出明细并
+  /// 支持一键清除（用户要求「可手动清除」）。
+  Widget _buildSourceHealthChip(
+    PluginInfo plugin,
+    SourceHealthStatus status,
+    List<SourceHealthEntry> entries,
+  ) {
+    const red = Color(0xFFE53935);
+    final text = entries.length > 1
+        ? '${context.tr(status.label)} ${entries.length}'
+        : context.tr(status.label);
+    return GestureDetector(
+      onTap: () => _showSourceHealthDialog(plugin, status, entries),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+        decoration: BoxDecoration(
+          color: red.withValues(alpha: 0.14),
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(color: red.withValues(alpha: 0.35), width: 0.5),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              status == SourceHealthStatus.timeout
+                  ? Icons.timer_off_outlined
+                  : Icons.error_outline,
+              size: 10,
+              color: red,
+            ),
+            const SizedBox(width: 2),
+            Text(
+              text,
+              style: const TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+                color: red,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 红标明细弹窗：说清「哪个音源 + 什么时候 + 为什么」，可一键清除。
+  Future<void> _showSourceHealthDialog(
+    PluginInfo plugin,
+    SourceHealthStatus status,
+    List<SourceHealthEntry> entries,
+  ) async {
+    final colors = ref.read(themeColorsProvider);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: colors.surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadius.lg),
+        ),
+        title: Text(
+          ctx.tr('清除「${status.label}」标记'),
+          style: TextStyle(color: colors.textPrimary, fontSize: 16),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              ctx.tr('这些音源在自动换源时失败了，标记只是提示，不影响继续尝试：'),
+              style: TextStyle(color: colors.textSecondary, fontSize: 13),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            ...entries.map((entry) {
+              final at = entry.at;
+              final time =
+                  '${at.month}/${at.day} '
+                  '${at.hour.toString().padLeft(2, '0')}:'
+                  '${at.minute.toString().padLeft(2, '0')}';
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Text(
+                  '• ${_healthSourceLabel(plugin, entry)}（$time）'
+                  '${entry.reason == null ? '' : '：${entry.reason}'}',
+                  style: TextStyle(fontSize: 12, color: colors.textHint),
+                ),
+              );
+            }),
+            const SizedBox(height: AppSpacing.sm),
+            Text(
+              ctx.tr('测试音源通过或后续播放成功后也会自动清除。'),
+              style: TextStyle(fontSize: 11, color: colors.textHint),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(ctx.tr('取消'), style: TextStyle(color: colors.textHint)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(
+              ctx.tr('清除标记'),
+              style: TextStyle(color: colors.primary),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    for (final entry in entries) {
+      await SourceHealthStore.clear(entry.sourceId);
+    }
+  }
+
+  /// 红标里显示的音源名：优先用插件自己声明的名字，其次平台名。
+  String _healthSourceLabel(PluginInfo plugin, SourceHealthEntry entry) {
+    for (final source in plugin.supportedSources) {
+      final id = source.id ?? SourceIdMapping.deriveId(source.name);
+      if (id != entry.baseId) continue;
+      if (source.name.trim().isNotEmpty) return source.name;
+    }
+    return SourceIdMapping.idToName[entry.baseId] ?? entry.baseId;
   }
 
   void _showPluginTestDialog(PluginInfo plugin) {

@@ -10,6 +10,7 @@ import '../../player/platform/audio_handler.dart';
 import '../../settings/domain/models/plugin_info.dart';
 import '../data/plugin_host.dart';
 import '../data/plugin_service.dart';
+import '../data/source_health_store.dart';
 import '../domain/plugin_types.dart';
 import 'music_source_manager.dart';
 
@@ -60,6 +61,10 @@ class PluginTestSourceResult {
 /// 一次插件测试的完整报告。
 class PluginTestReport {
   final String pluginName;
+
+  /// 被测插件 id：测试通过后按它清除音源上的「失败 / 超时」标记。
+  final String pluginId;
+
   final List<PluginTestSourceResult> sources;
 
   bool running;
@@ -68,12 +73,15 @@ class PluginTestReport {
   String? fatalError;
   PluginTestRuntime? runtime;
 
-  PluginTestReport({required this.pluginName, required this.sources})
-    : running = false,
-      finished = false,
-      cancelled = false,
-      fatalError = null,
-      runtime = null;
+  PluginTestReport({
+    required this.pluginName,
+    required this.sources,
+    this.pluginId = '',
+  }) : running = false,
+       finished = false,
+       cancelled = false,
+       fatalError = null,
+       runtime = null;
 
   int get totalQualityCount =>
       sources.fold(0, (sum, s) => sum + s.qualities.length);
@@ -147,6 +155,7 @@ class PluginTestService {
     }
     return PluginTestReport(
       pluginName: plugin.name,
+      pluginId: plugin.id,
       sources: specs
           .map(
             (spec) => PluginTestSourceResult(
@@ -202,6 +211,14 @@ class PluginTestService {
           onChanged: onChanged,
           isCancelled: isCancelled,
         );
+        // 测试出结果了：只要至少一个音质真的能播，就顺手清掉这个音源之前
+        // 在自动换源里留下的「失败 / 超时」标记（用户要求的自动清除通道之一）。
+        if (source.isAvailable && report.pluginId.isNotEmpty) {
+          final baseId = source.sourceId.contains('@')
+              ? source.sourceId
+              : '${source.sourceId}@${report.pluginId}';
+          unawaited(SourceHealthStore.clear(baseId));
+        }
       }
     } catch (e) {
       report.fatalError = '测试中断: ${_shortError(e)}';

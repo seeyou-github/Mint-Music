@@ -1,7 +1,9 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'dart:async';
 import '../domain/plugin_types.dart';
 import '../domain/plugin_source_states.dart';
 import '../data/plugin_service.dart';
+import '../data/source_health_store.dart';
 import 'music_source_manager.dart';
 import 'plugin_test_service.dart';
 
@@ -39,6 +41,17 @@ final pluginInitializedProvider = FutureProvider<void>((ref) async {
 /// 从而让「已登录 / 未登录」徽标与高音质置灰状态实时更新。
 final pluginLoginStateRevisionProvider = StreamProvider<void>((ref) {
   return ref.watch(pluginServiceProvider).loginStateChanges;
+});
+
+/// 音源健康状态（「失败 / 超时」红标）变化信号。
+///
+/// 标记存在 [SourceHealthStore]（内存 + 设置文件），不是 Riverpod 状态；
+/// 插件管理页 watch 它来重建卡片。首次订阅时会先触发一次加载：加载完成
+/// 前读到的是空标记，加载完成后 store 会再广播一次，界面自动补上。
+final pluginSourceHealthRevisionProvider = StreamProvider<int>((ref) async* {
+  yield SourceHealthStore.revision;
+  unawaited(SourceHealthStore.ensureLoaded());
+  yield* SourceHealthStore.changes;
 });
 
 final musicSourceManagerProvider = Provider<MusicSourceManager>((ref) {
