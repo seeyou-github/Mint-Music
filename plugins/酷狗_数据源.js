@@ -172,13 +172,14 @@ function coverOf(item) {
 /**
  * 付费 / 版权状态 → 歌曲列表标签（App 侧 SongAccess）。
  *
- * 酷狗是「分音质」给权限的（`A320Privilege` / `SQPrivilege` 可能一个是 0
- * 一个是 10），按用户要求**不按音质区分**，只给一个总体结论：
- *   pay_type = 2          → 数字专辑（实测 Price = 1990 / 2590）
- *   privilege = 10        → VIP
- *   privilege = 8         → 付费（可试听）
- *   pay_type 非 0 的其余值 → 付费
- * 免费歌实测是 privilege = 0 / pay_type = 0。
+ * 只认两个信号，别的都会误标：
+ *   pay_type = 2   → 数字专辑（实测 Price = 1990 / 2590）
+ *   privilege = 10 → VIP（实测未登录取地址直接 status=2）
+ *
+ * **privilege = 8 不能标 VIP**：实测这些歌未登录照样能拿到完整地址
+ * （`v5/url` status=1，能正常播放），它表示的是「高音质要会员」，
+ * 不是「这首歌要会员」。同理 `pay_type` 单独也不能当 VIP 依据
+ * （privilege=8 的歌 pay_type 也是 3）。
  */
 function accessOf(item) {
   if (!item) return '';
@@ -189,8 +190,6 @@ function accessOf(item) {
     payTypeRaw === undefined || payTypeRaw === null ? NaN : Number(payTypeRaw);
   if (payType === 2) return 'album';
   if (priv === 10) return 'vip';
-  if (priv === 8) return 'vip';
-  if (!isNaN(payType) && payType !== 0) return 'vip';
   return '';
 }
 

@@ -141,29 +141,31 @@ function normalizeCover(value, artist) {
 /**
  * 付费 / 版权状态 → 歌曲列表标签（App 侧 SongAccess）。
  *
- * 酷我三个接口都带 `payInfo`，里面 `feeType` 是最清楚的：
- *   feeType.vip   = "1" → 会员歌曲
- *   feeType.song  = "1" → 单曲付费
- *   feeType.album = "0" → 需购买专辑（"1" 表示不需要）
- * 另：`online = "0"` 是已下架。
+ * 口径与标签语义对齐：**「VIP」= 会员 / 只能试听**，所以只认这两个字段：
+ *   payInfo.listen_fragment = "1" → 非会员只能听片段 → vip
+ *   payInfo.paytype        = 3    → 会员专享（实测与 listen_fragment=1 同时出现）
+ *   online                 = "0"  → 已下架
+ * 其余一律当免费。
  *
- * 坑：`copyright` 字段**不能**当"有版权"用——实测榜单里正常可播的歌
- * 全是 `copyright = "0"`，拿它判无版权会把整个榜单标成无版权。
+ * 踩过的坑（这些字段都不能单独用，会把大量能免费播的歌标成 VIP/付费）：
+ *   · `feeType.vip`：**不等于「只能会员听」**。实测 `vip=1` 但 `listen_fragment=0`
+ *     的歌（pay=0x880088、paytype=0）能完整播放，它表示的是「会员可听（高音质）」，
+ *     按它判 VIP 会让整个列表几乎全是 VIP；
+ *   · `feeType.album`：只有免费歌才是 "1"，付费歌是 "0"，按 "0" 判「数字专辑」等于全标；
+ *   · `feeType.song`：免费歌也会是 "1"（「睡眠音乐 催眠曲」pay=0xFF、vip=0、song=1）；
+ *   · `copyright`：正常可播的歌全是 "0"，当「有版权」用会把整榜标成无版权。
  *
- * `pay` 那个位掩码（免费歌 0xFF，会员歌 0xFF00FF / 0xFC00FC / 0x880088）只作兜底，
- * 不按音质区分。
+ * 结论：酷我没有可靠的「数字专辑 / 单曲付费」字段，只报「会员（可试听）」与「下架」。
  */
 function accessOf(item) {
   if (!item) return '';
   var payInfo = item.payInfo || {};
-  var fee = payInfo.feeType || {};
   var online = item.ONLINE !== undefined ? item.ONLINE : item.online;
   if (online !== undefined && online !== null && String(online) === '0') {
     return 'offline';
   }
-  if (String(fee.vip) === '1') return 'vip';
-  if (String(fee.song) === '1') return 'paid';
-  if (String(fee.album) === '0') return 'album';
+  if (String(payInfo.listen_fragment) === '1') return 'vip';
+  if (String(payInfo.paytype) === '3') return 'vip';
   return '';
 }
 
