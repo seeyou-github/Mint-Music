@@ -67,12 +67,12 @@ Future<void> openPlaybackSource(
       // 专辑 / 作者详情要由「真能查详情」的插件解析：队列歌曲的 source 在
       // 播放时被换成了实际播放源（多半是只有 musicUrl 的落雪脚本），直接拿
       // 它去查会提示「该音源没有提供专辑详情接口」。
+      // 优先用「歌曲原本归属」的音源（数据源 / 原始插件），播放源只负责放歌；
+      // 原始归属的插件都不会查详情时，才在同平台里挑一个能查的。
       final collectionSource = container
           .read(musicSourceManagerProvider)
           .collectionDetailSourceFor(
-            (song.preferredSource?.trim().isNotEmpty ?? false)
-                ? song.preferredSource!
-                : (song.source ?? ''),
+            song.metadataSourceId ?? '',
             forArtist: type == PlaybackSourceType.artist,
           );
       extra = _collectionOf(
@@ -112,6 +112,7 @@ Future<void> openSearchForQuery(
   ProviderContainer container,
   String query, {
   SearchTab? tab,
+  String? source,
 }) async {
   final trimmed = query.trim();
   if (trimmed.isEmpty) return;
@@ -119,6 +120,7 @@ Future<void> openSearchForQuery(
   void start() {
     // 先安排待搜索词：新搜索页在 initState 里消费，已经打开的搜索页监听它。
     container.read(pendingSearchTabProvider.notifier).state = tab;
+    container.read(pendingSearchSourceProvider.notifier).state = source;
     container.read(pendingSearchQueryProvider.notifier).state = trimmed;
     _navigateToSource(container, AppRoutes.search, null, toggle: false);
   }

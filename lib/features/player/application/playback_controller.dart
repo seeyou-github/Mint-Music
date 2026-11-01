@@ -1386,6 +1386,10 @@ class PlaybackController extends StateNotifier<PlaybackState> {
             // 歌曲由插件解析地址，这里把音源标记成实际提供地址的插件，
             // 播放详情页显示的就是真正正在使用的音源。
             source: result.source ?? currentSongToPlay.source,
+            // 同时把「这首歌原本属于哪个插件」记下来：数据源歌曲在这里第一次
+            // 被换成落雪播放源，之后查专辑 / 歌手要按原始归属去查。
+            metadataSource:
+                currentSongToPlay.metadataSource ?? currentSongToPlay.source,
           );
           _replaceSongInQueue(index, currentSongToPlay);
         }
@@ -1445,6 +1449,8 @@ class PlaybackController extends StateNotifier<PlaybackState> {
               sourceHeaders: next.headers.isEmpty ? null : next.headers,
               sourceQuality: nextQuality,
               source: next.source ?? currentSongToPlay.source,
+              metadataSource:
+                  currentSongToPlay.metadataSource ?? currentSongToPlay.source,
               clearSourceHeaders: next.headers.isEmpty,
               clearSourceQuality: false,
             );
@@ -1519,6 +1525,8 @@ class PlaybackController extends StateNotifier<PlaybackState> {
               sourceQuality: fallbackQuality,
               // 标记实际提供地址的音源，界面上显示真正正在使用的音源。
               source: candidate.source ?? currentSongToPlay.source,
+              metadataSource:
+                  currentSongToPlay.metadataSource ?? currentSongToPlay.source,
               clearSourceHeaders: candidate.headers.isEmpty,
               clearSourceQuality: false,
             );
@@ -2065,6 +2073,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
         clearSourceQuality: false,
         // 标记实际提供地址的音源，界面上显示真正正在使用的音源。
         source: result.source ?? currentSong.source,
+        metadataSource: currentSong.metadataSource ?? currentSong.source,
       );
       if (index >= 0 && index < state.queue.length) {
         _replaceSongInQueue(index, updatedSong);

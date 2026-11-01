@@ -803,7 +803,15 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
     final context = this.context;
     final container = ProviderScope.containerOf(context, listen: false);
     Navigator.pop(context);
-    unawaited(openSearchForQuery(container, trimmed));
+    // 带上歌曲的元数据来源：搜出来的结果和这首歌同源，而不是跟着当前
+    // 搜索页选的音源跑（可能完全是另一个平台）。
+    unawaited(
+      openSearchForQuery(
+        container,
+        trimmed,
+        source: widget.song.metadataSourceId,
+      ),
+    );
   }
 
   /// 点专辑：能拿到专辑 id 就直接打开专辑详情页（播放的是这张专辑时用来源
@@ -829,7 +837,14 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
       );
       return;
     }
-    unawaited(openSearchForQuery(container, album, tab: SearchTab.albums));
+    unawaited(
+      openSearchForQuery(
+        container,
+        album,
+        tab: SearchTab.albums,
+        source: widget.song.metadataSourceId,
+      ),
+    );
   }
 
   /// 歌曲数据里能拿到的专辑 id；拿不到返回 null。

@@ -27,6 +27,13 @@ final pendingSearchQueryProvider = StateProvider<String?>((ref) => null);
 /// 为空时按「歌曲」处理；消费待搜索词时一并清空。
 final pendingSearchTabProvider = StateProvider<SearchTab?>((ref) => null);
 
+/// 与 [pendingSearchQueryProvider] 配套：这次搜索希望使用的音源。
+///
+/// 从歌曲的「歌曲名 / 歌手 / 专辑」跳过来时带上歌曲的元数据来源（数据源
+/// 或原始插件），搜索结果才和这首歌同源；为空表示沿用当前搜索音源。
+/// 消费待搜索词时一并清空。
+final pendingSearchSourceProvider = StateProvider<String?>((ref) => null);
+
 /// 搜索页当前使用的音源。
 ///
 /// 默认取「发现页正在使用的音源」；搜索页进入时会再同步一次，页内切换音源

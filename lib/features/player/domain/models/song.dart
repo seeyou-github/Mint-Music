@@ -134,6 +134,19 @@ class Song {
   /// 所以这里不做硬绑定（[source] 依旧是平台 id）。
   final String? preferredSource;
 
+  /// 元数据来源（`平台id@插件id`）：查专辑 / 歌手 / 搜索歌曲信息时用它。
+  ///
+  /// [source] 在解析完播放地址后会被改写成「实际播放源」（落雪脚本只有
+  /// `musicUrl`，没有 `getAlbumInfo` / 搜索），拿它去查专辑必然「该音源没有
+  /// 提供专辑详情接口」。所以播放时在这里记下歌曲原本的归属：
+  ///
+  /// * 数据源歌曲 → 数据源插件（和搜索 / 专辑的 raw 结构最匹配）；
+  /// * 非数据源歌曲 → 它自己（与 [source] 相同）。
+  ///
+  /// 为空表示「还没记录过」（老数据 / 本地歌曲），读取方用
+  /// [metadataSourceId] 回退到 [source]。
+  final String? metadataSource;
+
   /// B 站「充电专属 / 大会员专享」等会员专属作品标记。
   ///
   /// 来自插件音源列表接口的原始标记（如 bilibili 的 `is_charging_arc`），
@@ -181,6 +194,7 @@ class Song {
     this.hasLyric = false,
     this.hasWordLyric = false,
     this.preferredSource,
+    this.metadataSource,
     this.isVipExclusive = false,
     this.partsCount = 0,
     this.access = SongAccess.free,
@@ -196,6 +210,21 @@ class Song {
   bool get isBilibiliSource {
     final src = (displaySource ?? '').toLowerCase();
     return src.contains('bili');
+  }
+
+  /// 元数据操作（专辑 / 歌手 / 搜索）该用的音源 id。
+  ///
+  /// 优先级：播放时记下的原始归属 [metadataSource] → 收藏时绑定的
+  /// [preferredSource] → 当前 [source]。
+  ///
+  /// **不要**直接拿 [source] 去查详情：播放过的歌，[source] 已经被换成
+  /// 实际播放源（可能是只有 `musicUrl` 的落雪插件）。
+  String? get metadataSourceId {
+    final meta = metadataSource?.trim() ?? '';
+    if (meta.isNotEmpty) return meta;
+    final preferred = preferredSource?.trim() ?? '';
+    if (preferred.isNotEmpty) return preferred;
+    return source;
   }
 
   /// 展示 / 徽标用的音源 id。
@@ -251,6 +280,7 @@ class Song {
     bool? hasLyric,
     bool? hasWordLyric,
     String? preferredSource,
+    String? metadataSource,
     bool? isVipExclusive,
     int? partsCount,
     SongAccess? access,
@@ -296,6 +326,7 @@ class Song {
       preferredSource: clearPreferredSource
           ? null
           : preferredSource ?? this.preferredSource,
+      metadataSource: metadataSource ?? this.metadataSource,
       isVipExclusive: isVipExclusive ?? this.isVipExclusive,
       partsCount: partsCount ?? this.partsCount,
       access: access ?? this.access,
@@ -365,6 +396,7 @@ class Song {
       'hasLyric': hasLyric,
       'hasWordLyric': hasWordLyric,
       'preferredSource': preferredSource,
+      'metadataSource': metadataSource,
       'isVipExclusive': isVipExclusive,
       'partsCount': partsCount,
       'access': access.raw,
@@ -423,6 +455,7 @@ class Song {
       hasLyric: json['hasLyric'] == true,
       hasWordLyric: json['hasWordLyric'] == true,
       preferredSource: json['preferredSource']?.toString(),
+      metadataSource: json['metadataSource']?.toString(),
       isVipExclusive: json['isVipExclusive'] == true,
       partsCount: (json['partsCount'] as num?)?.toInt() ?? 0,
       access: SongAccess.fromRaw(json['access']?.toString()),

@@ -19,9 +19,9 @@ bool openSongPartsIfNeeded(BuildContext context, Song song) {
   final extra = song.lx?['extra'];
   final raw = extra is Map ? extra['musicItem'] : null;
   if (raw is! Map) return false;
-  final source = (song.preferredSource?.trim().isNotEmpty ?? false)
-      ? song.preferredSource!
-      : song.source;
+  // 用「歌曲原本归属」的音源：播放过的歌 source 已被换成播放源（可能只有
+  // musicUrl），拿它去查分P专辑必然失败。
+  final source = song.metadataSourceId;
   if (source == null || source.isEmpty) return false;
 
   final rawMap = raw.map((key, value) => MapEntry('$key', value));

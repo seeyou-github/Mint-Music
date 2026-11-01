@@ -69,6 +69,10 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   /// 批量选择控制器（长按搜索结果进入多选模式）。
   final SongSelectionController _selection = SongSelectionController();
 
+  /// 由「歌曲的元数据来源」带入的音源切换：搜索由 `_searchFromPending` 发起，
+  /// `searchSourceIdProvider` 的监听器不要再搜一遍。
+  String? _pendingSourceOverride;
+
   @override
   void initState() {
     super.initState();
@@ -143,6 +147,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         ref.read(searchSuggestInputProvider.notifier).state = '';
         ref.read(searchTabProvider.notifier).state = SearchTab.songs;
         ref.read(pendingSearchTabProvider.notifier).state = null;
+        ref.read(pendingSearchSourceProvider.notifier).state = null;
         ref.read(searchResultsControllerProvider.notifier).reset();
         ref.read(playlistSearchControllerProvider.notifier).reset();
         ref
@@ -217,10 +222,41 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   void _searchFromPending(String query, {SearchTab? tab}) {
     final trimmed = query.trim();
     if (trimmed.isEmpty) return;
+    _applyPendingSource();
     ref.read(searchTabProvider.notifier).state = tab ?? SearchTab.songs;
     setState(() => _inputText = trimmed);
     _controller.text = trimmed;
     _performSearch(trimmed);
+  }
+
+  /// 把「这次跳转指定的音源」切过去（歌曲的元数据来源）。
+  ///
+  /// 认不出的音源（比如落雪插件没有搜索、或者插件已卸载）就不切，沿用当前
+  /// 搜索音源；`_pendingSourceOverride` 用来让 `searchSourceIdProvider` 的
+  /// 监听器跳过这次切换带来的重复搜索。
+  void _applyPendingSource() {
+    final raw = ref.read(pendingSearchSourceProvider)?.trim() ?? '';
+    if (ref.read(pendingSearchSourceProvider) != null) {
+      ref.read(pendingSearchSourceProvider.notifier).state = null;
+    }
+    if (raw.isEmpty) return;
+    final sources = ref.read(searchAvailableSourcesProvider);
+    String? target;
+    if (sources.any((source) => source.id == raw)) {
+      target = raw;
+    } else {
+      // 拿不到同名音源时按平台找（`wy@插件` → 平台 `wy` 的任意可搜索音源）。
+      final base = SourceInfo.baseIdOf(raw);
+      for (final source in sources) {
+        if (SourceInfo.baseIdOf(source.id) == base) {
+          target = source.id;
+          break;
+        }
+      }
+    }
+    if (target == null || target == ref.read(searchSourceIdProvider)) return;
+    _pendingSourceOverride = target;
+    ref.read(searchSourceIdProvider.notifier).state = target;
   }
 
   /// 按当前关键词 + 当前标签页发起搜索。
@@ -578,6 +614,11 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     ref.listen<String>(searchSourceIdProvider, (previous, next) {
       // 切换音源：按当前关键词 + 当前标签页重新搜索（歌曲 / 歌单 / 专辑 / 作者）。
       if (previous != null && previous != next) {
+        // 这次切换由「待搜索」带入，搜索已经在 _searchFromPending 里发起。
+        if (_pendingSourceOverride == next) {
+          _pendingSourceOverride = null;
+          return;
+        }
         _runSearch(next);
       }
     });
