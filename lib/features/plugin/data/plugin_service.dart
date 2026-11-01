@@ -73,7 +73,16 @@ class PluginService {
     final lower = code.toLowerCase();
 
     // 澜音：接口名最明确，放在最前。
-    if (lower.contains('cerumusic')) return 'cr';
+    //
+    // 但落雪插件在注释里提一句「CeruMusic」（说明自己兼容哪些宿主）非常常见，
+    // 光凭这个词会把它们误判成澜音：那样脚本会被裸执行，`globalThis.lx` 为空，
+    // 导入时只报 `TypeError: cannot convert to object`，根本看不出原因。
+    // 真正读 `globalThis.lx` 的一定是落雪插件（澜音插件用 cerumusic.*），
+    // 所以这一种情况按落雪处理，其余仍然判澜音。
+    if (lower.contains('cerumusic')) {
+      if (lower.contains('globalthis.lx')) return 'lx';
+      return 'cr';
+    }
 
     // MusicFree：插件对象的独有字段（与 _validatePluginCode 的特征保持一致）。
     if (lower.contains('musicfree') ||

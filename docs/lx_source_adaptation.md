@@ -309,6 +309,32 @@ const cookie = readUserVariables().MUSIC_U || '';
 - [ ] 试听片段：返回 URL 不抛错
 - [ ] 无版权 / 需要 VIP：抛带人话的 Error，不返回空 URL
 - [ ] 请求不支持的 `source` / `action` 时明确拒绝，而不是静默返回空
+- [ ] 全文（**包括注释和提示文案**）不含下面第 9 节的禁用字眼
 
 参考实现：`D:\Download\音源\LX_网易云官方_播放下载.js`（v1.1.0，声明了
 `downloadQualitys` + `login` + `credentials` + `loginStatus`，并正确处理试听片段）。
+
+## 9. 插件里不能出现的字眼（会被判成别的格式）
+
+`PluginService.detectPluginType` 靠**关键字**判定格式，且澜音 / MusicFree 的判定
+排在落雪之前。只要插件源码里出现这些词（**注释、字符串、提示文案都算**），
+导入时就会走错分支：
+
+| 字眼（不区分大小写） | 会被判成 | 后果 |
+| --- | --- | --- |
+| `cerumusic` | 澜音 `cr` | 脚本被裸执行，`globalThis.lx` 为空 → `TypeError: cannot convert to object`（报错行号正好指向 `const { … } = globalThis.lx` 那行） |
+| `musicfree` / `getmediasource` / `supportedsearchtype` / `gettoplists` | MusicFree `mf` | 套 MusicFree 适配器，落雪 API 全不可用 |
+
+写插件时如果非要提到别的宿主，用「其它宿主」「某些宿主」这类模糊说法，
+别写出完整产品名。已经踩过：QQ 官方音源第一版注释里写了「洛雪 / CeruMusic 两套宿主」，
+导入直接失败；改掉后正常识别为 `lx`。
+
+兜底写法（推荐所有落雪插件都加）：在解构前先判空，报错给人话而不是
+`cannot convert to object`：
+
+```js
+const LX = globalThis.lx;
+if (!LX) throw new Error('没有检测到落雪（LX）运行时（globalThis.lx 为空）…');
+const { EVENT_NAMES, request, on, send, env, currentScriptInfo } = LX;
+```
+
