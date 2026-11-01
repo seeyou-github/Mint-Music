@@ -148,8 +148,22 @@ function authorsOf(item) {
   return names.join('、');
 }
 
-function coverOf(item) {
-  var albumInfo = item.album_info || {};
+/**
+ * 从 filename（「歌手 - 歌名」）里解析歌手。
+ *
+ * 歌单接口（special/song）**不返回 singername**，只有 filename；一旦
+ * album_audio 补全没匹配上（见 hydrateSongs 里 hash 不一致的坑），整列歌手
+ * 就是空的。这里做一层兜底，保证列表里始终能显示歌手。
+ */
+function singerFromFilename(item) {
+  var fileName = String(item.filename || item.FileName || '');
+  if (!fileName) return '';
+  var parts = fileName.split(' - ');
+  if (parts.length < 2) return '';
+  return decodeName(parts[0].trim());
+}
+
+function coverOf(item) {  var albumInfo = item.album_info || {};
   var candidates = [
     item.sizable_cover,
     item.album_sizable_cover,
@@ -219,6 +233,9 @@ function songOf(item) {
     id: String(hash),
     songId: String(hash),
     songmid: String(hash),
+    // 补全歌手 / 封面时的精确匹配键：歌单接口给的 hash 与 album_audio 返回的
+    // audio_info.hash 往往不是同一个文件（那是 128k 那档的 hash），只有 audio_id 稳定一致。
+    audioId: item.audio_id || item.Audioid || undefined,
     // 带上专辑 id：封面补全失败时 getPic 还能按专辑再查一次
     albumId: albumId ? String(albumId) : '',
     // 发行年份：优先用搜索接口直接给的发行日期，没有就留空（对比界面再按专辑查）
@@ -239,7 +256,7 @@ function songOf(item) {
       var parts = String(fileName).split(' - ');
       return decodeName(parts.length > 1 ? parts.slice(1).join(' - ') : fileName);
     })(),
-    singer: authorsOf(item),
+    singer: authorsOf(item) || singerFromFilename(item),
     albumName: decodeName(albumName),
     artwork: coverOf(item),
     duration: Math.floor(duration),
@@ -413,15 +430,35 @@ function hydrateSongs(songs) {
     return fetchAlbumAudio(chunk)
       .then(function (rows) {
         var byHash = {};
+        var byAudioId = {};
         for (var r = 0; r < rows.length; r++) {
           var row = rows[r];
           if (Array.isArray(row)) row = row[0];
           if (!row || !row.audio_info) continue;
-          var hash = row.audio_info.hash;
-          if (hash) byHash[String(hash).toUpperCase()] = row;
+          // audio_id 是最稳的匹配键（歌单接口的 hash 与响应里的 audio_info.hash
+          // 常常不是同一个文件，按 hash 匹配会大面积落空）。
+          if (row.audio_info.audio_id) {
+            byAudioId[String(row.audio_info.audio_id)] = row;
+          }
+          // 顺便把各档 hash 也登记上，兼容只给 hash 的接口（搜索 / 榜单）。
+          var audioInfo = row.audio_info;
+          var keys = [
+            audioInfo.hash,
+            audioInfo.hash_128,
+            audioInfo.hash_320,
+            audioInfo.hash_flac,
+            audioInfo.hash_high,
+            audioInfo.hash_super
+          ];
+          for (var k = 0; k < keys.length; k++) {
+            if (!keys[k]) continue;
+            byHash[String(keys[k]).toUpperCase()] = row;
+          }
         }
         for (var s = 0; s < songs.length; s++) {
-          var info = byHash[String(songs[s].id).toUpperCase()];
+          var info =
+            (songs[s].audioId && byAudioId[String(songs[s].audioId)]) ||
+            byHash[String(songs[s].id).toUpperCase()];
           if (!info) continue;
           if (!songs[s].artwork) {
             songs[s].artwork = normalizeImage(
