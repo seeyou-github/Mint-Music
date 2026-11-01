@@ -141,29 +141,27 @@ function normalizeCover(value, artist) {
 /**
  * 付费 / 版权状态 → 歌曲列表标签（App 侧 SongAccess）。
  *
- * 口径与标签语义对齐：**「VIP」= 会员 / 只能试听**，所以只认这两个字段：
- *   payInfo.listen_fragment = "1" → 非会员只能听片段 → vip
- *   payInfo.paytype        = 3    → 会员专享（实测与 listen_fragment=1 同时出现）
- *   online                 = "0"  → 已下架
+ * 口径与标签语义对齐：**「VIP」= 会员 / 只能试听**，所以只认这几个字段：
+ *   payInfo.listen_fragment  = "1" → 非会员只能听片段 → vip
+ *   payInfo.paytype          = 3   → 会员专享（实测与 listen_fragment=1 同时出现）
+ *   payInfo.cannotOnlinePlay = "1" → 明确禁止在线播放 → offline
  * 其余一律当免费。
  *
- * 踩过的坑（这些字段都不能单独用，会把大量能免费播的歌标成 VIP/付费）：
- *   · `feeType.vip`：**不等于「只能会员听」**。实测 `vip=1` 但 `listen_fragment=0`
- *     的歌（pay=0x880088、paytype=0）能完整播放，它表示的是「会员可听（高音质）」，
- *     按它判 VIP 会让整个列表几乎全是 VIP；
+ * 踩过的坑（这些字段都不能用，会把大量能正常播放的歌标错）：
+ *   · `online`：**不是「有没有下架」**。实测「罗生门」（online="0"）能拿到 10MB 的
+ *     320k 完整文件，「快乐老家」同样 online="0" 也能播；按它判下架会误标一堆好歌；
+ *   · `feeType.vip`：不等于「只能会员听」。`vip=1` 但 `listen_fragment=0` 的歌
+ *     （pay=0x880088、paytype=0）能完整播放，按它判 VIP 会让列表几乎全是 VIP；
  *   · `feeType.album`：只有免费歌才是 "1"，付费歌是 "0"，按 "0" 判「数字专辑」等于全标；
  *   · `feeType.song`：免费歌也会是 "1"（「睡眠音乐 催眠曲」pay=0xFF、vip=0、song=1）；
  *   · `copyright`：正常可播的歌全是 "0"，当「有版权」用会把整榜标成无版权。
  *
- * 结论：酷我没有可靠的「数字专辑 / 单曲付费」字段，只报「会员（可试听）」与「下架」。
+ * 结论：酷我没有可靠的「数字专辑 / 单曲付费」字段，只报「会员（可试听）」与「禁播」。
  */
 function accessOf(item) {
   if (!item) return '';
   var payInfo = item.payInfo || {};
-  var online = item.ONLINE !== undefined ? item.ONLINE : item.online;
-  if (online !== undefined && online !== null && String(online) === '0') {
-    return 'offline';
-  }
+  if (String(payInfo.cannotOnlinePlay) === '1') return 'offline';
   if (String(payInfo.listen_fragment) === '1') return 'vip';
   if (String(payInfo.paytype) === '3') return 'vip';
   return '';
