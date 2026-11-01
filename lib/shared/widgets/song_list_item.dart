@@ -270,6 +270,7 @@ class SongListItem extends ConsumerWidget {
             if (showQuality) _buildQualityTag(colors, context),
             if (showSource && song.source != null)
               _buildSourceTag(colors, context, ref),
+            _buildAccessTag(colors, context),
             Expanded(
               child: Text(
                 song.artist,
@@ -302,6 +303,49 @@ class SongListItem extends ConsumerWidget {
         ),
       ),
     );
+  }
+
+  /// 「非免费」标签：显示在歌手名左侧。
+  ///
+  /// 由数据源插件声明（`access: vip / album / paid / offline / nocopyright`），
+  /// 不区分音质。B 站那套会员专属标记仍走右侧的 [_buildVipTag]，两者互不影响。
+  Widget _buildAccessTag(ThemeColors colors, BuildContext context) {
+    final label = song.access.label;
+    if (label == null || selectionMode) return const SizedBox.shrink();
+    final color = _accessColor(colors);
+    return Container(
+      margin: const EdgeInsets.only(right: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(2),
+      ),
+      child: Text(
+        context.tr(label),
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+          color: color,
+        ),
+      ),
+    );
+  }
+
+  /// 各状态的颜色：会员金、数字专辑紫、单曲付费橙、下架/无版权灰。
+  Color _accessColor(ThemeColors colors) {
+    switch (song.access) {
+      case SongAccess.vip:
+        return const Color(0xFFE6A23C);
+      case SongAccess.album:
+        return const Color(0xFF9C6ADE);
+      case SongAccess.paid:
+        return const Color(0xFFE6704B);
+      case SongAccess.offline:
+      case SongAccess.noCopyright:
+        return colors.textHint;
+      case SongAccess.free:
+        return colors.textHint;
+    }
   }
 
   /// 点到黑名单歌曲时给个提示，避免看起来像「点了没反应」。

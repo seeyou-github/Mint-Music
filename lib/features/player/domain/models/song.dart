@@ -1,3 +1,96 @@
+/// 平台侧的「能不能免费听」状态。
+///
+/// 与 [Song.isVipExclusive] 的区别：
+/// * [isVipExclusive] 是 B 站专属的「充电专属 / 大会员专享」布尔标记，还挂着
+///   「隐藏B站会员专属歌曲」开关；
+/// * [SongAccess] 是 QQ / 网易 / 酷我 / 酷狗 数据源返回的付费与版权状态，
+///   只用来在歌曲列表里显示标签，**不参与任何过滤**。
+///
+/// 插件在歌曲对象里用 `access: 'vip' | 'album' | 'paid' | 'offline' | 'nocopyright'`
+/// 声明；不写（或写空）表示免费。
+enum SongAccess {
+  /// 免费（或平台没给状态）。
+  free,
+
+  /// 会员歌曲：需要会员才能完整播放，非会员只能试听片段。
+  vip,
+
+  /// 数字专辑：需要购买专辑才能听。
+  album,
+
+  /// 单曲付费：需要单独购买这首。
+  paid,
+
+  /// 已下架。
+  offline,
+
+  /// 无版权 / 未上架。
+  noCopyright;
+
+  /// 插件传来的原始值 → 枚举。认不出的值一律当免费，避免误标。
+  static SongAccess fromRaw(String? raw) {
+    switch ((raw ?? '').trim().toLowerCase()) {
+      case 'vip':
+      case 'viponly':
+      case 'member':
+        return SongAccess.vip;
+      case 'album':
+      case 'digital':
+      case 'digital_album':
+        return SongAccess.album;
+      case 'paid':
+      case 'pay':
+      case 'charge':
+        return SongAccess.paid;
+      case 'offline':
+      case 'removed':
+        return SongAccess.offline;
+      case 'nocopyright':
+      case 'no_copyright':
+      case 'uncopyrightable':
+        return SongAccess.noCopyright;
+      default:
+        return SongAccess.free;
+    }
+  }
+
+  /// 写回 JSON / 传给插件时用的原始值。
+  String get raw {
+    switch (this) {
+      case SongAccess.free:
+        return '';
+      case SongAccess.vip:
+        return 'vip';
+      case SongAccess.album:
+        return 'album';
+      case SongAccess.paid:
+        return 'paid';
+      case SongAccess.offline:
+        return 'offline';
+      case SongAccess.noCopyright:
+        return 'nocopyright';
+    }
+  }
+
+  /// 歌曲列表里的标签文案；[free] 不显示标签。
+  String? get label {
+    switch (this) {
+      case SongAccess.free:
+        return null;
+      case SongAccess.vip:
+        return 'VIP';
+      case SongAccess.album:
+        return '数字专辑';
+      case SongAccess.paid:
+        return '付费';
+      case SongAccess.offline:
+        return '下架';
+      case SongAccess.noCopyright:
+        return '无版权';
+    }
+  }
+}
+
 class Song {
   final String id;
   final String title;
@@ -55,6 +148,11 @@ class Song {
   /// 本地歌曲、专辑页里的单个分 P 始终为 0。
   final int partsCount;
 
+  /// 平台返回的付费 / 版权状态（QQ、网易、酷我、酷狗数据源）。
+  ///
+  /// 只用于列表标签展示，不影响播放与过滤；B 站那套仍走 [isVipExclusive]。
+  final SongAccess access;
+
   const Song({
     required this.id,
     required this.title,
@@ -85,9 +183,20 @@ class Song {
     this.preferredSource,
     this.isVipExclusive = false,
     this.partsCount = 0,
+    this.access = SongAccess.free,
   });
 
   bool get isLocal => source == 'local';
+
+  /// 是否 B 站音源的歌曲。
+  ///
+  /// 「隐藏B站会员专属歌曲」这个开关只对 B 站生效：别的平台（QQ / 网易 /
+  /// 酷我 / 酷狗）的会员歌只是「需要会员」，未登录还能试听、换音源也可能
+  /// 放得出来，不该被静默隐藏。
+  bool get isBilibiliSource {
+    final src = (displaySource ?? '').toLowerCase();
+    return src.contains('bili');
+  }
 
   /// 展示 / 徽标用的音源 id。
   ///
@@ -144,6 +253,7 @@ class Song {
     String? preferredSource,
     bool? isVipExclusive,
     int? partsCount,
+    SongAccess? access,
     bool clearSourceUrl = false,
     bool clearSourceHeaders = false,
     bool clearSourceQuality = false,
@@ -188,6 +298,7 @@ class Song {
           : preferredSource ?? this.preferredSource,
       isVipExclusive: isVipExclusive ?? this.isVipExclusive,
       partsCount: partsCount ?? this.partsCount,
+      access: access ?? this.access,
     );
   }
 
@@ -256,6 +367,7 @@ class Song {
       'preferredSource': preferredSource,
       'isVipExclusive': isVipExclusive,
       'partsCount': partsCount,
+      'access': access.raw,
     };
   }
 
@@ -313,6 +425,7 @@ class Song {
       preferredSource: json['preferredSource']?.toString(),
       isVipExclusive: json['isVipExclusive'] == true,
       partsCount: (json['partsCount'] as num?)?.toInt() ?? 0,
+      access: SongAccess.fromRaw(json['access']?.toString()),
     );
   }
 }

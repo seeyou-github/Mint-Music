@@ -138,6 +138,35 @@ function normalizeCover(value, artist) {
   return 'http://img1.kuwo.cn/star/' + directory + '/' + path;
 }
 
+/**
+ * 付费 / 版权状态 → 歌曲列表标签（App 侧 SongAccess）。
+ *
+ * 酷我三个接口都带 `payInfo`，里面 `feeType` 是最清楚的：
+ *   feeType.vip   = "1" → 会员歌曲
+ *   feeType.song  = "1" → 单曲付费
+ *   feeType.album = "0" → 需购买专辑（"1" 表示不需要）
+ * 另：`online = "0"` 是已下架。
+ *
+ * 坑：`copyright` 字段**不能**当"有版权"用——实测榜单里正常可播的歌
+ * 全是 `copyright = "0"`，拿它判无版权会把整个榜单标成无版权。
+ *
+ * `pay` 那个位掩码（免费歌 0xFF，会员歌 0xFF00FF / 0xFC00FC / 0x880088）只作兜底，
+ * 不按音质区分。
+ */
+function accessOf(item) {
+  if (!item) return '';
+  var payInfo = item.payInfo || {};
+  var fee = payInfo.feeType || {};
+  var online = item.ONLINE !== undefined ? item.ONLINE : item.online;
+  if (online !== undefined && online !== null && String(online) === '0') {
+    return 'offline';
+  }
+  if (String(fee.vip) === '1') return 'vip';
+  if (String(fee.song) === '1') return 'paid';
+  if (String(fee.album) === '0') return 'album';
+  return '';
+}
+
 function songOf(item) {
   if (!item) return null;
   // 搜索结果是 MUSICRID，歌单 / 榜单详情里是 id
@@ -172,7 +201,9 @@ function songOf(item) {
     year: yearOfTimestamp(item.pub || item.RELEASEDATE || item.releaseDate),
     artwork: cover,
     duration: Math.floor(duration),
-    source: 'kw'
+    source: 'kw',
+    // 非免费标签（vip / album / paid / offline / nocopyright），免费时为空串
+    access: accessOf(item)
   };
 }
 

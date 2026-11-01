@@ -287,9 +287,13 @@ class _LocalPlaylistDetailPageState
   }
 
   /// 完整歌曲中当前允许展示的部分（按「隐藏会员专属」开关过滤）。
+  ///
+  /// 开关只对 B 站生效，别的平台的会员歌靠 [SongAccess] 标签提示，不隐藏。
   List<Song> _visibleOriginalSongs() {
     if (!_hideVipExclusive) return List<Song>.from(_originalSongs);
-    return _originalSongs.where((s) => !s.isVipExclusive).toList();
+    return _originalSongs
+        .where((s) => !(s.isVipExclusive && s.isBilibiliSource))
+        .toList();
   }
 
   void _onSortModeChanged(SongSortMode mode) {

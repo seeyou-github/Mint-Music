@@ -254,6 +254,26 @@ function albumOf(track) {
 }
 
 /** 网易云歌曲 → 插件歌曲结构（时长统一换算成秒）。 */
+/**
+ * 付费 / 版权状态 → 歌曲列表标签（App 侧 SongAccess）。
+ *
+ * 网易用 `fee` 表示付费档位（不按音质区分，只报一个结论）：
+ *   0 免费 / 8 免费但高音质要会员 → 不标
+ *   1 会员歌曲                    → vip
+ *   4 数字专辑                    → album
+ * 另外 `st < 0` 是已下架，`noCopyrightRcmd` 非空是无版权。
+ */
+function accessOf(track) {
+  if (!track) return '';
+  var st = track.st;
+  if (st !== undefined && st !== null && Number(st) < 0) return 'offline';
+  if (track.noCopyrightRcmd) return 'nocopyright';
+  var fee = Number(track.fee);
+  if (fee === 1) return 'vip';
+  if (fee === 4) return 'album';
+  return '';
+}
+
 function songOf(track) {
   if (!track) return null;
   var album = albumOf(track);
@@ -275,7 +295,9 @@ function songOf(track) {
     ),
     artwork: normalizeCover(album.picUrl),
     duration: seconds,
-    source: 'wy'
+    source: 'wy',
+    // 非免费标签（vip / album / offline / nocopyright），免费时为空串
+    access: accessOf(track)
   };
 }
 

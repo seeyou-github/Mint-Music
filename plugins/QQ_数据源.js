@@ -159,6 +159,59 @@ function coverOfSingerMid(mid) {
   return 'https://y.gtimg.cn/music/photo_new/T001R500x500M000' + mid + '.jpg';
 }
 
+/**
+ * 付费 / 版权状态 → 歌曲列表标签（App 侧 SongAccess）。
+ *
+ * 只报四类，且**不按音质区分**（用户明确要求）：
+ *   vip         会员歌曲（非会员只能试听片段）
+ *   album       数字专辑（需购买整张）
+ *   paid        单曲付费
+ *   nocopyright 一个文件都没有（无版权 / 未上架）
+ *
+ * 注意：`price_track`（老接口叫 `paytrackprice`）每首歌都是 200（2 元），
+ * 拿它判会员会把所有歌都标成付费；真正决定能不能免费听的只有 `payplay`。
+ */
+function accessOf(item) {
+  if (!item) return '';
+  var pay = item.pay || {};
+  var payPlay = Number(
+    pay.payplay !== undefined ? pay.payplay : pay.pay_play
+  );
+  var priceAlbum = Number(
+    pay.price_album !== undefined ? pay.price_album : pay.payalbumprice
+  );
+  if (!hasAnyFile(item)) return 'nocopyright';
+  if (priceAlbum > 0) return 'album';
+  if (payPlay === 1) return 'vip';
+  return '';
+}
+
+/**
+ * 是否有任意一档可播文件。
+ *
+ * 接口没给 size 字段时无法判断，按「有文件」处理，避免把正常歌曲误标成无版权。
+ */
+function hasAnyFile(item) {
+  var file = item.file || {};
+  var sizes = [
+    item.size128,
+    item.size320,
+    item.sizeflac,
+    item.sizeape,
+    file.size_128mp3,
+    file.size_320mp3,
+    file.size_flac,
+    file.size_hires
+  ];
+  var hasSizeField = false;
+  for (var i = 0; i < sizes.length; i++) {
+    if (sizes[i] === undefined || sizes[i] === null || sizes[i] === '') continue;
+    hasSizeField = true;
+    if (Number(sizes[i]) > 0) return true;
+  }
+  return !hasSizeField;
+}
+
 /** 搜索 / 歌单 / 榜单里的歌曲 → 插件歌曲结构（时长单位：秒）。 */
 function songOf(item) {
   if (!item) return null;
@@ -185,7 +238,9 @@ function songOf(item) {
     year: yearOfTimestamp(item.pubtime || item.publish_time || item.time_public),
     artwork: coverOfAlbumMid(albumMidOf(item)),
     duration: interval > 0 ? interval : 0,
-    source: 'tx'
+    source: 'tx',
+    // 非免费标签（vip / album / paid / nocopyright），免费时为空串
+    access: accessOf(item)
   };
 }
 

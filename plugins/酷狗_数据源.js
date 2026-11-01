@@ -169,6 +169,31 @@ function coverOf(item) {
 }
 
 /** 搜索 / 歌单 / 榜单里的歌曲 → 插件歌曲结构（时长单位：秒）。 */
+/**
+ * 付费 / 版权状态 → 歌曲列表标签（App 侧 SongAccess）。
+ *
+ * 酷狗是「分音质」给权限的（`A320Privilege` / `SQPrivilege` 可能一个是 0
+ * 一个是 10），按用户要求**不按音质区分**，只给一个总体结论：
+ *   pay_type = 2          → 数字专辑（实测 Price = 1990 / 2590）
+ *   privilege = 10        → VIP
+ *   privilege = 8         → 付费（可试听）
+ *   pay_type 非 0 的其余值 → 付费
+ * 免费歌实测是 privilege = 0 / pay_type = 0。
+ */
+function accessOf(item) {
+  if (!item) return '';
+  var privRaw = item.Privilege !== undefined ? item.Privilege : item.privilege;
+  var payTypeRaw = item.PayType !== undefined ? item.PayType : item.pay_type;
+  var priv = privRaw === undefined || privRaw === null ? NaN : Number(privRaw);
+  var payType =
+    payTypeRaw === undefined || payTypeRaw === null ? NaN : Number(payTypeRaw);
+  if (payType === 2) return 'album';
+  if (priv === 10) return 'vip';
+  if (priv === 8) return 'vip';
+  if (!isNaN(payType) && payType !== 0) return 'vip';
+  return '';
+}
+
 function songOf(item) {
   if (!item) return null;
   var hash = item.FileHash || item.hash || '';
@@ -219,7 +244,9 @@ function songOf(item) {
     albumName: decodeName(albumName),
     artwork: coverOf(item),
     duration: Math.floor(duration),
-    source: 'kg'
+    source: 'kg',
+    // 非免费标签（vip / album / paid），免费时为空串
+    access: accessOf(item)
   };
 }
 

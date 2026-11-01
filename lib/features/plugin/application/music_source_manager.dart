@@ -1639,8 +1639,13 @@ class MusicSourceManager {
         // 「隐藏B站会员专属歌曲」开启时，插件列表里的会员专属歌曲直接过滤
         // （搜索 / 专辑 / 作者 / 榜单详情都走这里；已收藏的歌单由收藏详情页
         // 按同一开关过滤展示）。
+        //
+        // 这个开关**只针对 B 站**：QQ / 网易 / 酷我 / 酷狗 的会员歌曲用的是
+        // `SongAccess` 标签（能试听、换音源也可能放得出来），不该被它吃掉。
         if (hideVipExclusiveSongs) {
-          return songs.where((song) => !song.isVipExclusive).toList();
+          return songs
+              .where((song) => !(song.isVipExclusive && song.isBilibiliSource))
+              .toList();
         }
         return songs;
       }
@@ -1822,6 +1827,11 @@ class MusicSourceManager {
       lx: lxMeta,
       isVipExclusive: info['vipExclusive'] == true,
       partsCount: info['parts'] is num ? (info['parts'] as num).toInt() : 0,
+      // 付费 / 版权状态：数据源插件（QQ、网易、酷我、酷狗）用 `access` 声明，
+      // 只在列表里显示标签，不参与过滤。
+      access: SongAccess.fromRaw(
+        (info['access'] ?? info['vipType'])?.toString(),
+      ),
     );
   }
 
