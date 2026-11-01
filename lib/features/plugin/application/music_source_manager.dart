@@ -1009,6 +1009,63 @@ class MusicSourceManager {
     return sourceId;
   }
 
+  /// 专辑 / 作者详情该用哪个音源去查。
+  ///
+  /// 队列里的歌曲在解析完播放地址后，`source` 会被改写成**实际播放源**；
+  /// 落雪（lx）格式的插件只有 `musicUrl`，拿它去查专辑 / 作者，插件返回 null，
+  /// 界面就会提示「该音源没有提供专辑详情接口」——而同一个歌从列表点进去却是
+  /// 正常的（列表里还留着数据源 / 全功能源的 id）。
+  ///
+  /// 这里按「当前源能查就用它 → 否则同平台里找一个真能查的插件」来挑，
+  /// 数据源优先、其次按安装时间。找不到就原样返回，让上层照旧报错。
+  String collectionDetailSourceFor(
+    String sourceId, {
+    required bool forArtist,
+  }) {
+    final trimmed = sourceId.trim();
+    if (trimmed.isEmpty || trimmed == 'local') return trimmed;
+    final (baseId, pluginId) = splitSourceId(trimmed);
+    if (baseId.isEmpty) return trimmed;
+    // 当前这个源就能查：别多此一举。
+    if (pluginId != null && _hostSupportsCollectionDetail(trimmed, forArtist)) {
+      return trimmed;
+    }
+
+    ({String id, int rank, DateTime installed})? best;
+    for (final host in _pluginService.enabledPlugins) {
+      final hostPluginId = _pluginService.getPluginIdForHost(host);
+      if (hostPluginId == null || hostPluginId.isEmpty) continue;
+      final pluginSourceId = _getSourceIdForHost(host, baseId);
+      if (pluginSourceId == null) continue;
+      final appId = _pluginSourceAppId(host, pluginSourceId);
+      if (!_hostSupportsCollectionDetail(appId, forArtist)) continue;
+      final candidate = (
+        id: appId,
+        // 数据源优先：歌曲元数据本来就是它给的，专辑 / 作者的 raw 结构一致。
+        rank: host.isDataSource ? 0 : 1,
+        installed:
+            _pluginService.installTimeOf(hostPluginId) ??
+            DateTime.fromMillisecondsSinceEpoch(0),
+      );
+      final current = best;
+      if (current == null ||
+          candidate.rank < current.rank ||
+          (candidate.rank == current.rank &&
+              candidate.installed.isBefore(current.installed))) {
+        best = candidate;
+      }
+    }
+    return best?.id ?? trimmed;
+  }
+
+  /// 该音源背后的插件是否实现了专辑 / 作者详情接口。
+  bool _hostSupportsCollectionDetail(String sourceId, bool forArtist) {
+    for (final host in _findPluginHostsForSource(sourceId)) {
+      return forArtist ? host.supportsArtistWorks : host.supportsAlbumInfo;
+    }
+    return false;
+  }
+
   /// 这个插件 id 是否还对得上一个已启用的插件。
   ///
   /// 插件 id 是安装时间戳：卸载 / 重装（哪怕文件只改了名字）就会换一个新的，

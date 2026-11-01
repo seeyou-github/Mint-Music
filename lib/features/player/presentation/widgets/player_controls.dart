@@ -69,9 +69,15 @@ class _PlayerProgressBarState extends State<PlayerProgressBar> {
   bool _isDragging = false;
   double _dragProgress = 0.0;
 
+  /// 时长 / 进度文案：不足一小时 `mm:ss`，超过一小时 `h:mm:ss`。
+  ///
+  /// 以前只取 `inMinutes.remainder(60)`，播客、现场、纯音乐这类超过一小时的
+  /// 曲目会把小时吞掉（1:34:16 显示成 34:16），进度条看起来像「播了一半」。
   String _formatDuration(Duration d) {
+    final hours = d.inHours;
     final minutes = d.inMinutes.remainder(60).toString().padLeft(2, '0');
     final seconds = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    if (hours > 0) return '$hours:$minutes:$seconds';
     return '$minutes:$seconds';
   }
 

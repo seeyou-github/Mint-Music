@@ -1125,6 +1125,33 @@ JSON.stringify((function() {
     );
   }
 
+  /// 专辑详情（`getAlbumInfo`）是否由这个插件实现。
+  ///
+  /// 落雪脚本基本只实现 `musicUrl`：播放详情页把队列歌曲的 source 换成了
+  /// 实际播放源之后，再拿它去查专辑就会得到「该音源没有提供专辑详情接口」。
+  /// 上层据此改用一个真能查详情的同平台插件。
+  bool get supportsAlbumInfo =>
+      _supportsAlbumInfo ??= _hasExportMethod('getAlbumInfo');
+
+  /// 作者作品（`getArtistWorks`）是否由这个插件实现。
+  bool get supportsArtistWorks =>
+      _supportsArtistWorks ??= _hasExportMethod('getArtistWorks');
+
+  bool? _supportsAlbumInfo;
+  bool? _supportsArtistWorks;
+
+  bool _hasExportMethod(String name) {
+    if (!_loaded) return false;
+    try {
+      final result = _engine.evaluate(
+        'typeof module.exports.$name === "function"',
+      );
+      return result.stringResult == 'true';
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// 专辑详情（含歌曲列表）。
   ///
   /// 失败时**抛出**异常（不再吞掉返回 null）：上层需要区分「插件报错」和

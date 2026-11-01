@@ -9,6 +9,7 @@ import '../../discover/application/search_providers.dart';
 import '../../discover/domain/models/search_collection.dart';
 import '../../library/application/playlist_providers.dart';
 import '../../library/domain/models/recently_played.dart';
+import '../../plugin/application/plugin_providers.dart';
 import '../application/root_overlay_tracker.dart';
 import '../domain/models/song.dart';
 
@@ -63,12 +64,24 @@ Future<void> openPlaybackSource(
       target =
           '${AppRoutes.collectionDetail}?type=${collectionType.id}'
           '&id=$encodedId';
+      // 专辑 / 作者详情要由「真能查详情」的插件解析：队列歌曲的 source 在
+      // 播放时被换成了实际播放源（多半是只有 musicUrl 的落雪脚本），直接拿
+      // 它去查会提示「该音源没有提供专辑详情接口」。
+      final collectionSource = container
+          .read(musicSourceManagerProvider)
+          .collectionDetailSourceFor(
+            (song.preferredSource?.trim().isNotEmpty ?? false)
+                ? song.preferredSource!
+                : (song.source ?? ''),
+            forArtist: type == PlaybackSourceType.artist,
+          );
       extra = _collectionOf(
         collectionType,
         song: song,
         id: id,
         name: name,
         meta: sourceMeta,
+        source: collectionSource,
       );
     case PlaybackSourceType.search:
     case PlaybackSourceType.local:
@@ -307,6 +320,7 @@ SearchCollection _collectionOf(
   required String id,
   required String? name,
   required Map<String, dynamic>? meta,
+  String? source,
 }) {
   if (meta != null) return SearchCollection.fromJson(meta, type: type);
 
@@ -316,7 +330,7 @@ SearchCollection _collectionOf(
     id: id,
     title: title,
     type: type,
-    source: song.source ?? '',
+    source: source ?? song.source ?? '',
     coverUrl: song.coverUrl,
     artist: isArtist ? null : song.artist,
     raw: {
