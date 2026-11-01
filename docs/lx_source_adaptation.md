@@ -311,8 +311,13 @@ const cookie = readUserVariables().MUSIC_U || '';
 - [ ] 请求不支持的 `source` / `action` 时明确拒绝，而不是静默返回空
 - [ ] 全文（**包括注释和提示文案**）不含下面第 9 节的禁用字眼
 
-参考实现：`D:\Download\音源\LX_网易云官方_播放下载.js`（v1.1.0，声明了
-`downloadQualitys` + `login` + `credentials` + `loginStatus`，并正确处理试听片段）。
+参考实现：
+
+| 插件 | 说明 |
+| --- | --- |
+| `D:\Download\音源\LX_网易云官方_播放下载.js` | v1.1.0，`downloadQualitys` + `login` + `credentials` + `loginStatus`，VIP 歌返回 30 秒试听片段 |
+| `D:\Download\音源\LX_QQ_官方.js` | 只走 QQ 官方接口；`RS02` 前缀取会员歌 30 秒试听；`qm_keyst` + `uin` 凭据 |
+| `D:\Download\音源\LX_酷狗_官方.js` | 只走酷狗官方接口；`album_audio` 拿分音质 hash + `v5/url` 取地址；`userid` + `token` 凭据。酷狗未登录**没有**试听通道，会员歌只能提醒（见文件头「四、实测结论」） |
 
 ## 9. 插件里不能出现的字眼（会被判成别的格式）
 
