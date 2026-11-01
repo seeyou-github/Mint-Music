@@ -171,3 +171,36 @@ MusicFree 插件往往是单平台的（一个 bilibili 插件 + 一个网易插
 与 App 歌单详情页一一对应；点远处页码时只加载目标页。内置源一次性返回全量歌曲，
 因此不存在翻页概念。
 
+
+## 音质声明（本项目扩展）
+
+MusicFree 协议本身没有「支持的音质」字段，历史行为是适配器对所有插件统一报
+`128k / 320k / flac`，于是「B 站插件也显示无损」——选了必然拿不到。
+
+现在插件可以在 `module.exports` 里自己声明：
+
+```js
+module.exports = {
+  platform: 'MF_Bilibiil',
+  // 播放音质：界面「音质切换」只显示这些档位（顺序即菜单顺序）
+  qualitys: ['64k', '128k', '192k'],
+  // 下载音质：缺省等于 qualitys
+  downloadQualitys: ['64k', '128k', '192k'],
+  getMediaSource(musicItem, quality) { /* … */ },
+}
+```
+
+规则：
+
+| 情况 | 行为 |
+|---|---|
+| 没写 `qualitys` | 仍报默认三档（`128k / 320k / flac`），老插件不受影响 |
+| 写了标准档位（`64k/128k/320k/flac`） | 仍按旧的四档键（`low/standard/high/super`）传给插件 |
+| 写了非标准档位（如 `192k`） | **原样**传给 `getMediaSource`，不再被压成 `high→320k` |
+
+`getMediaSource` 返回值里的 `quality` 是**实际档位**：和请求不一致时宿主不会
+报错（旧版本会抛 `Quality mismatch`），而是交给上层判断——播放会接受降级并
+把界面同步成实际音质，下载 / 插件测试仍然拒绝。
+
+参考实现：`D:/Download/音源/MF_Bilibiil.js`（B 站 64K/132K/192K，按 dash 音轨
+id 选档，而不是按 bandwidth 排序取第几个）。

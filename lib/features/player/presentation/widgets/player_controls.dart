@@ -7,6 +7,7 @@ import '../../../settings/application/settings_providers.dart';
 String _estimateSize(String qualityId, int durationSec) {
   if (durationSec <= 0) return '';
   final kbps = <String, int>{
+    '64k': 64,
     '128k': 128,
     '192k': 192,
     '320k': 320,

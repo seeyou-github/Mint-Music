@@ -5,6 +5,7 @@ import '../models/song.dart';
 
 class QualitySizeFormatter {
   static const _estimatedBitrates = <String, int>{
+    '64k': 64000,
     '128k': 128000,
     '192k': 192000,
     '320k': 320000,

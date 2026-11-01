@@ -34,7 +34,51 @@ var __mfSourcesCache = null;
 var __mfActionsCache = null;
 var __mfSourceIdCache = null;
 
-var __mfQualityLabels = ['128k', '320k', 'flac'];
+/**
+ * 插件没声明音质时的默认档位。
+ *
+ * MusicFree 协议本身没有 qualitys 字段，所以历史行为是「所有插件都报这三档」，
+ * 结果就是「B 站插件也显示无损」。现在插件可以在 module.exports 里写
+ * `qualitys` / `qualities`（播放）和 `downloadQualitys` / `downloadQualities`
+ * （下载），适配器原样透传给宿主；没写的仍然用下面这三档，老插件行为不变。
+ */
+var __mfDefaultQualityLabels = ['128k', '320k', 'flac'];
+
+function __mfNormalizeQualityLabels(raw) {
+  if (!Array.isArray(raw) || !raw.length) return null;
+  var out = [];
+  var seen = {};
+  for (var i = 0; i < raw.length; i++) {
+    var label = __mfText(raw[i], '').trim();
+    if (!label) continue;
+    var key = label.toLowerCase();
+    if (seen[key]) continue;
+    seen[key] = 1;
+    out.push(label);
+  }
+  return out.length ? out : null;
+}
+
+/** 插件声明的播放音质（缺省 = 默认三档）。 */
+function __mfDeclaredQualities() {
+  var plugin = __mfPluginObject() || {};
+  return (
+    __mfNormalizeQualityLabels(plugin.qualitys) ||
+    __mfNormalizeQualityLabels(plugin.qualities) ||
+    __mfNormalizeQualityLabels(plugin.supportedQualities) ||
+    __mfDefaultQualityLabels.slice()
+  );
+}
+
+/** 插件声明的下载音质（缺省 = 播放音质）。 */
+function __mfDeclaredDownloadQualities() {
+  var plugin = __mfPluginObject() || {};
+  return (
+    __mfNormalizeQualityLabels(plugin.downloadQualitys) ||
+    __mfNormalizeQualityLabels(plugin.downloadQualities) ||
+    __mfDeclaredQualities()
+  );
+}
 
 /* ------------------------------------------------------------------ *
  * 捕获原始插件导出
@@ -253,8 +297,10 @@ function __mfSourcesObject() {
     __mfSourcesCache[__mfSourceId()] = {
       name: meta.name,
       type: 'music',
-      qualitys: __mfQualityLabels.slice(),
-      qualities: __mfQualityLabels.slice(),
+      qualitys: __mfDeclaredQualities(),
+      qualities: __mfDeclaredQualities(),
+      // 下载音质：插件没声明时等于播放音质（与本项目插件协议一致）
+      downloadQualitys: __mfDeclaredDownloadQualities(),
       actions: __mfActionList(),
     };
   }
@@ -770,12 +816,11 @@ function __mfParseMediaSource(response, qualityKey) {
     url = response;
   } else if (typeof response === 'object') {
     if (response.error) throw new Error(__mfErrorText(response.error));
+    // 只记录插件回报的音质，不在这里拒绝：服务器降级（要无损给 192k）是常态，
+    // 由宿主按用途决定是否接受（播放会降级并提示，下载 / 测试会拒绝）。
     [response.quality, response.data ? response.data.quality : null].forEach(function (value) {
       var label = __mfText(value, '');
       if (!label) return;
-      if (__mfQualityKey(label) !== qualityKey) {
-        throw new Error('Quality mismatch: requested ' + qualityKey + ', plugin returned ' + label);
-      }
       if (!reportedQuality) reportedQuality = label;
     });
     url = response.url || (response.data && response.data.url) || '';
@@ -812,7 +857,10 @@ function __mfQualityLabel(qualityKey) {
   if (qualityKey === 'super') return 'flac';
   if (qualityKey === 'high') return '320k';
   if (qualityKey === 'low') return '64k';
-  return '128k';
+  if (qualityKey === 'standard') return '128k';
+  // 插件自己声明的数字档（B 站的 192k、64k 等）原样返回，宿主认得这些标签。
+  if (/^\d{2,4}k$/.test(String(qualityKey || ''))) return qualityKey;
+  return String(qualityKey || '128k');
 }
 
 function __mfDirectUrl(item, quality) {
@@ -899,13 +947,25 @@ function __mfGetLyric(source, musicInfo) {
     });
 }
 
-/** 本项目音质标签 -> MusicFree 音质键（low / standard / high / super）。 */
+/**
+ * 本项目音质标签 -> 传给插件的音质键。
+ *
+ * 老约定是 low / standard / high / super 四档，绝大多数 MusicFree 插件只认这
+ * 四个。B 站这类档位是 64k/128k/192k 的音源没法用四档表达（192k 会被说成
+ * 320k），所以：**插件在 qualitys 里声明过的数字档，原样传下去**。
+ * 没声明的仍然走四档映射，老插件不受影响。
+ */
 function __mfQualityKey(quality) {
   var value = String(quality === null || quality === undefined ? '' : quality).trim().toLowerCase();
   if (value === 'low' || value === '64k') return 'low';
   if (value === 'standard' || value === '128k') return 'standard';
   if (value === 'high' || value === '320k' || value === 'hq') return 'high';
   if (value === 'super' || value === 'flac' || value === 'lossless') return 'super';
+  // 插件声明的其它数字档（64k/192k/...）直接透传
+  var declared = __mfDeclaredQualities();
+  for (var i = 0; i < declared.length; i++) {
+    if (String(declared[i]).toLowerCase() === value) return value;
+  }
   return null;
 }
 

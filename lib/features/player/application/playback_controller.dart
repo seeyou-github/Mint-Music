@@ -749,6 +749,22 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     return candidates;
   }
 
+  /// 把请求音质收敛到「当前音源声明过的档位」。
+  ///
+  /// 设置里的默认音质是全局的，但每个音源能给的档位不同（B 站只有
+  /// 64K / 132K / 192K）。不收敛就会每首歌都请求一个该音源根本没有的档位，
+  /// 然后每次弹一次「已自动降级」。收敛到最接近的档位后界面直接显示实际档位，
+  /// 也不再有多余的请求。
+  String _clampQualityToDeclared(String quality, List<String> declared) {
+    if (declared.isEmpty) return quality;
+    final key = musicQualityKey(quality);
+    if (declared.any((item) => musicQualityKey(item) == key)) return quality;
+    final ladder = sortedQualityLadder(declared);
+    return qualityStepDown(quality, ladder) ??
+        qualityStepUp(quality, ladder) ??
+        quality;
+  }
+
   /// 按音质阶梯解析地址：请求的档位**一个地址都拿不到**时自动降级，
   /// 已经是最低档则自动升级。
   ///
@@ -1259,7 +1275,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
         !isLocal && (song.coverUrl == null || song.coverUrl!.isEmpty)
         ? _musicSourceManager.getPic(song)
         : null;
-    final quality = isLocal
+    var quality = isLocal
         ? _getQualityFromSong(song)
         : (getQualityForSource?.call(SourceInfo.baseIdOf(sourceId)) ??
               _getQualityFromSong(song));
@@ -1275,6 +1291,10 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     final gatedQualities = isLocal
         ? const <String>{}
         : _musicSourceManager.getLoginGatedQualities(qualitySourceId);
+    // 全局默认音质不一定在这个音源声明过的档位里（例如给 B 站配了 320K，而
+    // B 站只有 64K/132K/192K）：先收敛到声明的档位，否则每首歌都会先请求一个
+    // 拿不到的档位、再触发一次「已自动降级」提示。
+    quality = _clampQualityToDeclared(quality, availableQualities);
     state = state.copyWith(
       currentIndex: index,
       currentSong: song,

@@ -132,6 +132,7 @@ Future<void> persistUserQuality(
 }
 
 const kQualityDisplayName = <String, String>{
+  '64k': '流畅 64K',
   '128k': '标准 128K',
   '192k': '高品质 192K',
   '320k': '超高品质 320K',
@@ -143,6 +144,7 @@ const kQualityDisplayName = <String, String>{
 };
 
 const kQualityDescription = <String, String>{
+  '64k': '最低音质，流量最省',
   '128k': '基础音质，文件较小',
   '192k': '良好音质，适合大多数场景',
   '320k': '高品质音质，接近CD品质',

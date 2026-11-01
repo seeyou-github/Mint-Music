@@ -699,6 +699,12 @@ class PluginService {
 
     print('[PluginService] 插件初始化完成，已加载 ${_loadedPlugins.length} 个插件');
 
+    // 插件文件更新后，音源 / 音质声明要在启动时同步一次：
+    // qualities / downloadQualitys 等字段只在**安装那一刻**写进 plugins.json，
+    // 用户替换插件文件（比如给 B 站插件补上 64k/128k/192k 的声明）后不同步的话，
+    // 界面还显示老档位，必须卸载重装才生效。
+    await _syncPluginSourceDeclarations();
+
     // 补齐插件图标（老插件 / 之前下载失败的场景）。
     // 这里必须 await：插件列表在初始化完成后才读取，图标没写完的话
     // 界面会一直用旧数据（没有 iconPath），表现为「装了插件也没有图标」。
@@ -707,6 +713,74 @@ class PluginService {
       const Duration(seconds: 20),
       onTimeout: () => print('[PluginService] 同步插件图标超时，跳过'),
     );
+  }
+
+  /// 把「运行中宿主声明的音源信息」同步回已安装插件记录。
+  ///
+  /// 只同步插件自己声明的东西（音源 id / 名称 / 播放音质 / 下载音质 / 登录门槛
+  /// / 凭据定义），不碰用户的开关状态（那存在 PluginSourcePreferences 里）。
+  Future<void> _syncPluginSourceDeclarations() async {
+    try {
+      final plugins = await loadPlugins();
+      var changed = false;
+      for (var i = 0; i < plugins.length; i++) {
+        final plugin = plugins[i];
+        final host = _loadedPlugins[plugin.id];
+        if (host == null) continue;
+        final declared = host.sources
+            .map(
+              (s) => PluginSource(
+                id: s.id,
+                name: s.name,
+                qualities: s.qualities,
+                downloadQualities: s.downloadQualities,
+                login: s.login,
+                credentials: s.credentials,
+              ),
+            )
+            .toList();
+        if (declared.isEmpty) continue;
+        if (_sameSourceDeclarations(plugin.supportedSources, declared)) {
+          continue;
+        }
+        plugins[i] = plugin.copyWith(supportedSources: declared);
+        changed = true;
+        print(
+          '[PluginService] 同步音源声明: ${plugin.name} → '
+          '${declared.map((s) => '${s.name}[${s.qualities.join('/')}]').join(', ')}',
+        );
+      }
+      if (changed) await savePlugins(plugins);
+    } catch (e) {
+      print('[PluginService] 同步音源声明失败: $e');
+    }
+  }
+
+  bool _sameSourceDeclarations(
+    List<PluginSource> a,
+    List<PluginSource> b,
+  ) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      final left = a[i];
+      final right = b[i];
+      if (left.id != right.id || left.name != right.name) return false;
+      if (!_sameStringList(left.qualities, right.qualities)) return false;
+      if (!_sameStringList(left.downloadQualities, right.downloadQualities)) {
+        return false;
+      }
+      if (left.login?.state != right.login?.state) return false;
+      if (left.credentials.length != right.credentials.length) return false;
+    }
+    return true;
+  }
+
+  bool _sameStringList(List<String> a, List<String> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 
   /// 补齐已安装插件的图标缓存。
