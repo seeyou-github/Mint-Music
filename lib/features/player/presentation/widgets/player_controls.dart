@@ -69,6 +69,9 @@ class _PlayerProgressBarState extends State<PlayerProgressBar> {
   bool _isDragging = false;
   double _dragProgress = 0.0;
 
+  /// 进度条本体（不含左右留白）的盒子：点击 / 拖动按它计算比例。
+  final GlobalKey _barKey = GlobalKey();
+
   /// 时长 / 进度文案：不足一小时 `mm:ss`，超过一小时 `h:mm:ss`。
   ///
   /// 以前只取 `inMinutes.remainder(60)`，播客、现场、纯音乐这类超过一小时的
@@ -84,7 +87,10 @@ class _PlayerProgressBarState extends State<PlayerProgressBar> {
   double get _displayProgress => _isDragging ? _dragProgress : widget.progress;
 
   double _getProgress(Offset globalPosition) {
-    final box = context.findRenderObject() as RenderBox;
+    // 用进度条本体而不是整个 PlayerProgressBar 的盒子：后者包含左右
+    // horizontalPadding，按整宽换算会让两端都偏移一截（中间恰好接近）。
+    final box = _barKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null) return 0.0;
     final local = box.globalToLocal(globalPosition);
     return (local.dx / box.size.width).clamp(0.0, 1.0);
   }
@@ -214,6 +220,7 @@ class _PlayerProgressBarState extends State<PlayerProgressBar> {
             },
             behavior: HitTestBehavior.opaque,
             child: Container(
+              key: _barKey,
               padding: EdgeInsets.symmetric(vertical: compact ? 4 : 12),
               child: LayoutBuilder(
                 builder: (context, constraints) {
