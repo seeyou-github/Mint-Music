@@ -318,7 +318,7 @@ const cookie = readUserVariables().MUSIC_U || '';
 | `D:\Download\音源\LX_网易云官方_播放下载.js` | v1.1.0，`downloadQualitys` + `login` + `credentials` + `loginStatus`，VIP 歌返回 30 秒试听片段 |
 | `D:\Download\音源\LX_QQ_官方.js` | 只走 QQ 官方接口；`RS02` 前缀取会员歌 30 秒试听；`qm_keyst` + `uin` 凭据 |
 | `D:\Download\音源\LX_酷狗_官方.js` | 只走酷狗官方接口；`album_audio` 拿分音质 hash + `v5/url` 取地址；`userid` + `token` 凭据。酷狗未登录**没有**试听通道，会员歌只能提醒（见文件头「四、实测结论」） |
-| `D:\Download\音源\LX_酷我_官方.js` | 只走酷我官方接口；`mobi.s` 多入口兜底（两个主机 × 车机/HD/普通渠道）+ `antiserver` 兜底；无需凭据。**接口会降级返回**，所以按返回的 `format`/`bitrate` 校验实际音质，不达标就换下一个入口 |
+| `D:\Download\音源\LX_酷我_官方.js` | 只走酷我官方接口；`mobi.s` 多入口兜底（两个主机 × 车机/HD/普通渠道）+ `antiserver` 兜底；无需凭据。**接口会降级返回**，所以按返回的 `format`/`bitrate` 校验实际音质，不达标就换下一个入口。内置「入口可用性自检」开关（`CONFIG.selfCheck` 或头部 `@selfcheck=1`），开启后加载时逐个探测入口、失败提示里附自检摘要 |
 
 ## 9. 插件里不能出现的字眼（会被判成别的格式）
 
