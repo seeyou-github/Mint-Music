@@ -13,6 +13,7 @@ import '../../discover/domain/models/search_collection.dart';
 import '../domain/source_id_mapping.dart';
 import '../domain/source_login_state.dart';
 import '../domain/plugin_source_states.dart';
+import '../domain/quality_ladder.dart';
 import '../domain/source_health.dart';
 import '../data/plugin_source_preferences.dart';
 import '../data/source_health_store.dart';
@@ -1926,6 +1927,13 @@ class MusicSourceManager {
   /// 播放链接由插件解析。
   /// [pluginHosts] 供插件测试传入被测宿主（隔离或共享），缺省时使用当前
   /// 已启用的插件宿主，保证测试结果与实际播放一致。
+  ///
+  /// [allowQualityDowngrade]：插件返回的音质低于请求音质时是否接受。
+  ///
+  /// * `false`（默认，插件测试 / 下载用）：视为失败，抛「音质不匹配」，
+  ///   这样测试报告和下载记录里的音质才是真的；
+  /// * `true`（播放用）：接受服务器实际给的音质，返回值里的 `quality` 就是
+  ///   **实际音质**，由播放器同步到界面（自动降级，见 `PlaybackController`）。
   Future<List<PluginMusicUrlResult>> getMusicUrlResultCandidates(
     Song song, {
     String quality = '320k',
@@ -1933,6 +1941,7 @@ class MusicSourceManager {
     List<PluginHost>? pluginHosts,
     void Function(String message)? onResolveError,
     bool allowMultiHost = false,
+    bool allowQualityDowngrade = false,
   }) async {
     // 插件重装后 id 会变：歌曲里存的旧插件 id 直接丢掉，退回平台 id，
     // 否则会被判成「该音源不可用（插件未启用或已卸载）」。
@@ -1948,6 +1957,7 @@ class MusicSourceManager {
         quality: quality,
         excludedUrls: excludedUrls,
         onResolveError: onResolveError,
+        allowQualityDowngrade: allowQualityDowngrade,
       );
     }
 
@@ -1988,14 +1998,16 @@ class MusicSourceManager {
           musicInfo,
           quality,
         );
-        if (result.quality.trim().isNotEmpty &&
-            musicQualityKey(result.quality) != musicQualityKey(quality)) {
-          throw Exception('音质不匹配：请求 $quality，插件返回 ${result.quality}，已拒绝替换音质');
-        }
+        // 服务器实际给的音质（可能低于请求：网易云要 lossless 会给 exhigh）。
+        final actualQuality = _effectiveQuality(
+          requested: quality,
+          reported: result.quality,
+          allowDowngrade: allowQualityDowngrade,
+        );
         final url = result.url.trim();
         final normalized = PluginMusicUrlResult(
           url: url,
-          quality: quality,
+          quality: actualQuality,
           headers: result.headers,
           // 记录实际提供地址的音源（插件），界面上据此显示当前使用的音源。
           source: _pluginSourceAppId(host, pluginSourceId),
@@ -2057,6 +2069,7 @@ class MusicSourceManager {
     Duration perSourceTimeout = const Duration(seconds: 10),
     void Function(DataSourceAttempt attempt)? onAttempt,
     void Function(String message)? onResolveError,
+    bool allowQualityDowngrade = false,
   }) async {
     final dataSourcePluginId = dataSourcePluginIdForSong(song);
     if (dataSourcePluginId == null) {
@@ -2095,6 +2108,7 @@ class MusicSourceManager {
           playbackSourceId: playbackSourceId,
           quality: quality,
           excludedUrls: excludedUrls,
+          allowQualityDowngrade: allowQualityDowngrade,
         ).timeout(perSourceTimeout);
         watch.stop();
         final attempt = DataSourceAttempt(
@@ -2167,6 +2181,7 @@ class MusicSourceManager {
     required String playbackSourceId,
     required String quality,
     required Set<String> excludedUrls,
+    bool allowQualityDowngrade = false,
   }) async {
     if (isDataSourceSource(playbackSourceId)) {
       throw Exception('该播放源本身也是数据源，无法解析播放地址');
@@ -2231,12 +2246,11 @@ class MusicSourceManager {
       quality,
     );
 
-    if (result.quality.trim().isNotEmpty &&
-        musicQualityKey(result.quality) != musicQualityKey(quality)) {
-      throw Exception(
-        '该音源只提供 ${result.quality}，不是请求的 $quality',
-      );
-    }
+    final actualQuality = _effectiveQuality(
+      requested: quality,
+      reported: result.quality,
+      allowDowngrade: allowQualityDowngrade,
+    );
     final url = result.url.trim();
     if (url.isEmpty || !_isValidAudioUrl(url)) {
       throw Exception('插件未返回可用的播放地址');
@@ -2251,15 +2265,40 @@ class MusicSourceManager {
 
     return PluginMusicUrlResult(
       url: url,
-      quality: quality,
+      quality: actualQuality,
       headers: result.headers,
       source: playbackSourceId,
     );
   }
 
+  /// 归一化插件回报的音质，并决定「降级」是否可接受。
+  ///
+  /// * 插件没回报音质 → 用请求音质（老插件不返回 quality 字段，不能因此判失败）；
+  /// * 与请求一致 → 用请求音质（统一大小写 / 别名写法）；
+  /// * 无法比较（插件自造标签，如网易的 `exhigh`）→ 仍用请求音质，否则界面
+  ///   上会显示一个用户看不懂、菜单里也没有的档位；
+  /// * 低于请求（服务器降级）→ [allowDowngrade] 为 true 时返回**实际音质**，
+  ///   否则抛「音质不匹配」（插件测试 / 下载走这条，结果才真实）；
+  /// * 高于请求 → 用实际音质（服务器给了更好的，没理由拒绝）。
+  String _effectiveQuality({
+    required String requested,
+    required String reported,
+    required bool allowDowngrade,
+  }) {
+    final text = reported.trim();
+    if (text.isEmpty) return requested;
+    if (musicQualityKey(text) == musicQualityKey(requested)) return requested;
+    final reportedRank = musicQualityRankOf(text);
+    final requestedRank = musicQualityRankOf(requested);
+    if (reportedRank == 0 || requestedRank == 0) return requested;
+    if (reportedRank < requestedRank && !allowDowngrade) {
+      throw Exception('音质不匹配：请求 $requested，插件返回 $text，已拒绝替换音质');
+    }
+    return text;
+  }
+
   /// 错误摘要：去掉 Exception 前缀、压成一行、限长，便于塞进汇总文案。
-  String _shortError(Object error) {
-    var text = '$error'.replaceFirst(RegExp(r'^Exception:\s*'), '');
+  String _shortError(Object error) {    var text = '$error'.replaceFirst(RegExp(r'^Exception:\s*'), '');
     text = text.replaceAll('"', "'").replaceAll('\n', ' ').trim();
     if (text.isEmpty) text = '未知错误';
     if (text.length > 60) text = '${text.substring(0, 60)}…';
@@ -2294,12 +2333,14 @@ class MusicSourceManager {
     required String quality,
     required Set<String> excludedUrls,
     void Function(String message)? onResolveError,
+    bool allowQualityDowngrade = false,
   }) async {
     final outcome = await resolveViaDataSource(
       song,
       quality: quality,
       excludedUrls: excludedUrls,
       onResolveError: onResolveError,
+      allowQualityDowngrade: allowQualityDowngrade,
     );
     return [
       PluginMusicUrlResult(
@@ -2336,12 +2377,14 @@ class MusicSourceManager {
     String quality = '320k',
     Set<String> excludedUrls = const <String>{},
     void Function(String message)? onResolveError,
+    bool allowQualityDowngrade = false,
   }) async {
     final candidates = await getMusicUrlResultCandidates(
       song,
       quality: quality,
       excludedUrls: excludedUrls,
       onResolveError: onResolveError,
+      allowQualityDowngrade: allowQualityDowngrade,
     );
     return candidates.isEmpty ? null : candidates.first;
   }

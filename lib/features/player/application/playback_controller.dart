@@ -15,6 +15,7 @@ import '../../plugin/application/music_source_manager.dart';
 import '../../plugin/application/plugin_providers.dart';
 import '../../plugin/data/source_health_store.dart';
 import '../../plugin/domain/plugin_types.dart';
+import '../../plugin/domain/quality_ladder.dart';
 import '../../plugin/domain/source_health.dart';
 import '../../blacklist/application/blacklist_providers.dart';
 import '../../settings/application/settings_providers.dart';
@@ -626,6 +627,8 @@ class PlaybackController extends StateNotifier<PlaybackState> {
         excludedUrls: excludedUrls,
         excludedSources: failed,
         perSourceTimeout: _dataSourceSourceTimeout,
+        // 播放源只拿得到更低音质时接受，而不是判它失败去换下一个源。
+        allowQualityDowngrade: true,
         onAttempt: (attempt) {
           attemptedCount++;
           if (attempt.success) {
@@ -695,6 +698,8 @@ class PlaybackController extends StateNotifier<PlaybackState> {
               song,
               quality: quality,
               excludedUrls: excludedUrls,
+              // 服务器只给得出更低音质时接受它（自动降级），界面同步成实际音质。
+              allowQualityDowngrade: true,
               onResolveError: (message) {
                 // 只记录仍在生效的播放请求的接口错误，避免被已取消的旧请求覆盖。
                 if (_currentPlayRequestId == requestId) {
@@ -742,6 +747,91 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     );
     candidates = await resolveOnce();
     return candidates;
+  }
+
+  /// 按音质阶梯解析地址：请求的档位**一个地址都拿不到**时自动降级，
+  /// 已经是最低档则自动升级。
+  ///
+  /// 与「服务器返回了更低音质」是两回事：那种情况在解析层就被接受了
+  /// （`allowQualityDowngrade`），这里只处理「这个档位完全没地址」。
+  ///
+  /// 阶梯来自音源声明的音质列表（已排除需登录的档位），所以不会去试一个
+  /// 音源根本没有的档位。[maxSteps] 限制额外尝试次数，避免一路降到底把
+  /// 用户晾在那儿——数据源换源本身已经很慢，调用方会把它压到 1。
+  Future<({List<PluginMusicUrlResult> results, String quality})>
+  _resolveWithQualityLadder(
+    Song song, {
+    required String quality,
+    required int requestId,
+    List<String> availableQualities = const [],
+    Set<String> gatedQualities = const {},
+    Set<String> excludedUrls = const <String>{},
+    int maxSteps = 2,
+  }) async {
+    final ladder = sortedQualityLadder(
+      availableQualities.where((q) => !gatedQualities.contains(q)),
+    );
+    var current = quality;
+    final tried = <String>{};
+    var results = const <PluginMusicUrlResult>[];
+
+    for (var step = 0; step <= maxSteps; step++) {
+      tried.add(musicQualityKey(current));
+      final watch = Stopwatch()..start();
+      results = await _resolveCurrentSourceUrlCandidates(
+        song,
+        quality: current,
+        requestId: requestId,
+        excludedUrls: excludedUrls,
+      );
+      watch.stop();
+      if (_currentPlayRequestId != requestId) {
+        return (results: const <PluginMusicUrlResult>[], quality: current);
+      }
+      if (results.isNotEmpty) {
+        final reported = results.first.quality.trim();
+        final effective = reported.isEmpty ? current : reported;
+        if (musicQualityKey(effective) != musicQualityKey(quality)) {
+          _notifyQualityAdjusted(quality, effective);
+        }
+        return (results: results, quality: effective);
+      }
+      if (step == maxSteps) break;
+      // 已经等太久了（多半是网络/插件超时，不是「这个档位没有」）：
+      // 再换一档只会让用户多等一轮，直接交还给上层报错。
+      if (watch.elapsed > _qualityStepBudget) break;
+
+      // 先降级；已经是最低档（或阶梯里没有更低档）时才升级。
+      final next =
+          qualityStepDown(current, ladder) ?? qualityStepUp(current, ladder);
+      if (next == null || tried.contains(musicQualityKey(next))) break;
+      if (_currentPlayRequestId != requestId) {
+        return (results: const <PluginMusicUrlResult>[], quality: current);
+      }
+      onMessage?.call(
+        tr(
+          '「${_getQualityDisplayName(current)}」获取不到播放地址，'
+          '正在尝试「${_getQualityDisplayName(next)}」…',
+        ),
+        backgroundColor: Colors.orange,
+      );
+      current = next;
+    }
+    return (results: results, quality: current);
+  }
+
+  /// 音质被自动调整时给用户一句人话提示（降级 / 升级语气不同）。
+  void _notifyQualityAdjusted(String requested, String actual) {
+    final requestedName = _getQualityDisplayName(requested);
+    final actualName = _getQualityDisplayName(actual);
+    if (isQualityDowngrade(requested, actual)) {
+      onMessage?.call(
+        tr('该歌曲没有「$requestedName」音质，已自动降级为「$actualName」'),
+        backgroundColor: Colors.orange,
+      );
+    } else {
+      onMessage?.call(tr('该歌曲没有「$requestedName」音质，已自动升级为「$actualName」'));
+    }
   }
 
   /// 换源后从原进度继续播放（如暂停期间 URL 过期，恢复时触发换源的场景），
@@ -991,6 +1081,13 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   static const Duration _audioSetTimeout = Duration(seconds: 10);
   static const Duration _musicSourceReadyTimeout = Duration(seconds: 12);
 
+  /// 音质阶梯最多值多少时间：一次尝试超过它就不再换档重试。
+  ///
+  /// 「这个档位拿不到地址」通常是插件秒回（url 为空 / 明确报错），一换档
+  /// 就能出结果；而超过这个时长基本是网络或插件超时，再试一档只是让用户
+  /// 继续干等（数据源换源一轮就可能 30 秒）。
+  static const Duration _qualityStepBudget = Duration(seconds: 8);
+
   /// 上一次看到的「是否正在播放」，用来捕捉「播放 → 暂停 / 停止」这一下。
   bool _wasPlaying = false;
 
@@ -1194,6 +1291,9 @@ class PlaybackController extends StateNotifier<PlaybackState> {
       Song currentSongToPlay = song;
       String? urlToPlay = song.sourceUrl;
       var resolvedUrlCandidates = <PluginMusicUrlResult>[];
+      // 实际生效的音质：服务器降级 / 阶梯切换后会变，末尾写进 song.sourceQuality，
+      // 否则下次比 `song.sourceQuality != quality` 时会误判成「音质变过」而反复重解析。
+      var playQuality = quality;
 
       // 队列里的地址是按「解析时的音质」保存的。用户之后切换过音质（全局
       // 默认音质 / 播放页手动切换），这个地址（以及它命中的缓存文件）就是
@@ -1242,14 +1342,31 @@ class PlaybackController extends StateNotifier<PlaybackState> {
 
       if (!_hasPlayableUrl(urlToPlay)) {
         debugPrint('[PlaybackController] URL 为空，正在解析: ${song.title}');
-        resolvedUrlCandidates = await _resolveCurrentSourceUrlCandidates(
+        final resolved = await _resolveWithQualityLadder(
           currentSongToPlay,
           quality: state.currentQuality,
           requestId: requestId,
+          availableQualities: availableQualities,
+          gatedQualities: gatedQualities,
+          // 数据源的换源本身已经串行试过所有播放源，再整轮降级会成倍变慢：
+          // 只给它一次机会。普通歌曲只有一个源，多降两档也不慢。
+          maxSteps: _musicSourceManager.dataSourcePluginIdForSong(song) != null
+              ? 1
+              : 2,
         );
+        if (_currentPlayRequestId != requestId) return;
+        resolvedUrlCandidates = resolved.results;
         urlToPlay = resolvedUrlCandidates.isEmpty
             ? null
             : resolvedUrlCandidates.first.url;
+        // 只有真的拿到地址才同步音质：全部失败时不要把 lastResolveError 那一档
+        // 显示成当前音质。
+        if (urlToPlay != null && urlToPlay.isNotEmpty) {
+          playQuality = resolved.quality;
+          if (playQuality != state.currentQuality) {
+            state = state.copyWith(currentQuality: playQuality);
+          }
+        }
         if (_currentPlayRequestId != requestId) {
           // 已被新的播放请求取代；isLoading 由新请求管理，不在此重置以免覆盖。
           return;
@@ -1263,7 +1380,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
           currentSongToPlay = currentSongToPlay.copyWith(
             sourceUrl: urlToPlay,
             sourceHeaders: result.headers.isEmpty ? null : result.headers,
-            sourceQuality: quality,
+            sourceQuality: playQuality,
             clearSourceHeaders: result.headers.isEmpty,
             clearSourceQuality: false,
             // 歌曲由插件解析地址，这里把音源标记成实际提供地址的插件，
@@ -1319,10 +1436,14 @@ class PlaybackController extends StateNotifier<PlaybackState> {
           if (_currentPlayRequestId != requestId) return;
           if (nextCandidates.isNotEmpty) {
             final next = nextCandidates.first;
+            // 换到的下一个源可能只给得出别的音质：以它回报的为准。
+            final nextQuality = next.quality.trim().isEmpty
+                ? playQuality
+                : next.quality.trim();
             final nextSong = currentSongToPlay.copyWith(
               sourceUrl: next.url,
               sourceHeaders: next.headers.isEmpty ? null : next.headers,
-              sourceQuality: quality,
+              sourceQuality: nextQuality,
               source: next.source ?? currentSongToPlay.source,
               clearSourceHeaders: next.headers.isEmpty,
               clearSourceQuality: false,
@@ -1334,7 +1455,19 @@ class PlaybackController extends StateNotifier<PlaybackState> {
               await _startPlayback();
               currentSongToPlay = nextSong;
               _replaceSongInQueue(index, nextSong);
-              state = state.copyWith(isLoading: false, currentSong: nextSong);
+              playQuality = nextQuality;
+              if (playQuality != state.currentQuality) {
+                state = state.copyWith(
+                  isLoading: false,
+                  currentSong: nextSong,
+                  currentQuality: playQuality,
+                );
+              } else {
+                state = state.copyWith(
+                  isLoading: false,
+                  currentSong: nextSong,
+                );
+              }
               _errorListenerSub = _mountOneTimeErrorListener(
                 requestId,
                 index,
@@ -1375,12 +1508,15 @@ class PlaybackController extends StateNotifier<PlaybackState> {
           failedUrls.add(candidateUrl);
 
           try {
+            final fallbackQuality = candidate.quality.trim().isEmpty
+                ? playQuality
+                : candidate.quality.trim();
             final fallbackSong = currentSongToPlay.copyWith(
               sourceUrl: candidateUrl,
               sourceHeaders: candidate.headers.isEmpty
                   ? null
                   : candidate.headers,
-              sourceQuality: quality,
+              sourceQuality: fallbackQuality,
               // 标记实际提供地址的音源，界面上显示真正正在使用的音源。
               source: candidate.source ?? currentSongToPlay.source,
               clearSourceHeaders: candidate.headers.isEmpty,
@@ -1392,7 +1528,12 @@ class PlaybackController extends StateNotifier<PlaybackState> {
             await _startPlayback();
             currentSongToPlay = fallbackSong;
             _replaceSongInQueue(index, fallbackSong);
-            state = state.copyWith(isLoading: false, currentSong: fallbackSong);
+            playQuality = fallbackQuality;
+            state = state.copyWith(
+              isLoading: false,
+              currentSong: fallbackSong,
+              currentQuality: playQuality,
+            );
             onMessage?.call(tr('原播放链接失败，已切换到备用播放链接'));
             _errorListenerSub = _mountOneTimeErrorListener(
               requestId,
@@ -1891,10 +2032,19 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     }
 
     try {
-      final result = await _musicSourceManager
-          .getMusicUrlResult(currentSong, quality: quality)
-          .timeout(_urlFetchTimeout);
+      // 手动切音质同样走「阶梯」：这个档位拿不到就自动降级，最低档再往上试。
+      final resolved = await _resolveWithQualityLadder(
+        currentSong,
+        quality: quality,
+        requestId: requestId,
+        availableQualities: state.availableQualities,
+        gatedQualities: state.gatedQualities,
+        // 手动切音质是前台等待：最多再试一档，别让用户干等两轮。
+        maxSteps: 1,
+      );
       if (_currentPlayRequestId != requestId) return;
+      final result = resolved.results.isEmpty ? null : resolved.results.first;
+      final actualQuality = resolved.quality;
 
       if (result == null || result.url.isEmpty) {
         await _resumeAfterQualitySwitch(requestId, wasPlaying);
@@ -1910,7 +2060,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
       final updatedSong = currentSong.copyWith(
         sourceUrl: result.url,
         sourceHeaders: result.headers.isEmpty ? null : result.headers,
-        sourceQuality: quality,
+        sourceQuality: actualQuality,
         clearSourceHeaders: result.headers.isEmpty,
         clearSourceQuality: false,
         // 标记实际提供地址的音源，界面上显示真正正在使用的音源。
@@ -1928,13 +2078,20 @@ class PlaybackController extends StateNotifier<PlaybackState> {
       state = state.copyWith(
         isLoading: false,
         isPlaying: wasPlaying,
-        currentQuality: quality,
+        // 降级 / 升级过就用实际音质，界面不能继续显示一个拿不到的档位。
+        currentQuality: actualQuality,
         currentSong: updatedSong,
       );
       await _resumeAfterQualitySwitch(requestId, wasPlaying);
       _finishQualitySwitch(requestId);
-      onMessage?.call(tr('已切换到 ${_getQualityDisplayName(quality)}'));
+      // 音质被阶梯调整过时，`_resolveWithQualityLadder` 已经提示过原因，
+      // 这里只在「就是用户要的那档」时补一句成功提示。
+      if (musicQualityKey(actualQuality) == musicQualityKey(quality)) {
+        onMessage?.call(tr('已切换到 ${_getQualityDisplayName(actualQuality)}'));
+      }
       // 用户手动切换音质：同步「默认音质 / 全局音质」。
+      // 这里记的是**用户选的那档**（不是降级后的实际档），下次播别的歌仍按
+      // 用户意图去要，遇到没有的再降级。
       onQualityChanged?.call(quality, currentSong.source);
     } catch (e) {
       if (_currentPlayRequestId != requestId) return;
