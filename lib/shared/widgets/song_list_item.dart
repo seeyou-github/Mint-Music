@@ -131,6 +131,10 @@ class SongListItem extends ConsumerWidget {
     return InkWell(
       onTap: effectiveTap,
       onLongPress: onLongPress,
+      // 歌曲行不要点击效果：水波纹 + 按下高亮都是纯装饰，长列表里每次点击
+      // 都要新建一个动画层重绘整行；行的反馈由「正在播放」高亮和 hover 承担。
+      splashFactory: NoSplash.splashFactory,
+      highlightColor: Colors.transparent,
       child: Container(
         color: selected
             ? colors.primary.withValues(alpha: 0.08)

@@ -263,6 +263,9 @@ class _BatchActionButton extends StatelessWidget {
     return InkWell(
       borderRadius: BorderRadius.circular(AppRadius.md),
       onTap: enabled ? onTap : null,
+      // 与 SongListItem 一致：不要水波纹与按下高亮。
+      splashFactory: NoSplash.splashFactory,
+      highlightColor: Colors.transparent,
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
         child: Column(

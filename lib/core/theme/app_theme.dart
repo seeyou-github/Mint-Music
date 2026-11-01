@@ -12,6 +12,13 @@ class AppTheme {
   static ThemeData get light => _lightCache ??= ThemeData(
     useMaterial3: true,
     brightness: Brightness.light,
+    // 全局关闭点击水波纹。
+    //
+    // 水波纹是纯装饰：每次点击都要在 Material 上新建一个动画层并重绘整块区域，
+    // 长列表里滚动 + 点击叠加时很容易看到掉帧。按下反馈由按钮/列表行自己的
+    // 颜色变化承担（见 song_list_item 等处的 highlightColor），不影响可点性判断。
+    splashFactory: NoSplash.splashFactory,
+    splashColor: Colors.transparent,
     colorScheme: const ColorScheme.light(
       primary: AppColors.primary,
       onPrimary: AppColors.textOnPrimary,
@@ -190,6 +197,13 @@ class AppTheme {
   static ThemeData get dark => _darkCache ??= ThemeData(
     useMaterial3: true,
     brightness: Brightness.dark,
+    // 全局关闭点击水波纹。
+    //
+    // 水波纹是纯装饰：每次点击都要在 Material 上新建一个动画层并重绘整块区域，
+    // 长列表里滚动 + 点击叠加时很容易看到掉帧。按下反馈由按钮/列表行自己的
+    // 颜色变化承担（见 song_list_item 等处的 highlightColor），不影响可点性判断。
+    splashFactory: NoSplash.splashFactory,
+    splashColor: Colors.transparent,
     colorScheme: const ColorScheme.dark(
       primary: AppColors.primaryLight,
       onPrimary: AppColors.textOnPrimary,

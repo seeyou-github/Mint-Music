@@ -801,11 +801,12 @@ class _PlayerCoverPage extends ConsumerWidget {
       alignment: alignment,
       child: GestureDetector(
         onTap: onTapCover,
-        child: AnimatedScale(
-          duration: const Duration(milliseconds: 500),
+        // 播放 / 暂停时的 500ms 缩放缓动去掉了：它每次切换播放状态都会让
+        // 封面（带大面积阴影与裁切）重新合成一遍。暂停态保留 0.95 的静态缩放，
+        // 用 Transform 直接给变换矩阵，不参与布局也不产生动画 ticker。
+        child: Transform.scale(
           scale: isPlaying ? 1.0 : 0.95,
           alignment: scaleAlignment,
-          curve: Curves.easeOutCubic,
           child: Container(
             width: coverSize,
             height: coverSize,

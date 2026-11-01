@@ -499,8 +499,9 @@ class _PlayPauseButton extends StatelessWidget {
     return GestureDetector(
       // 遵循 CeruMusic/Sollin-Music：加载期间禁用按钮，避免连点
       onTap: isLoading ? null : onPressed,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
+      // 原来是 AnimatedContainer(200ms)：宽高与装饰都不会变，动画纯属浪费
+      // 一个隐式动画控制器，直接用 Container。
+      child: Container(
         width: diameter,
         height: diameter,
         decoration: BoxDecoration(

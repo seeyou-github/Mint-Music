@@ -353,38 +353,25 @@ final appRouter = GoRouter(
     ),
     GoRoute(
       path: AppRoutes.fullPlayer,
-      pageBuilder: (context, state) => CustomTransitionPage(
+      // 播放详情页用 NoTransitionPage：打开 / 关闭都不做渐变。
+      //
+      // 这一页是整个应用最重的页面（封面、模糊背景、歌词 PageView、进度条），
+      // 200ms 的 FadeTransition 要把它整页合成一层再做透明度动画，低端机上是
+      // 明显的一顿；而淡入淡出本身不携带任何信息，去掉后点击封面/迷你播放器
+      // 是「立刻」出现，体感反而更快。
+      pageBuilder: (context, state) => NoTransitionPage(
         key: state.pageKey,
         child: const FullPlayerPage(),
-        transitionDuration: const Duration(milliseconds: 200),
-        reverseTransitionDuration: const Duration(milliseconds: 160),
-        transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          return FadeTransition(
-            opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut),
-            child: child,
-          );
-        },
       ),
     ),
     GoRoute(
       path: AppRoutes.lyric,
-      pageBuilder: (context, state) => CustomTransitionPage(
+      // 歌词页与播放详情页同属「整页播放界面」，同样用 NoTransitionPage：
+      // 它从封面点进来，240ms 的上滑会把这个重页面（整屏歌词 + 逐行动画）
+      // 边滑边合成，掉帧最明显。
+      pageBuilder: (context, state) => NoTransitionPage(
         key: state.pageKey,
         child: const LyricPage(),
-        transitionDuration: const Duration(milliseconds: 240),
-        reverseTransitionDuration: const Duration(milliseconds: 200),
-        transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          return SlideTransition(
-            position: Tween<Offset>(begin: const Offset(0, 1), end: Offset.zero)
-                .animate(
-                  CurvedAnimation(
-                    parent: animation,
-                    curve: Curves.easeOutCubic,
-                  ),
-                ),
-            child: child,
-          );
-        },
       ),
     ),
   ],
