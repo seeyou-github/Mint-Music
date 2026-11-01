@@ -253,7 +253,6 @@ function __lxNormalizeMusicUrlResult(response, payload) {
   }
 
   var reportedQuality = '';
-  var requestedKey = qualityKey(payload.info.type);
   function validateQuality(value) {
     value = parseNested(value);
     if (!value || typeof value !== 'object') return;
@@ -265,9 +264,9 @@ function __lxNormalizeMusicUrlResult(response, payload) {
       if (!label) return;
       var normalized = qualityKey(label);
       if (key === 'type' && !/^\\d{2,4}k${r'$'}/.test(normalized) && qualityTypes.indexOf(normalized) === -1) return;
-      if (normalized !== requestedKey) {
-        throw new Error('音质不匹配：请求 ' + payload.info.type + '，插件返回 ' + label + '，已拒绝替换音质');
-      }
+      // 只记录插件回报的音质，不在这里抛错：服务器降级（要 lossless 给
+      // 320k）是常态，由宿主按用途决定是否接受（播放会降级并提示，下载 /
+      // 测试会拒绝）。
       if (!reportedQuality) reportedQuality = label;
     });
     // Do not stop at the first label or URL: every branch must agree.

@@ -812,7 +812,6 @@ JSON.stringify((function() {
   }
 
   String? _validateMusicQuality(dynamic value, String requested) {
-    final requestedKey = musicQualityKey(requested);
     String? reported;
 
     void read(dynamic current) {
@@ -826,9 +825,11 @@ JSON.stringify((function() {
           if (label.isEmpty || (key == 'type' && !isMusicQualityType(label))) {
             continue;
           }
-          if (musicQualityKey(label) != requestedKey) {
-            throw Exception('音质不匹配：请求 $requested，插件返回 $label，已拒绝替换音质');
-          }
+          // 只**记录**插件回报的音质，不在这里拒绝。
+          //
+          // 「服务器只给得出更低音质」是常态（网易云没会员时请求无损会给
+          // 320k mp3），要交给上层按用途决定：播放允许降级并把界面同步成实际
+          // 音质，下载 / 插件测试仍然拒绝（见 MusicSourceManager._effectiveQuality）。
           reported ??= label;
         }
         // Check every response branch, including labels after the first URL.
