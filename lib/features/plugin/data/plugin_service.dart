@@ -705,6 +705,11 @@ class PluginService {
     // 界面还显示老档位，必须卸载重装才生效。
     await _syncPluginSourceDeclarations();
 
+    // 插件描述同步：早期 LX 插件导入时把 `@description` 截成了 36 字 + 「...」，
+    // 老记录里的省略号是**存进 plugins.json 的**，光改界面没用——必须从插件
+    // 文件重新读一遍才能恢复整段文字。
+    await _syncPluginDescriptions();
+
     // 补齐插件图标（老插件 / 之前下载失败的场景）。
     // 这里必须 await：插件列表在初始化完成后才读取，图标没写完的话
     // 界面会一直用旧数据（没有 iconPath），表现为「装了插件也没有图标」。
@@ -754,6 +759,56 @@ class PluginService {
     } catch (e) {
       print('[PluginService] 同步音源声明失败: $e');
     }
+  }
+
+  /// 从插件文件重新读 `@description`，修掉历史记录里的「36 字 + ...」。
+  ///
+  /// 只处理 LX 插件（描述在头部注释里，能稳定地用正则取到）；MusicFree 的
+  /// 描述来自 `module.exports`，导入时本来就没截断，不需要动。
+  ///
+  /// 正常情况下所有描述都一致，这一步是空转；只有老记录才会写一次盘。
+  Future<void> _syncPluginDescriptions() async {
+    try {
+      final plugins = await loadPlugins();
+      var changed = false;
+      for (var i = 0; i < plugins.length; i++) {
+        final plugin = plugins[i];
+        if (plugin.type != 'lx') continue;
+        final path = plugin.filePath;
+        if (path == null || path.isEmpty) continue;
+
+        String code;
+        try {
+          final file = File(path);
+          if (!await file.exists()) continue;
+          code = await file.readAsString();
+        } catch (_) {
+          continue;
+        }
+
+        final parsed = _extractLxDescription(code);
+        if (parsed == null || parsed.isEmpty) continue;
+        if (parsed == plugin.description) continue;
+
+        plugins[i] = plugin.copyWith(description: parsed);
+        changed = true;
+        print('[PluginService] 同步插件描述: ${plugin.name}');
+      }
+      if (changed) await savePlugins(plugins);
+    } catch (e) {
+      print('[PluginService] 同步插件描述失败: $e');
+    }
+  }
+
+  /// 取 LX 插件头部注释里的 `@description`（取不到返回 null）。
+  static String? _extractLxDescription(String code) {
+    final comment = RegExp(r'^/\*[\s\S]+?\*/').firstMatch(code)?.group(0);
+    if (comment == null) return null;
+    final match = RegExp(
+      r'^\s?\*\s?@description\s(.+)$',
+      multiLine: true,
+    ).firstMatch(comment);
+    return match?.group(1)?.trim();
   }
 
   bool _sameSourceDeclarations(

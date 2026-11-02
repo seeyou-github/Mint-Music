@@ -942,7 +942,9 @@ module.exports = {
       values['author']!.isEmpty ? 'Unknown' : values['author']!,
       56,
     );
-    values['description'] = _limit(values['description']!, 36);
+    // 描述不截断：插件作者把「支持哪些平台 / 已知问题 / 需要什么凭据」都写在
+    // 这一行里，截成 36 字 + `...` 等于把最有用的部分删掉。插件管理页现在按
+    // 整段换行显示，长度交给列表自适应。
     values['homepage'] = _limit(values['homepage']!, 1024);
     return values;
   }
