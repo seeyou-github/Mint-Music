@@ -1375,6 +1375,13 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         final song = visible[index];
         // 序号按全局位置编号（跳页直达后缓冲区从当前页起，也要接续页码）
         final songIndex = _songPager.absoluteStart + index;
+        // 播放队列用的是「缓冲区内的下标」。
+        //
+        // 跳页直达（点第 4 页这种）会把 `songs` 整个替换成目标页那几十首，
+        // 此时 `absoluteStart` 是全局序号（第 4 页 = 90 起），拿它当 startIndex
+        // 必然越界，`setQueue` 一夹就变成了「最后一行」—— 表现为点谁都播最下面
+        // 那首。专辑 / 作者详情页早就是这么区分的（displayIndex / bufferIndex）。
+        final bufferIndex = _songPager.start + index;
         return SongListItem(
           song: song,
           index: songIndex,
@@ -1410,7 +1417,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
             _globalLastTapTime = now;
             final controller = ref.read(playbackControllerProvider.notifier);
             PlaybackContext.instance.set(PlaybackSourceType.search);
-            await controller.setQueue(songs, startIndex: songIndex);
+            await controller.setQueue(songs, startIndex: bufferIndex);
           },
         );
       },
