@@ -1290,11 +1290,16 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
                 AppSpacing.md,
                 0,
               ),
+              // 描述整段显示：插件作者常把「支持哪些平台 / 需要什么凭据 / 已知
+              // 问题」写在这里，截成两行加省略号等于把最有用的部分删了。
+              // 行高 1.35 让多行不至于挤在一起。
               child: Text(
                 plugin.description,
-                style: TextStyle(fontSize: 12, color: colors.textHint),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 12,
+                  height: 1.35,
+                  color: colors.textHint,
+                ),
               ),
             ),
           // 只有一个音源时不需要单独开关（插件总开关已经够用）。
