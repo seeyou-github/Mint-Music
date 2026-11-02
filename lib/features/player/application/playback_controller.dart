@@ -1459,6 +1459,13 @@ class PlaybackController extends StateNotifier<PlaybackState> {
             _failedPlaybackSources
                 .putIfAbsent(_failedSourceKey(song), () => <String>{})
                 .add(failedSource);
+            // 音频层放不出来的原因必须留住：否则重取地址时会走「都已失败」的
+            // 短路分支，提示里只剩「共 N 个，已停止播放」，用户不知道是地址
+            // 过期、CDN 连不上，还是播放器不支持这个格式。
+            _musicSourceManager.notePlaybackSourceFailure(
+              failedSource,
+              '地址无法播放：${_audioErrorText(error)}',
+            );
             // 地址拿到了却放不出来，同样是「这个源现在不能用」：打红标让用户
             // 在插件管理页能看到，测试通过 / 后续播放成功 / 手动清除后消失。
             unawaited(
@@ -1524,6 +1531,10 @@ class PlaybackController extends StateNotifier<PlaybackState> {
               // 下一个源也放不出来：按「全部失败」处理（下面统一停止播放）。
               final nextSource = next.source;
               if (nextSource != null && nextSource.isNotEmpty) {
+                _musicSourceManager.notePlaybackSourceFailure(
+                  nextSource,
+                  '地址无法播放：${_audioErrorText(nextError)}',
+                );
                 unawaited(
                   SourceHealthStore.markFailed(
                     nextSource,
@@ -2261,6 +2272,22 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   ///   则显示「解析失败」并带上接口返回的具体错误；
   /// * **插件绑定音源**（`平台@插件`）：直接说明当前音源播放失败，
   ///   并尽量附上接口返回的具体错误。
+  /// 播放器抛出的错误 → 一行可读文案。
+  ///
+  /// 音频层的异常往往是英文长句（有时还带多层嵌套），压成一行、截到 80 字符
+  /// 就够判断是「连不上」「格式不支持」还是「超时」，再长只是噪音。
+  String _audioErrorText(Object error) {
+    var text = '$error'.trim();
+    text = text.replaceFirst(
+      RegExp(r'^(Exception|PlatformException|DioException):\s*'),
+      '',
+    );
+    text = text.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (text.isEmpty) return '播放器没有给出原因';
+    if (text.length > 80) text = '${text.substring(0, 80)}…';
+    return text;
+  }
+
   String _playbackFailureReason(Song song) {
     final source = song.source ?? '';
     String withDetail(String base) {

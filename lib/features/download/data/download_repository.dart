@@ -1037,7 +1037,7 @@ class DownloadRepository {
         }
         _handleError(
           taskId,
-          _describeDownloadError(e),
+          _describeDownloadError(e, url: url),
           tempFilePath: task.filePath,
         );
       }
@@ -1113,7 +1113,7 @@ class DownloadRepository {
     return true;
   }
 
-  String _describeDownloadError(DioException e) {
+  String _describeDownloadError(DioException e, {String url = ''}) {
     switch (e.type) {
       case DioExceptionType.connectionTimeout:
         return '连接服务器超时';
@@ -1133,7 +1133,28 @@ class DownloadRepository {
         break;
     }
     final message = (e.message ?? '').trim();
-    return message.isEmpty ? '下载失败' : _oneLine(message);
+    if (message.isNotEmpty) return _oneLine(message);
+    // 走到这里说明 Dio 连文案都没给（底层异常没有 message 时很常见）。
+    // 只说一句「下载失败」等于没说 —— 补上目标主机和内部异常，用户和排查
+    // 的人都能看出是「连不上」「被重定向到奇怪地址」还是「拿到了空响应」。
+    final host = _hostOfUrl(url);
+    final where = host.isEmpty ? '' : '（$host）';
+    final inner = e.error;
+    final innerText = inner == null
+        ? ''
+        : _oneLine('$inner').replaceFirst(RegExp(r'^\w*Exception:\s*'), '');
+    if (innerText.isNotEmpty) return '下载失败$where：$innerText';
+    return '下载失败$where：服务器没有返回任何数据';
+  }
+
+  /// 取 URL 的主机名，取不到就返回空串（只用于错误提示）。
+  static String _hostOfUrl(String url) {
+    if (url.isEmpty) return '';
+    try {
+      return Uri.tryParse(url)?.host ?? '';
+    } catch (_) {
+      return '';
+    }
   }
 
   /// HTTP 状态码 → 用户能看懂的原因。
@@ -1152,10 +1173,10 @@ class DownloadRepository {
     return '下载失败';
   }
 
-  /// 异常 → 一行可读文案（去掉 `Exception: ` 前缀、压成一行、限长）。
+  /// 异常 → 一行可读文案（去掉 `XxxException: ` 前缀、压成一行、限长）。
   static String _cleanErrorMessage(Object error) {
     var text = error.toString();
-    text = text.replaceFirst(RegExp(r'^(Exception|DioException):\s*'), '');
+    text = text.replaceFirst(RegExp(r'^\w*Exception:\s*'), '');
     return _oneLine(text);
   }
 

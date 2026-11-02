@@ -154,6 +154,20 @@ class MusicSourceManager {
   PluginSourceStates _pluginSourceStates = const PluginSourceStates();
   bool _pluginSourceStatesLoaded = false;
 
+  /// 每个播放源「最近一次为什么失败」，只用于拼失败提示。
+  ///
+  /// 以前源被标记失败后（`excludedSources`），下一次进来会直接走「都已失败」
+  /// 的短路分支，原来那句真实原因就丢了 —— 用户只能看到「共 1 个，已停止播放」。
+  /// 这里按播放源 id 记住原因，短路时一起带出去。
+  final Map<String, String> _lastPlaybackFailure = {};
+
+  /// 记录某个播放源的失败原因（播放器音频层放不出来时由控制器调用）。
+  void notePlaybackSourceFailure(String playbackSourceId, String reason) {
+    final text = reason.trim();
+    if (playbackSourceId.isEmpty || text.isEmpty) return;
+    _lastPlaybackFailure[playbackSourceId] = text;
+  }
+
   PluginSourceStates get pluginSourceStates => _pluginSourceStates;
 
   bool get pluginSourceStatesLoaded => _pluginSourceStatesLoaded;
@@ -2148,10 +2162,33 @@ class MusicSourceManager {
     ];
 
     if (usable.isEmpty) {
-      final message = candidates.isEmpty
-          ? '此$dataSourceName没有可用的播放源，请在插件管理中安装或启用能播放的音源插件。'
-          : '此$dataSourceName的播放源本次都已失败'
-                '（共 ${candidates.length} 个），已停止播放。';
+      // 走到这里说明候选源本次都已经失败过（被 excludedSources 挡掉）：
+      // 把这些源上次的真实原因一起带出来，而不是只说一句「都已失败」。
+      final details = <String>[
+        for (final id in candidates)
+          if ((_lastPlaybackFailure[id] ?? '').trim().isNotEmpty)
+            '${sourceDisplayName(id)}：${_lastPlaybackFailure[id]!.trim()}',
+      ];
+      final buffer = StringBuffer(
+        candidates.isEmpty
+            ? '此$dataSourceName没有可用的播放源，请在插件管理中安装或启用能播放的音源插件。'
+            : '此$dataSourceName的播放源本次都已失败'
+                  '（共 ${candidates.length} 个）',
+      );
+      if (candidates.isNotEmpty) {
+        if (details.isEmpty) {
+          buffer.write('，已停止播放。');
+        } else {
+          buffer.write('：');
+          for (final line in details.take(3)) {
+            buffer.write('\n · $line');
+          }
+          if (details.length > 3) {
+            buffer.write('\n · 等 ${details.length - 3} 个');
+          }
+        }
+      }
+      final message = buffer.toString();
       onResolveError?.call(message);
       throw DataSourcePlaybackException(message);
     }
@@ -2179,6 +2216,7 @@ class MusicSourceManager {
         onAttempt?.call(attempt);
         // 这个源真的解析出了地址：清掉它之前留下的「失败 / 超时」标记。
         unawaited(SourceHealthStore.clear(playbackSourceId));
+        _lastPlaybackFailure.remove(playbackSourceId);
         return DataSourceResolveOutcome(
           result: result,
           playbackSourceId: playbackSourceId,
@@ -2195,6 +2233,7 @@ class MusicSourceManager {
         );
         attempts.add(attempt);
         onAttempt?.call(attempt);
+        _lastPlaybackFailure[playbackSourceId] = attempt.error!;
         // 打红标：插件管理页的插件卡片上会显示「超时」，播放成功 / 测试通过 /
         // 用户手动清除后消失。
         unawaited(
@@ -2215,6 +2254,7 @@ class MusicSourceManager {
         );
         attempts.add(attempt);
         onAttempt?.call(attempt);
+        _lastPlaybackFailure[playbackSourceId] = attempt.error!;
         unawaited(
           SourceHealthStore.markFailed(
             playbackSourceId,
