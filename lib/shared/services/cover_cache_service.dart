@@ -152,9 +152,13 @@ class CoverCacheService {
     try {
       final path = await _diskPath(songId);
       await File(path).writeAsBytes(bytes, flush: false);
-      // 每写入 20 张封面检查一次缓存上限，避免频繁遍历目录。
+      // 每写入 100 张封面才检查一次缓存上限。
+      //
+      // 封面单张只有几十 KB，翻一页列表就能写十几张；以前每 20 张查一次，
+      // 每次都要把 5 个缓存目录（含上万条音频缓存）整体遍历一遍，纯属浪费。
+      // 真正的大头是 audio_cache，它按「每 100 首」检查（见 AudioCacheService）。
       _writeCount++;
-      if (_writeCount % 20 == 0 && CachePaths.maxBytes > 0) {
+      if (_writeCount % 100 == 0 && CachePaths.maxBytes > 0) {
         await CachePaths.enforceLimit();
       }
     } catch (e) {

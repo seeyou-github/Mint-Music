@@ -23,6 +23,16 @@ class AudioCacheService {
   /// 缓存子目录名。
   static const String subDirectoryName = 'audio_cache';
 
+  /// 每新缓存多少首歌才检查一次总容量。
+  ///
+  /// 一次检查要把 5 个缓存目录整个遍历 + 逐个 stat，缓存文件上万时是几百毫秒
+  /// 的 IO；每首歌都查纯属浪费。100 首 320k 大约 1.2GB，配合「超限清到上限的
+  /// 一半」，这个频率下正常听歌基本感觉不到清理动作。
+  static const int _limitCheckEverySongs = 100;
+
+  /// 距离上次容量检查已经新缓存了多少首。
+  static int _songsSinceLimitCheck = 0;
+
   /// 缓存文件名：`歌手 - 歌名 [音质-音源标签].扩展名`，
   /// 音源标签见 [sourceLabelFor]（裸平台 id 用平台名，插件用
   /// `平台-插件-插件id`）。
@@ -209,8 +219,14 @@ class AudioCacheService {
       }
       temp = null;
 
-      // 缓存写入后按「最大缓存大小」清理旧文件。
-      await CachePaths.enforceLimit();
+      // 每新缓存 100 首才检查一次总容量（不是每首都查，见 _limitCheckEverySongs）。
+      // 命中已有缓存时上面就 return 了，不会走到这里，所以这里数的确实是
+      // 「新增了多少个缓存文件」。
+      _songsSinceLimitCheck++;
+      if (_songsSinceLimitCheck >= _limitCheckEverySongs) {
+        _songsSinceLimitCheck = 0;
+        await CachePaths.enforceLimit();
+      }
     } catch (e) {
       debugPrint('[AudioCacheService] 缓存音频失败: $e');
     } finally {
