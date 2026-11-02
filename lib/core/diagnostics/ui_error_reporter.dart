@@ -95,6 +95,14 @@ Widget _buildErrorWidget(FlutterErrorDetails details) {
   );
 }
 
+/// 同一种错误 2 秒内只记一次。
+///
+/// 出问题的时候异常往往是「风暴」：一次缓存清理能连着抛几百条一模一样的
+/// Null check，如果每条都写盘，日志本身就会把主线程拖死，反而看不出问题。
+final Map<String, DateTime> _lastDumpAt = <String, DateTime>{};
+final Map<String, int> _suppressedCount = <String, int>{};
+const Duration _dumpInterval = Duration(seconds: 2);
+
 /// 追加写到 `AppData/temp/logs/ui_error.log`；超过 1MB 先清空，避免无限增长。
 void _dump(
   String kind,
@@ -102,9 +110,21 @@ void _dump(
   StackTrace? stack,
   String? context,
 ) {
+  final finger = '$kind|${message.length > 80 ? message.substring(0, 80) : message}';
+  final now = DateTime.now();
+  final last = _lastDumpAt[finger];
+  if (last != null && now.difference(last) < _dumpInterval) {
+    _suppressedCount[finger] = (_suppressedCount[finger] ?? 0) + 1;
+    return;
+  }
+  final suppressed = _suppressedCount.remove(finger) ?? 0;
+  _lastDumpAt[finger] = now;
+  if (_lastDumpAt.length > 200) _lastDumpAt.clear();
+
   final text = StringBuffer()
-    ..writeln('=== [$kind] ${DateTime.now().toIso8601String()}')
+    ..writeln('=== [$kind] ${now.toIso8601String()}')
     ..writeln(message);
+  if (suppressed > 0) text.writeln('（同类错误另有 $suppressed 条已被合并）');
   if (context != null && context.trim().isNotEmpty) {
     text.writeln('context: $context');
   }

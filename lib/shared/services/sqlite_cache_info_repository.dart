@@ -68,7 +68,7 @@ class SqliteCacheInfoRepository extends CacheInfoRepository {
       limit: 1,
     );
     if (rows.isEmpty) return null;
-    return _toObject(rows.first);
+    return _fromRow(rows.first);
   }
 
   @override
@@ -78,9 +78,32 @@ class SqliteCacheInfoRepository extends CacheInfoRepository {
   }) async {
     final db = await _database();
     final map = cacheObject.toMap(setTouchedToNow: setTouchedToNow);
-    final id = await db.insert('cache_index', _row(map));
-    return _toObject({...map, CacheObject.columnId: id}) ??
-        cacheObject.copyWith(id: id);
+    try {
+      final id = await db.insert('cache_index', _row(map));
+      return _fromDartMap({...map, CacheObject.columnId: id}) ??
+          cacheObject.copyWith(id: id);
+    } on DatabaseException catch (e) {
+      // 同一张封面被多个列表同时请求时，两个协程会同时走到「不存在 → 插入」，
+      // 后一个撞上 cache_key 的 UNIQUE 约束。这里改走更新，别把异常丢给
+      // flutter_cache_manager —— 它会在每次清理时连着抛几百条。
+      if (!e.isUniqueConstraintError()) rethrow;
+      final rows = await db.query(
+        'cache_index',
+        where: 'cache_key = ?',
+        whereArgs: [map[CacheObject.columnKey]],
+        limit: 1,
+      );
+      if (rows.isEmpty) rethrow;
+      final id = rows.first['id'] as int;
+      await db.update(
+        'cache_index',
+        _row(map),
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      return _fromDartMap({...map, CacheObject.columnId: id}) ??
+          cacheObject.copyWith(id: id);
+    }
   }
 
   @override
@@ -124,7 +147,7 @@ class SqliteCacheInfoRepository extends CacheInfoRepository {
   Future<List<CacheObject>> getAllObjects() async {
     final db = await _database();
     final rows = await db.query('cache_index');
-    return rows.map(_toObject).whereType<CacheObject>().toList();
+    return rows.map(_fromRow).whereType<CacheObject>().toList();
   }
 
   @override
@@ -176,7 +199,42 @@ class SqliteCacheInfoRepository extends CacheInfoRepository {
     };
   }
 
-  CacheObject? _toObject(Map<String, dynamic> map) {
+  /// SQLite 行 → CacheObject。
+  ///
+  /// **注意列名不是 [CacheObject] 的那一套**：库里是 `id` / `cache_key` /
+  /// `relative_path`，而 `CacheObject.columnId` 之类的常量是 `_id` / `key` /
+  /// `relativePath`（那套是给 `toMap()` 用的）。之前这里直接用常量取行，
+  /// 结果 id 恒为 null、relativePath 恒为空串：
+  ///   * 清理缓存时 `_removeCachedFile` 里 `cacheObject.id!` 直接崩
+  ///     （一次清理能连抛几百条 Null check operator）；
+  ///   * 就算不崩，`io.File('')` 也删不掉任何文件，缓存永远清不掉；
+  ///   * validTill 恒为 1970，所有缓存都被当成过期，每次启动都全量清理。
+  CacheObject? _fromRow(Map<String, dynamic> row) {
+    try {
+      final id = row['id'] as int?;
+      final key = (row['cache_key'] as String?)?.trim() ?? '';
+      if (id == null || key.isEmpty) return null;
+      return CacheObject(
+        (row['url'] as String?) ?? '',
+        key: key,
+        relativePath: (row['relative_path'] as String?) ?? '',
+        validTill: DateTime.fromMillisecondsSinceEpoch(
+          (row['valid_till'] as int?) ?? 0,
+        ),
+        eTag: row['e_tag'] as String?,
+        id: id,
+        length: row['length'] as int?,
+        touched: DateTime.fromMillisecondsSinceEpoch(
+          (row['touched'] as int?) ?? 0,
+        ),
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// `CacheObject.toMap()` 的结果（Dart 驼峰键）→ CacheObject。
+  CacheObject? _fromDartMap(Map<String, dynamic> map) {
     try {
       return CacheObject(
         (map[CacheObject.columnUrl] as String?) ?? '',

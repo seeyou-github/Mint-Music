@@ -22,6 +22,24 @@
 - MusicFree 适配器支持插件声明 `iconUrl` 与 `customSheets`（老插件启动时从宿主
   补一次 iconUrl 并缓存图标）
 
+### 修复
+- 启动时灰屏 / 卡顿，日志里刷出几百条 `Null check operator used on a null value`：
+  图片缓存索引（`SqliteCacheInfoRepository`）把 SQLite 行的列名当成了
+  `CacheObject` 的 `toMap()` 键
+  - 库里是 `id` / `cache_key` / `relative_path` / `valid_till`，而代码用的是
+    `CacheObject.columnId` 等常量（`_id` / `key` / `relativePath` / `validTill`），
+    只有 `url` / `length` / `touched` 恰好同名
+  - 后果一：读出来的 `id` 恒为 null → 清理缓存时 `_removeCachedFile` 里
+    `cacheObject.id!` 必崩（实测一次启动 831 条）
+  - 后果二：`relativePath` 恒为空串 → 即使不崩也删不掉任何文件，缓存只增不减
+  - 后果三：`validTill` 恒为 1970 → **所有**缓存都被判定过期，每次启动都对
+    全部索引做一次清理（实测 905 条），启动被拖慢甚至停在灰屏
+  - 现在拆成 `_fromRow`（读 SQLite 行）与 `_fromDartMap`（读 `toMap()` 结果）
+- 同一张封面被并发请求时 `cache_index.cache_key` 撞 UNIQUE 约束（一次启动 167 条）：
+  插入改为冲突时转 update，不再把 `SqfliteFfiException` 丢给上层
+- 异常日志加了 2 秒同类型去重：异常风暴时不再每条都写盘（否则日志本身就能把
+  主线程拖死，反而看不出问题）
+
 ### 新增
 - 界面异常可见化：release 版里 build 抛异常原本只是**一整块灰屏**，既没有原因也
   没有日志（Windows GUI 程序没有控制台，`print` 全丢）
