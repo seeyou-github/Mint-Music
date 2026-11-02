@@ -58,11 +58,18 @@ class CachePaths {
     'audio_cache',
   ];
 
+  /// 超限后清理到「上限的 [cleanTargetRatio]」。
+  ///
+  /// 不清到刚好等于上限：那样只要再缓存一首歌 / 再存几张图就又超了，于是每次
+  /// 写入都要来一次「全目录遍历 + 批量删除」。清到 50% 之后要再攒满一半容量
+  /// 才会再次清理，清理次数能少一个数量级，用户也不会感觉到「一直在删缓存」。
+  static const double cleanTargetRatio = 0.5;
+
   /// 按最大缓存大小清理应用自己的缓存子目录（合计，只删最旧的文件）。
   ///
-  /// 全目录遍历 + 逐文件 stat 在缓存接近上限（万级文件）时开销不小，
-  /// 因此例行调用有 [_enforceThrottle] 节流；用户改「最大缓存大小」等
-  /// 需要立即生效的场合传 `force: true`。
+  /// 全目录遍历 + 逐文件 stat 在缓存文件多时开销不小（几万个文件要几百毫秒），
+  /// 所以例行调用按 [_enforceThrottle] 节流，且**只有超限时才会真的删**；
+  /// 用户改「最大缓存大小」等需要立即生效的场合传 `force: true`。
   static Future<void> enforceLimit({bool force = false}) async {
     final limit = maxBytes;
     if (limit <= 0) return;
@@ -83,6 +90,12 @@ class CachePaths {
         final dir = await subDirectory(name);
         await for (final entity in dir.list(recursive: true)) {
           if (entity is! File) continue;
+          // 半成品（正在下载的音频 / 临时文件）既不计入总量，也不参与删除：
+          // 删了只会把正在进行的缓存写入打断，留着下一轮自然会消失。
+          if (entity.path.endsWith('.part') ||
+              entity.path.endsWith('.temp')) {
+            continue;
+          }
           try {
             final stat = await entity.stat();
             total += stat.size;
@@ -95,9 +108,11 @@ class CachePaths {
         }
       }
       if (total > limit) {
+        // 一次清到上限的一半，而不是刚好压到线上。
+        final target = (limit * cleanTargetRatio).round();
         entries.sort((a, b) => a.modified.compareTo(b.modified));
         for (final entry in entries) {
-          if (total <= limit) break;
+          if (total <= target) break;
           try {
             // 图片缓存索引（临时库 cache_index 表）跟着文件一起清，
             // 否则会留下指向已删文件的孤儿行。
@@ -117,18 +132,31 @@ class CachePaths {
 
   static DateTime? _lastEnforceAt;
   static bool _enforcing = false;
-  static const Duration _enforceThrottle = Duration(minutes: 1);
+  /// 例行检查的最小间隔。
+  ///
+  /// 每次检查都要把 5 个缓存目录整体遍历一遍，频繁做纯属浪费 CPU 和磁盘。
+  /// 配合「清到 50%」，5 分钟一次足够：正常听歌一小时也未必再触发一次删除。
+  static const Duration _enforceThrottle = Duration(minutes: 5);
 
   /// 删除图片缓存索引里指向已删文件的行。
   static Future<void> _deleteImageIndexRows(List<String> fileNames) async {
+    // 一次清一半可能删掉上千张图，而 SQLite 的 IN 参数有上限（默认 999），
+    // 分批删，否则整条语句会失败、留下一堆指向已删文件的孤儿行。
+    const batchSize = 400;
     try {
       final db = await AppDatabase.cacheDatabase();
-      final placeholders = List.filled(fileNames.length, '?').join(', ');
-      await db.delete(
-        'cache_index',
-        where: 'relative_path IN ($placeholders)',
-        whereArgs: fileNames,
-      );
+      for (var i = 0; i < fileNames.length; i += batchSize) {
+        final batch = fileNames.sublist(
+          i,
+          (i + batchSize) > fileNames.length ? fileNames.length : i + batchSize,
+        );
+        final placeholders = List.filled(batch.length, '?').join(', ');
+        await db.delete(
+          'cache_index',
+          where: 'relative_path IN ($placeholders)',
+          whereArgs: batch,
+        );
+      }
     } catch (_) {
       // 索引清不掉只会多留几行，flutter_cache_manager 取不到文件会自愈
     }
