@@ -130,7 +130,7 @@ class _AppShellState extends ConsumerState<AppShell> {
             content: Text(next.message),
             backgroundColor: next.backgroundColor ?? Colors.grey[800],
             behavior: SnackBarBehavior.floating,
-            duration: const Duration(seconds: 2),
+            duration: next.duration,
           ),
         );
       }

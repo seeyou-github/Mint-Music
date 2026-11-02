@@ -32,6 +32,12 @@ class DownloadTask {
   final int retries;
   final String? error;
 
+  /// 下载地址需要的请求头（Referer / User-Agent / Cookie 等）。
+  ///
+  /// 由插件解析地址时一并给出。B 站这类 CDN 会校验 Referer，缺了直接返回
+  /// 403 —— 播放能出声是因为播放器带上了这份头，下载以前没带就一直失败。
+  final Map<String, String> headers;
+
   /// 封面缺失：封面获取 / 写入失败时标记。
   ///
   /// 歌曲本身仍然是下载成功状态，只是没有内嵌封面，下载列表里会给出提示。
@@ -54,6 +60,7 @@ class DownloadTask {
     this.remainingTime,
     this.retries = 0,
     this.error,
+    this.headers = const <String, String>{},
     this.coverMissing = false,
     this.priority = 0,
     required this.createdAt,
@@ -73,6 +80,7 @@ class DownloadTask {
     int? remainingTime,
     int? retries,
     String? error,
+    Map<String, String>? headers,
     bool? coverMissing,
     int? priority,
     int? createdAt,
@@ -91,6 +99,7 @@ class DownloadTask {
       remainingTime: remainingTime ?? this.remainingTime,
       retries: retries ?? this.retries,
       error: error ?? this.error,
+      headers: headers ?? this.headers,
       coverMissing: coverMissing ?? this.coverMissing,
       priority: priority ?? this.priority,
       createdAt: createdAt ?? this.createdAt,
@@ -111,6 +120,7 @@ class DownloadTask {
     'remainingTime': remainingTime,
     'retries': retries,
     'error': error,
+    'headers': headers,
     'coverMissing': coverMissing,
     'priority': priority,
     'createdAt': createdAt,
@@ -131,6 +141,7 @@ class DownloadTask {
     'remainingTime': remainingTime,
     'retries': retries,
     'error': error,
+    'headers': headers,
     'coverMissing': coverMissing,
     'priority': priority,
     'createdAt': createdAt,
@@ -154,6 +165,10 @@ class DownloadTask {
       remainingTime: json['remainingTime'],
       retries: json['retries'] ?? 0,
       error: json['error'],
+      headers: (json['headers'] as Map?)?.map(
+            (key, value) => MapEntry(key.toString(), '${value ?? ''}'),
+          ) ??
+          const <String, String>{},
       coverMissing: json['coverMissing'] == true,
       priority: json['priority'] ?? 0,
       createdAt: json['createdAt'] ?? DateTime.now().millisecondsSinceEpoch,

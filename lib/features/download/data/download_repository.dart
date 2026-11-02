@@ -19,12 +19,30 @@ import '../domain/services/tag_write_service.dart';
 import '../../player/domain/models/song.dart';
 import '../../player/domain/models/lyric_line.dart';
 
+/// 插件解析出来的下载地址。
+///
+/// [headers] 是这条地址要求的请求头（B 站 / 网易 CDN 都会校验 Referer），
+/// 拿去下载时必须原样带上，否则播放能出声、下载却是 403。
+/// [error] 在拿不到地址时给用户看的原因（插件报错 / 音源没给地址）。
+class DownloadUrlResult {
+  const DownloadUrlResult({
+    required this.url,
+    this.source,
+    this.headers = const <String, String>{},
+    this.error,
+  });
+
+  final String url;
+  final String? source;
+  final Map<String, String> headers;
+  final String? error;
+}
+
 /// 下载地址获取器。
 ///
 /// 返回地址以及实际使用的音源 id（平台歌曲会由插件解析地址，换源后下载列表
 /// 里显示的来源也跟着变）。
-typedef UrlFetcher =
-    Future<({String url, String? source})?> Function(DownloadTask task);
+typedef UrlFetcher = Future<DownloadUrlResult?> Function(DownloadTask task);
 typedef TagWriteOptionsFetcher = TagWriteOptions Function();
 typedef LyricFetcher = Future<String?> Function(Song song);
 typedef LyricResultFetcher = Future<LyricResult?> Function(Song song);
@@ -489,6 +507,13 @@ class DownloadRepository {
     _initializingTasks.remove(taskId);
     _fileLocks.remove(task.filePath);
 
+    // 插件给的直链是有时效的（B 站约 2 小时、网易云也会过期），失败后点
+    // 「重试」如果再拿老地址去下，只会重复同一个 403 / 404。这里把地址和
+    // 请求头清掉，让 _startTask 重新解析一次。
+    // 本地歌曲的地址是文件路径，不能清。
+    final retryFromScratch =
+        task.url.isNotEmpty && (task.song.source ?? '') != 'local';
+
     _tasks[index] = _retargeted(task).copyWith(
       status: DownloadStatus.queued,
       progress: 0,
@@ -497,6 +522,8 @@ class DownloadRepository {
       remainingTime: null,
       retries: 0,
       error: null,
+      url: retryFromScratch ? '' : null,
+      headers: retryFromScratch ? const <String, String>{} : null,
     );
     await _flushTasks();
     _emitUpdate();
@@ -673,6 +700,7 @@ class DownloadRepository {
     _tasks[index] = _tasks[index].copyWith(status: DownloadStatus.downloading);
     _emitUpdate();
 
+    var activeCounted = false;
     try {
       var task = _tasks[index];
       String url = task.url;
@@ -680,11 +708,18 @@ class DownloadRepository {
         final fetched = await _urlFetcher!(task);
         if (fetched == null || fetched.url.isEmpty) {
           _initializingTasks.remove(taskId);
-          _markError(taskId, '无法获取播放链接');
+          _markError(
+            taskId,
+            (fetched?.error ?? '').trim().isNotEmpty
+                ? fetched!.error!.trim()
+                : '无法获取播放链接',
+          );
           return;
         }
         url = fetched.url;
-        task = task.copyWith(url: url);
+        // 请求头和地址一起收下：下载 / 重试都要用（播放侧一直是这么做的，
+        // 下载侧漏了这一步，B 站这类校验 Referer 的 CDN 就必然 403）。
+        task = task.copyWith(url: url, headers: fetched.headers);
         final resolvedSource = fetched.source;
         if (resolvedSource != null &&
             resolvedSource.isNotEmpty &&
@@ -711,6 +746,7 @@ class DownloadRepository {
 
       _initializingTasks.remove(taskId);
       _activeDownloads++;
+      activeCounted = true;
 
       await _downloadFile(taskId, url);
     } catch (e) {
@@ -718,7 +754,14 @@ class DownloadRepository {
       _initializingTasks.remove(taskId);
       final idx = _tasks.indexWhere((t) => t.id == taskId);
       final filePath = idx != -1 ? _tasks[idx].filePath : '';
-      _handleError(taskId, e.toString(), tempFilePath: filePath);
+      final message = _cleanErrorMessage(e);
+      if (activeCounted) {
+        _handleError(taskId, message, tempFilePath: filePath);
+      } else {
+        // 还没占到并发位（解析地址阶段就抛了）：只标失败，不能减计数，
+        // 否则并发额度会被越减越多。
+        _markError(taskId, message);
+      }
     }
   }
 
@@ -760,7 +803,7 @@ class DownloadRepository {
       // 采样起点落在续传点上，否则第一个窗口会把已有字节算成新流量。
       _speedMeters[taskId] = DownloadSpeedMeter(startBytes: startByte);
 
-      final headers = <String, String>{};
+      final headers = _downloadHeaders(task.headers);
       if (startByte > 0) {
         headers['Range'] = 'bytes=$startByte-';
       }
@@ -957,7 +1000,7 @@ class DownloadRepository {
         }
         _handleError(
           taskId,
-          '下载失败: HTTP ${response.statusCode}',
+          _describeHttpStatus(response.statusCode ?? 0),
           tempFilePath: filePath,
         );
       }
@@ -967,7 +1010,16 @@ class DownloadRepository {
       final idx = _tasks.indexWhere((t) => t.id == taskId);
       if (idx != -1) {
         final task = _tasks[idx];
-        if (task.retries < _maxRetries) {
+        // 断点位置失效（服务器换了文件 / 临时文件已经损坏）：删掉临时文件
+        // 从头下一次，而不是把「HTTP 416」丢给用户。
+        if (e.response?.statusCode == 416) {
+          final tempFile = File(tempPath);
+          if (await tempFile.exists()) {
+            await tempFile.delete();
+          }
+        }
+        // 403 / 404 这类重试多少次都是同一个结果，直接报错，别让用户等三轮。
+        if (task.retries < _maxRetries && _isRetryableDownloadError(e)) {
           _tasks[idx] = task.copyWith(
             status: DownloadStatus.queued,
             retries: task.retries + 1,
@@ -983,7 +1035,11 @@ class DownloadRepository {
         if (await tempFile.exists()) {
           await tempFile.delete();
         }
-        _handleError(taskId, e.message ?? '下载失败', tempFilePath: task.filePath);
+        _handleError(
+          taskId,
+          _describeDownloadError(e),
+          tempFilePath: task.filePath,
+        );
       }
     } catch (e) {
       final idx = _tasks.indexWhere((t) => t.id == taskId);
@@ -1005,13 +1061,108 @@ class DownloadRepository {
         if (await tempFile.exists()) {
           await tempFile.delete();
         }
-        _handleError(taskId, e.toString(), tempFilePath: task.filePath);
+        _handleError(
+          taskId,
+          _cleanErrorMessage(e),
+          tempFilePath: task.filePath,
+        );
       }
     } finally {
       _cancelTokens.remove(taskId);
       _speedMeters.remove(taskId);
       _lastProgressEmit.remove(taskId);
     }
+  }
+
+  /// 插件给的请求头 → 实际发给 CDN 的请求头。
+  ///
+  /// 剔除三类会坏事的头：
+  /// * `host`：由 URL 决定，硬塞插件里的值会让 CDN 收到错误 Host；
+  /// * `accept-encoding`：插件常写 `gzip, deflate, br`，而 Dart 的 HttpClient
+  ///   只会解 gzip，拿到 br 会存成一堆乱码（播放器能解，下载不行）；
+  /// * hop-by-hop 与 `range`：这些由我们控制，Range 要留给断点续传。
+  static const _ignoredDownloadHeaders = <String>{
+    'host',
+    'accept-encoding',
+    'content-encoding',
+    'connection',
+    'keep-alive',
+    'content-length',
+    'transfer-encoding',
+    'range',
+    'referer-length',
+  };
+
+  static Map<String, String> _downloadHeaders(Map<String, String>? source) {
+    final headers = <String, String>{};
+    (source ?? const <String, String>{}).forEach((key, value) {
+      final name = key.trim();
+      if (name.isEmpty || value.trim().isEmpty) return;
+      if (_ignoredDownloadHeaders.contains(name.toLowerCase())) return;
+      headers[name] = value;
+    });
+    return headers;
+  }
+
+  /// 4xx 里只有 408（请求超时）/ 429（限流）值得重试；
+  /// 403 缺请求头、404 地址过期这类，重试多少次都一样。
+  static bool _isRetryableDownloadError(DioException e) {
+    final status = e.response?.statusCode ?? 0;
+    if (status == 416) return true;
+    if (status >= 400 && status < 500) return status == 408 || status == 429;
+    return true;
+  }
+
+  String _describeDownloadError(DioException e) {
+    switch (e.type) {
+      case DioExceptionType.connectionTimeout:
+        return '连接服务器超时';
+      case DioExceptionType.sendTimeout:
+      case DioExceptionType.receiveTimeout:
+      case DioExceptionType.transformTimeout:
+        return '下载超时：服务器长时间没有返回数据';
+      case DioExceptionType.badCertificate:
+        return 'HTTPS 证书校验失败';
+      case DioExceptionType.connectionError:
+        return '网络连接失败，请检查网络';
+      case DioExceptionType.cancel:
+        return '下载已取消';
+      case DioExceptionType.badResponse:
+        return _describeHttpStatus(e.response?.statusCode ?? 0);
+      case DioExceptionType.unknown:
+        break;
+    }
+    final message = (e.message ?? '').trim();
+    return message.isEmpty ? '下载失败' : _oneLine(message);
+  }
+
+  /// HTTP 状态码 → 用户能看懂的原因。
+  String _describeHttpStatus(int code) {
+    if (code == 403) {
+      return '服务器拒绝访问（HTTP 403）：这条地址需要 Referer / User-Agent '
+          '等请求头，或链接已经过期，重试一次试试';
+    }
+    if (code == 404 || code == 410) {
+      return '文件不存在（HTTP $code）：链接可能已过期，重试会重新解析地址';
+    }
+    if (code == 416) return '断点续传位置无效（HTTP 416）';
+    if (code == 429) return '请求过于频繁（HTTP 429），稍后再试';
+    if (code >= 500) return '服务器错误（HTTP $code）';
+    if (code > 0) return '下载失败（HTTP $code）';
+    return '下载失败';
+  }
+
+  /// 异常 → 一行可读文案（去掉 `Exception: ` 前缀、压成一行、限长）。
+  static String _cleanErrorMessage(Object error) {
+    var text = error.toString();
+    text = text.replaceFirst(RegExp(r'^(Exception|DioException):\s*'), '');
+    return _oneLine(text);
+  }
+
+  static String _oneLine(String text) {
+    final flat = text.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (flat.length <= 200) return flat;
+    return '${flat.substring(0, 200)}…';
   }
 
   void _handleError(String taskId, String error, {String? tempFilePath}) {

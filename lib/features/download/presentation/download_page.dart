@@ -399,7 +399,53 @@ class _DownloadTaskItemState extends ConsumerState<_DownloadTaskItem> {
       showMenuButton: false,
       onTap: () => _handleTap(context),
       trailing: _buildTrailing(context, colors, repo),
-      footer: _isDownloading ? _buildProgress(colors) : null,
+      footer: _isDownloading
+          ? _buildProgress(colors)
+          : _buildFailureDetail(colors),
+    );
+  }
+
+  /// 失败原因：贴在行下方整行显示。
+  ///
+  /// 右侧那块地方只有几十像素宽，长句子会被截成「服务器拒绝访问…」，等于没
+  /// 说。整行最多两行 + 悬浮看全文，用户能直接判断是「没版权」「要登录」还是
+  /// 「地址过期」。
+  Widget? _buildFailureDetail(ThemeColors colors) {
+    if (!_isFailed) return null;
+    final message = (task.error ?? '').trim();
+    if (message.isEmpty) return null;
+    return Padding(
+      padding: const EdgeInsets.only(left: 2, right: 2),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 1),
+            child: Icon(
+              Icons.error_outline_rounded,
+              size: 12,
+              color: colors.error,
+            ),
+          ),
+          const SizedBox(width: 4),
+          Expanded(
+            child: Tooltip(
+              message: message,
+              waitDuration: const Duration(milliseconds: 400),
+              child: Text(
+                message,
+                style: TextStyle(
+                  fontSize: 11,
+                  height: 1.35,
+                  color: colors.error,
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 

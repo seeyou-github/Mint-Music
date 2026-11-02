@@ -2642,19 +2642,28 @@ class MusicSourceManager {
   /// 解析下载用的播放地址。
   ///
   /// 平台歌曲没有安装任何可用的插件音源：保留原 id，下载时同样由插件解析。
-  Future<({String url, String source})?> getMusicUrlForDownload(
+  ///
+  /// 返回值带上 [PluginMusicUrlResult.headers]：下载器要原样发给 CDN。
+  /// 播放侧一直带着这份头（所以能出声），下载侧以前只取了 url，遇到 B 站
+  /// 这种校验 Referer 的 CDN 就是「能播不能下」。
+  /// [onResolveError] 收插件报错原因，用于下载列表显示具体失败原因。
+  Future<({String url, String source, Map<String, String> headers})?>
+  getMusicUrlForDownload(
     Song song, {
     String quality = '320k',
+    void Function(String message)? onResolveError,
   }) async {
     final candidates = await getMusicUrlResultCandidates(
       song,
       quality: quality,
+      onResolveError: onResolveError,
     );
     for (final candidate in candidates) {
       if (candidate.url.isEmpty) continue;
       return (
         url: candidate.url,
         source: candidate.source ?? song.source ?? '',
+        headers: candidate.headers,
       );
     }
 
@@ -2667,10 +2676,15 @@ class MusicSourceManager {
       final urls = await getMusicUrlResultCandidates(
         candidate,
         quality: quality,
+        onResolveError: onResolveError,
       );
       for (final url in urls) {
         if (url.url.isEmpty) continue;
-        return (url: url.url, source: url.source ?? candidate.source ?? '');
+        return (
+          url: url.url,
+          source: url.source ?? candidate.source ?? '',
+          headers: url.headers,
+        );
       }
     }
     return null;

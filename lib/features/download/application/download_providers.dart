@@ -12,7 +12,15 @@ import '../domain/models/download_task.dart';
 class DownloadNotification {
   final String message;
   final Color? backgroundColor;
-  DownloadNotification({required this.message, this.backgroundColor});
+
+  /// 显示时长：失败提示带原因，太短看不清。
+  final Duration duration;
+
+  DownloadNotification({
+    required this.message,
+    this.backgroundColor,
+    this.duration = const Duration(seconds: 2),
+  });
 }
 
 final downloadNotificationProvider = StateProvider<DownloadNotification?>(
@@ -57,12 +65,32 @@ final downloadRepositoryProvider = Provider<DownloadRepository>((ref) {
   repo.setUrlFetcher((task) async {
     // 平台歌曲没有地址接口：由插件解析，失败再换其它已安装的插件，
     // 实际使用的音源会写进下载任务里（下载列表里显示出来源）。
+    //
+    // 插件报错原因收下来：以前解析失败只会得到一句「无法获取播放链接」，
+    // 用户不知道是没版权、插件没登录还是格式不支持。
+    String? failure;
     final resolved = await musicSourceManager.getMusicUrlForDownload(
       task.song,
       quality: task.quality,
+      onResolveError: (message) {
+        if (message.trim().isNotEmpty) failure = message.trim();
+      },
     );
-    if (resolved == null) return null;
-    return (url: resolved.url, source: resolved.source);
+    if (resolved == null) {
+      return DownloadUrlResult(
+        url: '',
+        error: failure == null
+            ? tr('无法获取播放链接：没有可用的音源能解析这首歌')
+            : tr('无法获取播放链接：$failure'),
+      );
+    }
+    return DownloadUrlResult(
+      url: resolved.url,
+      source: resolved.source,
+      // 请求头必须一起交给下载器：B 站 / 网易的 CDN 会校验 Referer，
+      // 缺了就是「能播放、下载 403」。
+      headers: resolved.headers,
+    );
   });
 
   // 设置标签写入选项获取器（对齐 CeruMusic tagWriteOptions）
@@ -119,11 +147,16 @@ final downloadRepositoryProvider = Provider<DownloadRepository>((ref) {
         DownloadNotification(message: tr('${task.song.title} 下载完成'));
   };
   repo.onTaskError = (task, error, {backgroundColor}) {
+    final detail = error.trim();
     ref
         .read(downloadNotificationProvider.notifier)
         .state = DownloadNotification(
-      message: tr('${task.song.title} 下载失败'),
+      // 带上具体原因：失败提示只说「下载失败」等于没说。
+      message: detail.isEmpty
+          ? tr('${task.song.title} 下载失败')
+          : tr('${task.song.title} 下载失败：$detail'),
       backgroundColor: backgroundColor ?? Colors.red,
+      duration: const Duration(seconds: 5),
     );
   };
 
