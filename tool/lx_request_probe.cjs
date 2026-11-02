@@ -112,6 +112,32 @@ function buildSandbox(vars, calls) {
       else if (opt.data) bodyText = String(opt.data).slice(0, 120)
       calls.push({ url: String(url), method, body: bodyText, headers: opt.headers || {} })
       const done = typeof callback === 'function' ? callback : () => {}
+
+      if (MODE === 'real') {
+        // 真发请求：用来实测第三方接口到底返回什么（不伪造任何响应）。
+        const ctrl = new AbortController()
+        const timer = setTimeout(() => ctrl.abort(), Number(process.argv[4]) || 20000)
+        fetch(String(url), {
+          method,
+          headers: opt.headers || {},
+          signal: ctrl.signal,
+        })
+          .then(async (r) => {
+            const text = await r.text()
+            clearTimeout(timer)
+            let body = text
+            try {
+              body = JSON.parse(text)
+            } catch (_) {}
+            done(null, { statusCode: r.status, headers: {}, body })
+          })
+          .catch((e) => {
+            clearTimeout(timer)
+            done(e)
+          })
+        return
+      }
+
       setTimeout(() => {
         const isOfficial = /music\.163\.com/.test(String(url))
         const ok = MODE === 'ok' || MODE === 'trial' || (MODE === 'official' && isOfficial)
@@ -177,10 +203,21 @@ async function main() {
     return
   }
 
+  // 只测一个平台：洛雪歌曲的 musicInfo 只带「它自己那个平台」的 id，
+  // 四个平台一起塞会串味（网易和酷我都认纯数字 id）。
+  const platform = (process.env.PLATFORM || 'wy').trim()
+  const platformInfo = {
+    wy: { songId: process.env.SID || '347230', songmid: process.env.SID || '347230' },
+    tx: { songmid: process.env.SMID || '' },
+    kw: { rid: process.env.SID || '', songId: process.env.SID || '' },
+    kg: { hash: process.env.HASH || '' },
+  }
   const tests = []
-  const wy = sources.wy
-  if (wy) {
-    for (const q of wy.qualitys || ['128k', '320k', 'flac']) tests.push(['wy', q])
+  const picked = sources[platform]
+  if (picked) {
+    for (const q of picked.qualitys || ['128k', '320k', 'flac']) {
+      tests.push([platform, q])
+    }
   }
   console.log('\n=== 播放请求（MODE=' + MODE + '）===')
   for (const [source, quality] of tests) {
@@ -190,11 +227,25 @@ async function main() {
         handler({
           source,
           action: 'musicUrl',
-          info: { type: quality, musicInfo: { songmid: '347230', songId: '347230', id: '347230', name: '海阔天空', singer: 'Beyond', hash: '' } },
+          info: {
+            type: quality,
+            musicInfo: {
+              ...(platformInfo[platform] || {}),
+              name: process.env.NAME || '海阔天空',
+              singer: process.env.SINGER || 'Beyond',
+              // 宿主一直会传 interval（歌曲总时长），插件用它兜底算码率
+              interval: process.env.INTERVAL || '5:26',
+            },
+          },
         }),
         8000,
       )
-      console.log(`-- ${source}/${quality} => ${JSON.stringify(res).slice(0, 120)}`)
+      // 地址太长，截断显示，但别把 quality / headers 这些关键字段切掉
+      const shown =
+        res && typeof res === 'object' && res.url
+          ? { ...res, url: String(res.url).slice(0, 70) + '…' }
+          : res
+      console.log(`-- ${source}/${quality} => ${JSON.stringify(shown)}`)
     } catch (e) {
       console.log(`-- ${source}/${quality} => 失败: ${e.message}`)
     }
