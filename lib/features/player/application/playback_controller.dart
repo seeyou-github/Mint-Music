@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:just_audio/just_audio.dart';
 import '../domain/models/song.dart';
@@ -502,11 +503,30 @@ class PlaybackController extends StateNotifier<PlaybackState> {
         _sameQualitySet(gated, state.gatedQualities)) {
       return;
     }
+    // 插件初始化 / 卸载会让一批 provider 在同一帧里连锁失效，这个回调有可能
+    // 正好落在 build 过程中。此时直接改 StateNotifier 会抛
+    // 「setState() or markNeedsBuild() called during build」——异常往上冒
+    // 就是整块 ErrorWidget（灰屏）。统一推迟到这一帧结束再写。
+    if (SchedulerBinding.instance.schedulerPhase ==
+        SchedulerPhase.persistentCallbacks) {
+      if (_availabilityRefreshScheduled) return;
+      _availabilityRefreshScheduled = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _availabilityRefreshScheduled = false;
+        if (!mounted) return;
+        // 帧末重算：这一帧里插件状态可能又变了。
+        refreshAvailability();
+      });
+      return;
+    }
     state = state.copyWith(
       availableQualities: qualities,
       gatedQualities: gated,
     );
   }
+
+  /// 是否已经安排了一次「帧末刷新音质可选项」。
+  bool _availabilityRefreshScheduled = false;
 
   static bool _sameQualitySet(Set<String> a, Set<String> b) {
     if (a.length != b.length) return false;

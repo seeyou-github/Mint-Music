@@ -22,7 +22,16 @@
 - MusicFree 适配器支持插件声明 `iconUrl` 与 `customSheets`（老插件启动时从宿主
   补一次 iconUrl 并缓存图标）
 
+### 新增
+- 界面异常可见化：release 版里 build 抛异常原本只是**一整块灰屏**，既没有原因也
+  没有日志（Windows GUI 程序没有控制台，`print` 全丢）
+  - 现在灰屏上会直接显示异常摘要 + 出错位置，便于反馈
+  - 完整异常与堆栈追加写入 `AppData/temp/logs/ui_error.log`（单文件上限 1MB）
+  - 只影响已经出错的路径，正常渲染不变
+
 ### 修复
+- 插件初始化 / 卸载时，`refreshAvailability` 可能在某一帧的 build 过程中修改
+  播放器状态，触发「setState() called during build」；现在统一推迟到帧末再写
 - 搜索结果翻到后面几页（跳页直达）后，点列表中间的歌曲**总是播放最下面那一首**：
   跳页时列表缓冲区被替换成「目标页那几十首」，而播放用的下标还是全局序号
   （第 4 页 = 92 起），越界后被 `setQueue` 夹成最后一条

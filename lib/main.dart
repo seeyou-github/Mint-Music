@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:just_audio_media_kit/just_audio_media_kit.dart';
 import 'app/app.dart';
+import 'core/diagnostics/ui_error_reporter.dart';
 import 'core/platform/taskbar_thumbnail_service.dart';
 import 'core/services/audio_service_init.dart';
 import 'core/storage/app_database.dart';
@@ -19,6 +20,10 @@ import 'features/player/domain/services/lyric_cache.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // 界面异常可见化：release 下 build 抛错原本是一整块灰屏、没有任何线索，
+  // 现在会写 AppData/temp/logs/ui_error.log 并把摘要显示在灰屏上。
+  installUiErrorReporting();
 
   // A large unbounded decoded-image cache causes memory pressure and GC jank
   // after browsing many playlists on lower-end devices. Cover widgets keep
