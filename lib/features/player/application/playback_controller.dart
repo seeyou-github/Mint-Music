@@ -457,13 +457,20 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     _failedPlaybackSources.clear();
   }
 
-  /// 插件状态变化后刷新「当前歌曲可用的音质」与登录门槛（需求 6）。
+  /// 插件状态变化后静默刷新「当前歌曲可用的音质」与登录门槛。
   ///
   /// 触发时机：安装 / 卸载 / 开关插件、开关插件音源、调整数据源播放源顺序。
   ///
-  /// 原则：**不打断正在播放的音频**。只在状态里更新可选项——用户正在听的
-  /// 这首已经拿到地址了，贸然重取只会造成卡顿或中断；变化的档位从下一首
-  /// （或用户主动切音质）开始生效，并用提示说明。
+  /// 原则：**完全静默，不打断、不提示、不改音质**。
+  ///
+  /// 安装 / 卸载插件时 `pluginSupportedSourcesProvider` 与
+  /// `pluginSourceStateProvider` 会连着变好几次（插件列表、音源列表、登录态
+  /// 各刷一遍），以前每变一次就弹一条「音源插件已卸载」「已不支持 XX 音质」，
+  /// 装个插件能连弹七八条橙色提示，把用户正在听的东西全盖住。
+  ///
+  /// 现在这里只做一件事：把音质菜单的可选项对齐到插件当前的能力。当前歌曲
+  /// 的插件已经不在了（且同平台也没有可用插件）时**直接不动**——正在播放的
+  /// 这首歌早就拿到地址了，音质菜单保持原样即可，等用户下次真正播放时再算。
   void refreshAvailability() {
     final song = state.currentSong;
     if (song == null || song.isLocal) return;
@@ -471,32 +478,25 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     final sourceId = song.source ?? '';
     if (sourceId.isEmpty) return;
 
-    // 当前歌曲绑定的插件被卸载 / 换成新 id：明确提示，不偷偷换源。
+    // 当前歌曲的插件被卸载 / 换成了新 id，且该平台已经没有别的插件：
+    // 什么都不做，保持音质菜单和当前音质不变。
     final (baseId, pluginId) = MusicSourceManager.splitSourceId(sourceId);
-    final isDataSource = _musicSourceManager.dataSourcePluginIdForSong(song) != null;
+    final isDataSource =
+        _musicSourceManager.dataSourcePluginIdForSong(song) != null;
     if (!isDataSource &&
         pluginId != null &&
         pluginId.isNotEmpty &&
         !_musicSourceManager.isPluginAlive(pluginId) &&
         !_musicSourceManager.hasPluginForPlatform(baseId)) {
-      onMessage?.call(
-        tr('当前歌曲的音源插件已卸载，切歌后将无法播放'),
-        backgroundColor: Colors.orange,
-      );
+      return;
     }
 
     final qualitySourceId =
         _musicSourceManager.effectivePlaybackSourceForSong(song) ?? sourceId;
-    final qualities = _musicSourceManager.getQualitiesForSourceId(qualitySourceId);
+    final qualities = _musicSourceManager.getQualitiesForSourceId(
+      qualitySourceId,
+    );
     final gated = _musicSourceManager.getLoginGatedQualities(qualitySourceId);
-
-    final current = state.currentQuality;
-    if (qualities.isNotEmpty && !qualities.contains(current)) {
-      onMessage?.call(
-        tr('当前音源已不支持 $current 音质，切歌后生效'),
-        backgroundColor: Colors.orange,
-      );
-    }
 
     if (_sameList(qualities, state.availableQualities) &&
         _sameQualitySet(gated, state.gatedQualities)) {
