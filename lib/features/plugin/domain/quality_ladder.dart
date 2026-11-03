@@ -53,9 +53,7 @@ List<String> sortedQualityLadder(Iterable<String> qualities) {
       unknown.add(value);
     }
   }
-  known.sort(
-    (a, b) => musicQualityRankOf(a).compareTo(musicQualityRankOf(b)),
-  );
+  known.sort((a, b) => musicQualityRankOf(a).compareTo(musicQualityRankOf(b)));
   return [...known, ...unknown];
 }
 
@@ -75,6 +73,52 @@ String? qualityStepDown(String current, List<String> ladder) {
   }
   return best;
 }
+
+/// 服务器是否明确表示「这个音质拿不到」。
+///
+/// 只有这类错误才允许自动换档（例如插件报「不支持 flac 音质」）。
+/// 401/403/429、超时、5xx、CDN 连不上等都不算：换一个音质只会多打一次
+/// 请求，还会把真正的错误盖掉。
+bool isQualityUnavailableError(String message) {
+  final text = message.trim();
+  if (text.isEmpty) return false;
+  return _qualityUnavailablePatterns.any((pattern) => pattern.hasMatch(text));
+}
+
+final List<RegExp> _qualityUnavailablePatterns = [
+  RegExp(r'不支持.{0,16}音质'),
+  RegExp(r'音质.{0,8}(?:不支持|不存在|不可用)'),
+  RegExp(r'(?:没有|无)该?音质'),
+  RegExp(r'音质不匹配'),
+  RegExp(r'unsupported\s+quality', caseSensitive: false),
+  RegExp(
+    r'quality.{0,20}(?:not\s+supported?|unsupported|unavailable|not\s+available)',
+    caseSensitive: false,
+  ),
+  RegExp(r'no\s+such\s+quality', caseSensitive: false),
+];
+
+/// 这个错误再请求一次也不会变（鉴权 / 限流 / 明确的 4xx）。
+///
+/// 上层用它跳过「同一个音源立刻重试一次」；5xx、超时、网络错误仍然允许
+/// 重试一次，但不会再自动换音质。
+bool isNonRetryableResolveError(String message) {
+  if (isQualityUnavailableError(message)) return true;
+  if (_authOrRateLimitPattern.hasMatch(message)) return true;
+  final match = RegExp(
+    r'(?:code|http)\s*([45]\d\d)',
+    caseSensitive: false,
+  ).firstMatch(message);
+  if (match == null) return false;
+  final status = int.tryParse(match.group(1)!) ?? 0;
+  return status >= 400 && status < 500 && status != 408;
+}
+
+final RegExp _authOrRateLimitPattern = RegExp(
+  r'\b(?:401|403|429)\b|未授权|认证用户|无权限|权限不足|拒绝访问|'
+  r'限流|请求过于频繁|频率过高|访问频率|额度|配额|封禁|封\s*IP',
+  caseSensitive: false,
+);
 
 /// 阶梯上比 [current] 高一档的音质（取「最接近的更高档」）；没有则返回 null。
 ///

@@ -920,9 +920,7 @@ class MusicSourceManager {
         if (pluginSourceId == null) continue;
         final appId = _pluginSourceAppId(host, pluginSourceId);
         if (!_pluginSourceCanResolveUrls(appId)) continue;
-        discovered.add(
-          (sourceId: appId, order: order++, installed: installed),
-        );
+        discovered.add((sourceId: appId, order: order++, installed: installed));
       }
     }
 
@@ -1033,10 +1031,7 @@ class MusicSourceManager {
   ///
   /// 兜底顺序：同平台里「数据源优先 → 安装时间次之」的能查插件；
   /// 一个都没有就原样返回，让上层照旧报错。
-  String collectionDetailSourceFor(
-    String sourceId, {
-    required bool forArtist,
-  }) {
+  String collectionDetailSourceFor(String sourceId, {required bool forArtist}) {
     final trimmed = sourceId.trim();
     if (trimmed.isEmpty || trimmed == 'local') return trimmed;
     final (baseId, pluginId) = splitSourceId(trimmed);
@@ -2334,7 +2329,10 @@ class MusicSourceManager {
       if (found == null) {
         throw Exception('在$playbackName里没有搜到这首歌');
       }
-      matched = found.copyWith(source: playbackSourceId, clearPreferredSource: true);
+      matched = found.copyWith(
+        source: playbackSourceId,
+        clearPreferredSource: true,
+      );
     }
 
     final musicInfo = _buildPluginMusicInfo(matched, playbackSourceId);
@@ -2396,7 +2394,8 @@ class MusicSourceManager {
   }
 
   /// 错误摘要：去掉 Exception 前缀、压成一行、限长，便于塞进汇总文案。
-  String _shortError(Object error) {    var text = '$error'.replaceFirst(RegExp(r'^Exception:\s*'), '');
+  String _shortError(Object error) {
+    var text = '$error'.replaceFirst(RegExp(r'^Exception:\s*'), '');
     text = text.replaceAll('"', "'").replaceAll('\n', ' ').trim();
     if (text.isEmpty) text = '未知错误';
     if (text.length > 60) text = '${text.substring(0, 60)}…';
@@ -2693,10 +2692,14 @@ class MusicSourceManager {
     String quality = '320k',
     void Function(String message)? onResolveError,
   }) async {
+    String? resolveError;
     final candidates = await getMusicUrlResultCandidates(
       song,
       quality: quality,
-      onResolveError: onResolveError,
+      onResolveError: (message) {
+        resolveError = message;
+        onResolveError?.call(message);
+      },
     );
     for (final candidate in candidates) {
       if (candidate.url.isEmpty) continue;
@@ -2706,6 +2709,9 @@ class MusicSourceManager {
         headers: candidate.headers,
       );
     }
+
+    // 鉴权 / 限流 / 明确的 4xx 换源也一样，直接保留服务器返回的 code+msg。
+    if (isNonRetryableResolveError(resolveError ?? '')) return null;
 
     final source = song.source;
     if (source == null || source.isEmpty) return null;

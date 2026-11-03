@@ -673,7 +673,9 @@ class PlaybackController extends StateNotifier<PlaybackState> {
       }
       if (attemptedCount > 1) {
         onMessage?.call(
-          tr('已切换到可用的播放源「${_musicSourceManager.sourceDisplayName(outcome.playbackSourceId)}」'),
+          tr(
+            '已切换到可用的播放源「${_musicSourceManager.sourceDisplayName(outcome.playbackSourceId)}」',
+          ),
         );
       }
       return [outcome.result];
@@ -684,7 +686,10 @@ class PlaybackController extends StateNotifier<PlaybackState> {
       return const <PluginMusicUrlResult>[];
     } catch (e) {
       if (_currentPlayRequestId == requestId) {
-        _lastResolveError = e.toString().replaceFirst(RegExp(r'^Exception://s*'), '');
+        _lastResolveError = e.toString().replaceFirst(
+          RegExp(r'^Exception://s*'),
+          '',
+        );
       }
       failed.clear();
       return const <PluginMusicUrlResult>[];
@@ -711,6 +716,8 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     // 用户多等一轮搜索 + 取地址。
     var dataSourceFailure = false;
     var timedOut = false;
+    // 鉴权 / 限流 / 明确的 4xx：重试同一个音质没有意义，还会多打一次接口。
+    var terminalFailure = false;
     Future<List<PluginMusicUrlResult>> resolveOnce() async {
       try {
         return await _musicSourceManager
@@ -724,6 +731,9 @@ class PlaybackController extends StateNotifier<PlaybackState> {
                 // 只记录仍在生效的播放请求的接口错误，避免被已取消的旧请求覆盖。
                 if (_currentPlayRequestId == requestId) {
                   _lastResolveError = message;
+                  if (isNonRetryableResolveError(message)) {
+                    terminalFailure = true;
+                  }
                 }
               },
             )
@@ -735,10 +745,12 @@ class PlaybackController extends StateNotifier<PlaybackState> {
         );
         if (error is DataSourcePlaybackException) dataSourceFailure = true;
         if (error is TimeoutException) timedOut = true;
+        final message = error is TimeoutException
+            ? tr('获取播放地址超时')
+            : error.toString().replaceFirst(RegExp(r'^Exception:\s*'), '');
         if (_currentPlayRequestId == requestId) {
-          _lastResolveError = error is TimeoutException
-              ? tr('获取播放地址超时')
-              : error.toString().replaceFirst(RegExp(r'^Exception:\s*'), '');
+          _lastResolveError = message;
+          if (isNonRetryableResolveError(message)) terminalFailure = true;
         }
         return const <PluginMusicUrlResult>[];
       }
@@ -748,6 +760,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     if (candidates.isNotEmpty ||
         _currentPlayRequestId != requestId ||
         dataSourceFailure ||
+        terminalFailure ||
         // 超时已经等满整个取地址窗口，重试只会再等一轮。
         timedOut) {
       return candidates;
@@ -832,6 +845,9 @@ class PlaybackController extends StateNotifier<PlaybackState> {
         }
         return (results: results, quality: effective);
       }
+      // 只有服务器明确说「没有 / 不支持这个音质」才换档。503、超时、
+      // 401/403/429 等是音源或服务器的问题，换一档只会多打一次请求。
+      if (!isQualityUnavailableError(_lastResolveError ?? '')) break;
       if (step == maxSteps) break;
       // 已经等太久了（多半是网络/插件超时，不是「这个档位没有」）：
       // 再换一档只会让用户多等一轮，直接交还给上层报错。
@@ -1303,7 +1319,8 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     // 数据源插件（它不提供播放），真正的音质声明在它的播放源上。
     final qualitySourceId = isLocal
         ? sourceId
-        : (_musicSourceManager.effectivePlaybackSourceForSong(song) ?? sourceId);
+        : (_musicSourceManager.effectivePlaybackSourceForSong(song) ??
+              sourceId);
     final availableQualities = isLocal
         ? <String>[quality]
         : _musicSourceManager.getQualitiesForSourceId(qualitySourceId);
@@ -1516,10 +1533,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
                   currentQuality: playQuality,
                 );
               } else {
-                state = state.copyWith(
-                  isLoading: false,
-                  currentSong: nextSong,
-                );
+                state = state.copyWith(isLoading: false, currentSong: nextSong);
               }
               _errorListenerSub = _mountOneTimeErrorListener(
                 requestId,
@@ -1541,9 +1555,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
                     status: nextError is TimeoutException
                         ? SourceHealthStatus.timeout
                         : SourceHealthStatus.failed,
-                    reason: nextError is TimeoutException
-                        ? '音频加载超时'
-                        : '音频加载失败',
+                    reason: nextError is TimeoutException ? '音频加载超时' : '音频加载失败',
                   ),
                 );
               }
@@ -2058,10 +2070,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     // 直接说清楚。
     final declared = state.availableQualities;
     if (declared.isNotEmpty && !declared.contains(quality)) {
-      onMessage?.call(
-        tr('当前音源不支持该音质'),
-        backgroundColor: Colors.red,
-      );
+      onMessage?.call(tr('当前音源不支持该音质'), backgroundColor: Colors.red);
       return;
     }
     // 需要登录的档位：说明原因，别让用户以为「点了没反应」。
@@ -2366,19 +2375,13 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     if (!mounted) return;
     state = state.copyWith(isPlaying: false, isLoading: false);
 
-    // 限频/限流时给出更具体的提示。
-    final isRateLimited = reason.contains('频率') || reason.contains('限制');
     // 数据源（只提供元数据）的失败原因本身就是一整句完整说明
     // （「此 xxx数据源指定的 xxx音源失效… 请在插件管理中设置其他音源。」），
     // 原样展示，不再加「播放失败：」前缀。
     final isDataSourceFailure =
         reason.startsWith('此') && reason.contains('数据源');
     onMessage?.call(
-      isDataSourceFailure
-          ? reason
-          : (isRateLimited
-                ? tr('播放失败：$reason，请稍后重试')
-                : tr('播放失败：$reason，已停止播放')),
+      isDataSourceFailure ? reason : tr('播放失败：$reason，已停止播放'),
       backgroundColor: Colors.red,
     );
   }

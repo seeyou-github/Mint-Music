@@ -122,8 +122,11 @@ class _MemoryAudioHandler implements MusicAudioHandler {
 class _MemorySourceManager implements MusicSourceManager {
   final requests = <({Song song, String quality})>[];
   final unavailable = <String>{};
+  final unavailableQualities = <String>{};
   final results = <String, PluginMusicUrlResult>{};
   bool throwOnUnavailable = false;
+  String unavailableReason = 'Resolver offline';
+  final unavailableReasons = <String, String>{};
   Future<List<PluginMusicUrlResult>>? pendingRequest;
   Completer<void>? requestStarted;
   List<String> supportedQualities = ['128k', '320k'];
@@ -136,15 +139,19 @@ class _MemorySourceManager implements MusicSourceManager {
     Set<String> excludedUrls = const <String>{},
     List<PluginHost>? pluginHosts,
     void Function(String message)? onResolveError,
+    bool allowMultiHost = false,
+    bool allowQualityDowngrade = false,
   }) async {
     requests.add((song: song, quality: quality));
     if (song.id == 'b' && pendingRequest != null) {
       requestStarted?.complete();
       return pendingRequest!;
     }
-    if (unavailable.contains(song.id)) {
-      if (throwOnUnavailable) throw StateError('Resolver offline');
-      onResolveError?.call('Resolver offline');
+    if (unavailable.contains(song.id) ||
+        unavailableQualities.contains(quality)) {
+      final reason = unavailableReasons[quality] ?? unavailableReason;
+      if (throwOnUnavailable) throw StateError(reason);
+      onResolveError?.call(reason);
       return const [];
     }
     final result =
@@ -161,6 +168,7 @@ class _MemorySourceManager implements MusicSourceManager {
     String quality = '320k',
     Set<String> excludedUrls = const <String>{},
     void Function(String message)? onResolveError,
+    bool allowQualityDowngrade = false,
   }) async {
     final candidates = await getMusicUrlResultCandidates(
       song,
@@ -194,7 +202,25 @@ class _MemorySourceManager implements MusicSourceManager {
       supportedQualities;
 
   @override
+  List<String> getQualitiesForSourceId(
+    String sourceId, {
+    QualityUsage usage = QualityUsage.play,
+  }) => supportedQualities;
+
+  @override
   String? dataSourcePluginIdForSong(Song song) => null;
+
+  @override
+  String? effectivePlaybackSourceForSong(Song song) => null;
+
+  @override
+  Set<String> getLoginGatedQualities(
+    String sourceId, {
+    QualityUsage usage = QualityUsage.play,
+  }) => const <String>{};
+
+  @override
+  String sourceDisplayName(String sourceId) => sourceId;
 
   @override
   bool hasPluginForPlatform(String baseId) => true;
@@ -316,6 +342,7 @@ void main() {
   });
 
   test('切换音质转圈期间 isAudible 为 false，切换完成后恢复', () async {
+    sources.supportedQualities = ['128k', '320k', 'flac'];
     await startA();
 
     final switching = controller.setQuality('flac');
@@ -592,6 +619,7 @@ void main() {
       '$quality resolution failure and retry never request another quality',
       () async {
         controller.getQualityForSource = (_) => quality;
+        sources.supportedQualities = ['128k', '320k', quality];
         sources.unavailable.add('b');
         await controller.setQueue([a, b, c], startIndex: 1);
         await controller.togglePlayPause();
@@ -609,17 +637,79 @@ void main() {
     );
   }
 
+  test('server 503 keeps the requested quality and shows code + msg', () async {
+    controller.getQualityForSource = (_) => '320k';
+    sources.supportedQualities = ['128k', '320k'];
+    sources.unavailable.add('b');
+    sources.unavailableReason = 'code 503：服务暂时不可用';
+    await controller.setQueue([a, b, c], startIndex: 1);
+    await pumpEventQueue();
+
+    expectSelectedB(playing: false);
+    // 5xx 允许同音质重试一次，但绝不换档。
+    expect(sources.requests, hasLength(2));
+    expect(
+      sources.requests.map((request) => request.quality),
+      everyElement('320k'),
+    );
+    expect(controller.playbackState.currentQuality, '320k');
+    expect(audio.loads, isEmpty);
+    expect(messages.join('\n'), contains('code 503'));
+  });
+
   test(
-    'unsupported preferred quality is not replaced with an available quality',
+    'server 401 stops immediately without retry or quality switch',
+    () async {
+      controller.getQualityForSource = (_) => '320k';
+      sources.supportedQualities = ['128k', '320k'];
+      sources.unavailable.add('b');
+      sources.unavailableReason = 'code 401：该音源仅对认证用户开放（未授权不可访问）';
+      await controller.setQueue([a, b, c], startIndex: 1);
+      await pumpEventQueue();
+
+      expectSelectedB(playing: false);
+      // 鉴权错误重试没意义：一次请求后直接停。
+      expect(sources.requests, hasLength(1));
+      expect(sources.requests.single.quality, '320k');
+      expect(controller.playbackState.currentQuality, '320k');
+      expect(audio.loads, isEmpty);
+      final text = messages.join('\n');
+      expect(text, contains('code 401'));
+      expect(text, contains('未授权不可访问'));
+    },
+  );
+
+  test(
+    'explicit unsupported quality still steps down to an available one',
+    () async {
+      controller.getQualityForSource = (_) => 'flac';
+      sources.supportedQualities = ['128k', '320k', 'flac'];
+      sources.unavailableQualities.add('flac');
+      sources.unavailableReasons['flac'] = '不支持 flac 音质';
+      await controller.setQueue([b]);
+      await pumpEventQueue();
+
+      expect(sources.requests.map((request) => request.quality), [
+        'flac',
+        '320k',
+      ]);
+      expect(controller.playbackState.isPlaying, isTrue);
+      expect(controller.playbackState.currentQuality, '320k');
+      expect(audio.loadedSong?.sourceQuality, '320k');
+    },
+  );
+
+  test(
+    'preferred quality is clamped to the qualities the source declares',
     () async {
       controller.getQualityForSource = (_) => 'flac';
       sources.supportedQualities = ['128k'];
       await controller.setQueue([b]);
       await pumpEventQueue();
 
-      expect(sources.requests.single.quality, 'flac');
-      expect(controller.playbackState.currentQuality, 'flac');
-      expect(audio.loadedSong?.sourceQuality, 'flac');
+      expect(sources.requests.single.quality, '128k');
+      expect(controller.playbackState.currentQuality, '128k');
+      expect(audio.loadedSong?.sourceQuality, '128k');
     },
   );
 
@@ -700,6 +790,7 @@ void main() {
   test(
     'failed manual quality selection preserves the current quality',
     () async {
+      sources.supportedQualities = ['128k', '320k', 'flac'];
       await controller.setQueue([b]);
       await controller.seek(const Duration(seconds: 42));
       sources.unavailable.add('b');
@@ -707,9 +798,9 @@ void main() {
       await controller.setQuality('flac');
       await pumpEventQueue();
 
-      expect(sources.requests.skip(before).map((request) => request.quality), [
-        'flac',
-      ]);
+      final attempted = sources.requests.skip(before);
+      expect(attempted, isNotEmpty);
+      expect(attempted.map((request) => request.quality), everyElement('flac'));
       expect(controller.playbackState.currentQuality, '320k');
       expect(controller.playbackState.isPlaying, isTrue);
       expect(audio.loadedSong?.sourceQuality, '320k');
