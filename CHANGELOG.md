@@ -40,6 +40,20 @@
     升级时删掉
 
 ### 修复
+- 「取地址接口 302 到真实文件」类音源（如仅网易的 Meting）**解析到地址却播放失败**：
+  落雪适配层的 `__lxRequest` 只白名单转发 `method / headers / body / timeout / follow_max`，
+  把插件显式传的 `follow_redirects: false` **丢掉了**
+  - 后果一：桥接层以为要跟随重定向，把整首歌（实测 3.6 MB）下载进 JS 引擎，响应变成
+    `200 + audio/mpeg` 且没有最终 URL，插件只能回退返回「取地址接口」地址
+  - 后果二：播放器再去请求这个接口时被宿主的默认请求头坑了——宿主对**所有**域名都强塞
+    浏览器 UA，而该站点对 Chrome UA 直接回 `418 I'm a Teapot`，mpv 报
+    `stream: Failed to open`，上层最终显示「地址无法播放：TimeoutException」
+  - 现在 `follow_redirects` 原样透传，插件能拿到 `Location` 直链（适配层在每次加载时
+    重新生成，已装插件**重启生效**，不用重装）
+  - 另外音频请求头只对**已知音乐平台 / CDN**（酷我、酷狗、网易、QQ、咪咕、B站、汽水系）
+    补 UA / Referer；未知域名一律不加，交给播放器自己的 UA 请求——第三方解析接口
+    普遍按 UA 防盗链，宿主塞浏览器 UA 只会被拦
+  - 插件自己通过 `httpHeaders` 声明的请求头不受影响，仍然照发
 - Windows 端整首歌曲播完后不自动切下一首（播放列表明明有下一首，进度停在最后一秒、按钮仍是播放中）：
   酷我车机 CDN 的转码 FLAC 普遍存在**最后一帧坏帧**，mpv 曲末打
   `Error decoding audio` 日志但播放正常走到结尾；media_kit 把这条日志当成致命错误上报，

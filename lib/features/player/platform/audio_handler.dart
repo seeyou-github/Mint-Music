@@ -607,7 +607,40 @@ class MusicAudioHandler extends BaseAudioHandler
     return null;
   }
 
+  /// 需要宿主补齐默认请求头的音乐平台域名。
+  ///
+  /// 只给这些已知平台 / CDN 加：第三方解析接口（如 Meting、各类取地址 API）
+  /// 常按 UA 做防盗链，**浏览器 UA 会被直接 418**，播放器拿到 418 就报
+  /// 「Failed to open」；这类地址补任何 UA 都不如不补——让播放器用自己的 UA
+  /// （libmpv 的 Lavf、ExoPlayer 的自身 UA）去请求，302 也能正常跟随。
+  static bool needsDefaultHeaders(String host) {
+    if (host.isEmpty) return false;
+    const domains = <String>[
+      'kuwo.cn',
+      'kugou.com',
+      'kgmusic.cn',
+      'music.126.net',
+      '163.com',
+      'qq.com',
+      'migu.cn',
+      'bilibili.com',
+      'bilivideo.com',
+      'hdslb.com',
+      'acgvideo.com',
+      // 汽水（字节系）
+      'douyinvod.com',
+      'byteimg.com',
+    ];
+    for (final domain in domains) {
+      if (host == domain || host.endsWith('.$domain')) return true;
+    }
+    return false;
+  }
+
   /// 构建 CDN 音频请求头（含各源 Referer 与酷我车机 CDN 无头规则）。
+  ///
+  /// 是否附加「默认请求头」见 [needsDefaultHeaders]：未知域名不加，交给播放器
+  /// 自己请求（避免把浏览器 UA 塞给按 UA 防盗链的第三方解析接口）。
   ///
   /// 公开为静态方法，插件测试等服务可复用同一套请求头规则。
   static Map<String, String> audioHeadersForUrl(
@@ -625,7 +658,7 @@ class MusicAudioHandler extends BaseAudioHandler
     // CeruMusic/LX Music assign Kuwo media URLs directly to an audio element.
     // Extra request headers can make this signed CDN return the 11-second
     // free-listening prompt, so keep this host header-free by default.
-    if (!isKuwoMediaCdn) {
+    if (!isKuwoMediaCdn && needsDefaultHeaders(host)) {
       headers.addAll({
         'User-Agent':
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -633,18 +666,16 @@ class MusicAudioHandler extends BaseAudioHandler
         'Accept-Encoding': 'identity',
         'Connection': 'keep-alive',
       });
-    }
 
-    if (!isKuwoMediaCdn && (url.contains('kuwo') || url.contains('kugou'))) {
-      headers['Referer'] = 'https://www.kuwo.cn/';
-    } else if (!isKuwoMediaCdn && url.contains('migu')) {
-      headers['Referer'] = 'https://music.migu.cn/';
-    } else if (!isKuwoMediaCdn &&
-        (url.contains('qq.com') || url.contains('qqmusic'))) {
-      headers['Referer'] = 'https://y.qq.com/';
-    } else if (!isKuwoMediaCdn &&
-        (url.contains('163') || url.contains('netease'))) {
-      headers['Referer'] = 'https://music.163.com/';
+      if (url.contains('kuwo') || url.contains('kugou')) {
+        headers['Referer'] = 'https://www.kuwo.cn/';
+      } else if (url.contains('migu')) {
+        headers['Referer'] = 'https://music.migu.cn/';
+      } else if (url.contains('qq.com') || url.contains('qqmusic')) {
+        headers['Referer'] = 'https://y.qq.com/';
+      } else if (url.contains('163') || url.contains('netease')) {
+        headers['Referer'] = 'https://music.163.com/';
+      }
     }
 
     // Kuwo's signed media CDN is sensitive to request headers. A Referer,

@@ -377,6 +377,13 @@ function __lxRequest(url, options, callback) {
     timeout: typeof options.timeout === 'number' ? options.timeout : 20000,
     follow_max: typeof options.follow_max === 'number' ? options.follow_max : 5
   };
+  // 「取地址接口本身 302 到真实文件」这类插件（如 Meting）会显式要求
+  // follow_redirects:false，自己读 Location 拿直链。这个开关必须原样透传给
+  // 宿主：以前只白名单转发 method/headers/body/timeout/follow_max，开关被丢掉，
+  // 桥接层就会自动跟随 302 —— 把整首歌（几 MB）下载进 JS 引擎、响应里只剩
+  // 200 + 音频二进制、拿不到最终 URL，插件只能回退返回接口地址，播放器再
+  // 去请求时往往被接口的 UA 门槛拦掉（表现为「解析到地址但播放失败」）。
+  if (options.follow_redirects === false) requestOptions.follow_redirects = false;
 
   // Use the two-argument form of then(). Some Android flutter_js builds expose
   // Promise.then() but do not expose Promise.prototype.catch() as a callable.
