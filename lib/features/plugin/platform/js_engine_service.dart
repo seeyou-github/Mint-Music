@@ -1297,19 +1297,70 @@ function __zlibRequest(action, data) {
       final bodyBytes = response.data is List<int>
           ? List<int>.from(response.data as List<int>)
           : utf8.encode(response.data?.toString() ?? '');
-      final bodyText = utf8.decode(bodyBytes, allowMalformed: true);
-      final responseBody = _parseResponseBody(bodyText);
+
+      // —— 大二进制响应不再往 JS 引擎里搬 ——
+      //
+      // 过去这里无条件把整个响应体 utf8 解码 + base64 + jsonEncode，再通过
+      // evaluate() 拼进 JS 源码里。体积一大就会在主 isolate 上做几次全量拷贝
+      // 和一次巨型字符串解析：实测一个「302 到音频」的取地址接口被跟随之后，
+      // 3.6MB 音频变成 11MB 的 resultJson，播放按钮转圈期间整个窗口明显卡死。
+      //
+      // 现在：文本体按阈值解码（大二进制跳过）；base64 只给较小的体。
+      // 取地址类插件真正需要的只是响应头（Location），音频 / 视频这类
+      // 大二进制对 JS 侧没有意义，直接省略体，只报长度与类型。
+      final contentType =
+          (response.headers.value('content-type') ?? '').toLowerCase();
+      final looksText =
+          contentType.isEmpty ||
+          contentType.contains('json') ||
+          contentType.contains('xml') ||
+          contentType.contains('javascript') ||
+          contentType.startsWith('text/');
+      const int maxTextBytes = 4 * 1024 * 1024;
+      const int maxUnknownTypeTextBytes = 512 * 1024;
+      const int maxBase64Bytes = 2 * 1024 * 1024;
+
+      // 文本体：类型明确是文本时放宽到 4MB；类型不明时只在小体积上尝试
+      // （不少接口把 JSON 标成 octet-stream）。严格 UTF-8 解码失败即视为二进制。
+      String? bodyText;
+      final textBudget = looksText ? maxTextBytes : maxUnknownTypeTextBytes;
+      if (bodyBytes.isNotEmpty && bodyBytes.length <= textBudget) {
+        try {
+          bodyText = utf8.decode(bodyBytes);
+        } catch (_) {
+          bodyText = null;
+        }
+      }
+      final includeBase64 =
+          bodyBytes.isNotEmpty && bodyBytes.length <= maxBase64Bytes;
+
+      final responseBody = bodyText == null
+          ? null
+          : _parseResponseBody(bodyText);
       final resultJson = jsonEncode({
-        'body': responseBody is String
-            ? responseBody
-            : jsonEncode(responseBody),
+        'body': bodyText == null
+            ? ''
+            : (responseBody is String
+                  ? responseBody
+                  : jsonEncode(responseBody)),
         'statusCode': response.statusCode ?? 200,
         'headers': response.headers.map.map(
           (k, v) => MapEntry(k, v.join(', ')),
         ),
-        'bodyBase64': base64Encode(bodyBytes),
+        'bodyBase64': includeBase64 ? base64Encode(bodyBytes) : '',
+        // 体被省略时告诉插件原因（只报长度和类型），插件应回退到
+        // 「只读 headers」的路径，而不是把空 body 当成「接口返回空」。
+        'bodyBytes': bodyBytes.length,
+        'bodyOmitted': !includeBase64 && bodyText == null,
+        'contentType': contentType,
       });
 
+      if (!includeBase64 && bodyText == null && bodyBytes.isNotEmpty) {
+        print(
+          '[JsEngine] 大二进制响应已省略体: ${bodyBytes.length} 字节 '
+          '(${contentType.isEmpty ? '未知类型' : contentType}) $url',
+        );
+      }
       print('[JsEngine] HTTP请求成功: ${response.statusCode} $url');
       _resolveRequest(requestId, true, resultJson);
     } catch (e) {
