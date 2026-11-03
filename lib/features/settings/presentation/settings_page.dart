@@ -1895,7 +1895,6 @@ class _PlaybackContent extends ConsumerWidget {
     ThemeColors colors,
   ) {
     final markPlayedStatus = ref.watch(markPlayedStatusProvider);
-    final rememberProgress = ref.watch(rememberProgressProvider);
     final hideVipExclusive = ref.watch(hideVipExclusiveSongsProvider);
     final downloadTimeout = ref.watch(playbackDownloadTimeoutProvider);
     return SettingGroup(
@@ -1913,24 +1912,6 @@ class _PlaybackContent extends ConsumerWidget {
               markPlayedStatusProvider,
               v,
               (s) => s.setMarkPlayedStatus(v),
-            ),
-            activeTrackColor: colors.primary.withValues(alpha: 0.3),
-            activeThumbColor: colors.primary,
-          ),
-          colors: colors,
-        ),
-        SettingDivider(colors: colors),
-        SettingRow(
-          icon: Icons.restore,
-          title: '记住播放进度',
-          subtitle: '再次播放没听完的歌曲时从上次的位置继续；重启软件后进度条也停在上次的位置',
-          trailing: Switch(
-            value: rememberProgress,
-            onChanged: (v) => _persistBool(
-              context,
-              rememberProgressProvider,
-              v,
-              (s) => s.setRememberProgress(v),
             ),
             activeTrackColor: colors.primary.withValues(alpha: 0.3),
             activeThumbColor: colors.primary,

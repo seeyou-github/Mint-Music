@@ -266,8 +266,9 @@ class AppDatabase {
     return openDatabase(
       path,
       // v4：新增 song_play_progress（已播放进度，用于「已听 N%」标签）。
-      // v5：新增 song_resume_position（上次播放位置，用于接着上次的进度继续）。
-      version: 5,
+      // v5 曾加过一张独立的 song_resume_position，现改为直接复用
+      // song_play_progress（「最远听到哪」就是续播位置），v6 里连同旧表一起清掉。
+      version: 6,
       onConfigure: (db) async {
         await db.execute('PRAGMA journal_mode=WAL');
         // NORMAL：写 WAL 不用每次 fsync，浏览时缓存索引写入不至于卡顿。
@@ -281,6 +282,9 @@ class AppDatabase {
       onUpgrade: (db, oldVersion, newVersion) async {
         // 图片缓存索引只是缓存，直接重建；其余表用 IF NOT EXISTS 补齐。
         await db.execute('DROP TABLE IF EXISTS cache_index');
+        // v5 短暂存在过的「上次播放位置」表已废弃：续播改为复用
+        // song_play_progress（最远听到哪就是续播位置），旧表直接删掉。
+        await db.execute('DROP TABLE IF EXISTS song_resume_position');
         await _createCacheSchema(db);
       },
     );
@@ -391,23 +395,6 @@ class AppDatabase {
     await db.execute(
       'CREATE INDEX IF NOT EXISTS idx_song_play_progress_time '
       'ON song_play_progress (updated_at DESC)',
-    );
-    // 每首歌一条「上次播放到哪里」：用于「接着上次的进度继续播放」。
-    //
-    // 与 song_play_progress 的 ratio（只增不减，给「已听 N%」标签用）不同，
-    // 这一份永远记录**最后一次**的位置——往回拖进度条、重听同一段都会更新；
-    // 播完（或停在接近结尾处）时直接删掉这一行，下次从头播。
-    await db.execute('''
-          CREATE TABLE IF NOT EXISTS song_resume_position (
-            song_id TEXT PRIMARY KEY,
-            position_ms INTEGER NOT NULL DEFAULT 0,
-            duration_ms INTEGER NOT NULL DEFAULT 0,
-            updated_at INTEGER NOT NULL DEFAULT 0
-          )
-        ''');
-    await db.execute(
-      'CREATE INDEX IF NOT EXISTS idx_song_resume_position_time '
-      'ON song_resume_position (updated_at DESC)',
     );
     await db.execute('''
           CREATE TABLE IF NOT EXISTS playback_state (

@@ -67,29 +67,33 @@ void main() {
     });
   });
 
-  group('SongResumeNotifier', () {
-    test('记录最新位置（往回拖也更新），停在开头 / 结尾则删除', () async {
+  group('续播位置（复用「已听」数据）', () {
+    test('按最远进度折算：往回拖不影响续播点', () async {
       final dir = Directory.systemTemp.createTempSync('mintmusic_resume_test');
       AppPaths.debugRootOverride = dir.path;
       try {
-        final notifier = SongResumeNotifier(PlayProgressStore());
+        final notifier = PlayedProgressNotifier(PlayProgressStore());
         await notifier.ready.timeout(const Duration(seconds: 5));
 
         notifier.record(songId: 's1', positionMs: 60000, durationMs: 300000);
-        expect(notifier.state['s1'], const Duration(minutes: 1));
+        expect(
+          notifier.resumePositionFor('s1', durationMs: 300000),
+          const Duration(minutes: 1),
+        );
 
-        // 与「已听 N%」不同：往回拖进度条也记最新位置。
+        // 往回拖进度条不会把「已听」降下去，续播点仍是最远的那里。
         notifier.record(songId: 's1', positionMs: 30000, durationMs: 300000);
-        expect(notifier.state['s1'], const Duration(seconds: 30));
+        expect(
+          notifier.resumePositionFor('s1', durationMs: 300000),
+          const Duration(minutes: 1),
+        );
 
-        // 停在开头（不足 3 秒）→ 没有恢复的意义，删掉。
-        notifier.record(songId: 's1', positionMs: 1000, durationMs: 300000);
-        expect(notifier.state.containsKey('s1'), isFalse);
-
-        // 停在结尾（距结尾不足 3 秒）→ 视为听完，删掉，下次从头播。
-        notifier.record(songId: 's2', positionMs: 120000, durationMs: 300000);
-        notifier.record(songId: 's2', positionMs: 298000, durationMs: 300000);
-        expect(notifier.state.containsKey('s2'), isFalse);
+        // 继续往后听到 80%：续播点跟着更新。
+        notifier.record(songId: 's1', positionMs: 240000, durationMs: 300000);
+        expect(
+          notifier.resumePositionFor('s1', durationMs: 300000),
+          const Duration(minutes: 4),
+        );
 
         notifier.dispose();
       } finally {
@@ -100,26 +104,31 @@ void main() {
       }
     });
 
-    test('resumePositionFor：没记录 / 太靠前 / 已接近结尾都返回 0', () async {
+    test('没记录 / 太靠前 / 听完 / 接近结尾都返回 0（从头播）', () async {
       final dir = Directory.systemTemp.createTempSync('mintmusic_resume_q');
       AppPaths.debugRootOverride = dir.path;
       try {
-        final notifier = SongResumeNotifier(PlayProgressStore());
+        final notifier = PlayedProgressNotifier(PlayProgressStore());
         await notifier.ready.timeout(const Duration(seconds: 5));
 
-        notifier.record(songId: 'a', positionMs: 66000, durationMs: 260000);
-        expect(
-          notifier.resumePositionFor('a', durationSeconds: 260),
-          const Duration(seconds: 66),
-        );
-        // 没有记录的歌 → 从头播。
-        expect(notifier.resumePositionFor('missing'), Duration.zero);
+        // 没有记录 → 从头播。
+        expect(notifier.resumePositionFor('missing', durationMs: 300000), Duration.zero);
 
-        // 记录时不知道时长（durationMs = 0），但歌曲元数据只有 60 秒：
-        // 66 秒已经越过结尾，不能恢复（否则一点就跳到末尾）。
-        notifier.record(songId: 'b', positionMs: 66000, durationMs: 0);
-        expect(notifier.state['b'], const Duration(seconds: 66));
-        expect(notifier.resumePositionFor('b', durationSeconds: 60), Duration.zero);
+        // 几乎没有进展（不足 3 秒）→ 从头播。
+        notifier.record(songId: 'tiny', positionMs: 2000, durationMs: 300000);
+        expect(notifier.resumePositionFor('tiny', durationMs: 300000), Duration.zero);
+
+        // 完整听完（100%）→ 从头播，进度条也归 0。
+        notifier.record(songId: 'done', positionMs: 300000, durationMs: 300000);
+        expect(notifier.state['done'], closeTo(1.0, 0.0001));
+        expect(notifier.resumePositionFor('done', durationMs: 300000), Duration.zero);
+
+        // 停在 99%（离结尾只剩几秒）→ 也从头播，避免一点就到末尾。
+        notifier.record(songId: 'near', positionMs: 297000, durationMs: 300000);
+        expect(notifier.resumePositionFor('near', durationMs: 300000), Duration.zero);
+
+        // 时长未知（元数据没有时长）→ 无从折算，从头播。
+        expect(notifier.resumePositionFor('s1', durationMs: 0), Duration.zero);
 
         notifier.dispose();
       } finally {
@@ -153,37 +162,6 @@ void main() {
 
       await store.clear();
       expect(await PlayProgressStore().loadAll(), isEmpty);
-    } finally {
-      AppPaths.debugRootOverride = null;
-      try {
-        dir.deleteSync(recursive: true);
-      } catch (_) {}
-    }
-  });
-
-  test('上次播放位置写入临时库、能读回，也能按记录删除', () async {
-    final dir = Directory.systemTemp.createTempSync('mintmusic_resume_db');
-    AppPaths.debugRootOverride = dir.path;
-    try {
-      final store = PlayProgressStore();
-      store.enqueuePosition(
-        'song-b',
-        const SavedPosition(positionMs: 42000, durationMs: 100000),
-      );
-      await store.flush();
-
-      final loaded = await PlayProgressStore().loadAllPositions();
-      expect(loaded['song-b'], isNotNull);
-      expect(loaded['song-b']!.positionMs, 42000);
-      expect(loaded['song-b']!.durationMs, 100000);
-
-      // positionMs <= 0 表示删除这条记录（播完 / 从头播）。
-      store.enqueuePosition('song-b', const SavedPosition(positionMs: 0));
-      await store.flush();
-      expect(await PlayProgressStore().loadAllPositions(), isEmpty);
-
-      await store.clear();
-      expect(await PlayProgressStore().loadAllPositions(), isEmpty);
     } finally {
       AppPaths.debugRootOverride = null;
       try {

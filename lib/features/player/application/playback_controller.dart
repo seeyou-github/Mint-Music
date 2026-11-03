@@ -109,25 +109,13 @@ final playbackControllerProvider =
 
       // 「已听 / 已听 N%」：播放位置按 1% 粒度记进临时库。
       // 开关在「设置 - 播放设置 - 标记歌曲播放状态」，关掉就完全不记录。
+      //
+      // 这份「最远听到哪」同时用于「接着上次继续播放」——不再单独存「最后
+      // 位置」：用户关心的是这首歌听到过哪里，往回拖进度条不该把续播点拉回去。
       final playedProgress = ref.read(playedProgressProvider.notifier);
-      // 「上次播放到哪里」：与「已听 N%」共用同一个记录时机（暂停 / 切歌 /
-      // 退出各记一次），但记的是最新位置（往回拖进度条也会更新）。
-      final songResume = ref.read(songResumeProvider.notifier);
-      controller.resolveResumePosition = (song) {
-        if (!ref.read(rememberProgressProvider)) return Duration.zero;
-        return songResume.resumePositionFor(
-          song.id,
-          durationSeconds: song.duration,
-        );
-      };
+      controller.resolveResumePosition = (song) => playedProgress
+          .resumePositionFor(song.id, durationMs: song.duration * 1000);
       controller.onProgress = (song, positionMs, durationMs) {
-        if (ref.read(rememberProgressProvider)) {
-          songResume.record(
-            songId: song.id,
-            positionMs: positionMs,
-            durationMs: durationMs,
-          );
-        }
         if (!ref.read(markPlayedStatusProvider)) return;
         playedProgress.record(
           songId: song.id,
@@ -200,19 +188,19 @@ final playbackControllerProvider =
       unawaited(() async {
         final session = await sessionStore.load();
         if (disposed) return;
-        // 等「上次播放位置」从数据库读出来，启动时进度条才能直接定位到最后
-        // 听到的地方（读失败会立即完成，不会卡住恢复流程）。
+        // 等「已听进度」从数据库读出来，启动时进度条才能直接停在最远听到的
+        // 位置（读失败会立即完成，不会卡住恢复流程）。
         try {
-          await songResume.ready.timeout(const Duration(seconds: 3));
+          await playedProgress.ready.timeout(const Duration(seconds: 3));
         } catch (_) {}
         if (disposed) return;
-        Duration savedPosition = Duration.zero;
-        if (session != null && ref.read(rememberProgressProvider)) {
-          savedPosition = songResume.resumePositionFor(
-            session.song.id,
-            durationSeconds: session.song.duration,
-          );
-        }
+        // 听完的歌（100%）进度条从 0 开始；没听完的停在最远位置。
+        final savedPosition = session == null
+            ? Duration.zero
+            : playedProgress.resumePositionFor(
+                session.song.id,
+                durationMs: session.song.duration * 1000,
+              );
         final restored =
             session != null &&
             controller.restoreSession(
@@ -345,9 +333,10 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   /// 播放位置变化时回调（写「已听 N%」进度）。位置 / 时长单位均为毫秒。
   void Function(Song song, int positionMs, int durationMs)? onProgress;
 
-  /// 读取某首歌「上次停下的位置」（接着上次继续播放）。
+  /// 读取某首歌「接着上次继续播放」的位置。
   ///
-  /// 由宿主注入：关闭「记住播放进度」时返回 [Duration.zero]，即从头播放。
+  /// 由宿主注入，按「已听 N%」那份最远进度折算；没记录 / 已听完 / 已接近
+  /// 结尾时返回 [Duration.zero]，即从头播放。
   Duration Function(Song song)? resolveResumePosition;
 
   /// 判断一首歌是否在黑名单里（由 provider 注入，控制器不直接依赖黑名单模块）。
@@ -945,9 +934,10 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     await _seekWithoutCounting(resumePosition);
   }
 
-  /// 从「上次停下的位置」继续播放（没听完的歌）。
+  /// 从「上次听到的位置」继续播放（没听完的歌）。
   ///
-  /// [resumeTarget] 由 [resolveResumePosition] 得到（开关关闭 / 没记录时为 0）。
+  /// [resumeTarget] 由 [resolveResumePosition] 得到（没记录 / 已听完 / 已接近
+  /// 结尾时为 0，即从头播放）。
   Future<void> _applyResumeTarget(
     Song song,
     Duration resumeTarget, {
@@ -1320,9 +1310,9 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     bool finalizePrevious = true,
     int skipStep = 1,
     bool skipBlocked = true,
-    // 是否从「上次停下的位置」继续：用户点播 / 上一首 / 下一首 / 重启后点播放
-    // 都为 true；自动连播（上一首自然播完）为 false，避免「连着听歌单时
-    // 下一首突然从中间开始」。
+    // 是否从「上次听到的位置」继续（按「已听 N%」的最远进度折算）：
+    // 用户点播 / 上一首 / 下一首 / 重启后点播放都为 true；自动连播（上一首
+    // 自然播完）为 false，避免「连着听歌单时下一首突然从中间开始」。
     bool resumeFromSaved = true,
   }) async {
     if (index < 0 || index >= state.queue.length) return;
@@ -1350,7 +1340,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     _lastResolveError = null;
     final requestId = ++_currentPlayRequestId;
     final song = state.queue[index];
-    // 起播位置：这首歌上次停下的地方（用户点播 / 上一首 / 下一首 / 重启后
+    // 起播位置：这首歌最远听到的地方（用户点播 / 上一首 / 下一首 / 重启后
     // 点播放）。解析地址期间进度条就先停在那个位置，不要在 0 和续播点之间跳。
     Duration resumeTarget = Duration.zero;
     if (resumeFromSaved) {
