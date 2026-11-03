@@ -110,7 +110,24 @@ final playbackControllerProvider =
       // 「已听 / 已听 N%」：播放位置按 1% 粒度记进临时库。
       // 开关在「设置 - 播放设置 - 标记歌曲播放状态」，关掉就完全不记录。
       final playedProgress = ref.read(playedProgressProvider.notifier);
+      // 「上次播放到哪里」：与「已听 N%」共用同一个记录时机（暂停 / 切歌 /
+      // 退出各记一次），但记的是最新位置（往回拖进度条也会更新）。
+      final songResume = ref.read(songResumeProvider.notifier);
+      controller.resolveResumePosition = (song) {
+        if (!ref.read(rememberProgressProvider)) return Duration.zero;
+        return songResume.resumePositionFor(
+          song.id,
+          durationSeconds: song.duration,
+        );
+      };
       controller.onProgress = (song, positionMs, durationMs) {
+        if (ref.read(rememberProgressProvider)) {
+          songResume.record(
+            songId: song.id,
+            positionMs: positionMs,
+            durationMs: durationMs,
+          );
+        }
         if (!ref.read(markPlayedStatusProvider)) return;
         playedProgress.record(
           songId: song.id,
@@ -183,12 +200,26 @@ final playbackControllerProvider =
       unawaited(() async {
         final session = await sessionStore.load();
         if (disposed) return;
+        // 等「上次播放位置」从数据库读出来，启动时进度条才能直接定位到最后
+        // 听到的地方（读失败会立即完成，不会卡住恢复流程）。
+        try {
+          await songResume.ready.timeout(const Duration(seconds: 3));
+        } catch (_) {}
+        if (disposed) return;
+        Duration savedPosition = Duration.zero;
+        if (session != null && ref.read(rememberProgressProvider)) {
+          savedPosition = songResume.resumePositionFor(
+            session.song.id,
+            durationSeconds: session.song.duration,
+          );
+        }
         final restored =
             session != null &&
             controller.restoreSession(
               queue: session.queue,
               index: session.index,
               quality: session.quality,
+              position: savedPosition,
             );
         sessionReady = true;
         if (restored) {
@@ -314,6 +345,11 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   /// 播放位置变化时回调（写「已听 N%」进度）。位置 / 时长单位均为毫秒。
   void Function(Song song, int positionMs, int durationMs)? onProgress;
 
+  /// 读取某首歌「上次停下的位置」（接着上次继续播放）。
+  ///
+  /// 由宿主注入：关闭「记住播放进度」时返回 [Duration.zero]，即从头播放。
+  Duration Function(Song song)? resolveResumePosition;
+
   /// 判断一首歌是否在黑名单里（由 provider 注入，控制器不直接依赖黑名单模块）。
   bool Function(Song song)? isSongBlocked;
 
@@ -349,7 +385,8 @@ class PlaybackController extends StateNotifier<PlaybackState> {
       onMessage?.call(tr('队列里的歌曲都在黑名单里'), backgroundColor: Colors.red);
       return;
     }
-    await playSongAt(next);
+    // 这是「被动跳歌」，不从上次位置续播。
+    await playSongAt(next, resumeFromSaved: false);
   }
 
   int _currentPlayRequestId = 0;
@@ -894,11 +931,41 @@ class PlaybackController extends StateNotifier<PlaybackState> {
 
   /// 换源后从原进度继续播放（如暂停期间 URL 过期，恢复时触发换源的场景），
   /// 避免重头播放。resumePosition 为 0 或已超过歌曲时长时跳过。
-  Future<void> _resumeFromPosition(Duration resumePosition) async {
+  Future<void> _resumeFromPosition(
+    Duration resumePosition, {
+    Duration? expectedDuration,
+  }) async {
     if (resumePosition <= Duration.zero) return;
-    final duration = _audioHandler.currentDuration;
-    if (duration != null && resumePosition >= duration) return;
+    final duration = _audioHandler.currentDuration ?? expectedDuration;
+    if (duration != null &&
+        duration > Duration.zero &&
+        resumePosition >= duration) {
+      return;
+    }
     await _seekWithoutCounting(resumePosition);
+  }
+
+  /// 从「上次停下的位置」继续播放（没听完的歌）。
+  ///
+  /// [resumeTarget] 由 [resolveResumePosition] 得到（开关关闭 / 没记录时为 0）。
+  Future<void> _applyResumeTarget(
+    Song song,
+    Duration resumeTarget, {
+    int? requestId,
+  }) async {
+    if (resumeTarget <= Duration.zero) return;
+    // 期间用户已经切到别的歌：不要把新歌 seek 到旧位置。
+    if (requestId != null && _currentPlayRequestId != requestId) return;
+    debugPrint(
+      '[PlaybackController] 从上次位置继续: ${song.title} '
+      '@${resumeTarget.inSeconds}s',
+    );
+    await _resumeFromPosition(
+      resumeTarget,
+      expectedDuration: song.duration > 0
+          ? Duration(seconds: song.duration)
+          : null,
+    );
   }
 
   /// 内部直接 seek（换源 / 换音质后恢复进度 / 单曲重播）。
@@ -926,29 +993,30 @@ class PlaybackController extends StateNotifier<PlaybackState> {
       unawaited(_audioEffectService.setSessionId(currentSessionId));
     }
     _positionSub = _audioHandler.positionStream.listen((position) {
-      if (mounted) {
-        final seekTarget = _seekTarget;
-        if (seekTarget != null) {
-          // seek 完成前可能还有旧位置事件，先忽略，避免歌词/进度条回跳。
-          if ((position - seekTarget).abs() >
-              const Duration(milliseconds: 500)) {
-            return;
-          }
-          _seekTarget = null;
-          _seekTargetTimer?.cancel();
-          _seekTargetTimer = null;
+      // 恢复会话后还没真正加载音源（或播放失败已 stop）：播放器没有音源，
+      // 上报的进度是 0，会把进度条从「上次停下的位置」打回开头，直接忽略。
+      // playSongAt 开始时会清掉这个标记。
+      if (!mounted || _needsSourceLoad) return;
+      final seekTarget = _seekTarget;
+      if (seekTarget != null) {
+        // seek 完成前可能还有旧位置事件，先忽略，避免歌词/进度条回跳。
+        if ((position - seekTarget).abs() > const Duration(milliseconds: 500)) {
+          return;
         }
-        // 进度回退（换歌 / 单曲循环从 0 重播）时以新进度为起点，
-        // 避免把上一段的进度算到这一段里。
-        final listenStart = _listenSegmentStart;
-        if (listenStart != null && position < listenStart) {
-          _listenSegmentStart = position;
-        }
-        final diff = (position - _lastEmittedPosition).abs();
-        if (diff >= _positionThrottle) {
-          _lastEmittedPosition = position;
-          state = state.copyWith(position: position);
-        }
+        _seekTarget = null;
+        _seekTargetTimer?.cancel();
+        _seekTargetTimer = null;
+      }
+      // 进度回退（换歌 / 单曲循环从 0 重播）时以新进度为起点，
+      // 避免把上一段的进度算到这一段里。
+      final listenStart = _listenSegmentStart;
+      if (listenStart != null && position < listenStart) {
+        _listenSegmentStart = position;
+      }
+      final diff = (position - _lastEmittedPosition).abs();
+      if (diff >= _positionThrottle) {
+        _lastEmittedPosition = position;
+        state = state.copyWith(position: position);
       }
     });
     _bufferedSub = _audioHandler.bufferedPositionStream.listen((buffered) {
@@ -1060,7 +1128,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
           Future.microtask(() {
             if (mounted && _pendingAutoNext) {
               _pendingAutoNext = false;
-              next();
+              next(auto: true);
             }
           });
         }
@@ -1095,12 +1163,14 @@ class PlaybackController extends StateNotifier<PlaybackState> {
 
   /// 恢复上次退出时的歌曲与队列。
   ///
-  /// 只恢复「听什么」，不恢复进度、不自动播放；恢复后用户点播放时，
-  /// [play] 会先重新解析在线地址，避免使用已过期的 URL。
+  /// 只恢复「听什么」，不自动播放；恢复后用户点播放时，[play] 会先重新解析
+  /// 在线地址。传入 [position] 时，进度条直接定位到上次停下的位置（点播放
+  /// 后也从那里继续）。
   bool restoreSession({
     required List<Song> queue,
     required int index,
     String? quality,
+    Duration? position,
   }) {
     // 启动期间用户已经开始播放：不要用旧会话覆盖。
     if (state.currentSong != null || state.queue.isNotEmpty) return false;
@@ -1112,7 +1182,10 @@ class PlaybackController extends StateNotifier<PlaybackState> {
       queue: List<Song>.from(queue),
       currentIndex: safeIndex,
       currentSong: queue[safeIndex],
-      position: Duration.zero,
+      // 进度条在启动时就停在「上次听到哪里」，而不是回到 0。
+      position: position == null || position < Duration.zero
+          ? Duration.zero
+          : position,
       isPlaying: false,
       isLoading: false,
       currentQuality: (quality == null || quality.isEmpty)
@@ -1247,6 +1320,10 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     bool finalizePrevious = true,
     int skipStep = 1,
     bool skipBlocked = true,
+    // 是否从「上次停下的位置」继续：用户点播 / 上一首 / 下一首 / 重启后点播放
+    // 都为 true；自动连播（上一首自然播完）为 false，避免「连着听歌单时
+    // 下一首突然从中间开始」。
+    bool resumeFromSaved = true,
   }) async {
     if (index < 0 || index >= state.queue.length) return;
 
@@ -1273,6 +1350,17 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     _lastResolveError = null;
     final requestId = ++_currentPlayRequestId;
     final song = state.queue[index];
+    // 起播位置：这首歌上次停下的地方（用户点播 / 上一首 / 下一首 / 重启后
+    // 点播放）。解析地址期间进度条就先停在那个位置，不要在 0 和续播点之间跳。
+    Duration resumeTarget = Duration.zero;
+    if (resumeFromSaved) {
+      try {
+        resumeTarget = resolveResumePosition?.call(song) ?? Duration.zero;
+      } catch (e) {
+        debugPrint('[PlaybackController] 读取上次播放位置失败: $e');
+      }
+      if (resumeTarget < Duration.zero) resumeTarget = Duration.zero;
+    }
     // 开始播放这首歌：清掉它上次记录的「失败播放源」，重新给每个源一次机会
     // （否则上次全部失败的歌，再点播放会立刻报「都已失败」）。
     _failedPlaybackSources.remove(_failedSourceKey(song));
@@ -1342,7 +1430,8 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     state = state.copyWith(
       currentIndex: index,
       currentSong: song,
-      position: Duration.zero,
+      // 有上次位置就先停在那个位置（解析地址期间进度条不回到 0）。
+      position: resumeTarget,
       // 换歌 → 时长归零（null 表示沿用，同歌重播不清）。
       actualDuration: previousSongId == song.id ? null : Duration.zero,
       isLoading: true,
@@ -1385,6 +1474,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
               .setAudioSource(urlToPlay, song: currentSongToPlay)
               .timeout(_audioSetTimeout);
           await _startPlayback();
+          await _applyResumeTarget(song, resumeTarget, requestId: requestId);
         } catch (_) {
           if (_currentPlayRequestId != requestId) return;
           await _stopPlaybackOnFailure(tr('播放歌曲失败'));
@@ -1471,6 +1561,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
             .setAudioSource(playUrl, song: currentSongToPlay)
             .timeout(_audioSetTimeout);
         await _startPlayback();
+        await _applyResumeTarget(song, resumeTarget, requestId: requestId);
       } catch (error) {
         if (_currentPlayRequestId != requestId) return;
 
@@ -1530,6 +1621,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
                   .setAudioSource(next.url, song: nextSong)
                   .timeout(_audioSetTimeout);
               await _startPlayback();
+              await _applyResumeTarget(song, resumeTarget, requestId: requestId);
               currentSongToPlay = nextSong;
               _replaceSongInQueue(index, nextSong);
               playQuality = nextQuality;
@@ -1604,6 +1696,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
                 .setAudioSource(candidateUrl, song: fallbackSong)
                 .timeout(_audioSetTimeout);
             await _startPlayback();
+            await _applyResumeTarget(song, resumeTarget, requestId: requestId);
             currentSongToPlay = fallbackSong;
             _replaceSongInQueue(index, fallbackSong);
             playQuality = fallbackQuality;
@@ -1674,7 +1767,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   /// - 队列仅一首且非单曲循环 → 暂停
   /// - listLoop: (currentIndex + 1) % length
   /// - shuffle: 随机索引
-  Future<void> next() async {
+  Future<void> next({bool auto = false}) async {
     _cancelPendingAutoNext();
     if (state.queue.isEmpty) return;
 
@@ -1735,7 +1828,9 @@ class PlaybackController extends StateNotifier<PlaybackState> {
       }
 
       if (nextIndex >= 0 && nextIndex < state.queue.length) {
-        await playSongAt(nextIndex);
+        // 自动连播（上一首自然播完）不从上次位置继续，避免连着听歌单时
+        // 下一首突然从中间开始；用户点「下一首」按钮才续播。
+        await playSongAt(nextIndex, resumeFromSaved: !auto);
       }
     } catch (e) {
       debugPrint('[PlaybackController] next() error: $e');

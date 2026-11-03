@@ -242,8 +242,8 @@ class SettingsService {
   bool getAutoPlay() => _prefs.getBool('auto_play') ?? false;
   Future<void> setAutoPlay(bool v) => _prefs.setBool('auto_play', v);
 
-  // -- remember progress (default off) --
-  bool getRememberProgress() => _prefs.getBool('remember_progress') ?? false;
+  // -- 记住播放进度（默认开启）--
+  bool getRememberProgress() => _prefs.getBool('remember_progress') ?? true;
   Future<void> setRememberProgress(bool v) =>
       _prefs.setBool('remember_progress', v);
 

@@ -27,7 +27,7 @@ final equalizerEnabledProvider = StateProvider<bool>((ref) => false);
 // -- playback --
 final playbackSpeedProvider = StateProvider<double>((ref) => 1.0);
 final autoPlayProvider = StateProvider<bool>((ref) => false);
-final rememberProgressProvider = StateProvider<bool>((ref) => false);
+final rememberProgressProvider = StateProvider<bool>((ref) => true);
 
 /// 播放下载超时（秒）：音频加载/下载的等待上限，默认 10 秒。
 final playbackDownloadTimeoutProvider = StateProvider<int>((ref) => 10);
