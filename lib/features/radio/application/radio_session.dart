@@ -26,7 +26,7 @@ class RadioSession {
     this.randomSourceId = '',
     this.playlistId,
     this.playlistSource,
-    this.recentPlaylistIds = const [],
+    this.usedPlaylistIds = const <String>{},
     this.songPlaylists = const {},
     this.songIds = const {},
   });
@@ -48,8 +48,10 @@ class RadioSession {
   final String? playlistId;
   final String? playlistSource;
 
-  /// 最近用过的歌单 id（新的在前）：补歌时避开它们，保证每轮换歌单。
-  final List<String> recentPlaylistIds;
+  /// 本次电台已经用过的歌单 id：补歌时全部避开，不再重复使用同一个歌单。
+  ///
+  /// 只在会话内有效（退出电台即清空），不占存储。
+  final Set<String> usedPlaylistIds;
 
   /// 每首电台歌曲各自来自哪个歌单：播放页「更多」里按歌曲跳转来源。
   final Map<String, RadioPlaylistRef> songPlaylists;
@@ -63,7 +65,7 @@ class RadioSession {
     String? cover,
     String? playlistId,
     String? playlistSource,
-    List<String>? recentPlaylistIds,
+    Set<String>? usedPlaylistIds,
     Map<String, RadioPlaylistRef>? songPlaylists,
     Set<String>? songIds,
   }) {
@@ -76,7 +78,7 @@ class RadioSession {
       randomSourceId: randomSourceId,
       playlistId: playlistId ?? this.playlistId,
       playlistSource: playlistSource ?? this.playlistSource,
-      recentPlaylistIds: recentPlaylistIds ?? this.recentPlaylistIds,
+      usedPlaylistIds: usedPlaylistIds ?? this.usedPlaylistIds,
       songPlaylists: songPlaylists ?? this.songPlaylists,
       songIds: songIds ?? this.songIds,
     );
@@ -91,12 +93,18 @@ final radioSessionProvider =
 /// 电台的播放会话：负责起播、补歌、退出。
 ///
 /// 补歌规则：队列里未播放的歌少于 10 首时，再随机补至少 20 首（受黑名单过滤）。
+///
+/// 选歌规则：**每个歌单最多取 3 首**，一批 20 首来自 7 个左右的歌单；
+/// 本次电台用过的歌单、已经入队播过的歌都不会再出现（退出电台即重置）。
 class RadioSessionController extends Notifier<RadioSession?> {
   /// 未播放歌曲少于此数时补歌。
   static const int refillThreshold = 10;
 
   /// 每次补歌的条数。
   static const int refillCount = 20;
+
+  /// 每个歌单最多取几首：取多了等于「在听某个歌单」，电台要的是多歌单混合。
+  static const int songsPerPlaylist = 3;
 
   bool _refilling = false;
 
@@ -113,13 +121,10 @@ class RadioSessionController extends Notifier<RadioSession?> {
     isBlocked: (song) => ref.read(blacklistProvider).isBlocked(song),
   );
 
-  /// 记一个歌单到「最近用过」里（新的在前，最多留 8 个）。
-  ///
-  /// 补歌时把它们排除掉，电台才会在配置的分类 / 关键词范围内不断换歌单。
-  static List<String> _pushRecent(List<String> recent, String? id) {
-    if (id == null || id.isEmpty) return recent;
-    final next = <String>[id, ...recent.where((item) => item != id)];
-    return next.length > 8 ? next.sublist(0, 8) : next;
+  /// 把这一批歌用掉的歌单记进「本次已用过」，下一轮补歌不再用。
+  static Set<String> _mergeUsed(Set<String> used, RadioBatch batch) {
+    if (batch.usedPlaylistIds.isEmpty) return used;
+    return {...used, ...batch.usedPlaylistIds};
   }
 
   /// 开始一个自定义电台。
@@ -140,6 +145,7 @@ class RadioSessionController extends Notifier<RadioSession?> {
       tags: station.tags,
       keywords: station.keywords,
       minCount: refillCount,
+      songsPerPlaylist: songsPerPlaylist,
     );
     if (batch.isEmpty) {
       throw const RadioException('没有随机到可播放的歌曲，请稍后重试');
@@ -158,7 +164,7 @@ class RadioSessionController extends Notifier<RadioSession?> {
       station: station,
       playlistId: batch.playlistId,
       playlistSource: batch.playlistSource,
-      recentPlaylistIds: _pushRecent(const [], batch.playlistId),
+      usedPlaylistIds: _mergeUsed(const {}, batch),
       songPlaylists: batch.songPlaylists,
       songIds: batch.songs.map((s) => s.id).toSet(),
     );
@@ -197,7 +203,7 @@ class RadioSessionController extends Notifier<RadioSession?> {
       randomSourceId: source,
       playlistId: batch.playlistId,
       playlistSource: batch.playlistSource,
-      recentPlaylistIds: _pushRecent(const [], batch.playlistId),
+      usedPlaylistIds: _mergeUsed(const {}, batch),
       songPlaylists: batch.songPlaylists,
       songIds: batch.songs.map((s) => s.id).toSet(),
     );
@@ -244,12 +250,13 @@ class RadioSessionController extends Notifier<RadioSession?> {
           .toSet();
       RadioBatch batch;
       if (session.isRandom) {
-        // 随机电台：每个歌单只取 3 首，取完就换下一个随机歌单，
-        // 直到凑够 20 首（引擎内部循环）；最近用过的歌单先跳过。
+        // 随机电台：同样每个歌单只取 3 首，跨歌单凑够一批；
+        // 本次电台用过的歌单、已经播过的歌都不再取。
         batch = await engine.randomSongs(
           sourceId: session.randomSourceId,
           minCount: refillCount,
-          excludePlaylistIds: session.recentPlaylistIds.toSet(),
+          songsPerPlaylist: songsPerPlaylist,
+          excludePlaylistIds: session.usedPlaylistIds,
           excludeIds: existing,
         );
       } else {
@@ -260,15 +267,15 @@ class RadioSessionController extends Notifier<RadioSession?> {
           fallback: [ref.read(discoverSourceIdProvider)],
         );
         if (sources.isEmpty) return;
-        // 每轮重新随机歌单，只避开最近用过的几个 —— 以前是「优先沿用上一轮
-        // 的歌单」，随机到大歌单后就再也换不掉了（实测 101 首的歌单连着放了
-        // 十六首都还是它）。
+        // 每个歌单最多取 3 首、跨歌单凑够一批；本次电台用过的歌单全部避开，
+        // 不会一直停留在同一个歌单里。
         batch = await engine.nextBatch(
           sourceIds: sources,
           tags: station.tags,
           keywords: station.keywords,
           minCount: refillCount,
-          excludePlaylistIds: session.recentPlaylistIds.toSet(),
+          songsPerPlaylist: songsPerPlaylist,
+          excludePlaylistIds: session.usedPlaylistIds,
           excludeIds: existing,
         );
       }
@@ -286,10 +293,7 @@ class RadioSessionController extends Notifier<RadioSession?> {
       state = current.copyWith(
         playlistId: batch.playlistId ?? session.playlistId,
         playlistSource: batch.playlistSource ?? session.playlistSource,
-        recentPlaylistIds: _pushRecent(
-          current.recentPlaylistIds,
-          batch.playlistId,
-        ),
+        usedPlaylistIds: _mergeUsed(current.usedPlaylistIds, batch),
         songPlaylists: {...current.songPlaylists, ...batch.songPlaylists},
         songIds: {...current.songIds, ...fresh.map((s) => s.id)},
       );
