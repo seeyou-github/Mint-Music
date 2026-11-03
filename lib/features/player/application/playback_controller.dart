@@ -61,6 +61,9 @@ final playbackControllerProvider =
           persistUserQuality(ref, quality: quality, sourceId: sourceId),
         );
       };
+      // 每次加载音频时读取最新的「播放下载超时」设置。
+      controller.getPlaybackDownloadTimeout = () =>
+          Duration(seconds: ref.read(playbackDownloadTimeoutProvider));
       controller.setPreferredSources(ref.read(preferredSourceMapProvider));
       controller.setDataSourcePlaybackSources(
         ref.read(dataSourcePlaybackSourcesProvider),
@@ -313,6 +316,9 @@ class PlaybackController extends StateNotifier<PlaybackState> {
 
   /// 判断一首歌是否在黑名单里（由 provider 注入，控制器不直接依赖黑名单模块）。
   bool Function(Song song)? isSongBlocked;
+
+  /// 播放下载超时（设置页「播放下载超时」），未注入时用默认 10 秒。
+  Duration Function()? getPlaybackDownloadTimeout;
 
   bool _blocked(Song song) => isSongBlocked?.call(song) ?? false;
 
@@ -1130,7 +1136,8 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   /// 50 秒，让「插件自己超时」的错误信息优先暴露，而不是被外层掐断成
   /// 「获取播放地址超时」。
   static const Duration _urlFetchTimeout = Duration(seconds: 50);
-  static const Duration _audioSetTimeout = Duration(seconds: 10);
+  Duration get _audioSetTimeout =>
+      getPlaybackDownloadTimeout?.call() ?? const Duration(seconds: 10);
   static const Duration _musicSourceReadyTimeout = Duration(seconds: 12);
 
   /// 音质阶梯最多值多少时间：一次尝试超过它就不再换档重试。

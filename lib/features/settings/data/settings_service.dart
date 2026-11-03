@@ -216,6 +216,12 @@ class SettingsService {
   Future<void> setPlaybackSpeed(double v) =>
       _prefs.setDouble('playback_speed', v);
 
+  // -- 播放下载超时（音频加载/下载等待上限，默认 10 秒）--
+  int getPlaybackDownloadTimeout() =>
+      _prefs.getInt('playback_download_timeout_seconds') ?? 10;
+  Future<void> setPlaybackDownloadTimeout(int v) =>
+      _prefs.setInt('playback_download_timeout_seconds', v);
+
   // -- download dir --
   Future<String> getDownloadDir() async {
     final persisted = _prefs.getString('download_dir');

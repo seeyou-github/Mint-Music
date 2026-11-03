@@ -29,6 +29,9 @@ final playbackSpeedProvider = StateProvider<double>((ref) => 1.0);
 final autoPlayProvider = StateProvider<bool>((ref) => false);
 final rememberProgressProvider = StateProvider<bool>((ref) => false);
 
+/// 播放下载超时（秒）：音频加载/下载的等待上限，默认 10 秒。
+final playbackDownloadTimeoutProvider = StateProvider<int>((ref) => 10);
+
 /// 是否记录并显示「已听 / 已听 N%」标记（默认开启）。
 ///
 /// 开启后播放过的歌曲会按 1% 粒度把进度写进临时库，
@@ -598,6 +601,8 @@ final settingsInitProvider = FutureProvider<void>((ref) async {
     ref.read(equalizerCustomPresetsProvider.notifier).state = list;
   } catch (_) {}
   ref.read(playbackSpeedProvider.notifier).state = svc.getPlaybackSpeed();
+  ref.read(playbackDownloadTimeoutProvider.notifier).state = svc
+      .getPlaybackDownloadTimeout();
   ref.read(downloadDirProvider.notifier).state = await svc.getDownloadDir();
   // 下载网络不再受限制（仅WiFi下载设置项已移除）。
   ref.read(wifiOnlyDownloadProvider.notifier).state = false;

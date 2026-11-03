@@ -1896,6 +1896,7 @@ class _PlaybackContent extends ConsumerWidget {
   ) {
     final markPlayedStatus = ref.watch(markPlayedStatusProvider);
     final hideVipExclusive = ref.watch(hideVipExclusiveSongsProvider);
+    final downloadTimeout = ref.watch(playbackDownloadTimeoutProvider);
     return SettingGroup(
       title: '播放设置',
       colors: colors,
@@ -1938,6 +1939,40 @@ class _PlaybackContent extends ConsumerWidget {
             activeThumbColor: colors.primary,
           ),
           colors: colors,
+        ),
+        SettingDivider(colors: colors),
+        SettingRow(
+          icon: Icons.timer_outlined,
+          title: '播放下载超时',
+          subtitle: '音频加载/下载的等待上限，超时后自动换源或提示失败',
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                '$downloadTimeout 秒',
+                style: TextStyle(fontSize: 13, color: colors.textHint),
+              ),
+              const SizedBox(width: 4),
+              Icon(Icons.chevron_right, size: 18, color: colors.textHint),
+            ],
+          ),
+          colors: colors,
+          onTap: () => _showBottomPicker(
+            context,
+            colors,
+            '播放下载超时',
+            const ['5', '10', '15', '20', '25', '30', '35', '40', '50', '60'],
+            '$downloadTimeout',
+            (v) {
+              final seconds = int.tryParse(v) ?? 10;
+              _persistInt(
+                context,
+                playbackDownloadTimeoutProvider,
+                seconds,
+                (s) => s.setPlaybackDownloadTimeout(seconds),
+              );
+            },
+          ),
         ),
       ],
     );
