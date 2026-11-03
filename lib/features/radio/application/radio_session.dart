@@ -26,6 +26,7 @@ class RadioSession {
     this.randomSourceId = '',
     this.playlistId,
     this.playlistSource,
+    this.recentPlaylistIds = const [],
     this.songPlaylists = const {},
     this.songIds = const {},
   });
@@ -43,9 +44,12 @@ class RadioSession {
   /// 电台自定义的配置（随机电台为 null）。
   final RadioStation? station;
 
-  /// 当前用来补歌的歌单（随机电台会一直从同一个歌单续歌）。
+  /// 当前用来补歌的歌单（界面上显示「来自哪个歌单」）。
   final String? playlistId;
   final String? playlistSource;
+
+  /// 最近用过的歌单 id（新的在前）：补歌时避开它们，保证每轮换歌单。
+  final List<String> recentPlaylistIds;
 
   /// 每首电台歌曲各自来自哪个歌单：播放页「更多」里按歌曲跳转来源。
   final Map<String, RadioPlaylistRef> songPlaylists;
@@ -59,6 +63,7 @@ class RadioSession {
     String? cover,
     String? playlistId,
     String? playlistSource,
+    List<String>? recentPlaylistIds,
     Map<String, RadioPlaylistRef>? songPlaylists,
     Set<String>? songIds,
   }) {
@@ -71,6 +76,7 @@ class RadioSession {
       randomSourceId: randomSourceId,
       playlistId: playlistId ?? this.playlistId,
       playlistSource: playlistSource ?? this.playlistSource,
+      recentPlaylistIds: recentPlaylistIds ?? this.recentPlaylistIds,
       songPlaylists: songPlaylists ?? this.songPlaylists,
       songIds: songIds ?? this.songIds,
     );
@@ -106,6 +112,15 @@ class RadioSessionController extends Notifier<RadioSession?> {
     manager: ref.read(musicSourceManagerProvider),
     isBlocked: (song) => ref.read(blacklistProvider).isBlocked(song),
   );
+
+  /// 记一个歌单到「最近用过」里（新的在前，最多留 8 个）。
+  ///
+  /// 补歌时把它们排除掉，电台才会在配置的分类 / 关键词范围内不断换歌单。
+  static List<String> _pushRecent(List<String> recent, String? id) {
+    if (id == null || id.isEmpty) return recent;
+    final next = <String>[id, ...recent.where((item) => item != id)];
+    return next.length > 8 ? next.sublist(0, 8) : next;
+  }
 
   /// 开始一个自定义电台。
   Future<void> startStation(RadioStation station) async {
@@ -143,6 +158,7 @@ class RadioSessionController extends Notifier<RadioSession?> {
       station: station,
       playlistId: batch.playlistId,
       playlistSource: batch.playlistSource,
+      recentPlaylistIds: _pushRecent(const [], batch.playlistId),
       songPlaylists: batch.songPlaylists,
       songIds: batch.songs.map((s) => s.id).toSet(),
     );
@@ -181,6 +197,7 @@ class RadioSessionController extends Notifier<RadioSession?> {
       randomSourceId: source,
       playlistId: batch.playlistId,
       playlistSource: batch.playlistSource,
+      recentPlaylistIds: _pushRecent(const [], batch.playlistId),
       songPlaylists: batch.songPlaylists,
       songIds: batch.songs.map((s) => s.id).toSet(),
     );
@@ -228,10 +245,11 @@ class RadioSessionController extends Notifier<RadioSession?> {
       RadioBatch batch;
       if (session.isRandom) {
         // 随机电台：每个歌单只取 3 首，取完就换下一个随机歌单，
-        // 直到凑够 20 首（引擎内部循环）。
+        // 直到凑够 20 首（引擎内部循环）；最近用过的歌单先跳过。
         batch = await engine.randomSongs(
           sourceId: session.randomSourceId,
           minCount: refillCount,
+          excludePlaylistIds: session.recentPlaylistIds.toSet(),
           excludeIds: existing,
         );
       } else {
@@ -242,13 +260,15 @@ class RadioSessionController extends Notifier<RadioSession?> {
           fallback: [ref.read(discoverSourceIdProvider)],
         );
         if (sources.isEmpty) return;
+        // 每轮重新随机歌单，只避开最近用过的几个 —— 以前是「优先沿用上一轮
+        // 的歌单」，随机到大歌单后就再也换不掉了（实测 101 首的歌单连着放了
+        // 十六首都还是它）。
         batch = await engine.nextBatch(
           sourceIds: sources,
           tags: station.tags,
           keywords: station.keywords,
           minCount: refillCount,
-          preferPlaylistId: session.playlistId,
-          preferPlaylistSource: session.playlistSource,
+          excludePlaylistIds: session.recentPlaylistIds.toSet(),
           excludeIds: existing,
         );
       }
@@ -266,6 +286,10 @@ class RadioSessionController extends Notifier<RadioSession?> {
       state = current.copyWith(
         playlistId: batch.playlistId ?? session.playlistId,
         playlistSource: batch.playlistSource ?? session.playlistSource,
+        recentPlaylistIds: _pushRecent(
+          current.recentPlaylistIds,
+          batch.playlistId,
+        ),
         songPlaylists: {...current.songPlaylists, ...batch.songPlaylists},
         songIds: {...current.songIds, ...fresh.map((s) => s.id)},
       );

@@ -29,8 +29,10 @@ class RadioPlaylistRef {
   final String? title;
 }
 
-/// 一次随机取到的歌，附带「这些歌来自哪个歌单」，便于随机电台继续从同一个
-/// 歌单补歌。
+/// 一次随机取到的歌，附带「这些歌来自哪个歌单」。
+///
+/// 每轮补歌会换一个随机歌单（只避开最近用过的几个），所以 [playlistId] 表示
+/// 这一批歌主要来自哪个歌单；每首歌各自的来源见 [songPlaylists]。
 class RadioBatch {
   const RadioBatch({
     required this.songs,
@@ -86,13 +88,16 @@ class RadioEngine {
   T _pick<T>(List<T> items) => items[_random.nextInt(items.length)];
 
   /// 电台取一批歌（至少 [minCount] 首，拿不到就返回现有的）。
+  ///
+  /// [excludePlaylistIds] 是「最近刚用过的歌单」：每轮补歌都重新随机歌单，
+  /// 只避开它们，避免电台一直停在同一个歌单里（以前是「优先沿用上一轮的歌单」，
+  /// 一旦随机到一个上百首的大歌单，就会一直从它补歌，永远换不出去）。
   Future<RadioBatch> nextBatch({
     required List<String> sourceIds,
     required List<RadioTagRef> tags,
     required List<String> keywords,
     int minCount = 20,
-    String? preferPlaylistId,
-    String? preferPlaylistSource,
+    Set<String> excludePlaylistIds = const <String>{},
     Set<String> excludeIds = const <String>{},
   }) async {
     if (sourceIds.isEmpty) {
@@ -107,23 +112,15 @@ class RadioEngine {
       throw const RadioException('这个电台还没有设置歌单分类或搜索关键词');
     }
 
-    // 上一次的歌单还能用就先用它（随机电台补歌时更像「正在听一个歌单」）。
-    if (preferPlaylistId != null && preferPlaylistId.isNotEmpty) {
-      final batch = await _songsFromPlaylist(
-        preferPlaylistId,
-        source: preferPlaylistSource,
-        minCount: minCount,
-        excludeIds: excludeIds,
-      );
-      if (!batch.isEmpty) return batch;
-    }
-
     // 两种来源都配了：随机挑一种。
     final useTags = hasTags && (!hasKeywords || _random.nextBool());
 
     if (useTags) {
       final tag = _pick(usable);
-      final playlist = await _randomPlaylistFromTags(tag);
+      final playlist = await _randomPlaylistFromTags(
+        tag,
+        excludePlaylistIds: excludePlaylistIds,
+      );
       if (playlist != null) {
         final batch = await _songsFromPlaylist(
           playlist.id,
@@ -155,6 +152,7 @@ class RadioEngine {
       sourceIds: sourceIds,
       keywords: keywords,
       minCount: minCount,
+      excludePlaylistIds: excludePlaylistIds,
       excludeIds: excludeIds,
     );
   }
@@ -167,6 +165,7 @@ class RadioEngine {
     required String sourceId,
     int minCount = 20,
     int songsPerPlaylist = 3,
+    Set<String> excludePlaylistIds = const <String>{},
     Set<String> excludeIds = const <String>{},
   }) async {
     // 随机一个分类（拿不到分类就用「热门」）。
@@ -199,12 +198,12 @@ class RadioEngine {
         tagId: tag?.id ?? '',
       );
       if (playlists.isEmpty) break;
-      // 同一轮里不重复用同一个歌单。
+      // 同一轮里不重复用同一个歌单；跨轮优先用最近没碰过的。
       final pool = playlists
           .where((p) => !triedPlaylists.contains(p.id))
           .toList(growable: false);
       if (pool.isEmpty) break;
-      final playlist = _pick(pool);
+      final playlist = _pick(_preferUnused(pool, excludePlaylistIds));
       triedPlaylists.add(playlist.id);
 
       final batch = await _songsFromPlaylist(
@@ -293,19 +292,36 @@ class RadioEngine {
     return const [];
   }
 
-  Future<Playlist?> _randomPlaylistFromTags(RadioTagRef tag) async {
+  Future<Playlist?> _randomPlaylistFromTags(
+    RadioTagRef tag, {
+    Set<String> excludePlaylistIds = const <String>{},
+  }) async {
     final playlists = await _randomCategoryPlaylists(
       sourceId: tag.sourceId,
       tagId: tag.tagId,
     );
     if (playlists.isEmpty) return null;
-    return _pick(playlists);
+    return _pick(_preferUnused(playlists, excludePlaylistIds));
+  }
+
+  /// 优先从「最近没用过」的歌单里挑；全都被排除了（比如这个分类歌单很少）
+  /// 就退回完整列表，保证还能取到歌。
+  List<Playlist> _preferUnused(
+    List<Playlist> playlists,
+    Set<String> excludePlaylistIds,
+  ) {
+    if (excludePlaylistIds.isEmpty) return playlists;
+    final fresh = playlists
+        .where((p) => !excludePlaylistIds.contains(p.id))
+        .toList(growable: false);
+    return fresh.isEmpty ? playlists : fresh;
   }
 
   Future<RadioBatch> _batchFromKeywords({
     required List<String> sourceIds,
     required List<String> keywords,
     required int minCount,
+    Set<String> excludePlaylistIds = const <String>{},
     Set<String> excludeIds = const <String>{},
   }) async {
     // 关键词顺序也随机，避免每次都从第一个词开始。
@@ -314,8 +330,17 @@ class RadioEngine {
       final sourceId = _pick(sourceIds);
       final playlists = await _searchPlaylists(sourceId, keyword);
       if (playlists.isEmpty) continue;
-      for (final playlist in ([...playlists]..shuffle(_random))) {
-        final batch = await _songsFromPlaylist(playlist.id, minCount: minCount);
+      // 同一个关键词下优先用最近没碰过的歌单：否则搜出来的第一页
+      // 每次都一样，电台会长期停在同一个歌单里。
+      final ordered = [
+        ..._preferUnused(playlists, excludePlaylistIds),
+      ]..shuffle(_random);
+      for (final playlist in ordered) {
+        final batch = await _songsFromPlaylist(
+          playlist.id,
+          minCount: minCount,
+          excludeIds: excludeIds,
+        );
         if (!batch.isEmpty) {
           final ref = RadioPlaylistRef(
             id: playlist.id,
