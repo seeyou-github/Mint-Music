@@ -47,7 +47,12 @@ typedef TagWriteOptionsFetcher = TagWriteOptions Function();
 typedef LyricFetcher = Future<String?> Function(Song song);
 typedef LyricResultFetcher = Future<LyricResult?> Function(Song song);
 typedef CoverUrlFetcher = Future<String?> Function(Song song);
-typedef QualityValidator = List<String> Function(String sourceId);
+/// 下载音质校验：按**整首歌**判断，而不是只按 `song.source`。
+///
+/// 数据源歌曲的 `source` 是数据源插件（不提供播放 / 下载），真正出面解析地址
+/// 的是配置的播放源；两者声明的下载音质可能不同（如数据源没有「超清母带」、
+/// 播放源有），只按 `song.source` 判断会把能下的档位误判成不支持。
+typedef QualityValidator = List<String> Function(Song song);
 
 class TagWriteOptions {
   final bool basicInfo;
@@ -375,12 +380,13 @@ class DownloadRepository {
       }
     }
 
-    // 验证音质是否受当前音源支持
-    final sourceId = song.source ?? 'wy';
+    // 验证音质是否受当前音源支持。
+    // 交给注入的校验器按整首歌判断（数据源歌曲要看真正的播放源声明了什么），
+    // 没注入时退回旧的三档默认。
     final supportedQualities =
-        _qualityValidator?.call(sourceId) ??
-        (sourceId == 'local' ? <String>[] : ['128k', '320k', 'flac']);
-    if (sourceId != 'local' && !supportedQualities.contains(quality)) {
+        _qualityValidator?.call(song) ??
+        (song.isLocal ? <String>[] : ['128k', '320k', 'flac']);
+    if (!song.isLocal && !supportedQualities.contains(quality)) {
       throw Exception('UNSUPPORTED_QUALITY:$quality');
     }
 

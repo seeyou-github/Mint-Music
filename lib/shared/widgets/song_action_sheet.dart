@@ -388,42 +388,72 @@ class SongActionSheet extends ConsumerStatefulWidget {
     Song song,
     String quality,
   ) async {
-    // 先拿到 messenger：下面会关闭当前弹层，context 随即失效。
+    // 先拿到 messenger / container：下面会关闭当前弹层，context 随即失效。
     final messenger = ScaffoldMessenger.of(context);
+    final container = ProviderScope.containerOf(context);
     Navigator.pop(context);
+    // 关掉弹层后原 context 已不可用，后面的提示文案、重新选择都用 messenger 的
+    // context（它挂在 App 根部，任何时刻都有效）。
+    final uiContext = messenger.context;
     try {
-      final repo = ProviderScope.containerOf(
-        context,
-      ).read(downloadRepositoryProvider);
+      final repo = container.read(downloadRepositoryProvider);
       await repo.addTask(song: song, quality: quality);
       // onTaskStarted 回调会显示 "开始下载 xxx" 通知
     } catch (e) {
       final err = e.toString();
       if (err.contains('UNSUPPORTED_QUALITY')) {
         final q = err.split(':').last;
-        messenger.showSnackBar(
+        _showTransientSnack(
+          messenger,
           SnackBar(
-            content: Text(context.tr('音质 $q 不受当前音源支持，请选择其他音质')),
-            duration: const Duration(seconds: 3),
+            content: Text(
+              uiContext.tr(
+                '「${getQualityDisplayName(q)}」不受当前音源支持，请选择其他音质',
+              ),
+            ),
             backgroundColor: Colors.orange,
             action: SnackBarAction(
-              label: context.tr('重新选择'),
+              label: uiContext.tr('重新选择'),
               textColor: Colors.white,
-              onPressed: () =>
-                  SongActionSheet.showDownloadQualityPicker(context, song),
+              onPressed: () => SongActionSheet.showDownloadQualityPicker(
+                uiContext,
+                song,
+              ),
             ),
           ),
         );
         return;
       }
-      messenger.showSnackBar(
+      _showTransientSnack(
+        messenger,
         SnackBar(
-          content: Text(context.tr('下载失败: $e')),
-          duration: const Duration(seconds: 2),
+          content: Text(uiContext.tr('下载失败: $e')),
           backgroundColor: Colors.red,
         ),
+        duration: const Duration(seconds: 3),
       );
     }
+  }
+
+  /// 显示一条**一定会自动消失**的提示。
+  ///
+  /// 不能只依赖 `SnackBar.duration`：Flutter 只在「入场动画播完后的某次 build
+  /// 且当前路由正好是前台」时才启动自动关闭计时器（scaffold.dart 里
+  /// `ScaffoldMessengerState.build`）。在关闭底部弹层的同一帧弹出提示时计时器
+  /// 可能永远不启动（实测「不受当前音源支持」那条会一直挂在底部不消失）。
+  /// 这里自己兜底关一次。
+  static void _showTransientSnack(
+    ScaffoldMessengerState messenger,
+    SnackBar bar, {
+    Duration? duration,
+  }) {
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(bar);
+    final wait = (duration ?? bar.duration) + const Duration(milliseconds: 300);
+    Future<void>.delayed(wait, () {
+      if (!messenger.mounted) return;
+      messenger.hideCurrentSnackBar(reason: SnackBarClosedReason.timeout);
+    });
   }
 
   @override

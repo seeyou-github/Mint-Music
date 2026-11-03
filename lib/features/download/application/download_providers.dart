@@ -133,7 +133,15 @@ final downloadRepositoryProvider = Provider<DownloadRepository>((ref) {
 
   // 设置音质验证器：只允许插件**为自己声明过**的下载音质，避免下载任务
   // 拿到一个插件根本给不了的档位（表现为「下载完发现是 128k」）。
-  repo.setQualityValidator((sourceId) {
+  //
+  // 按整首歌取「实际出面解析地址的那个源」的音质声明：数据源歌曲的
+  // `song.source` 是数据源插件（不提供下载），下载音质要看配置的播放源，
+  // 否则下载菜单里能选的档位到这里会被误判成「不受支持」。
+  repo.setQualityValidator((song) {
+    final sourceId =
+        musicSourceManager.effectivePlaybackSourceForSong(song) ??
+        song.source ??
+        '';
     return musicSourceManager.getDownloadQualitiesForSourceId(sourceId);
   });
 
