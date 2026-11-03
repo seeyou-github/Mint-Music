@@ -159,6 +159,31 @@ class MediaKitPlayer extends AudioPlayerPlatform {
           _logger.warning('Ignored external file error: $error');
           return;
         }
+        // Mint Music 本地补丁 2：只有「打开 / 加载失败」类错误才致命。
+        //
+        // mpv 播放中遇到损坏帧只丢那一帧、播放继续走到 eof。典型：酷我车机
+        // CDN 的转码 FLAC 普遍存在最后一帧坏帧，曲末打
+        //   [ffmpeg/audio:error] flac: decode_frame() failed
+        //   [ad:error] Error decoding audio
+        // media_kit 会把 ad / cplayer / stream 前缀的 error 日志原样转成
+        // stream.error；若据此把处理状态改成 idle，just_audio 会在
+        // 「非 idle → idle」跳变时调用 _setPlatformActive(false)（等同
+        // stop()）把真实播放器直接废掉、事件订阅一并取消，随后 mpv 正常
+        // 发出的 eof-reached=true（→ completed）永远送不到宿主 —— 表现为
+        // 「整首播完不自动切下一首，进度停在最后一秒且仍显示播放中」。
+        //
+        // 因此这里改为白名单：只有确定表示加载失败的错误才置 idle（保留
+        // 原有「加载失败 → 上层换源」行为），解码类错误一律忽略，EOF 由
+        // eof-reached 属性正常上报。
+        final isLoadFailure =
+            error.startsWith('Failed to open ') ||
+            error.startsWith('No protocol handler') ||
+            error.startsWith('tcp:') ||
+            error.startsWith('http:');
+        if (!isLoadFailure) {
+          _logger.warning('Ignored non-fatal error (playback continues): $error');
+          return;
+        }
         final errorUri = RegExp(r'Failed to open (.*)\.').firstMatch(error)?[1];
         if (errorUri == null || errorUri == _currentMedia?.uri) {
           _processingState = ProcessingStateMessage.idle;

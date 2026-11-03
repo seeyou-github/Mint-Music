@@ -1,3 +1,21 @@
+## 2.1.0+mint.2 (Mint Music 本地补丁)
+
+修复 Windows 端「整首播完不自动切下一首，进度停在最后一秒且仍显示播放中」：
+
+- 酷我车机 CDN 的转码 FLAC 普遍存在最后一帧坏帧，mpv 曲末打
+  `[ffmpeg/audio:error] flac: decode_frame() failed` / `[ad:error] Error decoding audio`，
+  但只丢那一帧、播放正常走到 eof（`eof-reached=true`，已用 libmpv 实测验证）。
+- media_kit 会把 `ad` / `cplayer` / `stream` 前缀的 error 日志原样转成 `stream.error`；
+  mint.1 版的处理逻辑把所有未豁免的错误都当成加载失败、把处理状态改成 `idle`。
+- just_audio 收到「非 idle → idle」跳变时会调用 `_setPlatformActive(false)`（等同
+  `stop()`）：真实播放器被替换为 idle 平台、事件订阅取消，随后正常发出的
+  `completed` 永远送不到宿主，自动切歌（依赖 `ProcessingState.completed`）失效。
+- 修复：错误处理改为白名单 —— 只有 `Failed to open` / `No protocol handler` /
+  `tcp:` / `http:` 开头（确定表示加载失败）的错误才置 idle，保留「加载失败 →
+  上层换源」行为；解码类错误一律忽略。
+
+上游仓库：https://github.com/Pato05/just_audio_media_kit （上游修复后可移除 `dependency_overrides` 恢复官方包）
+
 ## 2.1.0+mint.1 (Mint Music 本地补丁)
 
 基于 2.1.0 的本地补丁，未发布上游。修复带同名 `.lrc` 侧栏歌词的本地歌曲无法播放（报「播放歌曲失败」）：
