@@ -799,8 +799,22 @@ JSON.stringify((function() {
         final url = _extractMusicUrl(value[key]);
         if (url != null && url.isNotEmpty) return url;
       }
-      final error = value['error'] ?? value['message'];
-      if (error != null) throw Exception(error.toString());
+      // 插件把失败响应原样返回时（常见于 { code, msg }），把服务端原因带出去，
+      // 不要退化成「invalid musicUrl result」。
+      final rawCode = (value['code'] ?? '').toString().trim();
+      final message = value['msg'] ?? value['message'] ?? value['error'];
+      final codeError = rawCode.isNotEmpty && rawCode != '200';
+      if (message != null || codeError) {
+        final detail = message == null
+            ? ''
+            : message is Map
+            ? (message['msg'] ?? message['message'] ?? message).toString()
+            : message.toString();
+        if (detail.isNotEmpty) {
+          throw Exception(codeError ? 'code $rawCode：$detail' : detail);
+        }
+        throw Exception('code $rawCode');
+      }
     }
     if (value is List) {
       for (final item in value) {

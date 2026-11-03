@@ -240,6 +240,30 @@ List<_Case> _cases() => [
     'quality': '128k',
     'data': {'message': 'requested quality unavailable'},
   }, error: 'requested quality unavailable'),
+  // 落雪接口失败时返回 { code, msg }：提示里必须带出 msg 原文。
+  const _Case(
+    'code + msg error keeps server message',
+    {
+      'code': 503,
+      'msg':
+          '当前请求量过大，未授权调用暂时受限，请稍后重试。'
+          '推荐使用星海音乐源：https://zrcdy.dpdns.org/lx/vers.php',
+    },
+    error:
+        'code 503：当前请求量过大，未授权调用暂时受限，请稍后重试。'
+        '推荐使用星海音乐源：https://zrcdy.dpdns.org/lx/vers.php',
+  ),
+  const _Case('msg-only error keeps server message', {
+    'msg': '服务器繁忙，请稍后重试',
+  }, error: '服务器繁忙，请稍后重试'),
+  const _Case('code without msg remains visible', {
+    'code': 503,
+  }, error: 'code 503'),
+  const _Case('code 200 with success message and URL still succeeds', {
+    'code': 200,
+    'msg': 'success',
+    'data': {'url': _url, 'quality': '320k'},
+  }),
   const _Case('invalid URL remains an error', {
     'url': 'file:///song.mp3',
     'quality': '320k',
@@ -298,6 +322,9 @@ class _Engine implements JsEngineService {
     timeouts.add(timeout);
     return response is String ? response as String : jsonEncode(response);
   }
+
+  @override
+  void setRequestTimeoutFloor(Duration floor) {}
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);

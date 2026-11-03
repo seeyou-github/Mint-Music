@@ -26,6 +26,9 @@
   自动换源或提示失败
 
 ### 修复
+- 音源接口报错时服务端返回的 `msg` 显示不全 / 丢失：错误摘要不再截成 60 字；
+  落雪插件以 `{ code, msg }` 形式返回失败时，也会转成「code 503：<msg>」提示
+  （如星海 503 的「当前请求量过大，未授权调用暂时受限，请稍后重试…」）
 - 启动时灰屏 / 卡顿，日志里刷出几百条 `Null check operator used on a null value`：
   图片缓存索引（`SqliteCacheInfoRepository`）把 SQLite 行的列名当成了
   `CacheObject` 的 `toMap()` 键

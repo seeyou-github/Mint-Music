@@ -693,7 +693,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     } catch (e) {
       if (_currentPlayRequestId == requestId) {
         _lastResolveError = e.toString().replaceFirst(
-          RegExp(r'^Exception://s*'),
+          RegExp(r'^Exception:\s*'),
           '',
         );
       }

@@ -247,8 +247,23 @@ function __lxNormalizeMusicUrlResult(response, payload) {
         if (item) return item;
       }
     }
-    var error = value.error != null ? value.error : value.message;
-    if (error != null) throw new Error(String(error));
+    // 落雪约定失败响应是 { code: 503, msg: '...' }。这里必须把 msg 带出去：
+    // 只报「invalid musicUrl result」会让用户完全看不到服务端说明。
+    var rawCode = value.code != null ? String(value.code).trim() : '';
+    var error = value.error != null ? value.error : (value.message != null ? value.message : value.msg);
+    var detail = '';
+    if (error != null) {
+      if (typeof error === 'object') {
+        detail = String(error.msg != null ? error.msg : (error.message != null ? error.message : error));
+      } else {
+        detail = String(error);
+      }
+      detail = detail.trim();
+    }
+    if (rawCode && rawCode !== '200') {
+      throw new Error(detail ? 'code ' + rawCode + '：' + detail : 'code ' + rawCode);
+    }
+    if (detail) throw new Error(detail);
     return '';
   }
 

@@ -2393,13 +2393,14 @@ class MusicSourceManager {
     return text;
   }
 
-  /// 错误摘要：去掉 Exception 前缀、压成一行、限长，便于塞进汇总文案。
+  /// 错误摘要：去掉 Exception 前缀、压成一行。
+  ///
+  /// 不截断：插件接口返回的 `msg` 可能很长（含排队 / 鉴权提示），截掉后半段
+  /// 会让用户看不到真正原因，也违反「错误码必须带 msg」的约定。
   String _shortError(Object error) {
     var text = '$error'.replaceFirst(RegExp(r'^Exception:\s*'), '');
     text = text.replaceAll('"', "'").replaceAll('\n', ' ').trim();
-    if (text.isEmpty) text = '未知错误';
-    if (text.length > 60) text = '${text.substring(0, 60)}…';
-    return text;
+    return text.isEmpty ? '未知错误' : text;
   }
 
   /// 全部播放源失败时的汇总文案（最多 3 条明细 + 「等 N 个」）。
