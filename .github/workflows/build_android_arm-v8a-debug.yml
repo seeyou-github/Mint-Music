@@ -1,0 +1,37 @@
+name: Build Android (arm-v8a)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-android-arm-v8a:
+    name: Build Android arm-v8a APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          # 与 Windows 工作流保持一致，钉死版本避免 stable 漂移引入 Android
+          # 工具链变量（AGP / Gradle / JDK 兼容性此前反复出过问题）。
+          # 3.47.7 = 当前 stable 最新，Dart 3.13.5。
+          flutter-version: 3.47.7
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Android APK (arm-v8a only)
+        run: flutter build apk --debug --split-per-abi --target-platform android-arm64 --android-skip-build-dependency-validation
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mintmusic-android-arm64-v8a
+          path: build/app/outputs/flutter-apk/*.apk
+          retention-days: 3
+          if-no-files-found: error
