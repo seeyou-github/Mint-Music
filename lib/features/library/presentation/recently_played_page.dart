@@ -86,11 +86,14 @@ class _RecentlyPlayedPageState extends ConsumerState<RecentlyPlayedPage> {
       ),
       child: Row(
         children: [
-          GestureDetector(
-            onTap: () => context.pop(),
-            child: Icon(Icons.arrow_back, size: 24, color: colors.textPrimary),
-          ),
-          const SizedBox(width: AppSpacing.md),
+          // Android 靠系统返回手势 / 返回键，顶部不放返回箭头。
+          if (!Platform.isAndroid) ...[
+            GestureDetector(
+              onTap: () => context.pop(),
+              child: Icon(Icons.arrow_back, size: 24, color: colors.textPrimary),
+            ),
+            const SizedBox(width: AppSpacing.md),
+          ],
           Text(
             context.tr('最近播放'),
             style: TextStyle(

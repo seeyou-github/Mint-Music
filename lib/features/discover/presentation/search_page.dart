@@ -838,11 +838,14 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       ),
       child: Row(
         children: [
-          GestureDetector(
-            onTap: () => context.pop(),
-            child: Icon(Icons.arrow_back, size: 24, color: colors.textPrimary),
-          ),
-          const SizedBox(width: AppSpacing.sm),
+          // Android 靠系统返回手势 / 返回键，顶部不放返回箭头。
+          if (!Platform.isAndroid) ...[
+            GestureDetector(
+              onTap: () => context.pop(),
+              child: Icon(Icons.arrow_back, size: 24, color: colors.textPrimary),
+            ),
+            const SizedBox(width: AppSpacing.sm),
+          ],
           Expanded(
             child: Container(
               height: _searchFieldHeight,

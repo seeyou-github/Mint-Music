@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -467,15 +468,18 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
         children: [
           Row(
             children: [
-              GestureDetector(
-                onTap: () => context.pop(),
-                child: Icon(
-                  Icons.arrow_back,
-                  size: 24,
-                  color: colors.textPrimary,
+              // Android 靠系统返回手势 / 返回键，顶部不放返回箭头。
+              if (!Platform.isAndroid) ...[
+                GestureDetector(
+                  onTap: () => context.pop(),
+                  child: Icon(
+                    Icons.arrow_back,
+                    size: 24,
+                    color: colors.textPrimary,
+                  ),
                 ),
-              ),
-              const SizedBox(width: AppSpacing.md),
+                const SizedBox(width: AppSpacing.md),
+              ],
               Expanded(
                 child: Text(
                   item.title,

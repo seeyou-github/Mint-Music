@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -465,18 +466,23 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
       appBar: AppBar(
         backgroundColor: colors.background,
         elevation: 0,
-        leading: IconButton(
-          icon: Icon(Icons.arrow_back, color: colors.textPrimary),
-          onPressed: () {
-            // 正常情况下直接返回上一页；若当前分支里没有可返回的页面
-            // （例如从启动弹窗直接进入），则回到「我的」页面。
-            if (context.canPop()) {
-              context.pop();
-            } else {
-              context.go(AppRoutes.mine);
-            }
-          },
-        ),
+        // Android 靠系统返回手势 / 返回键，顶部不放返回箭头；
+        // 显式关掉 automaticallyImplyLeading，避免 AppBar 自动补一个。
+        automaticallyImplyLeading: false,
+        leading: Platform.isAndroid
+            ? null
+            : IconButton(
+                icon: Icon(Icons.arrow_back, color: colors.textPrimary),
+                onPressed: () {
+                  // 正常情况下直接返回上一页；若当前分支里没有可返回的页面
+                  // （例如从启动弹窗直接进入），则回到「我的」页面。
+                  if (context.canPop()) {
+                    context.pop();
+                  } else {
+                    context.go(AppRoutes.mine);
+                  }
+                },
+              ),
         title: Text(
           context.tr('插件管理'),
           style: TextStyle(

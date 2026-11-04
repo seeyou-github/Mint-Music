@@ -195,7 +195,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       ),
       child: Row(
         children: [
-          if (context.canPop()) ...[
+          // Android 靠系统返回手势 / 返回键，顶部不放返回箭头。
+          if (!Platform.isAndroid && context.canPop()) ...[
             IconButton(
               icon: Icon(Icons.arrow_back, color: colors.textPrimary),
               onPressed: () => context.pop(),

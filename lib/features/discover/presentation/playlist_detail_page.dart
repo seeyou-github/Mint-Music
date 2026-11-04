@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -553,19 +554,21 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            // 返回按钮
-            GestureDetector(
-              onTap: () => context.pop(),
-              child: Padding(
-                padding: const EdgeInsets.all(AppSpacing.xs),
-                child: Icon(
-                  Icons.arrow_back,
-                  size: 24,
-                  color: colors.textPrimary,
+            // 返回按钮：Android 靠系统返回手势 / 返回键，顶部不放返回箭头。
+            if (!Platform.isAndroid) ...[
+              GestureDetector(
+                onTap: () => context.pop(),
+                child: Padding(
+                  padding: const EdgeInsets.all(AppSpacing.xs),
+                  child: Icon(
+                    Icons.arrow_back,
+                    size: 24,
+                    color: colors.textPrimary,
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(width: AppSpacing.sm),
+              const SizedBox(width: AppSpacing.sm),
+            ],
             // 歌单封面
             ClipRRect(
               borderRadius: BorderRadius.circular(AppRadius.md),

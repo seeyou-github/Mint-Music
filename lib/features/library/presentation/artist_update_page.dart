@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -415,18 +416,21 @@ class _ArtistUpdatePageState extends ConsumerState<ArtistUpdatePage> {
       ),
       child: Row(
         children: [
-          GestureDetector(
-            onTap: () => context.pop(),
-            child: Padding(
-              padding: const EdgeInsets.all(AppSpacing.xs),
-              child: Icon(
-                Icons.arrow_back,
-                size: 24,
-                color: colors.textPrimary,
+          // Android 靠系统返回手势 / 返回键，顶部不放返回箭头。
+          if (!Platform.isAndroid) ...[
+            GestureDetector(
+              onTap: () => context.pop(),
+              child: Padding(
+                padding: const EdgeInsets.all(AppSpacing.xs),
+                child: Icon(
+                  Icons.arrow_back,
+                  size: 24,
+                  color: colors.textPrimary,
+                ),
               ),
             ),
-          ),
-          const SizedBox(width: AppSpacing.sm),
+            const SizedBox(width: AppSpacing.sm),
+          ],
           ClipOval(
             child: SizedBox(
               width: coverSize,
