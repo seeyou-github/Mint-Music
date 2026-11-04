@@ -435,6 +435,9 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
                   // 打开的都是这个页面，之前裸 Stack 会让返回按钮和歌单标题
                   // 顶进状态栏里。底部由外层导航栏 / 迷你播放器负责，不重复加。
                   child: SafeArea(
+                    // 顶部不避让：头部渐变要一直铺到状态栏（沉浸式），
+                    // 状态栏高度交给 _buildHeader 自己加内边距。
+                    top: false,
                     bottom: false,
                     child: playlistAsync.when(
                       data: (page) {
@@ -526,9 +529,11 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
     // 与歌单封面同高，去掉描述后顶部不会跳动
     final headerHeight = ResponsiveLayout.isTablet(context) ? 96.0 : 72.0;
     return Container(
-      padding: const EdgeInsets.fromLTRB(
+      padding: EdgeInsets.fromLTRB(
         AppSpacing.sm,
-        AppSpacing.md,
+        // 状态栏沉浸：把状态栏高度算进头部内边距，让主题色渐变一直铺到
+        // 屏幕顶端（外层用的是 SafeArea(top: false)，不拦这一段）。
+        AppSpacing.md + MediaQuery.paddingOf(context).top,
         AppSpacing.lg,
         AppSpacing.md,
       ),

@@ -374,6 +374,8 @@ class _ArtistUpdatePageState extends ConsumerState<ArtistUpdatePage> {
         children: [
           Positioned.fill(
             child: SafeArea(
+              // 顶部不避让：让头部渐变铺到状态栏（沉浸式）。
+              top: false,
               child: Column(
                 children: [
                   _buildHeader(colors, playlist, fetchedCount, newCount),
@@ -396,9 +398,11 @@ class _ArtistUpdatePageState extends ConsumerState<ArtistUpdatePage> {
   ) {
     final coverSize = ResponsiveLayout.isTablet(context) ? 80.0 : 64.0;
     return Container(
-      padding: const EdgeInsets.fromLTRB(
+      padding: EdgeInsets.fromLTRB(
         AppSpacing.sm,
-        AppSpacing.md,
+        // 状态栏沉浸：把状态栏高度算进头部内边距，让主题色渐变一直铺到
+        // 屏幕顶端（外层用的是 SafeArea(top: false)，不拦这一段）。
+        AppSpacing.md + MediaQuery.paddingOf(context).top,
         AppSpacing.lg,
         AppSpacing.md,
       ),

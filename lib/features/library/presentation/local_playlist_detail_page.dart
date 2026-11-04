@@ -380,6 +380,8 @@ class _LocalPlaylistDetailPageState
               children: [
                 Positioned.fill(
                   child: SafeArea(
+                    // 顶部不避让：让头部渐变铺到状态栏（沉浸式）。
+                    top: false,
                     child: playlistsAsync.when(
                       data: (playlists) {
                         final playlist = playlists
@@ -564,9 +566,11 @@ class _LocalPlaylistDetailPageState
     // 与歌单封面同高，去掉描述后顶部不会跳动
     final headerHeight = ResponsiveLayout.isTablet(context) ? 96.0 : 72.0;
     return Container(
-      padding: const EdgeInsets.fromLTRB(
+      padding: EdgeInsets.fromLTRB(
         AppSpacing.sm,
-        AppSpacing.md,
+        // 状态栏沉浸：把状态栏高度算进头部内边距，让主题色渐变一直铺到
+        // 屏幕顶端（外层用的是 SafeArea(top: false)，不拦这一段）。
+        AppSpacing.md + MediaQuery.paddingOf(context).top,
         AppSpacing.lg,
         AppSpacing.md,
       ),
