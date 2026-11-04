@@ -144,7 +144,9 @@ class _PlayQueueSheetContentState
         borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
       ),
       child: SafeArea(
-        minimum: const EdgeInsets.only(bottom: 70),
+        // 之前这里给迷你播放器预留了 70px 底部空间，但弹层是根导航上的
+        // 模态面板，弹出时迷你播放器被遮罩盖住根本看不见，纯浪费一段
+        // 列表高度；列表直接贴到安全区底边（手势导航条由 SafeArea 避开）。
         child: DraggableScrollableSheet(
           initialChildSize: 0.6,
           minChildSize: 0.3,
