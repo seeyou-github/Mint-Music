@@ -349,7 +349,10 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
                           },
                         ),
                       ),
-                      if (_currentPage == 1)
+                      // Android 切到歌词页后不再在下方叠一份歌名 / 歌手 /
+                      // 当前歌词（歌词区满屏滚动，信息重复），歌词区随之变高；
+                      // 其它平台保留。
+                      if (_currentPage == 1 && !Platform.isAndroid)
                         // 与封面共用左右留白，歌名 / 歌手左对齐封面左边缘。
                         Padding(
                           padding: EdgeInsets.only(
