@@ -258,14 +258,59 @@ class PluginRepository {
     return url;
   }
 
+  /// 从插件头注释里取一个字段（大小写不敏感，`update_?url` 兼容下划线写法）。
+  ///
+  /// 只看开头一段：头注释一定在脚本最前面，避免在大体积混淆脚本里全文扫描。
+  static String? _headerField(String code, String fieldPattern) {
+    final head = code.length > 8192 ? code.substring(0, 8192) : code;
+    final match = RegExp(
+      '^[ \\t]*\\*?[ \\t]*@$fieldPattern[ \\t]+(\\S+)',
+      caseSensitive: false,
+      multiLine: true,
+    ).firstMatch(head);
+    return match?.group(1)?.trim();
+  }
+
+  static bool _isHttpUrl(String value) {
+    final uri = Uri.tryParse(value);
+    return uri != null && (uri.scheme == 'http' || uri.scheme == 'https');
+  }
+
+  /// 更新检测地址优先级：源码 `@updateUrl` > 源码 `@homepage` > 安装时存下的地址。
+  ///
+  /// 每次检查都从已安装插件的本地文件实时读一遍，老插件不必重装也能用上
+  /// 新字段。落雪插件被转换过，原始头注释保存在 `<filePath>.source.js`，
+  /// 所以先读它、再读转换后的代码，都取不到才回退到安装时的快照。
+  Future<String?> resolveUpdateUrl(PluginInfo plugin) async {
+    final path = plugin.filePath;
+    if (path != null && path.isNotEmpty) {
+      for (final candidate in ['$path.source.js', path]) {
+        try {
+          final file = File(candidate);
+          if (!await file.exists()) continue;
+          final code = await file.readAsString();
+          final declared =
+              _headerField(code, 'update_?url') ??
+              _headerField(code, 'homepage');
+          if (declared != null && _isHttpUrl(declared)) return declared;
+        } catch (_) {
+          // 文件读不了就继续试下一个候选 / 回退存储值，不影响检查主流程。
+        }
+      }
+    }
+    final stored = plugin.updateUrl?.trim();
+    return (stored == null || stored.isEmpty) ? null : stored;
+  }
+
   /// Check if a plugin has an update available by fetching its updateUrl
   /// and comparing the version number.
   Future<PluginUpdateResult> checkPluginUpdate(PluginInfo plugin) async {
-    if (plugin.updateUrl == null || plugin.updateUrl!.isEmpty) {
+    final declaredUrl = await resolveUpdateUrl(plugin);
+    if (declaredUrl == null || declaredUrl.isEmpty) {
       return PluginUpdateResult(plugin: plugin, available: false);
     }
 
-    final url = _normalizeUpdateUrl(plugin.updateUrl!);
+    final url = _normalizeUpdateUrl(declaredUrl);
 
     try {
       final response = await _dio.get(
@@ -312,9 +357,9 @@ class PluginRepository {
     final plugins = await loadPlugins();
     final results = <PluginUpdateResult>[];
 
-    // Check updates in parallel with a small delay to avoid overwhelming
+    // 不再按存储值提前跳过：地址也可能只写在插件源码头注释里，
+    // 由 checkPluginUpdate → resolveUpdateUrl 自己判断有没有可用地址。
     for (final plugin in plugins) {
-      if (plugin.updateUrl == null || plugin.updateUrl!.isEmpty) continue;
       results.add(await checkPluginUpdate(plugin));
     }
 

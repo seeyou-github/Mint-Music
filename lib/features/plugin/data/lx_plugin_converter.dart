@@ -518,6 +518,7 @@ function __lxRequest(url, options, callback) {
     author: pluginInfo.author,
     description: pluginInfo.description || '',
     homepage: pluginInfo.homepage || '',
+    updateUrl: pluginInfo.updateUrl || '',
     rawScript: originalPluginCode,
     // 用户凭据：与 lx.getUserVariables() 同一份，老写法读这里也能拿到。
     userVariables: __lxUserVariables
@@ -941,14 +942,28 @@ module.exports = {
       'author': '',
       'description': '',
       'homepage': '',
+      // 更新检测地址：优先于 @homepage（后者常常只是站点首页）。
+      'updateUrl': '',
     };
 
+    // 头注释字段名大小写不敏感，兼容 @updateUrl / @updateurl / @update_url。
+    final keyAlias = <String, String>{
+      'name': 'name',
+      'version': 'version',
+      'author': 'author',
+      'description': 'description',
+      'homepage': 'homepage',
+      'updateurl': 'updateUrl',
+      'update_url': 'updateUrl',
+    };
     final matcher = RegExp(r'^\s?\*\s?@(\w+)\s(.+)$');
     for (final rawLine in comment.split(RegExp(r'\r?\n'))) {
       final match = matcher.firstMatch(rawLine);
       if (match == null) continue;
-      final key = match.group(1);
-      if (key == null || !values.containsKey(key)) continue;
+      final rawKey = match.group(1);
+      if (rawKey == null) continue;
+      final key = keyAlias[rawKey.toLowerCase()];
+      if (key == null) continue;
       values[key] = match.group(2)?.trim() ?? '';
     }
 
@@ -968,6 +983,7 @@ module.exports = {
     // 这一行里，截成 36 字 + `...` 等于把最有用的部分删掉。插件管理页现在按
     // 整段换行显示，长度交给列表自适应。
     values['homepage'] = _limit(values['homepage']!, 1024);
+    values['updateUrl'] = _limit(values['updateUrl']!, 1024);
     return values;
   }
 

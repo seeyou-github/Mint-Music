@@ -438,7 +438,12 @@ JSON.stringify((function() {
       version: version,
       author: author,
       description: _safeString(data['description']),
-      homepage: _safeString(data['homepage']),
+      homepage: _nonEmptyUrl(data['homepage']),
+      // 洛雪适配器导出的是 updateUrl；其它格式插件也可能写全小写或下划线。
+      updateUrl:
+          _nonEmptyUrl(data['updateUrl']) ??
+          _nonEmptyUrl(data['updateurl']) ??
+          _nonEmptyUrl(data['update_url']),
       isDataSource: _detectDataSource({'pluginInfo': data}),
       // 站点图标（favicon / logo）：导入插件时下载并缓存，音源列表与切换按钮用它
       iconUrl:
@@ -446,6 +451,13 @@ JSON.stringify((function() {
           _safeString(data['icon']) ??
           _safeString(data['logo']),
     );
+  }
+
+  /// 空串当缺失处理：`@homepage` / `@updateUrl` 没写时洛雪适配器会导出 ''，
+  /// 若原样保留会让 `??` 回退失效（更新地址变成一个空 URL）。
+  static String? _nonEmptyUrl(dynamic value) {
+    final text = _safeString(value)?.trim();
+    return (text == null || text.isEmpty) ? null : text;
   }
 
   /// Safely convert a dynamic value to String, handling Lists and other

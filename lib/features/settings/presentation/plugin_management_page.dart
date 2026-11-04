@@ -1683,15 +1683,18 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
     }
     if (_checkingPluginUpdateIds.contains(plugin.id)) return;
 
-    final updateUrl = plugin.updateUrl;
-    if (updateUrl == null || updateUrl.trim().isEmpty) {
-      _toast(context.tr('该插件没有配置更新地址，无法检查更新'));
-      return;
-    }
-
     setState(() => _checkingPluginUpdateIds.add(plugin.id));
     try {
       final repo = ref.read(pluginRepositoryProvider);
+      // 更新地址可能只写在插件源码头注释里（@updateUrl / @homepage），
+      // 不能只看安装时存下来的那份。
+      final updateUrl = await repo.resolveUpdateUrl(plugin);
+      if (updateUrl == null || updateUrl.trim().isEmpty) {
+        if (mounted) {
+          _toast(context.tr('该插件没有配置更新地址，无法检查更新'));
+        }
+        return;
+      }
       final result = await repo.checkPluginUpdate(plugin);
       if (!mounted) return;
       if (result.available) {

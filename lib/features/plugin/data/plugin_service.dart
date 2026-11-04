@@ -58,6 +58,15 @@ class PluginService {
     }
   }
 
+  /// 取第一个非空字符串：头注释没写的字段会是 ''，不能让 `??` 提前短路。
+  static String? _firstNonEmptyUrl(List<String?> values) {
+    for (final value in values) {
+      final trimmed = value?.trim();
+      if (trimmed != null && trimmed.isNotEmpty) return trimmed;
+    }
+    return null;
+  }
+
   /// 自动识别插件代码的类型：澜音(cr) / 洛雪(lx) / MusicFree(mf)。
   ///
   /// 按「特征从最明确到次明确」依次匹配，全部落空返回 null（界面弹框
@@ -634,7 +643,12 @@ class PluginService {
         filePath: destPath,
         // 新添加的插件默认启用（用户可在插件管理里随时关闭）。
         isEnabled: true,
-        updateUrl: pluginInfo.homepage ?? sourceUrl,
+        // 更新检测地址优先级：@updateUrl > @homepage > 安装时的下载 URL。
+        updateUrl: _firstNonEmptyUrl([
+          pluginInfo.updateUrl,
+          pluginInfo.homepage,
+          sourceUrl,
+        ]),
         // 插件自己声明是「数据源」时记下来，插件管理页据此归类。
         isDataSource: host.isDataSource,
         iconUrl: pluginInfo.iconUrl,

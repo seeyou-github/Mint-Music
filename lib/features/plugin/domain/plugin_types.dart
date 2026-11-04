@@ -295,6 +295,13 @@ class PluginMetadata {
   final String? description;
   final String? homepage;
 
+  /// 插件头注释里声明的更新检测地址（`@updateUrl`）。
+  ///
+  /// 为空时宿主回退到 [homepage]，再回退到安装时的下载 URL。
+  /// 与 [homepage] 分开存，是因为 homepage 通常是站点首页（HTML），
+  /// 直接拿去比对脚本版本号没有意义。
+  final String? updateUrl;
+
   /// 插件是否支持「自定义歌单」：歌单由 App 侧新建（封面 / 名称 / 搜索关键字），
   /// 内容用插件自己的搜索接口按关键字分页取，插件不需要提供歌单接口。
   final bool customSheets;
@@ -318,6 +325,7 @@ class PluginMetadata {
     required this.author,
     this.description,
     this.homepage,
+    this.updateUrl,
     this.iconUrl,
     this.customSheets = false,
     this.isDataSource = false,
@@ -330,6 +338,7 @@ class PluginMetadata {
       author: json['author'] as String,
       description: json['description'] as String?,
       homepage: json['homepage'] as String?,
+      updateUrl: json['updateUrl'] as String?,
       iconUrl: (json['iconUrl'] ?? json['icon']) as String?,
       customSheets: json['customSheets'] == true,
       isDataSource: json['isDataSource'] == true,
@@ -342,6 +351,7 @@ class PluginMetadata {
     'author': author,
     'description': description,
     if (homepage != null) 'homepage': homepage,
+    if (updateUrl != null) 'updateUrl': updateUrl,
     if (iconUrl != null) 'iconUrl': iconUrl,
     if (customSheets) 'customSheets': true,
     if (isDataSource) 'isDataSource': true,
