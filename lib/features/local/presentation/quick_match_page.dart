@@ -15,7 +15,7 @@ import '../../player/domain/services/lyric_cache.dart';
 import '../application/local_providers.dart';
 import '../domain/local_song_filter.dart';
 
-/// 「快速匹配本地歌曲」页面。
+/// 「匹配歌曲」页面。
 ///
 /// 顶部是扫描目录下拉（默认第一个目录），下面是字段「有 / 无」筛选栏，
 /// 再下面是歌曲列表：封面、歌名、歌手、专辑、年份、流派、注释、歌词状态，
@@ -243,17 +243,19 @@ class _QuickMatchPageState extends ConsumerState<QuickMatchPage> {
         : (dirs.isEmpty ? '' : dirs.first);
     final label = current.isEmpty ? context.tr('全部目录') : _dirName(current);
     return Padding(
+      // 右侧只留 4：关闭 IconButton 自带 12px 内边距，图标到屏幕右缘
+      // 的视觉间距正好 = 16（lg），与左侧标题的间距一致。
       padding: const EdgeInsets.fromLTRB(
         AppSpacing.lg,
         AppSpacing.md,
-        AppSpacing.md,
+        4,
         AppSpacing.sm,
       ),
       child: Row(
         children: [
           Expanded(
             child: Text(
-              context.tr('快速匹配本地歌曲'),
+              context.tr('匹配歌曲'),
               style: TextStyle(
                 fontSize: 20,
                 fontWeight: FontWeight.bold,
@@ -427,6 +429,9 @@ class _QuickMatchPageState extends ConsumerState<QuickMatchPage> {
   }
 
   /// 列表列头（与每一行对齐）。
+  ///
+  /// 列宽比例：图标 : 名称 : 年份 : 歌词 : 编辑 : 匹配 = 2 : 5 : 2 : 2 : 1 : 1；
+  /// 宽屏（>=900）再在名称后插专辑、年份后插流派 / 注释。
   Widget _buildListHeader(ThemeColors colors) {
     final wide = MediaQuery.sizeOf(context).width >= 900;
     final style = TextStyle(fontSize: 11, color: colors.textHint);
@@ -437,23 +442,18 @@ class _QuickMatchPageState extends ConsumerState<QuickMatchPage> {
       ),
       child: Row(
         children: [
-          const SizedBox(width: _coverSize + AppSpacing.sm),
-          Expanded(flex: 4, child: Text(context.tr('歌名 / 歌手'), style: style)),
+          const Expanded(flex: 2, child: SizedBox.shrink()),
+          Expanded(flex: 5, child: Text(context.tr('名称'), style: style)),
           if (wide)
             Expanded(flex: 3, child: Text(context.tr('专辑'), style: style)),
-          SizedBox(
-            width: _yearWidth,
-            child: Text(context.tr('年份'), style: style),
-          ),
-          if (wide)
+          Expanded(flex: 2, child: Text(context.tr('年份'), style: style)),
+          if (wide) ...[
             Expanded(flex: 2, child: Text(context.tr('流派'), style: style)),
-          if (wide)
             Expanded(flex: 2, child: Text(context.tr('注释'), style: style)),
-          SizedBox(
-            width: _lyricWidth,
-            child: Text(context.tr('歌词'), style: style),
-          ),
-          const SizedBox(width: _actionWidth),
+          ],
+          Expanded(flex: 2, child: Text(context.tr('歌词'), style: style)),
+          // 操作区两列（编辑 1 + 匹配 1）共用一个弹性空间。
+          const Expanded(flex: 2, child: SizedBox.shrink()),
         ],
       ),
     );
@@ -497,29 +497,35 @@ class _QuickMatchPageState extends ConsumerState<QuickMatchPage> {
         ),
         child: Row(
           children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(AppRadius.sm),
-              child: MusicCoverImage(
-                url: song.coverUrl,
-                songId: song.id,
-                filePath: song.filePath,
-                width: _coverSize,
-                height: _coverSize,
-                errorWidget: Container(
-                  width: _coverSize,
-                  height: _coverSize,
-                  color: colors.surfaceVariant,
-                  child: Icon(
-                    Icons.music_note,
-                    size: 18,
-                    color: colors.textHint,
+            Expanded(
+              flex: 2,
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(AppRadius.sm),
+                  child: MusicCoverImage(
+                    url: song.coverUrl,
+                    songId: song.id,
+                    filePath: song.filePath,
+                    width: _coverSize,
+                    height: _coverSize,
+                    errorWidget: Container(
+                      width: _coverSize,
+                      height: _coverSize,
+                      color: colors.surfaceVariant,
+                      child: Icon(
+                        Icons.music_note,
+                        size: 18,
+                        color: colors.textHint,
+                      ),
+                    ),
                   ),
                 ),
               ),
             ),
             const SizedBox(width: AppSpacing.sm),
             Expanded(
-              flex: 4,
+              flex: 5,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
@@ -544,37 +550,38 @@ class _QuickMatchPageState extends ConsumerState<QuickMatchPage> {
               ),
             ),
             if (wide) Expanded(flex: 3, child: _cell(colors, song.album)),
-            SizedBox(
-              width: _yearWidth,
+            Expanded(
+              flex: 2,
               child: _cell(colors, song.year?.toString() ?? ''),
             ),
-            if (wide) Expanded(flex: 2, child: _cell(colors, song.genre)),
-            if (wide) Expanded(flex: 2, child: _cell(colors, song.comment)),
-            SizedBox(
-              width: _lyricWidth,
-              child: _buildLyricBadges(colors, hasLyric, hasWord),
-            ),
-            SizedBox(
-              width: _actionWidth,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  _iconButton(
-                    colors,
-                    icon: Icons.edit,
-                    tooltip: context.tr('编辑标签'),
-                    onTap: () => context.push(
-                      '${AppRoutes.tagEditor}?songId=${song.id}',
-                    ),
-                  ),
-                  _iconButton(
-                    colors,
-                    icon: Icons.auto_fix_high,
-                    tooltip: context.tr('匹配'),
-                    onTap: () => unawaited(_openMatch(song, all)),
-                  ),
-                ],
+            if (wide) ...[
+              Expanded(flex: 2, child: _cell(colors, song.genre)),
+              Expanded(flex: 2, child: _cell(colors, song.comment)),
+            ],
+            Expanded(
+              flex: 2,
+              // 歌词徽标（「歌词」「逐字」两个并排）可能比 flex 2 宽，
+              // 用 FittedBox 缩一下避免溢出。
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: _buildLyricBadges(colors, hasLyric, hasWord),
               ),
+            ),
+            _actionCell(
+              colors,
+              icon: Icons.edit,
+              tooltip: context.tr('编辑标签'),
+              onTap: () => context.push(
+                '${AppRoutes.tagEditor}?songId=${song.id}',
+              ),
+            ),
+            _actionCell(
+              colors,
+              icon: Icons.auto_fix_high,
+              tooltip: context.tr('匹配'),
+              onTap: () => unawaited(_openMatch(song, all)),
+              alignEnd: true,
             ),
           ],
         ),
@@ -626,20 +633,38 @@ class _QuickMatchPageState extends ConsumerState<QuickMatchPage> {
     );
   }
 
-  Widget _iconButton(
+  /// 行尾操作按钮（flex 1 弹性列，编辑与匹配各占 1 份）。
+  ///
+  /// [alignEnd] 为 true 时图标贴列右缘（「匹配」是最后一列），
+  /// 让图标到屏幕右缘的间距 = 行内边距 lg，与左侧封面到左缘的间距一致。
+  /// FittedBox 兜底：极窄屏幕下列宽不够时整体缩小，不溢出。
+  Widget _actionCell(
     ThemeColors colors, {
     required IconData icon,
     required String tooltip,
     required VoidCallback onTap,
+    bool alignEnd = false,
   }) {
-    return Tooltip(
-      message: tooltip,
-      child: InkResponse(
-        onTap: onTap,
-        radius: 18,
-        child: Padding(
-          padding: const EdgeInsets.all(6),
-          child: Icon(icon, size: 18, color: colors.textSecondary),
+    return Expanded(
+      flex: 1,
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        alignment: alignEnd ? Alignment.centerRight : Alignment.center,
+        child: Tooltip(
+          message: tooltip,
+          child: InkResponse(
+            onTap: onTap,
+            radius: 18,
+            child: Padding(
+              padding: EdgeInsets.only(
+                left: 4,
+                right: alignEnd ? 0 : 4,
+                top: 6,
+                bottom: 6,
+              ),
+              child: Icon(icon, size: 18, color: colors.textSecondary),
+            ),
+          ),
         ),
       ),
     );
@@ -709,7 +734,4 @@ class _QuickMatchPageState extends ConsumerState<QuickMatchPage> {
 
   static const double _coverSize = 40;
   static const double _rowHeight = 58;
-  static const double _yearWidth = 56;
-  static const double _lyricWidth = 96;
-  static const double _actionWidth = 76;
 }
