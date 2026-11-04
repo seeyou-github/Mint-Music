@@ -62,6 +62,9 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
   /// 竖屏时歌名与封面底部的固定间距。
   static const double _portraitInfoGap = 10;
 
+  /// 竖屏底部控制行与屏幕底边（安全区内）的留白。
+  static const double _portraitBottomGap = 16;
+
   @override
   void initState() {
     super.initState();
@@ -110,6 +113,8 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
   Widget build(BuildContext context) {
     ref.watch(currentSongIdentityProvider);
     final song = ref.read(playbackControllerProvider).currentSong;
+    // SafeArea 内 padding 会被消费，底边导航条高度要在它外面取。
+    final bottomInset = MediaQuery.paddingOf(context).bottom;
     final isPlaying = ref.watch(
       playbackControllerProvider.select((s) => s.isPlaying),
     );
@@ -189,14 +194,18 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
                     0.0,
                     (viewportWidth - coverSize) / 2,
                   );
-                  // 封面顶边落在窗口高度的 15%：扣掉状态栏和顶部工具栏后，
-                  // 换算成 PageView 内部需要补的间距。
-                  final coverTopGap = math.max(
-                    0.0,
-                    windowSize.height * 0.15 -
-                        safePadding.top -
-                        _PlayerHeader.height,
-                  );
+                  // Android：封面顶边与顶栏的间距 = 底部大播放按钮到屏幕
+                  // 底边的间距（控制行下方留白 + 底部导航条高度），上下
+                  // 留白一致，顶栏下不再多出一块空白（等效把封面区整体
+                  // 上移一半）。其它平台维持「窗口高度 15%」的锚点。
+                  final coverTopGap = Platform.isAndroid
+                      ? math.max(0.0, _portraitBottomGap + bottomInset)
+                      : math.max(
+                          0.0,
+                          windowSize.height * 0.15 -
+                              safePadding.top -
+                              _PlayerHeader.height,
+                        );
                   // 音源标签在封面上方，封面整体下移标签占用的高度。
                   final coverTop = coverTopGap + _PlayerSourceTag.space;
                   return Column(
@@ -356,7 +365,7 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
                       _PlayerProgressBar(),
                       const SizedBox(height: 12),
                       _PlayerControls(onQueue: _openPlayQueue),
-                      SizedBox(height: 16),
+                      const SizedBox(height: _portraitBottomGap),
                     ],
                   );
                 },
@@ -1314,7 +1323,7 @@ class _PlayerActions extends ConsumerWidget {
   }
 }
 
-/// 歌手名下方的「正在播放的歌词」（Android）：一行歌词 + 播放进度条。
+/// 歌手名下方的「正在播放的歌词」（Android）：一行歌词。
 class _InlineLyricLine extends ConsumerWidget {
   const _InlineLyricLine({required this.fontSize});
 
@@ -1327,10 +1336,6 @@ class _InlineLyricLine extends ConsumerWidget {
     final position = ref.watch(
       playbackControllerProvider.select((s) => s.position),
     );
-    final duration = ref.watch(
-      playbackControllerProvider.select((s) => s.duration),
-    );
-    final colors = ref.watch(themeColorsProvider);
 
     final positionMs = position.inMilliseconds;
     var index = lines.isEmpty
@@ -1339,34 +1344,14 @@ class _InlineLyricLine extends ConsumerWidget {
     if (index < 0 && lines.isNotEmpty) index = 0;
     final text = index >= 0 ? lines[index].plainText.trim() : '';
 
-    final progress = duration.inMilliseconds > 0
-        ? (positionMs / duration.inMilliseconds).clamp(0.0, 1.0)
-        : 0.0;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          text.isEmpty ? context.tr('暂无歌词') : text,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            fontSize: fontSize,
-            color: Colors.white.withValues(alpha: text.isEmpty ? 0.35 : 0.7),
-          ),
-        ),
-        const SizedBox(height: 4),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(1),
-          child: LinearProgressIndicator(
-            value: progress,
-            minHeight: 2,
-            backgroundColor: Colors.white.withValues(alpha: 0.12),
-            valueColor: AlwaysStoppedAnimation<Color>(colors.primary),
-          ),
-        ),
-      ],
+    return Text(
+      text.isEmpty ? context.tr('暂无歌词') : text,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(
+        fontSize: fontSize,
+        color: Colors.white.withValues(alpha: text.isEmpty ? 0.35 : 0.7),
+      ),
     );
   }
 }
