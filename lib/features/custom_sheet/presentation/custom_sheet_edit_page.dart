@@ -267,7 +267,11 @@ class _CustomSheetEditPageState extends ConsumerState<CustomSheetEditPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
+                // 用 Wrap：窄屏 / 大字号下两个按钮排不开时自动换行，
+                // 写死成 Row 会报「RIGHT OVERFLOWED」。
+                Wrap(
+                  spacing: AppSpacing.sm,
+                  runSpacing: AppSpacing.xs,
                   children: [
                     _buildSmallButton(
                       colors,
@@ -275,7 +279,6 @@ class _CustomSheetEditPageState extends ConsumerState<CustomSheetEditPage> {
                       label: context.tr('本地上传'),
                       onTap: _pickLocalCover,
                     ),
-                    const SizedBox(width: AppSpacing.sm),
                     _buildSmallButton(
                       colors,
                       icon: Icons.link,

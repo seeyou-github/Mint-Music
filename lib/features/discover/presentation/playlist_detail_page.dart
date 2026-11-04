@@ -525,8 +525,12 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
           end: Alignment.bottomCenter,
         ),
       ),
-      child: SizedBox(
-        height: headerHeight,
+      // 只给下限、不写死高度：名称 / 音源标签 / 操作按钮这三行在部分字体
+      // （比如内置的思源宋体）或系统大字号下会比 72 高几像素，写死高度就会报
+      // 「BOTTOM OVERFLOWED BY 5.0 PIXELS」。让它按内容自己撑开，
+      // 封面仍然固定 headerHeight。
+      child: ConstrainedBox(
+        constraints: BoxConstraints(minHeight: headerHeight),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
@@ -575,7 +579,8 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
             ),
             const SizedBox(width: AppSpacing.md),
             // 第一行 名称 / 第二行 音源标签 / 第三行 操作按钮。
-            // 三行总高与封面同高（headerHeight），字号收紧保证 72px 也放得下。
+            // 三行：名称 / 音源标签 / 操作按钮。高度不写死（见上方 ConstrainedBox），
+            // 内容比封面高时由外层撑开，不会溢出。
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
