@@ -431,42 +431,50 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
             body: Stack(
               children: [
                 Positioned.fill(
-                  child: playlistAsync.when(
-                    data: (page) {
-                      final playlist = page.playlist;
-                      if (playlist == null) {
-                        return Center(
-                          child: Text(
-                            context.tr('歌单未找到'),
-                            style: TextStyle(color: colors.textHint),
-                          ),
-                        );
-                      }
-                      return Column(
-                        children: [
-                          _buildHeader(context, ref, colors, playlist),
-                          if (selecting)
-                            SongSelectionBar(
-                              colors: colors,
-                              controller: _selection,
-                              songs: currentSongs,
+                  // 顶部避开状态栏：搜索、发现（歌单）、发现（榜单）三个入口
+                  // 打开的都是这个页面，之前裸 Stack 会让返回按钮和歌单标题
+                  // 顶进状态栏里。底部由外层导航栏 / 迷你播放器负责，不重复加。
+                  child: SafeArea(
+                    bottom: false,
+                    child: playlistAsync.when(
+                      data: (page) {
+                        final playlist = page.playlist;
+                        if (playlist == null) {
+                          return Center(
+                            child: Text(
+                              context.tr('歌单未找到'),
+                              style: TextStyle(color: colors.textHint),
                             ),
-                          Expanded(
-                            child: _buildSongList(ref, colors, currentSongs),
-                          ),
-                        ],
-                      );
-                    },
-                    loading: () =>
-                        const Center(child: CircularProgressIndicator()),
-                    error: (error, __) => LoadErrorView(
-                      colors: colors,
-                      message: error.toString().replaceFirst('Exception: ', ''),
-                      onRetry: () {
-                        ref.invalidate(
-                          playlistDetailProvider(widget.playlistId),
+                          );
+                        }
+                        return Column(
+                          children: [
+                            _buildHeader(context, ref, colors, playlist),
+                            if (selecting)
+                              SongSelectionBar(
+                                colors: colors,
+                                controller: _selection,
+                                songs: currentSongs,
+                              ),
+                            Expanded(
+                              child: _buildSongList(ref, colors, currentSongs),
+                            ),
+                          ],
                         );
                       },
+                      loading: () =>
+                          const Center(child: CircularProgressIndicator()),
+                      error: (error, __) => LoadErrorView(
+                        colors: colors,
+                        message: error
+                            .toString()
+                            .replaceFirst('Exception: ', ''),
+                        onRetry: () {
+                          ref.invalidate(
+                            playlistDetailProvider(widget.playlistId),
+                          );
+                        },
+                      ),
                     ),
                   ),
                 ),
