@@ -44,21 +44,15 @@ class _AppShellState extends ConsumerState<AppShell> {
     });
     // 启动时自动检查更新（需开启「启动时检查更新」开关）
     WidgetsBinding.instance.addPostFrameCallback((_) async {
+      // 首帧回调可能在部件已经销毁后才跑到（例如 initState 里抛错、
+      // 或者路由被替换），此时 ref 已经失效，再 read 会抛
+      // 「Looking up a deactivated widget's ancestor is unsafe」。
+      if (!mounted) return;
       final info = await runStartupUpdateCheck(ref);
       if (info != null && mounted) {
         await showUpdateDialog(context, info);
       }
     });
-    // Android：开始播放时检查通知权限，缺少权限则提示用户开启。
-    if (Platform.isAndroid) {
-      ref.listen<bool>(
-        playbackControllerProvider.select((state) => state.isPlaying),
-        (previous, next) {
-          if (previous == true || !next) return;
-          unawaited(_ensureNotificationPermission());
-        },
-      );
-    }
   }
 
   /// Android 播放通知依赖通知权限，缺少时弹框提醒用户开启。
@@ -120,6 +114,21 @@ class _AppShellState extends ConsumerState<AppShell> {
 
   @override
   Widget build(BuildContext context) {
+    // Android：开始播放时检查通知权限，缺少权限则提示用户开启。
+    //
+    // 必须写在 build 里：Riverpod 的 ref.listen 只允许在 ConsumerWidget /
+    // ConsumerState.build 期间注册，放到 initState 会直接断言失败
+    // （'ref.listen can only be used within the build method'），表现为红屏。
+    // Riverpod 会按 build 周期自动维护订阅，重复注册是安全的。
+    if (Platform.isAndroid) {
+      ref.listen<bool>(
+        playbackControllerProvider.select((state) => state.isPlaying),
+        (previous, next) {
+          if (previous == true || !next) return;
+          unawaited(_ensureNotificationPermission());
+        },
+      );
+    }
     ref.listen<DownloadNotification?>(downloadNotificationProvider, (
       prev,
       next,

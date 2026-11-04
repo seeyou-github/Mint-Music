@@ -55,7 +55,8 @@ class AppDatabase {
   static Future<void> checkpoint() async {
     try {
       final db = await cacheDatabase();
-      await db.execute('PRAGMA wal_checkpoint(TRUNCATE)');
+      // 同样会返回一行结果，必须走 rawQuery（见 _applyPragmas 的注释）。
+      await db.rawQuery('PRAGMA wal_checkpoint(TRUNCATE)');
     } catch (e) {
       debugPrint('[AppDatabase] checkpoint 失败: $e');
     }
@@ -190,6 +191,33 @@ class AppDatabase {
     }
   }
 
+  /// 应用连接级 PRAGMA。
+  ///
+  /// 两个坑，都在 Android 上才会暴露（桌面端走 FFI 实现，`execute` 什么都收）：
+  ///
+  /// * `PRAGMA journal_mode=WAL` 会**返回一行结果**（`wal` / `memory`），而
+  ///   Android 的 `SQLiteDatabase.execSQL`（sqflite 的 `execute` 底层就是它）
+  ///   不接受会返回结果集的语句，会抛
+  ///   `Queries can be performed using SQLiteDatabase query or rawQuery methods only.`
+  ///   → 整个库打不开、降级成内存库（数据不落盘）。必须用 `rawQuery`。
+  /// * 内存库没有 WAL（journal_mode 只能是 `memory`），直接跳过。
+  ///
+  /// `synchronous` / `foreign_keys` 只设置不查询，不返回结果集，用 `execute` 安全。
+  static Future<void> _applyPragmas(
+    Database db, {
+    required bool inMemory,
+    required String synchronous,
+    bool foreignKeys = false,
+  }) async {
+    if (!inMemory) {
+      await db.rawQuery('PRAGMA journal_mode=WAL');
+    }
+    await db.execute('PRAGMA synchronous=$synchronous');
+    if (foreignKeys) {
+      await db.execute('PRAGMA foreign_keys=ON');
+    }
+  }
+
   static Future<Database> _openImportant({bool inMemory = false}) async {
     // 重要库已经不再使用（我的收藏 / 收藏歌单都改成了 JSON 文件
     // `AppData\config\playlists.json`），这里只有「旧版本留下的文件」才会打开，
@@ -211,9 +239,12 @@ class AppDatabase {
       version: 2,
       onConfigure: (db) async {
         // WAL：写入不阻塞读取；synchronous=FULL：断电也不会丢已提交的事务。
-        await db.execute('PRAGMA journal_mode=WAL');
-        await db.execute('PRAGMA synchronous=FULL');
-        await db.execute('PRAGMA foreign_keys=ON');
+        await _applyPragmas(
+          db,
+          inMemory: path == inMemoryDatabasePath,
+          synchronous: 'FULL',
+          foreignKeys: true,
+        );
       },
       onCreate: (db, version) async {
         await _createImportantSchema(db);
@@ -270,11 +301,10 @@ class AppDatabase {
       // song_play_progress（「最远听到哪」就是续播位置），v6 里连同旧表一起清掉。
       version: 6,
       onConfigure: (db) async {
-        await db.execute('PRAGMA journal_mode=WAL');
         // NORMAL：写 WAL 不用每次 fsync，浏览时缓存索引写入不至于卡顿。
         // 关键数据（本地歌曲 / 最近播放 / 搜索历史）写完后会显式
         // checkpoint 一次（见 [checkpoint]），进程被强杀时也能兜底。
-        await db.execute('PRAGMA synchronous=NORMAL');
+        await _applyPragmas(db, inMemory: inMemory, synchronous: 'NORMAL');
       },
       onCreate: (db, version) async {
         await _createCacheSchema(db);
