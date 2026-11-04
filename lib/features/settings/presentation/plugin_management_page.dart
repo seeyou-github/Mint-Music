@@ -788,7 +788,7 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
             const SizedBox(width: 6),
             Expanded(
               child: Text(
-                context.tr('没有可用的同平台播放源，请安装或启用对应的洛雪格式音源插件'),
+                context.tr('没有可用的同平台播放源，请安装或启用对应的洛雪 / 澜音格式音源插件'),
                 style: TextStyle(fontSize: 12, color: colors.error),
               ),
             ),
@@ -869,7 +869,7 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
             padding: const EdgeInsets.only(left: 22, top: 2),
             child: Text(
               context.tr(
-                '拖动调整顺序，靠上优先；全部失败则停止播放（只统计洛雪格式音源）',
+                '拖动调整顺序，靠上优先；全部失败则停止播放（只统计洛雪 / 澜音格式音源）',
               ),
               style: TextStyle(fontSize: 11, color: colors.textHint),
             ),
@@ -1002,8 +1002,8 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
     final manager = ref.read(musicSourceManagerProvider);
     final cleaned = [
       for (final id in list)
-        // 只保留「还能用 + 落雪格式」的源：拖动期间被卸载 / 关闭的、以及
-        // 历史配置里混进来的 MusicFree / 澜音 源都要剔掉。
+        // 只保留「还能用 + 落雪 / 澜音格式」的源：拖动期间被卸载 / 关闭的、
+        // 以及历史配置里混进来的 MusicFree 源都要剔掉。
         if (manager.isAutoSwitchEligible(id)) id,
     ];
     if (cleaned.isEmpty) return;

@@ -893,14 +893,14 @@ class MusicSourceManager {
     return list.isEmpty ? null : list.first;
   }
 
-  /// 自动发现：数据源支持的每个平台 × 已启用且能解析地址的**落雪格式**插件。
+  /// 自动发现：数据源支持的每个平台 × 已启用且能解析地址的播放源插件。
   ///
   /// 排序规则：插件安装时间升序（先装的排前面），同插件内按数据源平台顺序。
   /// 已卸载 / 已关闭 / 不支持该平台的插件不会出现在结果里。
   ///
-  /// **格式限制（用户明确要求）**：自动发现与自动换源只认落雪（lx）格式的
-  /// 解析源。MusicFree / 澜音插件是「全功能音源」，它们自己就是数据源，把
-  /// 它们塞进别人的播放源列表会绕开用户选择的数据源，行为不可预期。
+  /// 格式上放行落雪（lx）与澜音（cr）：两者都导出按平台取址的 `musicUrl`，
+  /// 澜音虽然自带搜索 / 歌单，也能只借用它的解析能力给数据源播放。
+  /// MusicFree（mf）仍不参与，避免绕开用户选择的数据源。
   List<String> autoDiscoverPlaybackSourcesFor(String pluginId) {
     final platforms = _platformsOfDataSource(pluginId);
     if (platforms.isEmpty) return const [];
@@ -933,10 +933,13 @@ class MusicSourceManager {
 
   /// 这个格式的插件能不能当「数据源的播放源」（自动发现 + 自动换源）。
   ///
-  /// 只放行落雪（lx）：它的定位就是纯解析播放地址，不提供歌单 / 榜单；
-  /// 澜音（cr）与 MusicFree（mf）自己就是全功能音源，不参与别人的换源。
-  bool isPlaybackSourcePluginFormat(String pluginId) =>
-      _pluginService.isLxPlugin(pluginId);
+  /// 落雪（lx）是纯解析播放地址；澜音（cr）虽然自带搜索 / 歌单，但导出的是
+  /// 同样的 `musicUrl(source, musicInfo, quality)` 契约，用户明确要求数据源
+  /// 能借用它来播放，所以一并放行。MusicFree（mf）暂不放行。
+  bool isPlaybackSourcePluginFormat(String pluginId) {
+    final type = _pluginService.pluginTypeOf(pluginId);
+    return type == 'lx' || type == 'cr';
+  }
 
   /// 数据源插件声明的平台 id 集合。
   Set<String> _platformsOfDataSource(String pluginId) {
@@ -969,9 +972,9 @@ class MusicSourceManager {
 
   /// 能不能进「数据源播放源列表」（自动发现 + 手动排序 + 自动换源）。
   ///
-  /// 在 [isPlaybackSourceUsable] 之上多一条**格式限制**：只认落雪（lx）。
-  /// 历史配置里混进来的 MusicFree / 澜音 源会被它过滤掉，用户重排时也会
-  /// 被剔出列表（见插件管理页的 `_reorderDataSourcePlaybackSources`）。
+  /// 在 [isPlaybackSourceUsable] 之上多一条格式限制：放行落雪（lx）与
+  /// 澜音（cr）。历史配置里混进来的 MusicFree 源会被它过滤掉，用户重排时
+  /// 也会被剔出列表（见插件管理页的 `_reorderDataSourcePlaybackSources`）。
   bool isAutoSwitchEligible(String sourceId) {
     if (!isPlaybackSourceUsable(sourceId)) return false;
     final (_, pluginId) = splitSourceId(sourceId.trim());
@@ -2282,8 +2285,8 @@ class MusicSourceManager {
     final (_, playbackPluginId) = splitSourceId(playbackSourceId);
     if (playbackPluginId == null ||
         !isPlaybackSourcePluginFormat(playbackPluginId)) {
-      // 兜底：手动配置里混进来的 MusicFree / 澜音 源不参与自动换源。
-      throw Exception('该音源不是落雪格式，不能作为数据源的播放源');
+      // 兜底：手动配置里混进来的 MusicFree 源不参与自动换源。
+      throw Exception('该音源不是落雪 / 澜音格式，不能作为数据源的播放源');
     }
     final playbackName = sourceDisplayName(playbackSourceId);
 

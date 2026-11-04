@@ -1319,6 +1319,9 @@ class PluginService {
   /// 这个插件是不是落雪（LX）格式。
   bool isLxPlugin(String pluginId) => _pluginTypes[pluginId] == 'lx';
 
+  /// 插件安装时记下的格式（`cr` / `lx` / `mf`）；记录缺失时返回空串。
+  String pluginTypeOf(String pluginId) => _pluginTypes[pluginId] ?? '';
+
   /// 插件的安装时间（数据源播放源列表按它升序排列）；插件不存在返回 null。
   DateTime? installTimeOf(String pluginId) {
     for (final plugin in _pluginInfos) {
