@@ -11,15 +11,13 @@ enum LoadMoreStatus {
 
   /// 下一页加载失败：显示「加载失败，点击重试」。
   error,
-
-  /// 已经没有下一页。
-  noMore,
 }
 
-/// 分页列表底部统一的「加载中 / 加载失败点击重试 / 没有更多了」提示。
+/// 分页列表底部统一的「加载中 / 加载失败点击重试」提示。
 ///
-/// 以前分页失败会被当成「没有更多」，用户看到的是列表直接停住，也不知道
-/// 是网络问题还是真的没有数据了；这里把两种情况分开显示，失败时给重试入口。
+/// 「没有更多了」不再展示——到底没到底，翻页条自己会表现出来，多一行
+/// 提示只是占地方。以前分页失败会被当成「没有更多」，用户看到的是列表
+/// 直接停住，也不知道是网络问题还是真的没有数据了；失败单独给重试入口。
 class LoadMoreFooter extends StatelessWidget {
   const LoadMoreFooter({
     super.key,
@@ -54,11 +52,6 @@ class LoadMoreFooter extends StatelessWidget {
           width: 20,
           height: 20,
           child: CircularProgressIndicator(strokeWidth: 2),
-        );
-      case LoadMoreStatus.noMore:
-        return Text(
-          context.tr('没有更多了'),
-          style: TextStyle(fontSize: 12, color: colors.textHint),
         );
       case LoadMoreStatus.error:
         return GestureDetector(

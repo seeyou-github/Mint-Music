@@ -1,3 +1,6 @@
+import 'dart:math' as math;
+
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -7,9 +10,13 @@ import '../../core/theme/theme_provider.dart';
 
 /// 列表底部的胶囊分页条，加载中禁用导航。
 ///
-/// [totalKnown] 为 false 时，[pageCount] 仅代表已加载可达页及下一页入口，
-/// 不展示总页数、尾页按钮或任意跳页。调用方在加载结束时改为 true。
-/// 已知总页数（接口返回了总数）时额外提供「尾页」一键直达。
+/// - 窄屏（<760）：页码按钮 + 「第 N 页」下拉。页码窗口按宽度自适应：
+///   首页 + 当前页附近的页码 + 末页，跨页用省略号；宽度不够时缩到只剩
+///   首页 / 当前页 / 末页 + 下拉。
+/// - 宽屏（>=760）：上一页 + 页码按钮 + 下一页 + 「第 N 页」下拉。
+///
+/// 「第 N 页」下拉列出全部页码，选一个直达（Windows 上支持滚轮滚动和
+/// 按住鼠标拖动，另有常驻滚动条可拖）。总共只有 1 页时整个分页条不显示。
 class PageBar extends ConsumerStatefulWidget {
   const PageBar({
     super.key,
@@ -18,7 +25,6 @@ class PageBar extends ConsumerStatefulWidget {
     required this.onChanged,
     this.loading = false,
     this.padding,
-    this.totalKnown = true,
   });
 
   final int currentPage;
@@ -26,114 +32,48 @@ class PageBar extends ConsumerStatefulWidget {
   final ValueChanged<int> onChanged;
   final bool loading;
   final EdgeInsetsGeometry? padding;
-  final bool totalKnown;
 
   @override
   ConsumerState<PageBar> createState() => _PageBarState();
 }
 
 class _PageBarState extends ConsumerState<PageBar> {
-  late final TextEditingController _jumpController;
+  /// 页码按钮 / 省略号 / 步进按钮 / 下拉按钮的估算宽度（算窗口大小时用）。
+  static const double _pageButtonWidth = 36;
+  static const double _ellipsisWidth = 24;
+  static const double _stepButtonWidth = 84;
+  static const double _dropdownWidth = 100;
+  static const double _elementGap = 4;
+  static const double _wideBreakpoint = 760;
+  static const double _menuItemHeight = 44;
+
+  /// 页码下拉一次最多显示几行，超出部分滚动。
+  static const int _maxMenuRows = 9;
+
+  /// 页码下拉菜单的滚动控制器（Scrollbar 拖动需要）。
+  final ScrollController _menuScrollController = ScrollController();
 
   int get _count => widget.pageCount < 1 ? 1 : widget.pageCount;
   int get _current => widget.currentPage.clamp(1, _count);
-  bool get _showJump => widget.totalKnown && _count > 20;
-
-  int? get _jumpTarget {
-    if (!_showJump || widget.loading) return null;
-    final text = _jumpController.text.trim();
-    if (!RegExp(r'^[0-9]+$').hasMatch(text)) return null;
-    final page = int.tryParse(text);
-    if (page == null || page < 1 || page > _count || page == _current) {
-      return null;
-    }
-    return page;
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    _jumpController = TextEditingController(text: '$_current');
-  }
-
-  @override
-  void didUpdateWidget(covariant PageBar oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.currentPage != widget.currentPage ||
-        oldWidget.totalKnown != widget.totalKnown) {
-      _jumpController.text = '$_current';
-    }
-  }
 
   @override
   void dispose() {
-    _jumpController.dispose();
+    _menuScrollController.dispose();
     super.dispose();
   }
 
-  void _submitJump() {
-    final target = _jumpTarget;
-    if (target != null) widget.onChanged(target);
+  void _go(int page) {
+    if (widget.loading || page < 1 || page > _count || page == _current) return;
+    widget.onChanged(page);
   }
+
+  // ------------------------------------------------------------ UI
 
   @override
   Widget build(BuildContext context) {
+    // 只有 1 页：页码、上一页/下一页、下拉都没什么可翻的，整个分页条不显示。
+    if (_count <= 1) return const SizedBox.shrink();
     final colors = ref.watch(themeColorsProvider);
-    final pages = _windowPages(_current, _count, widget.totalKnown);
-    final pageButtons = SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          for (final page in pages)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 2),
-              child: page == null
-                  ? ExcludeSemantics(
-                      child: Text(
-                        '…',
-                        style: TextStyle(color: colors.textHint),
-                      ),
-                    )
-                  : _buildPageButton(colors, page),
-            ),
-        ],
-      ),
-    );
-    final previous = _buildStepButton(
-      colors,
-      label: context.tr('上一页'),
-      icon: Icons.chevron_left,
-      enabled: _current > 1 && !widget.loading,
-      onTap: () => widget.onChanged(_current - 1),
-    );
-    final next = _buildStepButton(
-      colors,
-      label: widget.loading ? context.tr('加载中') : context.tr('下一页'),
-      icon: Icons.chevron_right,
-      iconAfter: true,
-      enabled: _current < _count && !widget.loading,
-      onTap: () => widget.onChanged(_current + 1),
-    );
-    // 总页数已知时提供「尾页」直达；未知总数时 pageCount 只到已加载范围，
-    // 点尾页会误导，所以整个按钮都不出现。
-    final showLast = widget.totalKnown && _count > 1;
-    final last = _buildStepButton(
-      colors,
-      label: context.tr('尾页'),
-      icon: Icons.keyboard_double_arrow_right,
-      iconAfter: true,
-      enabled: showLast && _current < _count && !widget.loading,
-      onTap: () => widget.onChanged(_count),
-    );
-    final total = Text(
-      context.tr('共 $_count 页'),
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-      style: TextStyle(fontSize: 12, color: colors.textSecondary),
-    );
-    const gap = SizedBox(width: AppSpacing.sm);
-
     return Padding(
       padding:
           widget.padding ??
@@ -143,57 +83,72 @@ class _PageBarState extends ConsumerState<PageBar> {
           ),
       child: LayoutBuilder(
         builder: (context, constraints) {
-          // 窄屏上页码单独横滚，跳页框始终紧挨下一页左侧。
-          if (constraints.maxWidth < 760) {
-            return Column(
-              mainAxisSize: MainAxisSize.min,
+          final wide = constraints.maxWidth >= _wideBreakpoint;
+          final radius = _fitRadius(constraints.maxWidth, wide: wide);
+          final pages = _windowPages(_current, _count, radius);
+          final pageButtons = Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final page in pages)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 2),
+                  child: page == null
+                      ? ExcludeSemantics(
+                          child: Text(
+                            '…',
+                            style: TextStyle(color: colors.textHint),
+                          ),
+                        )
+                      : _buildPageButton(colors, page),
+                ),
+            ],
+          );
+          final dropdown = _buildDropdown(colors);
+          if (!wide) {
+            // 窄屏：页码一行 + 右侧下拉（窗口按宽度算好，极端情况页码区可滚）。
+            return Row(
               children: [
-                Row(
-                  children: [
-                    Expanded(child: pageButtons),
-                    if (widget.totalKnown) ...[
-                      gap,
-                      ConstrainedBox(
-                        constraints: BoxConstraints(
-                          maxWidth: constraints.maxWidth * 0.35,
-                        ),
-                        child: total,
-                      ),
-                    ],
-                  ],
+                Expanded(
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: pageButtons,
+                  ),
                 ),
-                const SizedBox(height: AppSpacing.sm),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Flexible(child: previous),
-                    gap,
-                    if (_showJump)
-                      Flexible(flex: 2, child: _buildJumpInput(colors))
-                    else
-                      const Spacer(),
-                    gap,
-                    Flexible(child: next),
-                    if (showLast) ...[gap, Flexible(child: last)],
-                  ],
-                ),
+                const SizedBox(width: AppSpacing.sm),
+                dropdown,
               ],
             );
           }
+          final previous = _buildStepButton(
+            colors,
+            label: widget.loading ? context.tr('加载中') : context.tr('上一页'),
+            icon: Icons.chevron_left,
+            enabled: _current > 1 && !widget.loading,
+            onTap: () => _go(_current - 1),
+          );
+          final next = _buildStepButton(
+            colors,
+            label: widget.loading ? context.tr('加载中') : context.tr('下一页'),
+            icon: Icons.chevron_right,
+            iconAfter: true,
+            enabled: _current < _count && !widget.loading,
+            onTap: () => _go(_current + 1),
+          );
           return Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               previous,
-              gap,
-              Flexible(child: pageButtons),
-              if (widget.totalKnown) ...[gap, Flexible(child: total)],
-              if (_showJump) ...[
-                gap,
-                SizedBox(width: 136, child: _buildJumpInput(colors)),
-              ],
-              gap,
+              const SizedBox(width: AppSpacing.sm),
+              Flexible(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: pageButtons,
+                ),
+              ),
+              const SizedBox(width: AppSpacing.sm),
               next,
-              if (showLast) ...[gap, last],
+              const SizedBox(width: AppSpacing.sm),
+              dropdown,
             ],
           );
         },
@@ -254,7 +209,7 @@ class _PageBarState extends ConsumerState<PageBar> {
         label: context.tr('第 $page 页'),
         child: OutlinedButton(
           onPressed: !widget.loading && !selected
-              ? () => widget.onChanged(page)
+              ? () => _go(page)
               : null,
           style: _buttonStyle(colors, selected: selected),
           child: ExcludeSemantics(child: Text('$page')),
@@ -263,67 +218,134 @@ class _PageBarState extends ConsumerState<PageBar> {
     );
   }
 
-  Widget _buildJumpInput(ThemeColors colors) {
-    final border = OutlineInputBorder(
-      borderRadius: BorderRadius.circular(AppRadius.full),
-      borderSide: BorderSide(color: colors.divider),
-    );
-    return Row(
-      children: [
-        Expanded(
-          child: TextField(
-            controller: _jumpController,
-            enabled: !widget.loading,
-            keyboardType: TextInputType.number,
-            textInputAction: TextInputAction.go,
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 12, color: colors.textPrimary),
-            cursorColor: colors.primary,
-            decoration: InputDecoration(
-              hintText: '1–$_count',
-              hintStyle: TextStyle(color: colors.textHint),
-              isDense: true,
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 8,
-                vertical: 10,
-              ),
-              border: border,
-              enabledBorder: border,
-              disabledBorder: border,
-              focusedBorder: border.copyWith(
-                borderSide: BorderSide(color: colors.primary),
+  /// 「第 N 页」下拉：点开列出全部页码，选一个直达。
+  ///
+  /// 列表可滚动：滚轮直接滚（Windows）、按住鼠标 / 触屏也能拖，
+  /// 另有常驻滚动条可拖动快跳。
+  Widget _buildDropdown(ThemeColors colors) {
+    final menuHeight =
+        math.min(_count, _maxMenuRows) * _menuItemHeight + AppSpacing.xs * 2;
+    return PopupMenuButton<int>(
+      enabled: !widget.loading,
+      tooltip: context.tr('跳转到指定页'),
+      color: colors.surface,
+      elevation: 8,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppRadius.md),
+      ),
+      onSelected: _go,
+      itemBuilder: (_) => [
+        PopupMenuItem<int>(
+          enabled: false,
+          padding: EdgeInsets.zero,
+          child: SizedBox(
+            width: 148,
+            height: menuHeight,
+            child: Scrollbar(
+              controller: _menuScrollController,
+              thumbVisibility: true,
+              child: ScrollConfiguration(
+                behavior: const _MouseDragScrollBehavior(),
+                child: ListView.builder(
+                  controller: _menuScrollController,
+                  padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+                  itemCount: _count,
+                  itemBuilder: (menuContext, index) =>
+                      _buildMenuRow(menuContext, colors, index + 1),
+                ),
               ),
             ),
-            onChanged: (_) => setState(() {}),
-            onSubmitted: (_) => _submitJump(),
           ),
         ),
-        const SizedBox(width: AppSpacing.xs),
-        OutlinedButton(
-          onPressed: _jumpTarget == null ? null : _submitJump,
-          style: _buttonStyle(colors),
-          child: Text(context.tr('确定')),
-        ),
       ],
+      child: Container(
+        height: 40,
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
+        decoration: BoxDecoration(
+          border: Border.all(color: colors.divider),
+          borderRadius: BorderRadius.circular(AppRadius.full),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              context.tr('第 $_current 页'),
+              style: TextStyle(
+                fontSize: 12,
+                color: widget.loading ? colors.textHint : colors.textSecondary,
+              ),
+            ),
+            Icon(Icons.arrow_drop_down, size: 18, color: colors.textHint),
+          ],
+        ),
+      ),
     );
   }
 
-  /// null 表示真正的跨页省略；仅缺一页时直接补齐，避免无意义省略号。
-  static List<int?> _windowPages(int current, int count, bool totalKnown) {
-    final keep = <int>{1};
-    if (totalKnown && count <= 10) {
+  /// 下拉里的一行页码。[menuContext] 在弹层内部，用于带值关闭弹层。
+  Widget _buildMenuRow(
+    BuildContext menuContext,
+    ThemeColors colors,
+    int page,
+  ) {
+    final selected = page == _current;
+    return InkWell(
+      onTap: () => Navigator.of(menuContext).pop(page),
+      child: SizedBox(
+        height: _menuItemHeight,
+        child: Row(
+          children: [
+            const SizedBox(width: AppSpacing.md),
+            Expanded(
+              child: Text(
+                context.tr('第 $page 页'),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 13,
+                  color: selected ? colors.primary : colors.textPrimary,
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+                ),
+              ),
+            ),
+            if (selected) Icon(Icons.check, size: 16, color: colors.primary),
+            const SizedBox(width: AppSpacing.md),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 按可用宽度估当前页两侧最多保留几页：从最大半径往下试，放不下就缩，
+  /// 最窄只剩首页 / 当前页 / 末页（+ 省略号）。
+  int _fitRadius(double available, {required bool wide}) {
+    var reserved = _dropdownWidth + _elementGap;
+    if (wide) reserved += (_stepButtonWidth + _elementGap) * 2;
+    final budget = available - reserved;
+    final maxRadius = wide ? 5 : 3;
+    for (var radius = maxRadius; radius >= 0; radius--) {
+      final width = _windowPages(_current, _count, radius).fold<double>(
+        0,
+        (sum, page) =>
+            sum +
+            (page == null ? _ellipsisWidth : _pageButtonWidth) +
+            _elementGap,
+      );
+      if (width <= budget) return radius;
+    }
+    return 0;
+  }
+
+  /// 页码窗口：首页 + 末页 + 当前页 ± [radius]。页数少到窗口能盖住就全显；
+  /// 缺两页以上用省略号（null），只缺一页直接补齐。
+  static List<int?> _windowPages(int current, int count, int radius) {
+    if (count <= radius * 2 + 1) {
       return [for (var page = 1; page <= count; page++) page];
     }
-    if (current <= 5) {
-      keep.addAll([for (var page = 1; page <= 8; page++) page]);
-    } else if (totalKnown && current >= count - 4) {
-      keep.addAll([for (var page = count - 7; page <= count; page++) page]);
-    } else {
-      keep.addAll([
-        for (var page = current - 3; page <= current + 3; page++) page,
-      ]);
+    final keep = <int>{1, count};
+    for (var page = current - radius; page <= current + radius; page++) {
+      keep.add(page);
     }
-    if (totalKnown) keep.add(count);
     final sorted = keep.where((page) => page >= 1 && page <= count).toList()
       ..sort();
     final result = <int?>[];
@@ -340,4 +362,19 @@ class _PageBarState extends ConsumerState<PageBar> {
     }
     return result;
   }
+}
+
+/// 页码下拉列表允许鼠标 / 触控板按住拖动滚动（Windows 上默认只有滚轮）。
+class _MouseDragScrollBehavior extends MaterialScrollBehavior {
+  const _MouseDragScrollBehavior();
+
+  @override
+  Set<PointerDeviceKind> get dragDevices => const {
+    PointerDeviceKind.touch,
+    PointerDeviceKind.mouse,
+    PointerDeviceKind.stylus,
+    PointerDeviceKind.invertedStylus,
+    PointerDeviceKind.trackpad,
+    PointerDeviceKind.unknown,
+  };
 }

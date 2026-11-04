@@ -873,7 +873,6 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
           PageBar(
             currentPage: _pager.page,
             pageCount: pageCount,
-            totalKnown: _total != null || _isEnd,
             loading: _loadingMore || _pagingLoading,
             onChanged: (page) => unawaited(_goToPage(page)),
           ),

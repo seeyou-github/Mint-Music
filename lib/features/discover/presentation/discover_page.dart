@@ -1418,7 +1418,6 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
               PageBar(
                 currentPage: _playlistPager.page,
                 pageCount: pageCount,
-                totalKnown: notifier.total != null || notifier.noMore,
                 loading: notifier.loadingMore || _pagingLoading,
                 onChanged: (page) => unawaited(_goToPlaylistPage(page)),
               ),

@@ -557,7 +557,6 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         PageBar(
           currentPage: pager.page,
           pageCount: pager.pageCount(loaded, hasMore: hasMore, total: total),
-          totalKnown: total != null || !hasMore,
           loading: loading || _pagingLoading,
           onChanged: onPage,
         ),
