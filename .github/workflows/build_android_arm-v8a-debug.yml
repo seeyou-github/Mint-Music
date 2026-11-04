@@ -1,4 +1,4 @@
-name: Build Android (arm-v8a)
+name: Build Android (arm-v8a)-debug
 
 on:
   workflow_dispatch:
