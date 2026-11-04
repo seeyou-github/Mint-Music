@@ -693,6 +693,8 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
         return SongListItem(
           song: song,
           index: displayIndex,
+          // 序号列按整张专辑 / 作者的最大序号（总数）自适应宽度。
+          maxIndex: _total ?? songs.length,
           isPlaying: currentSongId == song.id,
           showPlayedTag: true,
           onPlayTap: () async {

@@ -1281,6 +1281,7 @@ class _LocalPlaylistDetailPageState
                 return SongListItem(
                   song: song,
                   index: songIndex,
+                  maxIndex: _sortedSongs.length,
                   isPlaying: isPlaying,
                   showPlayedTag: true,
                   selectionMode: selecting,

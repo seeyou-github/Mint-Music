@@ -13,6 +13,7 @@ import '../../../shared/pagination/page_slicer.dart';
 import '../../../shared/widgets/cover_badge.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../../../shared/widgets/page_bar.dart';
+import '../../../shared/widgets/song_index_width.dart';
 import '../../../shared/widgets/source_badge.dart';
 import '../../discover/domain/models/search_collection.dart';
 import '../../player/application/playback_context.dart';
@@ -1060,10 +1061,19 @@ class _RankRowState extends ConsumerState<_RankRow> {
           child: Row(
             children: [
               SizedBox(
-                width: 30,
+                // 序号列宽度按榜单最大排名的位数自适应（最多 100 名），
+                // 序号贴着左侧，不再在一整块空白里居中。
+                width: songIndexWidth(
+                  context,
+                  maxIndex: widget.queue.length,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
                 child: Text(
                   '${widget.rank}',
-                  textAlign: TextAlign.center,
+                  textAlign: TextAlign.left,
+                  maxLines: 1,
+                  softWrap: false,
                   style: TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w600,

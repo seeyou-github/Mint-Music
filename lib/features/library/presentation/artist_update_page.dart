@@ -11,6 +11,7 @@ import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../../../shared/widgets/song_action_sheet.dart';
+import '../../../shared/widgets/song_index_width.dart';
 import '../../../shared/widgets/song_list_item.dart';
 import '../../discover/domain/models/search_collection.dart';
 import '../../player/application/playback_context.dart';
@@ -237,16 +238,26 @@ class _ArtistUpdatePageState extends ConsumerState<ArtistUpdatePage> {
                   child: Row(
                     children: [
                       SizedBox(
-                        // 四位数序号也不折行。
-                        width: 40,
+                        // 序号列宽度按列表最大序号的位数自适应，序号贴着左侧。
+                        width: songIndexWidth(
+                          context,
+                          maxIndex: missing.length,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w400,
+                        ),
                         child: Text(
                           '${index + 1}',
+                          textAlign: TextAlign.left,
+                          maxLines: 1,
+                          softWrap: false,
                           style: TextStyle(
                             fontSize: 12,
                             color: colors.textHint,
                           ),
                         ),
                       ),
+                      // 序号列现在是按位数收窄的，补一段间距免得数字贴着歌名。
+                      const SizedBox(width: AppSpacing.sm),
                       Expanded(
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
@@ -747,6 +758,7 @@ class _ArtistUpdatePageState extends ConsumerState<ArtistUpdatePage> {
         return SongListItem(
           song: song,
           index: index,
+          maxIndex: page.songs.length,
           showPlayedTag: true,
           trailingBadge: isNew ? _buildNewTag(colors) : null,
           onPlayTap: () => _playSong(page, index),

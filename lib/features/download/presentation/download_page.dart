@@ -61,8 +61,11 @@ class DownloadPage extends ConsumerWidget {
                     itemCount: sorted.length,
                     addAutomaticKeepAlives: false,
                     addRepaintBoundaries: true,
-                    itemBuilder: (context, index) =>
-                        _DownloadTaskItem(task: sorted[index], index: index),
+                    itemBuilder: (context, index) => _DownloadTaskItem(
+                      task: sorted[index],
+                      index: index,
+                      maxIndex: sorted.length,
+                    ),
                   );
                 },
                 loading: () => const Center(child: CircularProgressIndicator()),
@@ -320,10 +323,17 @@ class DownloadPage extends ConsumerWidget {
 /// * 失败 / 文件不存在：右侧显示「重试」按钮，其下方显示文字提示；
 /// * 成功：右侧只显示文件大小（不再显示进度条与下载信息）。
 class _DownloadTaskItem extends ConsumerStatefulWidget {
-  const _DownloadTaskItem({required this.task, required this.index});
+  const _DownloadTaskItem({
+    required this.task,
+    required this.index,
+    required this.maxIndex,
+  });
 
   final DownloadTask task;
   final int index;
+
+  /// 列表里的最大序号：序号列宽度按它的位数自适应。
+  final int maxIndex;
 
   @override
   ConsumerState<_DownloadTaskItem> createState() => _DownloadTaskItemState();
@@ -394,6 +404,7 @@ class _DownloadTaskItemState extends ConsumerState<_DownloadTaskItem> {
     return SongListItem(
       song: task.song,
       index: widget.index,
+      maxIndex: widget.maxIndex,
       showQuality: false,
       showDuration: false,
       showMenuButton: false,

@@ -1385,6 +1385,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         return SongListItem(
           song: song,
           index: songIndex,
+          // 序号列宽度按搜索结果的总条数自适应（不知道总数时用已加载条数）。
+          maxIndex: state.total ?? songs.length,
           showIndex: true,
           showCover: true,
           showQuality: true,

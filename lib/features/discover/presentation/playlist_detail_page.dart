@@ -805,6 +805,8 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
         return SongListItem(
           song: song,
           index: songIndex,
+          // 序号列宽度按整张歌单的最大序号（总数）自适应。
+          maxIndex: _total ?? songs.length,
           isPlaying: isPlaying,
           showPlayedTag: true,
           selectionMode: selecting,

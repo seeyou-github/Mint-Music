@@ -13,6 +13,7 @@ import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../../../core/utils/scroll_locate.dart';
 import '../../../shared/widgets/song_action_sheet.dart';
+import '../../../shared/widgets/song_index_width.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../../../shared/widgets/song_selection.dart';
 import '../application/local_providers.dart';
@@ -213,7 +214,7 @@ class _LocalPageState extends ConsumerState<LocalPage> {
                 children: [
                   Column(
                     children: [
-                      _buildHeader(colors, songs, scanProgress),
+                      _buildHeader(colors, scanProgress),
                       if (selecting)
                         // 多选模式：用选择栏替换常规控制区
                         // （对应 CeruMusic 中列表列头被整行替换的设计）。
@@ -267,12 +268,10 @@ class _LocalPageState extends ConsumerState<LocalPage> {
     );
   }
 
-  /// 顶部：标题 + 搜索框 + 选择目录 / 扫描 / 更多操作三个图标按钮。
-  Widget _buildHeader(
-    ThemeColors colors,
-    List<Song> songs,
-    ScanProgress scanProgress,
-  ) {
+  /// 顶部：搜索框 + 选择目录 / 扫描 / 快速匹配三个图标按钮。
+  ///
+  /// 标题「本地音乐」已去掉（底部导航已经标明当前分类），空间留给搜索框。
+  Widget _buildHeader(ThemeColors colors, ScanProgress scanProgress) {
     final isTablet = ResponsiveLayout.isTablet(context);
     return Padding(
       padding: EdgeInsets.symmetric(
@@ -281,32 +280,16 @@ class _LocalPageState extends ConsumerState<LocalPage> {
       ),
       child: Row(
         children: [
-          Container(
-            width: 4,
-            height: 24,
-            decoration: BoxDecoration(
-              color: colors.primary,
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
-          const SizedBox(width: AppSpacing.md),
-          Text(
-            context.tr('本地音乐'),
-            style: TextStyle(
-              fontSize: isTablet ? 26 : 22,
-              fontWeight: FontWeight.bold,
-              color: colors.textPrimary,
-            ),
-          ),
-          const SizedBox(width: AppSpacing.md),
-          // 搜索框：与发现页保持一致的最大 / 最小宽度
+          // 不再显示「本地音乐」标题（页面位于底部导航「本地」分支，标题冗余），
+          // 腾出来的空间全部给搜索框。
           Expanded(
             child: Align(
-              alignment: Alignment.centerRight,
+              alignment: Alignment.centerLeft,
               child: ConstrainedBox(
                 constraints: BoxConstraints(
                   minWidth: 140,
-                  maxWidth: isTablet ? 420 : 300,
+                  // 手机铺满整行；宽屏收一点，避免搜索框横跨整个窗口。
+                  maxWidth: isTablet ? 420 : double.infinity,
                 ),
                 child: _buildSearchBar(colors),
               ),
@@ -590,6 +573,7 @@ class _LocalPageState extends ConsumerState<LocalPage> {
               key: ValueKey(song.id),
               song: song,
               index: index,
+              maxIndex: songs.length,
               onPlay: _playSong,
               onContextMenu: _showSongContextMenu,
               selectionMode: selecting,
@@ -1364,6 +1348,7 @@ class _LocalSongItem extends ConsumerWidget {
     super.key,
     required this.song,
     required this.index,
+    required this.maxIndex,
     required this.onPlay,
     required this.onContextMenu,
     this.selectionMode = false,
@@ -1384,6 +1369,9 @@ class _LocalSongItem extends ConsumerWidget {
 
   final Song song;
   final int index;
+
+  /// 列表里的最大序号：序号列宽度按它的位数自适应。
+  final int maxIndex;
   final void Function(Song song) onPlay;
   final void Function(ThemeColors colors, Song song) onContextMenu;
   final bool selectionMode;
@@ -1392,6 +1380,13 @@ class _LocalSongItem extends ConsumerWidget {
 
   /// 长按回调：进入批量选择模式（菜单改由右侧 more_vert 按钮触发）。
   final VoidCallback? onLongPress;
+
+  /// 序号列宽度：按最大序号位数自适应；多选模式至少要放得下勾选框。
+  double _indexWidth(BuildContext context) {
+    final width = songIndexWidth(context, maxIndex: maxIndex, fontSize: 13);
+    const checkboxWidth = 34.0;
+    return selectionMode && width < checkboxWidth ? checkboxWidth : width;
+  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -1423,8 +1418,9 @@ class _LocalSongItem extends ConsumerWidget {
             children: [
               // 序号 / 勾选框
               SizedBox(
-                // 四位数序号也不能折行。
-                width: 48,
+                // 宽度按整库最大序号的位数自适应（两位数只有十几像素），
+                // 多选模式下至少留出勾选框的位置。
+                width: _indexWidth(context),
                 child: selectionMode
                     ? IgnorePointer(
                         // 只做展示：整行点击由外层 GestureDetector 处理
@@ -1445,7 +1441,10 @@ class _LocalSongItem extends ConsumerWidget {
                             )
                           : Text(
                               '${index + 1}',
-                              textAlign: TextAlign.center,
+                              // 序号贴着列表左边，不再居中留一大块空白。
+                              textAlign: TextAlign.left,
+                              maxLines: 1,
+                              softWrap: false,
                               style: TextStyle(
                                 fontSize: 13,
                                 color: colors.textHint,

@@ -17,6 +17,7 @@ import '../../../shared/widgets/music_cover_image.dart';
 import '../../../shared/widgets/page_bar.dart';
 import '../../../shared/widgets/load_more_footer.dart';
 import '../../../shared/widgets/source_icon.dart';
+import '../../../shared/widgets/song_index_width.dart';
 import '../application/discover_providers.dart';
 import '../application/hot_board_providers.dart';
 import '../domain/models/hot_board.dart';
@@ -2056,10 +2057,19 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
         child: Row(
           children: [
             SizedBox(
-              width: 24,
+              // 序号列按榜单最大序号的位数自适应（热榜一般 10 首 = 两位数），
+              // 用前三行的大字号量，保证所有行宽度一致且不折行。
+              width: songIndexWidth(
+                context,
+                maxIndex: board.songs.length,
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+              ),
               child: Text(
                 '${index + 1}',
-                textAlign: TextAlign.center,
+                textAlign: TextAlign.left,
+                maxLines: 1,
+                softWrap: false,
                 style: TextStyle(
                   fontSize: isTopThree ? 16 : 13,
                   fontWeight: isTopThree ? FontWeight.w700 : FontWeight.w500,

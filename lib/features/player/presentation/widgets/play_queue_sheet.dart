@@ -7,6 +7,7 @@ import '../../../../core/l10n/l10n.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/utils/scroll_locate.dart';
 import '../../../../shared/widgets/music_cover_image.dart';
+import '../../../../shared/widgets/song_index_width.dart';
 import '../../../blacklist/application/blacklist_providers.dart';
 import '../../application/playback_controller.dart';
 import '../../domain/models/playback_state.dart';
@@ -214,18 +215,22 @@ class _PlayQueueSheetContentState
                           final isCurrent = index == currentIndex;
                           // 黑名单歌曲：只显示、不可播放，播放时会自动跳过。
                           final blocked = blacklist.isBlocked(queueSong);
+                          // 序号列宽度按队列最大序号的位数自适应：序号列 + 间距 + 封面。
+                          final indexWidth = songIndexWidth(
+                            context,
+                            maxIndex: queue.length,
+                            fontSize: 11,
+                          );
                           return ListTile(
                             enabled: !blocked,
                             leading: SizedBox(
-                              // 四位数序号也不折行：序号列 + 间距 + 封面总宽。
-                              width: 92,
+                              width: indexWidth + 4 + 44,
                               child: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   // 序号：当前播放歌曲用播放图标，其他用数字
                                   SizedBox(
-                                    // 四位数序号不换行。
-                                    width: 44,
+                                    width: indexWidth,
                                     child: isCurrent
                                         ? Icon(
                                             Icons.play_arrow,

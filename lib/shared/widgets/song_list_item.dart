@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io' as io;
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -16,18 +17,26 @@ import '../../shared/services/cover_fetcher.dart';
 import '../../features/plugin/application/music_source_manager.dart';
 import '../../features/plugin/domain/plugin_types.dart';
 import '../../features/plugin/application/plugin_providers.dart';
+import 'song_index_width.dart';
 import 'source_name_tag.dart';
 import 'song_action_sheet.dart';
 
 class SongListItem extends ConsumerWidget {
   static const double itemExtent = 60;
 
-  /// 序号列宽度：四位数（千首以上的歌单 / 队列）也不能折行。
-  /// 勾选框复用同一宽度，切换多选模式时封面位置不会跳动。
-  static const double _indexWidth = 48;
+  /// 多选模式勾选框的最小占位宽度。
+  ///
+  /// 序号列宽度是按位数动态算的（两位数只有十几像素），勾选框塞不进去，
+  /// 所以多选模式下至少留这么宽。
+  static const double _checkboxWidth = 34;
 
   final Song song;
   final int? index;
+
+  /// 列表里的最大序号（通常是歌曲总数）：用来算序号列该占多宽。
+  ///
+  /// 不传时退化成按本行序号算，只适合「一行一首、序号固定」的孤立场景。
+  final int? maxIndex;
   final bool showIndex;
   final bool showCover;
   final bool showQuality;
@@ -79,6 +88,7 @@ class SongListItem extends ConsumerWidget {
     super.key,
     required this.song,
     this.index,
+    this.maxIndex,
     this.showIndex = true,
     this.showCover = true,
     this.showQuality = true,
@@ -152,8 +162,8 @@ class SongListItem extends ConsumerWidget {
                 children: [
                   if (showIndex)
                     selectionMode
-                        ? _buildCheckbox(colors)
-                        : _buildIndex(colors),
+                        ? _buildCheckbox(colors, indexColumnWidth(context))
+                        : _buildIndex(colors, indexColumnWidth(context)),
                   if (showCover) ...[
                     const SizedBox(width: AppSpacing.sm),
                     _buildCover(colors, ref),
@@ -179,13 +189,23 @@ class SongListItem extends ConsumerWidget {
     );
   }
 
+  /// 序号列宽度：按最大序号位数自适应；多选模式至少留出勾选框的位置。
+  double indexColumnWidth(BuildContext context) {
+    final width = songIndexWidth(
+      context,
+      maxIndex: maxIndex ?? ((index ?? 0) + 1),
+      fontSize: 13,
+    );
+    return selectionMode ? math.max(width, _checkboxWidth) : width;
+  }
+
   /// 多选模式下的勾选框。
   ///
   /// 用 [IgnorePointer] 包住，让它只负责展示：整行的点击统一由外层 InkWell
   /// 处理，避免「点勾选框触发两次切换导致状态不变」。
-  Widget _buildCheckbox(ThemeColors colors) {
+  Widget _buildCheckbox(ThemeColors colors, double width) {
     return SizedBox(
-      width: _indexWidth,
+      width: width,
       child: IgnorePointer(
         child: Checkbox(
           value: selected,
@@ -198,21 +218,23 @@ class SongListItem extends ConsumerWidget {
     );
   }
 
-  Widget _buildIndex(ThemeColors colors) {
+  Widget _buildIndex(ThemeColors colors, double width) {
     return SizedBox(
-      // 四位数的序号也不能折行（大歌单 / 队列很容易上千首），
-      // 系统字体放大后仍要留出余量。
-      width: _indexWidth,
+      width: width,
+      // 序号贴着列表左边（不再在固定宽度里居中）：两位数的列表不用白搭一串
+      // 空白，封面也能整体左移。
       child: isPlaying
           ? Icon(Icons.play_arrow, size: 18, color: colors.primary)
           : Text(
               index != null ? '${index! + 1}' : '',
+              maxLines: 1,
+              softWrap: false,
               style: TextStyle(
                 fontSize: 13,
                 color: colors.textHint,
                 fontWeight: FontWeight.w500,
               ),
-              textAlign: TextAlign.center,
+              textAlign: TextAlign.left,
             ),
     );
   }
