@@ -80,6 +80,17 @@ class _LocalPageState extends ConsumerState<LocalPage> {
     if (!hasPermission && mounted) _showPermissionDialog();
   }
 
+  /// 一个扫描目录都没设置时，打开「扫描目录设置」引导用户添加。
+  ///
+  /// 这是「仅扫描已设置的扫描目录」这条规则的兜底：不设目录 = 不扫描，
+  /// 而不是退化成扫描设备全部音乐。
+  Future<void> _promptAddScanDir(ThemeColors colors) async {
+    final repo = ref.read(localMusicRepositoryProvider);
+    await repo.init();
+    if (!mounted || repo.getScannedDirectories().isNotEmpty) return;
+    await _showDirModal(colors);
+  }
+
   void _showPermissionDialog() {
     final colors = ref.read(themeColorsProvider);
     showDialog(
@@ -109,14 +120,18 @@ class _LocalPageState extends ConsumerState<LocalPage> {
               final granted = await ref
                   .read(localMusicNotifierProvider.notifier)
                   .requestPermissionAndScan();
-              if (!granted && mounted) {
+              if (!mounted) return;
+              if (!granted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     content: Text(context.tr('权限被拒绝，无法扫描本地音乐')),
                     duration: const Duration(seconds: 3),
                   ),
                 );
+                return;
               }
+              // 授权后不会自动扫全盘：没配扫描目录就引导去添加。
+              await _promptAddScanDir(colors);
             },
             child: Text(
               context.tr('授权'),
@@ -642,24 +657,12 @@ class _LocalPageState extends ConsumerState<LocalPage> {
           ),
           const SizedBox(height: AppSpacing.sm),
           Text(
-            context.tr('点击下方按钮扫描设备音乐'),
+            context.tr('先添加扫描目录，再扫描其中的音乐'),
             style: TextStyle(fontSize: 13, color: colors.textHint),
           ),
           const SizedBox(height: AppSpacing.lg),
           GestureDetector(
-            onTap: () async {
-              final granted = await ref
-                  .read(localMusicNotifierProvider.notifier)
-                  .requestPermissionAndScan();
-              if (!granted && mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(context.tr('权限被拒绝，无法扫描本地音乐')),
-                    duration: const Duration(seconds: 3),
-                  ),
-                );
-              }
-            },
+            onTap: _scanLibrary,
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
               decoration: BoxDecoration(
@@ -723,17 +726,27 @@ class _LocalPageState extends ConsumerState<LocalPage> {
   }
 
   Future<void> _scanLibrary() async {
-    await ref
+    // 没设置扫描目录就直接打开目录设置：这种情况下扫描没有任何意义，
+    // 也不允许退化成「扫描整机音乐」。
+    final repo = ref.read(localMusicRepositoryProvider);
+    await repo.init();
+    if (!mounted) return;
+    if (repo.getScannedDirectories().isEmpty) {
+      await _showDirModal(ref.read(themeColorsProvider));
+      return;
+    }
+    final granted = await ref
         .read(localMusicNotifierProvider.notifier)
         .requestPermissionAndScan();
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(context.tr('扫描完成')),
-          duration: const Duration(seconds: 2),
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          granted ? context.tr('扫描完成') : context.tr('权限被拒绝，无法扫描本地音乐'),
         ),
-      );
-    }
+        duration: const Duration(seconds: 2),
+      ),
+    );
   }
 
   // ---------------------------------------------------------------- 批量选择
@@ -1101,7 +1114,7 @@ class _LocalPageState extends ConsumerState<LocalPage> {
                       const SizedBox(height: AppSpacing.xs),
                       Text(
                         context.tr(
-                          dirs.isEmpty ? '未设置目录时将扫描设备全部音乐' : '设置目录后仅扫描指定目录下的音乐',
+                          dirs.isEmpty ? '未设置扫描目录时不会扫描任何音乐' : '仅扫描下面这些目录里的音乐',
                         ),
                         style: TextStyle(fontSize: 12, color: colors.textHint),
                       ),
@@ -1112,13 +1125,13 @@ class _LocalPageState extends ConsumerState<LocalPage> {
                           child: Column(
                             children: [
                               Icon(
-                                Icons.all_inclusive,
+                                Icons.folder_off_outlined,
                                 size: 32,
                                 color: colors.primary.withValues(alpha: 0.5),
                               ),
                               const SizedBox(height: AppSpacing.sm),
                               Text(
-                                context.tr('当前：扫描全部音乐'),
+                                context.tr('当前：未设置扫描目录，请添加'),
                                 style: TextStyle(
                                   color: colors.textSecondary,
                                   fontSize: 13,
@@ -1221,7 +1234,7 @@ class _LocalPageState extends ConsumerState<LocalPage> {
                                     border: Border.all(color: colors.divider),
                                   ),
                                   child: Text(
-                                    context.tr('扫描全部'),
+                                    context.tr('清空目录'),
                                     textAlign: TextAlign.center,
                                     style: TextStyle(
                                       fontSize: 14,
@@ -1286,14 +1299,18 @@ class _LocalPageState extends ConsumerState<LocalPage> {
                             await ref
                                 .read(localMusicNotifierProvider.notifier)
                                 .setDirectories(dirs);
-                            await ref
+                            final scanned = await ref
                                 .read(localMusicNotifierProvider.notifier)
                                 .scanAll();
                             if (context.mounted) {
                               Navigator.pop(context);
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
-                                  content: Text(context.tr('目录已保存并重新扫描')),
+                                  content: Text(
+                                    context.tr(
+                                      scanned ? '目录已保存并重新扫描' : '还没有扫描目录，未扫描任何音乐',
+                                    ),
+                                  ),
                                   duration: const Duration(seconds: 2),
                                 ),
                               );

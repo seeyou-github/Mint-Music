@@ -118,8 +118,8 @@ class LocalMusicNotifier extends StateNotifier<AsyncValue<List<Song>>> {
       if (hasPermission) {
         final songs = repo.getLocalSongs();
         // 临时数据库被删除 / 本地歌曲为空，但设置里仍保存着扫描目录时，
-        // 第一次进入「本地」分类自动补扫一次。没有扫描目录就不自动扫描，
-        // 避免在桌面上无意间遍历整个系统音乐目录。
+        // 第一次进入「本地」分类自动补扫一次；没有扫描目录就不自动扫描
+        // （扫描只认「扫描目录设置」里的目录，任何平台都不再遍历整机存储）。
         final shouldAutoScan =
             songs.isEmpty &&
             !_autoScanAttempted &&
@@ -174,6 +174,8 @@ class LocalMusicNotifier extends StateNotifier<AsyncValue<List<Song>>> {
         );
         if (!granted) return false;
       }
+      // 授权后只扫「已设置的扫描目录」；一个目录都没设就什么都不扫，
+      // 由界面引导用户去添加目录（不再默认遍历整机存储）。
       await scanAll();
       return true;
     } catch (e, st) {
@@ -223,23 +225,30 @@ class LocalMusicNotifier extends StateNotifier<AsyncValue<List<Song>>> {
     _ref.invalidate(scannedDirectoriesProvider);
   }
 
-  Future<void> scanAll() async {
+  /// 扫描本地音乐。返回 false 表示没有扫描目录、这次什么都没扫。
+  ///
+  /// 没有配置扫描目录时**不会**退化成「扫描整机音乐」，只提示用户先加目录。
+  Future<bool> scanAll() async {
     try {
       if (state.hasError) {
         state = const AsyncValue.loading();
       }
       final repo = _ref.read(localMusicRepositoryProvider);
-      await repo.scanAll(
+      final scanned = await repo.scanAll(
         onProgress: (progress) {
           _ref.read(scanProgressProvider.notifier).state = progress;
         },
       );
       state = AsyncValue.data(repo.getLocalSongs());
 
-      // 后台预加载封面缓存
-      _preloadCovers(repo.getLocalSongs());
+      if (scanned) {
+        // 后台预加载封面缓存
+        _preloadCovers(repo.getLocalSongs());
+      }
+      return scanned;
     } catch (e, st) {
       state = AsyncValue.error(e, st);
+      return false;
     }
   }
 

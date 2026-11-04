@@ -229,22 +229,37 @@ class LocalMusicRepository {
     return await _audioQuery.permissionsStatus();
   }
 
-  Future<void> scanAll({ScanProgressCallback? onProgress}) async {
-    if (_isScanning) return;
+  /// 扫描本地音乐。
+  ///
+  /// **只扫描「扫描目录设置」里已添加的目录**：一个目录都没设置时直接返回
+  /// false，不做任何扫描。绝不回退成「扫描设备全部音乐」——Android 上刚拿到
+  /// 存储权限就那样扫，会把整机（含外置存储）的音频一次性灌进曲库。
+  /// 返回值表示「这次是否真的扫了」。
+  Future<bool> scanAll({ScanProgressCallback? onProgress}) async {
+    if (_isScanning) return false;
     await init();
+
+    if (_scannedDirs.isEmpty) {
+      debugPrint('[LocalMusic] 未设置扫描目录，跳过扫描');
+      // 复位进度，避免界面上残留「扫描中」状态。
+      final idle = ScanProgress(processed: 0, total: 0, running: false);
+      onScanProgress?.call(idle);
+      onProgress?.call(idle);
+      return false;
+    }
+
     _isScanning = true;
 
     try {
       if (!supportsMediaStore) {
         // 桌面端：没有 MediaStore，直接遍历目录解析文件标签。
-        await _scanDesktop(onProgress);
-        return;
+        return await _scanDesktop(onProgress);
       }
 
       final alreadyGranted = await checkPermission();
       if (!alreadyGranted) {
         final hasPermission = await requestPermission();
-        if (!hasPermission) return;
+        if (!hasPermission) return false;
       }
 
       final startProgress = ScanProgress(processed: 0, total: 0, running: true);
@@ -345,7 +360,9 @@ class LocalMusicRepository {
         );
         onScanProgress?.call(doneProgress);
         onProgress?.call(doneProgress);
+        return true;
       } catch (e) {
+        debugPrint('[LocalMusic] MediaStore 扫描失败: $e');
         final errorProgress = ScanProgress(
           processed: 0,
           total: 0,
@@ -353,25 +370,26 @@ class LocalMusicRepository {
         );
         onScanProgress?.call(errorProgress);
         onProgress?.call(errorProgress);
+        return false;
       }
     } finally {
       _isScanning = false;
     }
   }
 
-  /// 桌面端扫描：遍历已设置的目录（或系统音乐目录），解析文件标签。
+  /// 桌面端扫描：遍历已设置的目录，解析文件标签。
   ///
   /// 与 Android 端 MediaStore 扫描不同，这里直接读文件，所以能拿到内嵌封面，
   /// 并把它写进封面缓存供列表显示。
-  Future<void> _scanDesktop(ScanProgressCallback? onProgress) async {
+  Future<bool> _scanDesktop(ScanProgressCallback? onProgress) async {
     final startProgress = ScanProgress(processed: 0, total: 0, running: true);
     onScanProgress?.call(startProgress);
     onProgress?.call(startProgress);
 
     try {
-      final dirs = _scannedDirs.isNotEmpty
-          ? _scannedDirs.toList()
-          : await _defaultMusicDirectories();
+      // 只扫已设置的目录：没有目录时上游 scanAll 已经拦住了，这里不再回退到
+      // 「系统音乐目录」，避免用户没配目录却把整个 Music 文件夹扫进来。
+      final dirs = _scannedDirs.toList();
 
       final files = <String>[];
       for (final dir in dirs) {
@@ -463,6 +481,7 @@ class LocalMusicRepository {
       );
       onScanProgress?.call(doneProgress);
       onProgress?.call(doneProgress);
+      return true;
     } catch (e) {
       debugPrint('[LocalMusic] 桌面端扫描失败: $e');
       final errorProgress = ScanProgress(
@@ -472,28 +491,8 @@ class LocalMusicRepository {
       );
       onScanProgress?.call(errorProgress);
       onProgress?.call(errorProgress);
+      return false;
     }
-  }
-
-  /// 系统默认音乐目录（未设置扫描目录时使用）。
-  Future<List<String>> _defaultMusicDirectories() async {
-    final home =
-        Platform.environment['USERPROFILE'] ??
-        Platform.environment['HOME'] ??
-        '';
-    if (home.isEmpty) return const [];
-    final candidates = <String>[
-      p.join(home, 'Music'),
-      p.join(home, 'OneDrive', 'Music'),
-      p.join(home, '音乐'),
-    ];
-    final result = <String>[];
-    for (final candidate in candidates) {
-      try {
-        if (await Directory(candidate).exists()) result.add(candidate);
-      } catch (_) {}
-    }
-    return result;
   }
 
   /// 递归列出目录下的音频文件。
