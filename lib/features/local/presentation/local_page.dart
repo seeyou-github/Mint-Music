@@ -243,11 +243,17 @@ class _LocalPageState extends ConsumerState<LocalPage> {
                     Positioned(
                       left: 0,
                       right: 0,
-                      // 宽屏（左侧导航栏）布局下内容区没有迷你播放器，
-                      // 批量操作栏直接贴底；窄屏才需要避开迷你播放器。
-                      bottom: ResponsiveLayout.hasBottomMiniPlayer(context)
-                          ? AppSpacing.miniPlayerHeight
-                          : 0,
+                      // 操作栏紧贴底部：有歌在播时贴着迷你播放器顶部，
+                      // 没歌（迷你播放器是空占位）或宽屏侧边栏布局时直接贴底。
+                      bottom: ResponsiveLayout.batchBarBottomInset(
+                        context,
+                        // 没有歌在播时迷你播放器是空占位，操作栏应该直接贴底。
+                        miniPlayerVisible: ref.watch(
+                          playbackControllerProvider.select(
+                            (s) => s.currentSong != null,
+                          ),
+                        ),
+                      ),
                       child: SongBatchActionBar(
                         colors: colors,
                         controller: _selection,
@@ -550,6 +556,13 @@ class _LocalPageState extends ConsumerState<LocalPage> {
     }
 
     final selecting = _selection.isActive;
+    // 多选时批量操作栏紧贴迷你播放器，列表底部要一并让开。
+    final batchBarInset = ResponsiveLayout.batchBarBottomInset(
+      context,
+      miniPlayerVisible: ref.watch(
+        playbackControllerProvider.select((s) => s.currentSong != null),
+      ),
+    );
     return Stack(
       children: [
         ListView.separated(
@@ -562,7 +575,7 @@ class _LocalPageState extends ConsumerState<LocalPage> {
             bottom:
                 AppSpacing.xxxl +
                 AppSpacing.huge +
-                (selecting ? SongBatchActionBar.height : 0),
+                (selecting ? SongBatchActionBar.height + batchBarInset : 0),
           ),
           itemCount: songs.length,
           separatorBuilder: (_, __) =>

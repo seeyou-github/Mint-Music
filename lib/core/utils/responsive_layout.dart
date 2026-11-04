@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../theme/app_spacing.dart';
+
 /// Device type classification based on screen size.
 enum DeviceType { phone, tablet, desktop }
 
@@ -91,6 +93,36 @@ class ResponsiveLayout {
   /// 迷你播放器，因此底部的批量操作栏应当直接贴底而不是悬空。
   static bool hasBottomMiniPlayer(BuildContext context) {
     return !shouldShowSidebar(context);
+  }
+
+  /// 迷你播放器停在底部导航栏上方时占用的高度。
+  ///
+  /// 手机 56、平板竖屏 64（见 `MiniPlayer`），再加上它与导航栏之间 5px 的
+  /// 间隙（见 `AppShell` 里的 `Positioned(bottom: 5)`）。
+  /// 侧边栏布局下播放器在左侧栏底部，这里返回 0。
+  static double miniPlayerReservedHeight(BuildContext context) {
+    if (shouldShowSidebar(context)) return 0;
+    return (isTablet(context) ? _miniPlayerTabletHeight : _miniPlayerHeight) +
+        _miniPlayerGap;
+  }
+
+  static const double _miniPlayerHeight = 56;
+  static const double _miniPlayerTabletHeight = 64;
+  static const double _miniPlayerGap = 5;
+
+  /// 多选批量操作栏贴在底部时的偏移量。
+  ///
+  /// [miniPlayerVisible] 由调用方按「是否有歌在播」传入：没有歌在播时
+  /// `MiniPlayer` 返回的是空占位，底部其实是空的，操作栏应当直接贴底，
+  /// 否则就会像之前那样在列表中间悬空一大截。
+  /// 操作栏自带 `AppSpacing.sm` 下外边距，这里减掉它才能真正紧挨着播放器。
+  static double batchBarBottomInset(
+    BuildContext context, {
+    required bool miniPlayerVisible,
+  }) {
+    if (!miniPlayerVisible) return 0;
+    final reserved = miniPlayerReservedHeight(context);
+    return reserved > AppSpacing.sm ? reserved - AppSpacing.sm : 0;
   }
 
   // ── Grid configuration ─────────────────────────────────────────────

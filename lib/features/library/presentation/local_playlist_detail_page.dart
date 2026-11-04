@@ -461,11 +461,17 @@ class _LocalPlaylistDetailPageState
                   Positioned(
                     left: 0,
                     right: 0,
-                    // 宽屏（左侧导航栏）布局下内容区没有迷你播放器，
-                    // 批量操作栏直接贴底；窄屏才需要避开迷你播放器。
-                    bottom: ResponsiveLayout.hasBottomMiniPlayer(context)
-                        ? AppSpacing.miniPlayerHeight + AppSpacing.xl
-                        : 0,
+                    // 操作栏紧贴底部：有歌在播时贴着迷你播放器顶部，
+                    // 没歌（迷你播放器是空占位）或宽屏侧边栏布局时直接贴底。
+                    bottom: ResponsiveLayout.batchBarBottomInset(
+                      context,
+                      // 没有歌在播时迷你播放器是空占位，操作栏应该直接贴底。
+                      miniPlayerVisible: ref.watch(
+                        playbackControllerProvider.select(
+                          (s) => s.currentSong != null,
+                        ),
+                      ),
+                    ),
                     child: SongBatchActionBar(
                       colors: colors,
                       controller: _selection,
@@ -1249,6 +1255,14 @@ class _LocalPlaylistDetailPageState
     final bottomInset = ResponsiveLayout.hasBottomMiniPlayer(context)
         ? AppSpacing.miniPlayerHeight + AppSpacing.xxxl
         : AppSpacing.xxxl;
+    // 多选时批量操作栏紧贴迷你播放器，列表底部要一并让开。
+    final batchBarInset = ResponsiveLayout.batchBarBottomInset(
+      context,
+      miniPlayerVisible: ref.watch(
+        playbackControllerProvider.select((s) => s.currentSong != null),
+      ),
+    );
+
     // 只渲染当前页（每页 50 首）；播放 / 多选 / 右滑删除仍用完整列表。
     _pager.clampTo(_sortedSongs.length, hasMore: false);
     final visible = _pager.slice(_sortedSongs);
@@ -1261,7 +1275,9 @@ class _LocalPlaylistDetailPageState
           // 预留迷你播放器高度（56px + 底部 20px 间距），保证最后一首歌曲
           // 能滚动到迷你播放器上方而不被遮挡；多选模式下还要避开批量操作栏。
           padding: EdgeInsets.only(
-            bottom: bottomInset + (selecting ? SongBatchActionBar.height : 0),
+            bottom:
+            bottomInset +
+            (selecting ? SongBatchActionBar.height + batchBarInset : 0),
           ),
           itemCount: visible.length + 1,
           addAutomaticKeepAlives: false,
