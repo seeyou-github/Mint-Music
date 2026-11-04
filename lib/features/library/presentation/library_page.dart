@@ -58,30 +58,18 @@ class LibraryPage extends ConsumerWidget {
     );
   }
 
+  /// 顶部：只放操作按钮，靠左排列。
+  ///
+  /// 原来这里有一个「我的收藏」标题占住左侧、把按钮全推到右边；底部导航已经
+  /// 标明当前是「收藏」分类，标题冗余，去掉后按钮直接从左边开始。
   Widget _buildHeader(BuildContext context, ThemeColors colors, WidgetRef ref) {
-    final isTablet = ResponsiveLayout.isTablet(context);
     return Padding(
       padding: EdgeInsets.symmetric(
         horizontal: ResponsiveLayout.horizontalPadding(context),
         vertical: AppSpacing.md,
       ),
       child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              context.tr('我的收藏'),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: isTablet ? 26 : 22,
-                fontWeight: FontWeight.bold,
-                color: colors.textPrimary,
-              ),
-            ),
-          ),
-          const SizedBox(width: AppSpacing.md),
-          _buildActionButtons(context, colors, ref),
-        ],
+        children: [_buildActionButtons(context, colors, ref)],
       ),
     );
   }
