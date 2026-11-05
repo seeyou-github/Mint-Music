@@ -1193,7 +1193,8 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
             ),
           ),
           // 数据源插件的描述都是「只提供搜索… / 播放需要在…指定播放源」这类
-          // 说明，卡片里不再重复展示；普通插件的描述是作者写的使用说明，保留。
+          // 说明，卡片里不再重复展示；播放音源插件的描述是作者写的使用说明，
+          // 默认折叠成两行，点「展开」看全文。
           if (plugin.description.isNotEmpty && !plugin.isDataSource)
             Padding(
               padding: const EdgeInsets.fromLTRB(
@@ -1202,16 +1203,9 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
                 AppSpacing.md,
                 0,
               ),
-              // 描述整段显示：插件作者常把「支持哪些平台 / 需要什么凭据 / 已知
-              // 问题」写在这里，截成两行加省略号等于把最有用的部分删了。
-              // 行高 1.35 让多行不至于挤在一起。
-              child: Text(
-                plugin.description,
-                style: TextStyle(
-                  fontSize: 12,
-                  height: 1.35,
-                  color: colors.textHint,
-                ),
+              child: _ExpandableDescription(
+                text: plugin.description,
+                colors: colors,
               ),
             ),
           // 只有一个音源时不需要单独开关（插件总开关已经够用）。
@@ -2543,6 +2537,102 @@ class _PluginCredentialSectionState
           ],
         ],
       ),
+    );
+  }
+}
+
+/// 插件卡片里的描述文字：默认只显示 2 行，超出时给「展开 / 折叠」按钮。
+///
+/// 用 [TextPainter] 先量一次「2 行放不放得下」，短描述就不显示按钮，
+/// 避免多出一个点了也没变化的控件。
+class _ExpandableDescription extends StatefulWidget {
+  const _ExpandableDescription({required this.text, required this.colors});
+
+  final String text;
+  final ThemeColors colors;
+
+  @override
+  State<_ExpandableDescription> createState() => _ExpandableDescriptionState();
+}
+
+class _ExpandableDescriptionState extends State<_ExpandableDescription> {
+  static const int _collapsedLines = 2;
+
+  bool _expanded = false;
+
+  /// 描述文字样式：在默认文字样式上叠加字号 / 行高 / 颜色。
+  ///
+  /// 必须基于 DefaultTextStyle 合并，量宽和实际渲染才会用同一套字体
+  /// （设置里可以换全局字体，直接写 TextStyle 量出来的行数会和显示不一致）。
+  TextStyle _styleOf(BuildContext context) =>
+      DefaultTextStyle.of(context).style.merge(
+        TextStyle(fontSize: 12, height: 1.35, color: widget.colors.textHint),
+      );
+
+  /// 折叠状态下是否会被截断（只有被截断才需要展开按钮）。
+  bool _overflows(BuildContext context, double maxWidth, TextStyle style) {
+    final painter = TextPainter(
+      text: TextSpan(text: widget.text, style: style),
+      maxLines: _collapsedLines,
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+      locale: Localizations.maybeLocaleOf(context),
+    )..layout(maxWidth: maxWidth);
+    final exceeded = painter.didExceedMaxLines;
+    painter.dispose();
+    return exceeded;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final style = _styleOf(context);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // 拿不到宽度约束时按「整段显示」处理，不加按钮。
+        if (!constraints.hasBoundedWidth ||
+            !_overflows(context, constraints.maxWidth, style)) {
+          return Text(widget.text, style: style);
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              widget.text,
+              style: style,
+              maxLines: _expanded ? null : _collapsedLines,
+              overflow: _expanded
+                  ? TextOverflow.visible
+                  : TextOverflow.ellipsis,
+            ),
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => setState(() => _expanded = !_expanded),
+              child: Padding(
+                padding: const EdgeInsets.only(top: 2, bottom: 2),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _expanded ? context.tr('折叠') : context.tr('展开'),
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: widget.colors.primary,
+                      ),
+                    ),
+                    Icon(
+                      _expanded
+                          ? Icons.keyboard_arrow_up
+                          : Icons.keyboard_arrow_down,
+                      size: 14,
+                      color: widget.colors.primary,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }
