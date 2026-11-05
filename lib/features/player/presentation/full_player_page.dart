@@ -1327,32 +1327,83 @@ class _PlayerActions extends ConsumerWidget {
 }
 
 /// 歌手名下方的「正在播放的歌词」（Android）：一行歌词。
-class _InlineLyricLine extends ConsumerWidget {
+class _InlineLyricLine extends ConsumerStatefulWidget {
   const _InlineLyricLine({required this.fontSize});
 
   /// 与歌手名同字号。
   final double fontSize;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final lines = ref.watch(lyricControllerProvider.select((s) => s.lines));
+  ConsumerState<_InlineLyricLine> createState() => _InlineLyricLineState();
+}
+
+class _InlineLyricLineState extends ConsumerState<_InlineLyricLine> {
+  /// 已经为哪一份歌词（音源 + 歌曲）主动触发过加载。
+  ///
+  /// 歌词控制器内部虽然监听切歌，但它只在「已经被监听过」之后才存在：
+  /// 打开详情页时正在播的这首歌不会被补加载，必须等用户切到歌词页才取词。
+  /// 单行歌词是详情页的常驻内容，这里自己保证当前歌曲的歌词已经请求过。
+  String? _requestedLyricKey;
+
+  String _lyricKeyOf(Song song) => '${song.id}|${song.lyricSourceId}';
+
+  void _requestLyricIfNeeded(Song? song) {
+    if (song == null) return;
+    final key = _lyricKeyOf(song);
+    if (_requestedLyricKey == key) return;
+    final lyric = ref.read(lyricControllerProvider);
+    // 歌词已经属于这首歌（加载中或已就绪）就不用再请求了。
+    if (lyric.currentSongId == song.id &&
+        lyric.currentSongSource == song.lyricSourceId) {
+      _requestedLyricKey = key;
+      return;
+    }
+    _requestedLyricKey = key;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final current = ref.read(playbackControllerProvider).currentSong;
+      if (current == null) return;
+      // 期间又换歌了：交给新歌自己的那次请求。
+      if (_lyricKeyOf(current) != key) return;
+      // 控制器自己的切歌监听可能已经先取上了，别重复请求。
+      final latest = ref.read(lyricControllerProvider);
+      if (latest.currentSongId == current.id &&
+          latest.currentSongSource == current.lyricSourceId) {
+        return;
+      }
+      unawaited(ref.read(lyricControllerProvider.notifier).loadLyrics(current));
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final lyricState = ref.watch(lyricControllerProvider);
     final position = ref.watch(
       playbackControllerProvider.select((s) => s.position),
     );
+    final song = ref.read(playbackControllerProvider).currentSong;
+    _requestLyricIfNeeded(song);
 
+    final lines = lyricState.lines;
     final positionMs = position.inMilliseconds;
     var index = lines.isEmpty
         ? -1
         : lines.lastIndexWhere((line) => line.startTimeMs <= positionMs);
     if (index < 0 && lines.isNotEmpty) index = 0;
     final text = index >= 0 ? lines[index].plainText.trim() : '';
+    // 还在取词（含歌词不属于当前歌的瞬间）时不要说「暂无歌词」，
+    // 否则切歌瞬间会闪一下「暂无歌词」。
+    final loading =
+        text.isEmpty &&
+        (lyricState.isLoading ||
+            (song != null && lyricState.currentSongId != song.id));
 
     return Text(
-      text.isEmpty ? context.tr('暂无歌词') : text,
+      text.isNotEmpty ? text : context.tr(loading ? '歌词加载中…' : '暂无歌词'),
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
       style: TextStyle(
-        fontSize: fontSize,
+        fontSize: widget.fontSize,
         color: Colors.white.withValues(alpha: text.isEmpty ? 0.35 : 0.7),
       ),
     );
