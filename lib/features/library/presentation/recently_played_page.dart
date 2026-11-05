@@ -1061,7 +1061,13 @@ class _RankRowState extends ConsumerState<_RankRow> {
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 140),
           margin: const EdgeInsets.symmetric(vertical: 2),
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          // 左边不留内边距：名次列直接从列表左边缘起算，这样「屏幕左边缘 →
+          // 名次」和「名次 → 封面」两段间距才能做成一样宽（见下面的名次列）。
+          padding: const EdgeInsets.only(
+            right: AppSpacing.sm,
+            top: 4,
+            bottom: 4,
+          ),
           decoration: BoxDecoration(
             color: _hovered ? hoverColor : Colors.transparent,
             borderRadius: BorderRadius.circular(AppRadius.md),
@@ -1069,8 +1075,9 @@ class _RankRowState extends ConsumerState<_RankRow> {
           child: Row(
             children: [
               SizedBox(
-                // 序号列宽度按榜单最大排名的位数自适应（最多 100 名），
-                // 序号贴着左侧，不再在一整块空白里居中。
+                // 名次列：宽度按榜单最大名次的位数自适应（最多 100 名），
+                // 数字水平居中；列后留的间距与列表左内边距相同，所以
+                // 「屏幕左边缘 → 数字」和「数字 → 封面」两段一样宽。
                 width: songIndexWidth(
                   context,
                   maxIndex: widget.queue.length,
@@ -1079,7 +1086,7 @@ class _RankRowState extends ConsumerState<_RankRow> {
                 ),
                 child: Text(
                   '${widget.rank}',
-                  textAlign: TextAlign.left,
+                  textAlign: TextAlign.center,
                   maxLines: 1,
                   softWrap: false,
                   style: TextStyle(
@@ -1089,7 +1096,7 @@ class _RankRowState extends ConsumerState<_RankRow> {
                   ),
                 ),
               ),
-              const SizedBox(width: 4),
+              const SizedBox(width: AppSpacing.lg),
               ClipRRect(
                 borderRadius: BorderRadius.circular(AppRadius.sm),
                 child: MusicCoverImage(
