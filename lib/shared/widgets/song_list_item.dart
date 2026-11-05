@@ -150,9 +150,13 @@ class SongListItem extends ConsumerWidget {
             ? colors.primary.withValues(alpha: 0.08)
             : Colors.transparent,
         child: Padding(
-          padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.md,
-            vertical: AppSpacing.sm,
+          // 右侧留白减半：行尾的「更多」按钮不再离屏幕边缘那么远，列表右边
+          // 空出一大条的问题就没了（左侧保持原样，序号照旧贴边）。
+          padding: const EdgeInsets.only(
+            left: AppSpacing.md,
+            right: AppSpacing.md / 2,
+            top: AppSpacing.sm,
+            bottom: AppSpacing.sm,
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
