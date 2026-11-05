@@ -12,11 +12,13 @@ import '../../features/player/application/mini_player_visibility.dart';
 
 /// 列表底部的胶囊分页条，加载中禁用导航。
 ///
-/// 布局规则（按宽度自适应，全部居中）：
+/// 布局规则（按宽度自适应，整行铺满、间距均分）：
 /// - 所有页码都能放下 → 只显示页码按钮，**不显示「第 N 页」下拉**；
 /// - 放不下时 → 首页 + 当前页前后各一页 + 末页，跨页用省略号，
 ///   右侧紧跟「第 N 页」下拉（下拉紧挨着最后一个页码按钮）；
 /// - 宽屏（>=760）额外在两端加「上一页 / 下一页」。
+/// - 整行横向铺满：第一个元素贴列表左边、最后一个贴右边，和上方的
+///   歌单 / 歌曲列表左右边缘对齐，中间的空隙均分。
 ///
 /// [docked] 为 true 时表示分页条**常驻在内容区底部**（不是列表项），
 /// 会给自身补一段下内边距避开 Android 的迷你播放器，避免被播放栏盖住。
@@ -185,17 +187,23 @@ class _PageBarState extends ConsumerState<PageBar> {
               ],
             ];
 
-            // 居中：内容比一行窄时正中显示；极端窄屏（超大字号 / 极小屏）
-            // 放不下时退化成可横滚，避免出现溢出条纹。
-            return SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: ConstrainedBox(
-                constraints: BoxConstraints(minWidth: constraints.maxWidth),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: children,
-                ),
-              ),
+            // 铺满整行、间距均分：第一个页码贴左边、「第 N 页」下拉贴右边，
+            // 左右边缘和上方的歌单 / 歌曲列表对齐（以前整组居中，比列表窄一截，
+            // 看起来像浮在中间）。
+            final contentWidth =
+                _windowWidth(context, pages) +
+                (showDropdown ? AppSpacing.xs + _dropdownWidth(context) : 0) +
+                (wide ? (_stepButtonWidth + _stepGap) * 2 : 0);
+            // 极端窄屏（超大字号 / 极小屏）放不下时退化成可横滚，避免溢出条纹。
+            if (contentWidth > constraints.maxWidth) {
+              return SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(mainAxisSize: MainAxisSize.min, children: children),
+              );
+            }
+            return Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: children,
             );
           },
         ),
