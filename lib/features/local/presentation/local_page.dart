@@ -563,8 +563,10 @@ class _LocalPageState extends ConsumerState<LocalPage> {
         ListView.separated(
           controller: _scrollController,
           padding: EdgeInsets.only(
-            left: AppSpacing.lg,
-            right: AppSpacing.lg,
+            // 左右各 8（原来是 16）：配合行内 4px 内边距，序号左边距、
+            // 「更多」按钮到屏幕边缘的距离都缩到原来的一半。
+            left: AppSpacing.sm,
+            right: AppSpacing.sm,
             // 底部多留出空间，避免最后一项被悬浮的迷你播放器遮挡；
             // 多选模式下还要再避开底部批量操作栏。
             bottom:
@@ -1413,7 +1415,12 @@ class _LocalSongItem extends ConsumerWidget {
             : () => onPlay(song),
         onLongPress: selectionMode ? null : onLongPress,
         child: Container(
-          padding: const EdgeInsets.all(AppSpacing.sm),
+          // 左右内边距减半（8 → 4），上下保持 8：行高 64 = 封面 48 + 上下各 8，
+          // 竖向一旦改动，`itemExtent` 定位就会偏。
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.xs,
+            vertical: AppSpacing.sm,
+          ),
           decoration: BoxDecoration(
             color: selected
                 ? colors.primary.withValues(alpha: 0.10)
@@ -1540,7 +1547,14 @@ class _LocalSongItem extends ConsumerWidget {
                 GestureDetector(
                   onTap: () => onContextMenu(colors, song),
                   child: Padding(
-                    padding: const EdgeInsets.all(4),
+                    // 右侧只留 2（原来 4），配合行内 4px：⋮ 到屏幕边缘
+                    // 由 28 收到 14。
+                    padding: const EdgeInsets.only(
+                      left: AppSpacing.xs,
+                      right: 2,
+                      top: AppSpacing.xs,
+                      bottom: AppSpacing.xs,
+                    ),
                     child: Icon(
                       Icons.more_vert,
                       size: 18,
