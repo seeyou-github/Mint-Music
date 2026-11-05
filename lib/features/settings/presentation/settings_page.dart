@@ -1848,7 +1848,6 @@ class _PlaybackContent extends ConsumerWidget {
         SettingRow(
           icon: Icons.playlist_add_check,
           title: '标记歌曲播放状态',
-          subtitle: '记录每首歌的播放进度，歌曲列表显示「已听 N%」',
           trailing: Switch(
             value: markPlayedStatus,
             onChanged: (v) => _persistBool(
@@ -1866,7 +1865,6 @@ class _PlaybackContent extends ConsumerWidget {
         SettingRow(
           icon: Icons.workspace_premium_outlined,
           title: '隐藏B站会员专属歌曲',
-          subtitle: '充电专属 / 大会员专享作品不出现在歌曲列表，已收藏的歌单也按此开关隐藏',
           trailing: Switch(
             value: hideVipExclusive,
             onChanged: (v) {
@@ -1888,7 +1886,6 @@ class _PlaybackContent extends ConsumerWidget {
         SettingRow(
           icon: Icons.timer_outlined,
           title: '播放下载超时',
-          subtitle: '音频加载/下载的等待上限，超时后自动换源或提示失败',
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
             children: [

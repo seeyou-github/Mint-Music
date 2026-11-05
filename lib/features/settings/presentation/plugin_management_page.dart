@@ -676,11 +676,6 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
               ),
           ],
         ),
-        const SizedBox(height: AppSpacing.xs),
-        Text(
-          context.tr('只提供搜索 / 歌单 / 榜单等数据，播放时使用下面指定的播放源'),
-          style: TextStyle(fontSize: 12, color: colors.textHint),
-        ),
         const SizedBox(height: AppSpacing.md),
         if (dataSources.isEmpty)
           Container(
@@ -765,7 +760,7 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
-                  context.tr('播放源（自动匹配，按优先级）'),
+                  context.tr('播放源'),
                   style: TextStyle(fontSize: 12, color: colors.textSecondary),
                 ),
               ),
@@ -810,15 +805,6 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
               );
             },
           ),
-          Padding(
-            padding: const EdgeInsets.only(left: 22, top: 2),
-            child: Text(
-              context.tr(
-                '拖动调整顺序，靠上优先；全部失败则停止播放（只统计洛雪 / 澜音格式音源）',
-              ),
-              style: TextStyle(fontSize: 11, color: colors.textHint),
-            ),
-          ),
         ],
       ),
     );
@@ -834,21 +820,6 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
   }) {
     final name = manager.sourceDisplayName(sourceId);
     final loginState = manager.loginStateForSourceId(sourceId);
-    final qualities = manager.getQualitiesForSourceId(sourceId);
-    final playable = [
-      for (final quality in qualities)
-        if (!manager
-            .getLoginGatedQualities(sourceId)
-            .contains(quality))
-          quality,
-    ];
-    final qualityText = qualities.isEmpty
-        ? context.tr('音质未声明')
-        : (playable.length == qualities.length
-              ? qualities.join(' · ')
-              : '${playable.join(' · ')}（需登录：'
-                    '${qualities.length - playable.length} 档）');
-
     final (Color? badgeColor, String? badgeText) = switch (loginState) {
       SourceLoginState.loggedIn => (colors.primary, context.tr('已登录')),
       SourceLoginState.loggedOut => (colors.textHint, context.tr('未登录')),
@@ -903,12 +874,6 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
                       ),
                     ],
                   ],
-                ),
-                Text(
-                  qualityText,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 10, color: colors.textHint),
                 ),
               ],
             ),
@@ -1227,7 +1192,9 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
               ],
             ),
           ),
-          if (plugin.description.isNotEmpty)
+          // 数据源插件的描述都是「只提供搜索… / 播放需要在…指定播放源」这类
+          // 说明，卡片里不再重复展示；普通插件的描述是作者写的使用说明，保留。
+          if (plugin.description.isNotEmpty && !plugin.isDataSource)
             Padding(
               padding: const EdgeInsets.fromLTRB(
                 AppSpacing.md,
@@ -1255,11 +1222,6 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    context.tr('插件自带音源（可单独开关）'),
-                    style: TextStyle(fontSize: 11, color: colors.textHint),
-                  ),
-                  const SizedBox(height: 2),
                   ...plugin.supportedSources.map(
                     (source) => _buildPluginSourceRow(
                       plugin,

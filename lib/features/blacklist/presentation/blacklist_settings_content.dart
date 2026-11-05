@@ -112,12 +112,7 @@ class _BlacklistSettingsContentState
                 color: colors.textSecondary,
               ),
             ),
-            const SizedBox(height: AppSpacing.xs),
-            Text(
-              context.tr('被拉黑的歌曲不会播放，列表里显示「黑名单」标签；播放时自动跳过。'),
-              style: TextStyle(fontSize: 12, color: colors.textHint),
-            ),
-            const SizedBox(height: AppSpacing.md),
+            const SizedBox(height: AppSpacing.sm),
             if (_tab == _BlacklistTab.songs)
               _buildSongList(colors, keyword)
             else
