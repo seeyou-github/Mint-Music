@@ -30,10 +30,15 @@ Future<String?> syncPlaylistsNow(WidgetRef ref) async {
   try {
     // 先确保本地歌单已就绪（首次启动会创建「我的收藏」），避免用空数据覆盖远端。
     // 整次同步套 1 分钟超时：服务器连上了却不回话时不能一直挂着。
-    await SyncTimeout.guard(() async {
+    // 整次同步套 1 分钟超时：服务器连上了却不回话时不能一直挂着；
+    // 超时会连带取消底层 HTTP 请求。
+    final op = SyncAttempt(1);
+    await op.run(() async {
       await ref.read(playlistsProvider.future);
-      await PlaylistSyncService.pullAndMerge(WebDavService(config));
-    }(), attempt: 1);
+      await PlaylistSyncService.pullAndMerge(
+        WebDavService(config, cancelToken: op.cancelToken),
+      );
+    }());
     ref.invalidate(playlistsProvider);
     status.succeed();
     return null;

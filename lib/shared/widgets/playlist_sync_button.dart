@@ -57,11 +57,15 @@ class _PlaylistSyncButtonState extends ConsumerState<PlaylistSyncButton> {
       }
       // 整次尝试（等本地歌单 + 拉取合并）共用一个超时，避免服务器
       // 「连上了但一直不回」时界面无限停在「同步中」。
-      await SyncTimeout.guard(() async {
+      // 超时会连带取消底层 HTTP 请求（迟到的响应不会被合并）。
+      final op = SyncAttempt(_attempt);
+      await op.run(() async {
         // 确保本地歌单（含「我的收藏」）已就绪，再与远端合并。
         await ref.read(playlistsProvider.future);
-        await PlaylistSyncService.pullAndMerge(WebDavService(config));
-      }(), attempt: _attempt);
+        await PlaylistSyncService.pullAndMerge(
+          WebDavService(config, cancelToken: op.cancelToken),
+        );
+      }());
       if (!mounted) return;
       ref.invalidate(playlistsProvider);
       setState(() => _phase = _SyncPhase.success);

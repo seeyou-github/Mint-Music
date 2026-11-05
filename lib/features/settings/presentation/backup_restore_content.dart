@@ -217,9 +217,14 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
       final bytes = await BackupService.createBackup();
       final fileName = BackupService.buildBackupFileName();
       // 服务器「连上了但一直不回」时不能让进度条无限转，整次上传套超时。
-      await SyncTimeout.guard(
-        WebDavService(config).uploadBackup(bytes, fileName),
-        attempt: _backupAttempt,
+      // 服务器「连上了但一直不回」时不能让进度条无限转，整次上传套超时；
+      // 超时会连带取消这次 PUT 请求。
+      final op = SyncAttempt(_backupAttempt);
+      await op.run(
+        WebDavService(
+          config,
+          cancelToken: op.cancelToken,
+        ).uploadBackup(bytes, fileName),
       );
       _closeProgress();
       _toast(tr('备份上传成功'));
@@ -256,9 +261,9 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
     _showProgress(tr('正在读取 WebDAV 备份列表...'));
     List<RemoteBackupFile> files;
     try {
-      files = await SyncTimeout.guard(
-        WebDavService(config).listBackups(),
-        attempt: _restoreAttempt,
+      final listOp = SyncAttempt(_restoreAttempt);
+      files = await listOp.run(
+        WebDavService(config, cancelToken: listOp.cancelToken).listBackups(),
       );
     } catch (e) {
       _closeProgress();
@@ -291,9 +296,12 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
     setState(() => _busy = true);
     _showProgress(tr('正在下载并还原...'));
     try {
-      final bytes = await SyncTimeout.guard(
-        WebDavService(config).downloadBackup(picked.path),
-        attempt: _restoreAttempt,
+      final downloadOp = SyncAttempt(_restoreAttempt);
+      final bytes = await downloadOp.run(
+        WebDavService(
+          config,
+          cancelToken: downloadOp.cancelToken,
+        ).downloadBackup(picked.path),
       );
       await BackupService.restoreBackup(bytes);
       _closeProgress();

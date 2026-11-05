@@ -56,9 +56,13 @@ class _AppState extends ConsumerState<App> {
         debugPrint('[App] 本地歌单加载失败，仍尝试远端同步: $e');
       }
       // 启动时的一次性同步同样套 1 分钟超时，避免启动流程被卡住。
-      await SyncTimeout.guard(
-        PlaylistSyncService.pullAndMerge(WebDavService(config)),
-        attempt: 1,
+      // 启动时的一次性同步同样套 1 分钟超时，避免启动流程被卡住；
+      // 超时会连带取消底层 HTTP 请求。
+      final op = SyncAttempt(1);
+      await op.run(
+        PlaylistSyncService.pullAndMerge(
+          WebDavService(config, cancelToken: op.cancelToken),
+        ),
       );
       if (!mounted) return;
       ref.invalidate(playlistsProvider);

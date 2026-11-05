@@ -124,9 +124,21 @@ class RemoteBackupFile {
 
 /// WebDAV 客户端封装：备份上传 / 下载 / 列表，歌单 JSON 的读写。
 class WebDavService {
-  WebDavService(this.config);
+  WebDavService(this.config, {dio.CancelToken? cancelToken})
+    : _cancelToken = cancelToken;
 
   final WebDavConfig config;
+
+  /// 本次操作的取消令牌（见 `SyncAttempt`）。
+  ///
+  /// 超时后它会被 cancel，正在等待的请求立刻结束，服务器迟到的响应也不会
+  /// 再被写盘 / 合并。为 null 时（后台推送、连接测试）不参与取消。
+  final dio.CancelToken? _cancelToken;
+
+  /// 本次操作是否已被取消（超时 / 主动取消）。
+  ///
+  /// 上层在把结果写盘之前先看一眼：取消后即使数据已经拿到，也当作失败丢弃。
+  bool get isCancelled => _cancelToken?.isCancelled ?? false;
 
   webdav.Client? _client;
 
@@ -163,6 +175,7 @@ class WebDavService {
         client,
         'GET',
         target,
+        cancelToken: _cancelToken,
         optionsHandler: (options) {
           options.responseType = dio.ResponseType.bytes;
           options.followRedirects = true;
@@ -213,6 +226,7 @@ class WebDavService {
         'PUT',
         target,
         data: bytes,
+        cancelToken: _cancelToken,
         optionsHandler: (options) {
           options.followRedirects = false;
           options.validateStatus = (status) => status != null;
@@ -273,7 +287,7 @@ class WebDavService {
     if (!config.isConfigured) return 'WebDAV 未配置';
     try {
       final client = _buildClient();
-      await client.readDir(backupDir.isEmpty ? '/' : backupDir);
+      await client.readDir(backupDir.isEmpty ? '/' : backupDir, _cancelToken);
       return '';
     } catch (e) {
       return '连接失败：$e';
@@ -287,7 +301,7 @@ class WebDavService {
     if (path.isEmpty) return;
     final client = _buildClient();
     try {
-      await client.mkdir(path);
+      await client.mkdir(path, _cancelToken);
     } catch (_) {
       // 目录已存在时服务端会报错，忽略即可。
     }
@@ -308,7 +322,7 @@ class WebDavService {
     _requireConfigured();
     final client = _buildClient();
     final dir = backupDir.isEmpty ? '/' : backupDir;
-    final items = await client.readDir(dir);
+    final items = await client.readDir(dir, _cancelToken);
     final result = <RemoteBackupFile>[];
     for (final item in items) {
       final dyn = item as dynamic;
@@ -351,7 +365,7 @@ class WebDavService {
   Future<void> deleteBackup(String path) async {
     _requireConfigured();
     final client = _buildClient();
-    await client.remove(path);
+    await client.remove(path, _cancelToken);
   }
 
   // ---------------------------------------------------------------- 歌单同步

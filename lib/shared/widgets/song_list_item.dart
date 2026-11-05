@@ -611,23 +611,32 @@ class SongListItem extends ConsumerWidget {
 
   /// 「更多」按钮的宽度：图标 20，左右各留 4。
   ///
-  /// 行尾内边距为 0 时，三个点距屏幕右缘 ≈ 4 + 8.3（more_vert 图标里那三个点
-  /// 本身只占中间 4dp）≈ 12dp，正好和序号距屏幕左缘的 12dp 对齐。
+  /// 行尾内边距为 0 时，三个点距屏幕右缘 = 4（按钮内留白）+ 8.3（more_vert
+  /// 图标里那三个点本身只占中间约 3.3dp）≈ 12dp，正好和序号距屏幕左缘的
+  /// 12dp（[AppSpacing.md]）对齐。
   static const double _menuButtonWidth = 28;
 
+  /// 「更多」按钮的高度（与行内其它元素居中对齐即可，撑满行高的点击区）。
+  static const double _menuButtonHeight = 36;
+
   Widget _buildMenuButton(ThemeColors colors, BuildContext context) {
-    return IconButton(
-      icon: Icon(Icons.more_vert, size: 20, color: colors.textHint),
-      onPressed: onMenuTap ?? () => SongActionSheet.show(context, song: song),
-      // 默认 IconButton 带 48dp 的最小点击区（tapTargetSize: padded），20dp 的
-      // 图标居中后在右边白留 14dp；光调行内边距压不下去，蓝色高亮区也会
-      // 顶到屏幕边缘。这里改成 shrinkWrap 并固定 28dp 宽，图标离边缘的距离
-      // 才是可控的。
-      style: IconButton.styleFrom(
+    // 外面再套一层固定尺寸：IconButton 的 tapTargetSize / 默认 48dp 最小点击区
+    // 在不同 Flutter 版本里的生效方式不一致，只写 style 有可能被忽略，结果是
+    // 按钮仍有 48dp 宽、图标被推到里面 14dp，右侧间距怎么调都下不去。
+    // 用 SizedBox 给死尺寸，子级必然按 28×36 布局，图标严格居中。
+    return SizedBox(
+      width: _menuButtonWidth,
+      height: _menuButtonHeight,
+      child: IconButton(
+        icon: Icon(Icons.more_vert, size: 20, color: colors.textHint),
+        onPressed: onMenuTap ?? () => SongActionSheet.show(context, song: song),
         padding: EdgeInsets.zero,
-        minimumSize: const Size(_menuButtonWidth, 36),
-        maximumSize: const Size(_menuButtonWidth, 36),
-        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        style: IconButton.styleFrom(
+          padding: EdgeInsets.zero,
+          minimumSize: const Size(_menuButtonWidth, _menuButtonHeight),
+          maximumSize: const Size(_menuButtonWidth, _menuButtonHeight),
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
       ),
     );
   }
