@@ -222,12 +222,45 @@ class LocalMusicRepository {
     await _flushIndex();
   }
 
+  /// 用一整份目录列表替换当前扫描目录。
+  ///
+  /// 目录弹窗里的「清空目录」「删除单条」「添加文件夹」「确认」都走这里，
+  /// 所以除了写配置，还必须让歌曲索引和新的目录集合保持一致：目录被移除
+  /// 后，它下面的歌也要从内存和临时库 `local_songs` 表里一起删掉。否则
+  /// 清空目录时 `scanAll()` 因没有目录直接跳过，旧歌会一直留在列表里，
+  /// 重启后又从数据库读回来（「清了目录但歌还在」）。
   Future<void> setDirectories(List<String> dirs) async {
     await init();
     _scannedDirs.clear();
     _scannedDirs.addAll(dirs.where((d) => d.isNotEmpty));
+    final normalizedDirs = [
+      for (final dir in _scannedDirs) dir.replaceAll('\\', '/'),
+    ];
+    _songsMap.removeWhere((_, song) {
+      // 一个目录都不剩：整个本地歌曲索引清空。
+      if (normalizedDirs.isEmpty) return true;
+      final fp = (song.filePath ?? '').replaceAll('\\', '/');
+      // 没有文件路径就无法归属任何目录，同样清掉。
+      if (fp.isEmpty) return true;
+      // 与 scanAll 的目录过滤判据保持一致：不在任何现存目录下的歌删掉。
+      return !normalizedDirs.any((dir) => fp.startsWith(dir));
+    });
     await _persistDirectories();
+    if (normalizedDirs.isEmpty) await _clearLegacyDirTable();
+    // _persistIndex 会先 DELETE FROM local_songs 再写当前 _songsMap，
+    // 所以这一步同时把数据库里的相关缓存清干净。
     await _flushIndex();
+  }
+
+  /// 旧版本把扫描目录存在临时库 `local_dirs` 表里（现在只存 settings.json）。
+  /// 清空目录时一并删掉，避免以后走迁移路径又把已清空的目录读回来。
+  Future<void> _clearLegacyDirTable() async {
+    try {
+      final db = await AppDatabase.cacheDatabase();
+      await db.delete('local_dirs');
+    } catch (e) {
+      debugPrint('[LocalMusic] 清空旧目录表失败: $e');
+    }
   }
 
   Future<bool> requestPermission() async {
