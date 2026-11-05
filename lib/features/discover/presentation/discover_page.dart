@@ -109,6 +109,16 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
   bool _pagingLoading = false;
   int _pagingGeneration = 0;
 
+  /// 顶部分类顺序（左右滑动切换用，滑动循环绕回）。
+  static const List<DiscoverTab> _tabOrder = [
+    DiscoverTab.playlists,
+    DiscoverTab.leaderboards,
+    DiscoverTab.radio,
+  ];
+
+  /// 本次横向滑动累计的位移（判断是不是一次「明确的」左右滑）。
+  double _tabSwipeDx = 0;
+
   @override
   void initState() {
     super.initState();
@@ -324,11 +334,23 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
             _buildHeader(context, colors),
             const SizedBox(height: AppSpacing.sm),
             Expanded(
-              child: switch (tab) {
-                DiscoverTab.playlists => _buildPlaylistsTab(colors),
-                DiscoverTab.leaderboards => _buildLeaderboardsTab(colors),
-                DiscoverTab.radio => const RadioPanel(),
-              },
+              child: GestureDetector(
+                // Android：左右滑动切换顶部分类（循环）。横向滚动的内容
+                // （分类标签行等）是更深的手势识别器，会自己赢下手势，不受影响。
+                behavior: HitTestBehavior.translucent,
+                onHorizontalDragStart: Platform.isAndroid
+                    ? _onTabSwipeStart
+                    : null,
+                onHorizontalDragUpdate: Platform.isAndroid
+                    ? _onTabSwipeUpdate
+                    : null,
+                onHorizontalDragEnd: Platform.isAndroid ? _onTabSwipeEnd : null,
+                child: switch (tab) {
+                  DiscoverTab.playlists => _buildPlaylistsTab(colors),
+                  DiscoverTab.leaderboards => _buildLeaderboardsTab(colors),
+                  DiscoverTab.radio => const RadioPanel(),
+                },
+              ),
             ),
           ],
         ),
@@ -385,6 +407,37 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
           .read(pluginInitializedProvider.future)
           .timeout(const Duration(seconds: 8));
     } catch (_) {}
+  }
+
+  void _onTabSwipeStart(DragStartDetails details) => _tabSwipeDx = 0;
+
+  void _onTabSwipeUpdate(DragUpdateDetails details) =>
+      _tabSwipeDx += details.delta.dx;
+
+  /// 左右滑动切换顶部分类（Android）。
+  ///
+  /// 方向跟手势走：手指往左滑 = 下一个分类、往右滑 = 上一个，两端循环
+  /// （电台再往左回到歌单）。位移不够就靠甩动速度判断，避免轻轻一碰就切。
+  void _onTabSwipeEnd(DragEndDetails details) {
+    final velocity = details.primaryVelocity ?? 0;
+    final bool swipeLeft;
+    if (_tabSwipeDx.abs() >= 64) {
+      swipeLeft = _tabSwipeDx < 0;
+    } else if (velocity.abs() >= 200) {
+      swipeLeft = velocity < 0;
+    } else {
+      return;
+    }
+    _tabSwipeDx = 0;
+
+    final current = ref.read(discoverTabProvider);
+    final index = _tabOrder.indexOf(current);
+    if (index < 0) return;
+    final step = swipeLeft ? 1 : -1;
+    final next =
+        _tabOrder[(index + step + _tabOrder.length) % _tabOrder.length];
+    if (next == current) return;
+    ref.read(discoverTabProvider.notifier).state = next;
   }
 
   Widget _buildHeader(BuildContext context, ThemeColors colors) {
