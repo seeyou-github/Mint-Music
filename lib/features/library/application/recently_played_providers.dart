@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/recently_played_repository.dart';
 import '../domain/models/recently_played.dart';
+import '../../player/application/play_progress_providers.dart';
 import '../../player/domain/models/song.dart';
 
 final recentlyPlayedRepositoryProvider = Provider<RecentlyPlayedRepository>((
@@ -39,13 +40,19 @@ class RecentlyPlayedNotifier extends AsyncNotifier<List<RecentlyPlayedItem>> {
           sourceMeta: sourceMeta,
         );
     ref.invalidateSelf();
+    // 排行 / 统计按播放次数与时长的累计值展示，播放一次就要重新读。
+    ref.invalidate(playRankingProvider);
   }
 
   Future<void> clearAll() async {
     await ref.read(recentlyPlayedRepositoryProvider).clearAll();
+    // 「已听 N%」进度也在重要库，跟统计一起清（用户的「清除」= 把这些数据
+    // 全部抹掉，而不是只清一半）。
+    await ref.read(playedProgressProvider.notifier).clearAll();
     ref.invalidateSelf();
     ref.invalidate(recentlyPlayedPlaylistsProvider);
     ref.invalidate(playbackStatsProvider);
+    ref.invalidate(playRankingProvider);
   }
 
   Future<void> removeFromHistory(String songId) async {
@@ -95,6 +102,11 @@ final playbackStatsGranularityProvider =
     StateProvider<PlaybackStatsGranularity>(
       (ref) => PlaybackStatsGranularity.day,
     );
+
+/// 听歌排行（重要库里的全量历史，不受「最近播放 500 首」上限限制）。
+final playRankingProvider = FutureProvider<List<RecentlyPlayedItem>>((ref) {
+  return ref.read(recentlyPlayedRepositoryProvider).loadRanking();
+});
 
 /// 听歌统计（按粒度聚合）。
 final playbackStatsProvider =

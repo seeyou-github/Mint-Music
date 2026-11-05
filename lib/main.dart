@@ -165,7 +165,7 @@ class _AppLifecycleFlushState extends State<_AppLifecycleFlush>
     // 设上限，避免数据库异常时卡住关窗；超时后仍然正常退出。
     try {
       await AppDatabase.flushAll()
-          .then((_) => AppDatabase.checkpoint())
+          .then((_) => AppDatabase.checkpointAll())
           .timeout(const Duration(seconds: 2));
     } catch (e) {
       debugPrint('[App] 退出前落盘失败或超时: $e');

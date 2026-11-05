@@ -329,12 +329,11 @@ class _RecentlyPlayedPageState extends ConsumerState<RecentlyPlayedPage> {
   // ---------------------------------------------------------------- 排行
 
   Widget _buildRankTab(ThemeColors colors) {
-    final async = ref.watch(recentlyPlayedProvider);
+    // 排行来自重要库（全量历史），不像「最近播放」列表那样只有最近 500 首。
+    final async = ref.watch(playRankingProvider);
     return async.when(
       data: (items) {
-        final ranked = List<RecentlyPlayedItem>.of(items)
-          ..sort((a, b) => b.playCount.compareTo(a.playCount));
-        final top = ranked.take(100).toList(growable: false);
+        final top = items.take(100).toList(growable: false);
         if (top.isEmpty) {
           return _EmptyState(
             icon: Icons.bar_chart,
@@ -493,7 +492,7 @@ class _RecentlyPlayedPageState extends ConsumerState<RecentlyPlayedPage> {
           style: TextStyle(color: colors.textPrimary),
         ),
         content: Text(
-          context.tr('将删除播放记录、最近打开的歌单与听歌统计，无法恢复。'),
+          context.tr('将删除播放记录、最近打开的歌单、听歌统计与已听进度，无法恢复。'),
           style: TextStyle(color: colors.textSecondary),
         ),
         actions: [

@@ -83,6 +83,10 @@ class AppPaths {
   static String? debugRootOverride;
 
   /// 配置文件目录：设置、字体、均衡器配置等。
+  ///
+  /// 设置文件 `settings.json` 在**所有平台**都放在这里（Android 上就是
+  /// `/data/data/<包名>/files/settings.json`），备份时打包这个目录即可，
+  /// 不需要再单独处理 `shared_prefs`。
   static Future<Directory> configDirectory() async {
     if (Platform.isWindows) {
       return _subDirectory(configFolderName);
@@ -136,7 +140,8 @@ class AppPaths {
 
   /// 重要数据库目录（Windows 为 `AppData\db`）。
   ///
-  /// 存放「不能丢」的数据：我的收藏、收藏歌单。变更后立即落盘。
+  /// 存放「不能丢」的数据：我的收藏、收藏歌单、每首歌的已听进度、听歌统计
+  /// 与排行。变更后立即落盘。
   static Future<Directory> databaseDirectory() async {
     if (Platform.isWindows) {
       return _subDirectory(databaseFolderName);

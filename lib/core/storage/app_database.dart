@@ -15,14 +15,18 @@ import 'app_preferences.dart';
 /// 应用的数据按「重要程度」分成两个库：
 ///
 /// * **重要库**（Windows：`AppData\db\mintmusic.db`）
-///   存放 *不能丢* 的数据：我的收藏、收藏歌单。
+///   存放 *不能丢* 的数据：我的收藏、收藏歌单、每首歌的「已听 N%」进度、
+///   听歌统计（累计时长 / 次数 / 听过的歌 / 按天累计）与听歌排行。
 ///   变更后立即落盘（SQLite 事务 + WAL + `synchronous=FULL`），
 ///   宁可多写几次也不能丢。
 ///
 /// * **临时库**（Windows：`AppData\temp\db\mintmusic_cache.db`）
-///   存放 *丢了可以重新生成* 的高频数据：本地歌曲列表、最近播放、下载列表、
-///   搜索历史、缓存索引。这些数据变动频繁，统一走「合并延迟写」
+///   存放 *丢了可以重新生成* 的高频数据：本地歌曲列表、最近播放列表、
+///   下载列表、搜索历史、缓存索引。这些数据变动频繁，统一走「合并延迟写」
 ///   （见 [DeferredWriter]），尽量减少 SSD 写入次数。
+///
+/// 「最近听过的歌 / 打开过的歌单」属于可以重算的浏览记录，留在临时库；
+/// 「听了多久、听了几次、排行、听到哪」属于用户长期积累的数据，进重要库。
 ///
 /// 其它平台沿用系统目录：重要库放在应用私有数据目录，临时库放在应用缓存目录。
 class AppDatabase {
@@ -41,10 +45,10 @@ class AppDatabase {
   static bool get isPersistent => _persistent;
   static bool _persistent = true;
 
-  /// 重要库：我的收藏、收藏歌单。
+  /// 重要库：我的收藏、收藏歌单、已听进度、听歌统计与排行。
   Database get important => _important;
 
-  /// 临时库：本地歌曲列表、最近播放、下载列表、搜索历史、缓存索引。
+  /// 临时库：本地歌曲列表、最近播放列表、下载列表、搜索历史、缓存索引。
   Database get cache => _cache;
 
   /// 把 WAL 落盘（checkpoint）。
@@ -52,14 +56,33 @@ class AppDatabase {
   /// 正常关窗时 Dart 会先 flush 再 checkpoint；但断电、崩溃或在任务管理器里
   /// 结束进程仍然不会给应用收尾机会，所以关键数据写完后仍要显式 checkpoint
   /// 一次，避免 WAL 里还没落盘的数据丢失（表现为「刚写完就退出，重启后没了」）。
+  ///
+  /// 只处理临时库（本地索引 / 搜索历史这类高频数据）；重要库的写入是
+  /// `synchronous=FULL` 且每次都是小事务，退出时用 [checkpointAll] 兜一次即可。
   static Future<void> checkpoint() async {
     try {
       final db = await cacheDatabase();
       // 同样会返回一行结果，必须走 rawQuery（见 _applyPragmas 的注释）。
       await db.rawQuery('PRAGMA wal_checkpoint(TRUNCATE)');
     } catch (e) {
-      debugPrint('[AppDatabase] checkpoint 失败: $e');
+      debugPrint('[AppDatabase] checkpoint 临时库失败: $e');
     }
+  }
+
+  /// 只把重要库的 WAL 落盘。
+  static Future<void> checkpointImportant() async {
+    try {
+      final db = await importantDatabase();
+      await db.rawQuery('PRAGMA wal_checkpoint(TRUNCATE)');
+    } catch (e) {
+      debugPrint('[AppDatabase] checkpoint 重要库失败: $e');
+    }
+  }
+
+  /// 两个库都落盘（退出应用、备份前用）。
+  static Future<void> checkpointAll() async {
+    await checkpoint();
+    await checkpointImportant();
   }
 
   /// 清除临时库里的「缓存类」数据（歌词、图片缓存索引）。
@@ -223,7 +246,8 @@ class AppDatabase {
   }
 
   static Future<Database> _openImportant({bool inMemory = false}) async {
-    // 重要库：我的收藏 + 收藏歌单（`playlists` / `playlist_songs`）。
+    // 重要库：我的收藏 + 收藏歌单（`playlists` / `playlist_songs`）+ 听歌数据
+    // （已听进度、累计统计、排行）。
     //
     // 收藏一度改成 JSON 文件（`config/playlists.json`），上千首时每次收藏
     // 一首歌都要「读整个文件 → 改 → 全量写回」（实测 2000 首约 80ms + 2MB
@@ -235,7 +259,12 @@ class AppDatabase {
     }
     return openDatabase(
       path,
-      version: 2,
+      // v2：收藏 / 收藏歌单（playlists、playlist_songs）。
+      // v3：听歌数据从临时库搬回来——song_play_progress（已听进度）、
+      //     song_play_stats（每首歌播放次数 / 时长，排行用）、
+      //     play_totals（累计总时长 / 播放次数）、
+      //     play_daily（每天累计时长 / 次数）。
+      version: 3,
       onConfigure: (db) async {
         // WAL：写入不阻塞读取；synchronous=FULL：断电也不会丢已提交的事务。
         await _applyPragmas(
@@ -291,6 +320,70 @@ class AppDatabase {
       'CREATE INDEX IF NOT EXISTS idx_playlist_songs_order '
       'ON playlist_songs (playlist_id, sort_order)',
     );
+
+    // ------------------------------------------------------------ 听歌数据
+    //
+    // 这几张表以前在临时库（`mintmusic_cache.db`）：换设备、清缓存、还原备份
+    // 都会丢。但它们记录的是用户长期积累的东西（听了多久、听了几次、排行、
+    // 每首歌听到哪），丢了补不回来，所以整体搬到重要库。
+    //
+    // 其中「总时长 / 播放次数 / 听过的歌 / 每天时长」只记累计值，**不按歌
+    // 逐条记录**：统计页只需要最后的汇总数字，没必要为它保存几万条明细。
+
+    // 每首歌一条「已播放进度」：ratio 只增不减，1.0 表示完整听过一遍。
+    // 用于歌曲列表里的「已听 / 已听 N%」标签，以及「接着上次继续播放」。
+    await db.execute('''
+          CREATE TABLE IF NOT EXISTS song_play_progress (
+            song_id TEXT PRIMARY KEY,
+            ratio REAL NOT NULL DEFAULT 0,
+            position_ms INTEGER NOT NULL DEFAULT 0,
+            duration_ms INTEGER NOT NULL DEFAULT 0,
+            updated_at INTEGER NOT NULL DEFAULT 0
+          )
+        ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_song_play_progress_time '
+      'ON song_play_progress (updated_at DESC)',
+    );
+
+    // 每首歌的播放汇总（「排行」分类的数据源）。
+    // `data` 是 `RecentlyPlayedItem.toPersistJson()`（含歌曲信息与来源），
+    // 排行里点一首歌可以直接排队播放，不用再去查临时库。
+    await db.execute('''
+          CREATE TABLE IF NOT EXISTS song_play_stats (
+            song_id TEXT PRIMARY KEY,
+            play_count INTEGER NOT NULL DEFAULT 0,
+            listened_ms INTEGER NOT NULL DEFAULT 0,
+            last_played_at INTEGER NOT NULL DEFAULT 0,
+            data TEXT NOT NULL DEFAULT '{}'
+          )
+        ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_song_play_stats_rank '
+      'ON song_play_stats (play_count DESC, listened_ms DESC)',
+    );
+
+    // 累计统计：只有一行（id = 1）。「听过的歌」直接数 song_play_stats 的行数，
+    // 不额外存一份计数，免得两处对不上。
+    await db.execute('''
+          CREATE TABLE IF NOT EXISTS play_totals (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            total_listened_ms INTEGER NOT NULL DEFAULT 0,
+            total_plays INTEGER NOT NULL DEFAULT 0,
+            updated_at INTEGER NOT NULL DEFAULT 0
+          )
+        ''');
+    await db.execute('INSERT OR IGNORE INTO play_totals (id) VALUES (1)');
+
+    // 每天的累计（day 为本地时区的 `yyyy-MM-dd`）。周 / 月 / 年视图由它
+    // 汇总得到，所以一年只有 365 行，比按次记录小两个量级。
+    await db.execute('''
+          CREATE TABLE IF NOT EXISTS play_daily (
+            day TEXT PRIMARY KEY,
+            listened_ms INTEGER NOT NULL DEFAULT 0,
+            plays INTEGER NOT NULL DEFAULT 0
+          )
+        ''');
   }
 
   static Future<Database> _openCache({bool inMemory = false}) async {
@@ -381,6 +474,11 @@ class AppDatabase {
       'ON recently_played_playlists (opened_at DESC)',
     );
     // 每次播放（一段连续收听）一条记录：统计总时长 / 按天周月年聚合都靠它。
+    //
+    // **已废弃**：听歌统计改成「只存累计值」后搬进了重要库（见
+    // `_createImportantSchema` 的 play_totals / play_daily）。这张表只在升级
+    // 后的第一次启动时被读一遍（聚合成累计值），然后清空；保留表结构是为了
+    // 让老版本的明细数据不会在升级时丢得莫名其妙。
     await db.execute('''
           CREATE TABLE IF NOT EXISTS play_events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -422,7 +520,10 @@ class AppDatabase {
           )
         ''');
     // 每首歌一条「已播放进度」：ratio 只增不减，1.0 表示完整听过一遍。
-    // 用于歌曲列表里的「已听 / 已听 N%」标签。
+    //
+    // **已搬迁**：这张表现在是「重要库」里的同名列（听歌进度属于长期数据，
+    // 不能跟着清缓存丢掉）。临时库这份只在升级后第一次启动时被读一遍并导入
+    // 重要库，随后清空。
     await db.execute('''
           CREATE TABLE IF NOT EXISTS song_play_progress (
             song_id TEXT PRIMARY KEY,

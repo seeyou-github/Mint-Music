@@ -95,11 +95,7 @@ final playbackControllerProvider =
       controller.onListenEnded = (song, listenedMs) {
         unawaited(
           recentRepo
-              .recordListen(
-                songId: song.id,
-                listenedMs: listenedMs,
-                durationMs: song.duration * 1000,
-              )
+              .recordListen(songId: song.id, listenedMs: listenedMs)
               .then((_) {
                 // 退出应用时会结算最后一首歌，此时 provider 已经销毁。
                 if (!disposed) ref.invalidate(playbackStatsProvider);

@@ -6,12 +6,17 @@ import 'package:sqflite/sqflite.dart';
 import '../../../core/storage/app_database.dart';
 import '../../../core/storage/app_preferences.dart';
 import '../domain/models/recently_played.dart';
+import 'play_stats_store.dart';
 import '../../player/domain/models/song.dart';
 
 /// 最近播放 / 播放统计的本地存储。
 ///
-/// 数据量大、变动频繁（每次播放都会变），丢了也无所谓，因此放在「临时库」
-/// （Windows：`AppData\temp\db\mintmusic_cache.db`）。
+/// **最近听过的歌 / 打开过的歌单**：数据量大、变动频繁，丢了也能重新积累，
+/// 放在「临时库」（Windows：`AppData\temp\db\mintmusic_cache.db`）。
+///
+/// **听歌统计与排行**（听了多久、听了几次、每天听多久、排行、听到哪）：属于
+/// 用户长期积累的数据，放在「重要库」（`AppData\db\mintmusic.db`），由
+/// [PlayStatsStore] 负责，这里只做转发。
 ///
 /// **写盘策略**：运行期只改内存，并把变化攒在待写队列里；攒够 [batchSize]
 /// 条（默认 10）才真正写一次数据库。不足 10 条时由 [DeferredWriter] 的
@@ -30,10 +35,10 @@ class RecentlyPlayedRepository {
   /// 最多保留多少首最近播放。
   static const int maxItems = 500;
 
-  /// 最多保留多少条播放事件（统计用）。
-  static const int maxEvents = 20000;
-
   static const String _legacyKey = 'recently_played';
+
+  /// 听歌统计 / 排行（重要库）。
+  final PlayStatsStore _stats = PlayStatsStore();
 
   List<RecentlyPlayedItem>? _cache;
   List<RecentlyPlayedPlaylist>? _playlistsCache;
@@ -44,17 +49,13 @@ class RecentlyPlayedRepository {
   /// 待写入的歌单（id → 最新记录）。
   final Map<String, RecentlyPlayedPlaylist> _pendingPlaylists = {};
 
-  /// 待写入的播放事件。
-  final List<Map<String, Object?>> _pendingEvents = [];
-
   /// 攒批写盘器：定时器兜底 + 应用切后台/退出时 flush。
   late final DeferredWriter _writer = DeferredWriter(
     _flushPending,
     interval: const Duration(seconds: 15),
   );
 
-  int get _pendingCount =>
-      _pendingSongs.length + _pendingPlaylists.length + _pendingEvents.length;
+  int get _pendingCount => _pendingSongs.length + _pendingPlaylists.length;
 
   // ---------------------------------------------------------------- 读取
 
@@ -126,142 +127,15 @@ class RecentlyPlayedRepository {
     return playlists;
   }
 
-  /// 听歌统计。数据量不大（几千条事件），直接读出来在内存里聚合。
+  /// 听歌统计（累计总时长 / 次数 / 听过的歌 / 按粒度聚合的柱状数据）。
   Future<PlaybackStats> loadStats({
     PlaybackStatsGranularity granularity = PlaybackStatsGranularity.day,
-  }) async {
-    final events = <({DateTime at, int listenedMs})>[];
-    final songIds = <String>{};
-    try {
-      final db = await AppDatabase.cacheDatabase();
-      final rows = await db.query(
-        'play_events',
-        columns: ['song_id', 'played_at', 'listened_ms'],
-        orderBy: 'played_at ASC',
-      );
-      for (final row in rows) {
-        final songId = '${row['song_id'] ?? ''}';
-        if (songId.isNotEmpty) songIds.add(songId);
-        events.add((
-          at: DateTime.fromMillisecondsSinceEpoch(
-            (row['played_at'] as num?)?.toInt() ?? 0,
-          ),
-          listenedMs: (row['listened_ms'] as num?)?.toInt() ?? 0,
-        ));
-      }
-    } catch (e) {
-      debugPrint('[RecentlyPlayed] 读取播放事件失败: $e');
-    }
-
-    // 还没落盘的播放事件也要算进去：刚听完歌就打开「统计」时，
-    // 数据库里可能还是旧的（攒批写盘有 15 秒窗口）。
-    for (final event in List<Map<String, Object?>>.of(_pendingEvents)) {
-      final listenedMs = (event['listened_ms'] as num?)?.toInt() ?? 0;
-      if (listenedMs <= 0) continue;
-      final songId = '${event['song_id'] ?? ''}';
-      if (songId.isNotEmpty) songIds.add(songId);
-      events.add((
-        at: DateTime.fromMillisecondsSinceEpoch(
-          (event['played_at'] as num?)?.toInt() ?? 0,
-        ),
-        listenedMs: listenedMs,
-      ));
-    }
-
-    var totalMs = 0;
-    for (final event in events) {
-      totalMs += event.listenedMs;
-    }
-
-    return PlaybackStats(
-      totalListenedMs: totalMs,
-      totalPlays: events.length,
-      songCount: songIds.length,
-      buckets: _buildBuckets(events, granularity),
-    );
+  }) {
+    return _stats.loadStats(granularity: granularity);
   }
 
-  List<PlaybackStatBucket> _buildBuckets(
-    List<({DateTime at, int listenedMs})> events,
-    PlaybackStatsGranularity granularity,
-  ) {
-    final now = DateTime.now();
-    final buckets = <String, ({String label, int ms, int plays})>{};
-    final keys = <String>[];
-
-    void addKey(String key, String label) {
-      keys.add(key);
-      buckets[key] = (label: label, ms: 0, plays: 0);
-    }
-
-    // 生成时间轴（从早到晚），保证没有播放的区间也占一个空柱。
-    switch (granularity) {
-      case PlaybackStatsGranularity.day:
-        for (var i = 6; i >= 0; i--) {
-          final d = DateTime(
-            now.year,
-            now.month,
-            now.day,
-          ).subtract(Duration(days: i));
-          addKey('${d.year}-${d.month}-${d.day}', '${d.month}/${d.day}');
-        }
-      case PlaybackStatsGranularity.week:
-        final thisMonday = DateTime(
-          now.year,
-          now.month,
-          now.day,
-        ).subtract(Duration(days: now.weekday - 1));
-        for (var i = 7; i >= 0; i--) {
-          final d = thisMonday.subtract(Duration(days: i * 7));
-          addKey('${d.year}-${d.month}-${d.day}', '${d.month}/${d.day}');
-        }
-      case PlaybackStatsGranularity.month:
-        for (var i = 5; i >= 0; i--) {
-          final m = DateTime(now.year, now.month - i, 1);
-          addKey('${m.year}-${m.month}', '${m.month}月');
-        }
-      case PlaybackStatsGranularity.year:
-        for (var i = 4; i >= 0; i--) {
-          addKey('${now.year - i}', '${now.year - i}');
-        }
-    }
-
-    for (final event in events) {
-      final d = event.at;
-      final String key;
-      switch (granularity) {
-        case PlaybackStatsGranularity.day:
-          key = '${d.year}-${d.month}-${d.day}';
-        case PlaybackStatsGranularity.week:
-          final monday = DateTime(
-            d.year,
-            d.month,
-            d.day,
-          ).subtract(Duration(days: d.weekday - 1));
-          key = '${monday.year}-${monday.month}-${monday.day}';
-        case PlaybackStatsGranularity.month:
-          key = '${d.year}-${d.month}';
-        case PlaybackStatsGranularity.year:
-          key = '${d.year}';
-      }
-      final bucket = buckets[key];
-      if (bucket == null) continue;
-      buckets[key] = (
-        label: bucket.label,
-        ms: bucket.ms + event.listenedMs,
-        plays: bucket.plays + 1,
-      );
-    }
-
-    return [
-      for (final key in keys)
-        PlaybackStatBucket(
-          label: buckets[key]!.label,
-          listenedMs: buckets[key]!.ms,
-          plays: buckets[key]!.plays,
-        ),
-    ];
-  }
+  /// 听歌排行（重要库里的全量历史，不受最近播放 500 首上限限制）。
+  Future<List<RecentlyPlayedItem>> loadRanking() => _stats.loadRanking();
 
   // ---------------------------------------------------------------- 写入
 
@@ -307,6 +181,8 @@ class RecentlyPlayedRepository {
     _cache = history;
 
     _pendingSongs[song.id] = item;
+    // 听歌次数 / 排行记在重要库（临时库这份只是「最近听过」列表）。
+    _stats.recordPlay(item);
     await _afterChange();
   }
 
@@ -314,18 +190,11 @@ class RecentlyPlayedRepository {
   Future<void> recordListen({
     required String songId,
     required int listenedMs,
-    required int durationMs,
   }) async {
     if (songId.isEmpty || listenedMs <= 0) return;
-    _pendingEvents.add({
-      'song_id': songId,
-      'played_at': DateTime.now().millisecondsSinceEpoch,
-      'listened_ms': listenedMs,
-      'duration_ms': durationMs,
-    });
-    if (_pendingEvents.length > maxEvents) {
-      _pendingEvents.removeRange(0, _pendingEvents.length - maxEvents);
-    }
+    // 直接交给重要库的累计器：总时长 / 每天时长 / 每首歌时长都在那儿合并，
+    // 不再按「每次播放一条」存明细（那会有几万行，还得全表扫着聚合）。
+    _stats.recordListen(songId: songId, listenedMs: listenedMs);
     await _afterChange();
   }
 
@@ -369,24 +238,26 @@ class RecentlyPlayedRepository {
     }
   }
 
-  /// 清空全部最近播放数据（歌曲 / 歌单 / 统计）。
+  /// 清空全部最近播放数据。
+  ///
+  /// 最近听过的歌 / 歌单在临时库，听歌统计在重要库，两个库都要清
+  /// （用户点「清除」时要的是把这几类数据一起抹掉）。
   Future<void> clearAll() async {
     _cache = <RecentlyPlayedItem>[];
     _playlistsCache = <RecentlyPlayedPlaylist>[];
     _pendingSongs.clear();
     _pendingPlaylists.clear();
-    _pendingEvents.clear();
     try {
       final db = await AppDatabase.cacheDatabase();
       await db.transaction((txn) async {
         await txn.delete('recently_played');
         await txn.delete('recently_played_playlists');
-        await txn.delete('play_events');
       });
       await AppDatabase.checkpoint();
     } catch (e) {
       debugPrint('[RecentlyPlayed] 清空失败: $e');
     }
+    await _stats.clear();
   }
 
   /// 删除一首歌的记录。
@@ -408,17 +279,18 @@ class RecentlyPlayedRepository {
   }
 
   /// 立即落盘（应用切后台 / 退出时由 [AppDatabase.flushAll] 调用）。
-  Future<void> flush() => _writer.writeNow();
+  Future<void> flush() async {
+    await _writer.writeNow();
+    await _stats.flush();
+  }
 
   /// 把攒下的变化一次性写入数据库。
   Future<void> _flushPending() async {
     if (_pendingCount == 0) return;
     final songs = List<RecentlyPlayedItem>.of(_pendingSongs.values);
     final playlists = List<RecentlyPlayedPlaylist>.of(_pendingPlaylists.values);
-    final events = List<Map<String, Object?>>.of(_pendingEvents);
     _pendingSongs.clear();
     _pendingPlaylists.clear();
-    _pendingEvents.clear();
 
     try {
       final db = await AppDatabase.cacheDatabase();
@@ -446,9 +318,6 @@ class RecentlyPlayedRepository {
             conflictAlgorithm: ConflictAlgorithm.replace,
           );
         }
-        for (final event in events) {
-          await txn.insert('play_events', event);
-        }
       });
     } catch (e) {
       debugPrint('[RecentlyPlayed] 写库失败: $e');
@@ -459,7 +328,6 @@ class RecentlyPlayedRepository {
       for (final item in playlists) {
         _pendingPlaylists[item.id] = item;
       }
-      _pendingEvents.insertAll(0, events);
     }
   }
 
