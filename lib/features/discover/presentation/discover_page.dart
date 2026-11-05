@@ -489,7 +489,8 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
                 DiscoverTab.radio,
           ),
           const Spacer(),
-          // 搜索入口：圆形图标按钮，和右侧切换音源按钮同尺寸
+          // 搜索入口：圆形图标按钮，和右侧切换音源按钮完全同款
+          // （同样 40 的圆底 + 同样 24 的居中图标）。
           GestureDetector(
             onTap: () => context.push('/search'),
             child: Container(
@@ -500,11 +501,17 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
                 shape: BoxShape.circle,
               ),
               alignment: Alignment.center,
-              child: Icon(Icons.search, size: 20, color: colors.textSecondary),
+              child: Icon(
+                Icons.search,
+                size: _circleIconSize,
+                color: colors.textSecondary,
+              ),
             ),
           ),
           const SizedBox(width: AppSpacing.sm),
-          // 切换音源（插件）按钮：放在搜索框右侧，高度与搜索框一致，图标铺满圆形
+          // 切换音源（插件）按钮：与搜索按钮共用同一个圆底和图标尺寸。
+          // 以前这里的音源圆标 size 直接等于按钮直径（铺满整个圆），而搜索
+          // 只有一个 20px 放大镜，实心红圆看起来明显比搜索按钮「大一圈」。
           GestureDetector(
             key: _sourceButtonKey,
             onTap: () => _showSourceMenu(
@@ -520,18 +527,17 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
                 color: colors.surface,
                 shape: BoxShape.circle,
               ),
-              // 图标铺满圆形按钮，不留内边距
-              clipBehavior: Clip.antiAlias,
+              alignment: Alignment.center,
               child: currentSource != null
                   ? _buildSourceIcon(
                       // 变体 id 也一起传进去：插件自带图标时优先显示它。
                       currentSource.id,
-                      size: _searchBarHeight,
+                      size: _circleIconSize,
                       label: currentSource.name,
                     )
                   : Icon(
                       Icons.music_note,
-                      size: _searchBarHeight,
+                      size: _circleIconSize,
                       color: colors.textSecondary,
                     ),
             ),
@@ -543,6 +549,10 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
 
   /// 顶部两个圆形按钮（搜索 / 切换音源）的直径，保持视觉高度一致。
   static const double _searchBarHeight = 40;
+
+  /// 两个圆底按钮里图标的直径：必须共用同一个值，否则铺满整圆的音源圆标
+  /// 会比放大镜明显「大一圈」（见 _buildTabBar 的说明）。
+  static const double _circleIconSize = 24;
 
   void _showSourceMenu(
     BuildContext context,
