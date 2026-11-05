@@ -318,57 +318,9 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
                   AppSpacing.lg,
                   AppSpacing.sm,
                 ),
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final fields = [
-                      _buildField(
-                        colors,
-                        controller: _titleController,
-                        hint: context.tr('歌曲名'),
-                        icon: Icons.music_note,
-                      ),
-                      _buildField(
-                        colors,
-                        controller: _artistController,
-                        hint: context.tr('歌手名'),
-                        icon: Icons.person_outline,
-                      ),
-                    ];
-                    if (constraints.maxWidth < 520) {
-                      return Column(
-                        children: [
-                          fields[0],
-                          const SizedBox(height: AppSpacing.sm),
-                          fields[1],
-                        ],
-                      );
-                    }
-                    return Row(
-                      children: [
-                        Expanded(flex: 3, child: fields[0]),
-                        const SizedBox(width: AppSpacing.sm),
-                        Expanded(flex: 2, child: fields[1]),
-                      ],
-                    );
-                  },
-                ),
+                child: _buildSearchArea(colors),
               ),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
-                child: Row(
-                  children: [
-                    _buildSourcePicker(colors),
-                    const SizedBox(width: AppSpacing.sm),
-                    Expanded(
-                      child: Align(
-                        alignment: Alignment.centerRight,
-                        child: _buildSearchButton(colors),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: AppSpacing.sm),
+              const SizedBox(height: AppSpacing.xs),
               _buildResults(colors),
               _buildFormatTag(colors),
               const Divider(height: 1),
@@ -410,40 +362,87 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
     );
   }
 
+  /// 输入区高度：两个输入框和右侧的圆形按钮共用同一高度，右边缘才能对齐。
+  static const double _barHeight = 42;
+
+  /// 搜索输入区：歌曲名 / 歌手名各占一行，右侧分别是音源切换与搜索按钮。
+  ///
+  /// 两个输入框并排放在一行时，弹层宽度下每个只剩一百多像素，长歌名会被截断；
+  /// 改成「每行一个输入框 + 一个圆形按钮」后每个框都能占满整行宽度。
+  Widget _buildSearchArea(ThemeColors colors) {
+    return Column(
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: _buildField(
+                colors,
+                controller: _titleController,
+                hint: context.tr('歌曲名'),
+                icon: Icons.music_note,
+              ),
+            ),
+            const SizedBox(width: AppSpacing.sm),
+            _buildSourceButton(colors),
+          ],
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        Row(
+          children: [
+            Expanded(
+              child: _buildField(
+                colors,
+                controller: _artistController,
+                hint: context.tr('歌手名'),
+                icon: Icons.person_outline,
+              ),
+            ),
+            const SizedBox(width: AppSpacing.sm),
+            _buildSearchButton(colors),
+          ],
+        ),
+      ],
+    );
+  }
+
   Widget _buildField(
     ThemeColors colors, {
     required TextEditingController controller,
     required String hint,
     required IconData icon,
   }) {
-    return TextField(
-      controller: controller,
-      textInputAction: TextInputAction.search,
-      onSubmitted: (_) => unawaited(_search()),
-      style: TextStyle(fontSize: 14, color: colors.textPrimary),
-      decoration: InputDecoration(
-        isDense: true,
-        hintText: hint,
-        hintStyle: TextStyle(fontSize: 14, color: colors.textHint),
-        prefixIcon: Icon(icon, size: 18, color: colors.textHint),
-        prefixIconConstraints: const BoxConstraints(minWidth: 36),
-        filled: true,
-        fillColor: colors.surfaceVariant,
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.sm,
-          vertical: 10,
-        ),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(AppRadius.md),
-          borderSide: BorderSide.none,
+    return SizedBox(
+      height: _barHeight,
+      child: TextField(
+        controller: controller,
+        textInputAction: TextInputAction.search,
+        onSubmitted: (_) => unawaited(_search()),
+        style: TextStyle(fontSize: 14, color: colors.textPrimary),
+        decoration: InputDecoration(
+          isDense: true,
+          hintText: hint,
+          hintStyle: TextStyle(fontSize: 14, color: colors.textHint),
+          prefixIcon: Icon(icon, size: 18, color: colors.textHint),
+          prefixIconConstraints: const BoxConstraints(minWidth: 36),
+          filled: true,
+          fillColor: colors.surfaceVariant,
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.sm,
+            vertical: 10,
+          ),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(AppRadius.md),
+            borderSide: BorderSide.none,
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildSourcePicker(ThemeColors colors) {
+  /// 音源切换：圆形按钮，直接显示当前音源的图标（和搜索按钮同尺寸）。
+  Widget _buildSourceButton(ThemeColors colors) {
     final sources = ref.watch(searchSupportedSourcesProvider);
-    if (sources.isEmpty) return const SizedBox.shrink();
+    if (sources.isEmpty) return const SizedBox(width: _barHeight);
     final selected = sources.where((s) => s.id == _sourceId).firstOrNull;
     final label = selected?.name ?? _sourceId;
     return PopupMenuButton<String>(
@@ -487,72 +486,52 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
           ),
       ],
       child: Container(
-        constraints: const BoxConstraints(maxWidth: 200),
-        padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.sm,
-          vertical: 7,
-        ),
+        width: _barHeight,
+        height: _barHeight,
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(AppRadius.full),
-          border: Border.all(color: colors.divider),
+          color: colors.surfaceVariant,
+          shape: BoxShape.circle,
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.dns_outlined, size: 14, color: colors.textHint),
-            const SizedBox(width: AppSpacing.xs),
-            Flexible(
-              child: Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 12, color: colors.textSecondary),
-              ),
-            ),
-            Icon(Icons.arrow_drop_down, size: 16, color: colors.textHint),
-          ],
+        clipBehavior: Clip.antiAlias,
+        child: SourceIcon(
+          // 同名插件的变体 id 要还原成平台 id 才能取到对应图标。
+          sourceId: MusicSourceManager.splitSourceId(_sourceId).$1,
+          size: _barHeight,
+          label: label,
         ),
       ),
     );
   }
 
+  /// 搜索按钮：和音源按钮同尺寸的圆形，便于两行输入框右边缘对齐。
   Widget _buildSearchButton(ThemeColors colors) {
     return GestureDetector(
       onTap: _searching ? null : () => unawaited(_search()),
       child: Container(
-        padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.md,
-          vertical: 7,
-        ),
+        width: _barHeight,
+        height: _barHeight,
+        alignment: Alignment.center,
         decoration: BoxDecoration(
           color: _searching ? colors.surfaceVariant : colors.primary,
-          borderRadius: BorderRadius.circular(AppRadius.full),
+          shape: BoxShape.circle,
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (_searching)
-              SizedBox(
-                width: 12,
-                height: 12,
+        child: _searching
+            ? SizedBox(
+                width: 14,
+                height: 14,
                 child: CircularProgressIndicator(
                   strokeWidth: 2,
                   color: colors.textHint,
                 ),
               )
-            else
-              Icon(Icons.search, size: 14, color: colors.textOnPrimary),
-            const SizedBox(width: AppSpacing.xs),
-            Text(
-              context.tr(_searching ? '搜索中' : '搜索'),
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w500,
-                color: _searching ? colors.textHint : colors.textOnPrimary,
+            : Text(
+                context.tr('搜索'),
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: colors.textOnPrimary,
+                ),
               ),
-            ),
-          ],
-        ),
       ),
     );
   }
