@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -1621,11 +1620,13 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       );
     }
 
-    final width = MediaQuery.sizeOf(context).width;
-    final columns = Platform.isAndroid ? 3 : math.max(2, (width / 260).ceil());
+    // 与歌单结果共用同一套网格参数（同样的列数、间距、卡片比例），
+    // Android 手机 2 列，封面尺寸和歌单卡片完全一致。
+    final crossAxisCount = ResponsiveLayout.gridCrossAxisCount(context);
+    final isTablet = ResponsiveLayout.isTablet(context);
     final pager = _collectionPager(type);
     // 每页 30 行：每页条数 = 30 × 列数。
-    pager.updatePageSize(_resultPageRows * columns);
+    pager.updatePageSize(_resultPageRows * crossAxisCount);
     pager.clampTo(
       state.results.length,
       hasMore: state.hasMore,
@@ -1641,18 +1642,16 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     }
     return _buildPagedGrid(
       sliver: SliverPadding(
-        padding: const EdgeInsets.fromLTRB(
-          AppSpacing.lg,
-          AppSpacing.sm,
-          AppSpacing.lg,
-          AppSpacing.lg,
+        padding: EdgeInsets.symmetric(
+          horizontal: ResponsiveLayout.horizontalPadding(context),
+          vertical: AppSpacing.lg,
         ),
         sliver: SliverGrid(
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: columns,
-            mainAxisSpacing: AppSpacing.md,
-            crossAxisSpacing: AppSpacing.md,
-            mainAxisExtent: 210,
+            crossAxisCount: crossAxisCount,
+            mainAxisSpacing: isTablet ? 16 : AppSpacing.md,
+            crossAxisSpacing: isTablet ? 16 : AppSpacing.md,
+            childAspectRatio: isTablet ? 0.88 : 0.82,
           ),
           delegate: SliverChildBuilderDelegate(
             (context, index) => _buildCollectionCard(colors, visible[index]),
