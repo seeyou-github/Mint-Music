@@ -1272,17 +1272,19 @@ class _LocalPlaylistDetailPageState
     final pageStart = _pager.start;
     final list = ListView.builder(
       controller: _scrollController,
-      // 预留迷你播放器高度（56px + 底部 20px 间距），保证最后一首歌曲
-      // 能滚动到迷你播放器上方而不被遮挡；多选模式下还要避开批量操作栏。
+      // 分页条是列表最后一项（自己让开迷你播放器）；多选时它收起，
+      // 底部换成批量操作栏，这里补回对应的让位。
       padding: EdgeInsets.only(
-        bottom:
-            bottomInset +
-            (selecting ? SongBatchActionBar.height + batchBarInset : 0),
+        bottom: selecting
+            ? bottomInset + SongBatchActionBar.height + batchBarInset
+            : AppSpacing.sm,
       ),
-      itemCount: visible.length,
+      itemCount: visible.length + (selecting ? 0 : 1),
       addAutomaticKeepAlives: false,
       addRepaintBoundaries: true,
       itemBuilder: (context, index) {
+        // 最后一项是分页条：滚到列表末尾才出现。
+        if (index == visible.length) return _buildPageFooter(pageCount);
         final song = visible[index];
         // 序号按整体列表算，翻页后接着上一页继续编号。
         final songIndex = pageStart + index;
@@ -1349,25 +1351,16 @@ class _LocalPlaylistDetailPageState
         );
       },
     );
-    // 分页条常驻在列表下方（贴底），不跟着列表末尾滚动；
-    // 多选时底部被批量操作栏占用，分页条暂时收起。
-    return Column(
+    return Stack(
       children: [
-        Expanded(
-          child: Stack(
-            children: [
-              list,
-              // 定位当前播放歌曲的悬浮按钮（右下角，避开底部分页条）
-              if (!selecting) _buildLocateFab(colors),
-            ],
-          ),
-        ),
-        if (!selecting) _buildPageFooter(pageCount),
+        list,
+        // 定位当前播放歌曲的悬浮按钮（右下角，避开底部播放栏）
+        if (!selecting) _buildLocateFab(colors),
       ],
     );
   }
 
-  /// 常驻底部分页条：本地歌单 / 收藏的歌单 / 榜单 / 专辑 / 作者共用。
+  /// 列表末尾的分页条：本地歌单 / 收藏的歌单 / 榜单 / 专辑 / 作者共用。
   Widget _buildPageFooter(int pageCount) {
     return PageBar(
       currentPage: _pager.page,

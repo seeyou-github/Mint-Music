@@ -1374,17 +1374,20 @@ class _SearchPageState extends ConsumerState<SearchPage> {
 
     final list = ListView.builder(
       controller: _resultsScrollController,
-      // 多选模式下为底部批量操作栏留出空间
+      // 分页条是列表最后一项（自己让开迷你播放器）；多选时它收起，
+      // 底部改成批量操作栏，这里补回对应的让位。
       padding: EdgeInsets.only(
-        bottom:
-            bottomInset +
-            (selecting ? SongBatchActionBar.height + batchBarInset : 0),
+        bottom: selecting
+            ? bottomInset + SongBatchActionBar.height + batchBarInset
+            : AppSpacing.sm,
       ),
-      itemCount: visible.length,
+      itemCount: visible.length + (selecting ? 0 : 1),
       cacheExtent: 360,
       addAutomaticKeepAlives: false,
       addRepaintBoundaries: true,
       itemBuilder: (context, index) {
+        // 最后一项是分页条：滚到列表末尾才出现。
+        if (index == visible.length) return footer;
         final song = visible[index];
         // 序号按全局位置编号（跳页直达后缓冲区从当前页起，也要接续页码）
         final songIndex = _songPager.absoluteStart + index;
@@ -1437,14 +1440,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         );
       },
     );
-    // 分页条常驻在列表下方（贴底），不跟着列表末尾滚动；
-    // 多选时底部被批量操作栏占用，分页条暂时收起。
-    return Column(
-      children: [
-        Expanded(child: list),
-        if (!selecting) footer,
-      ],
-    );
+    return list;
   }
 
   Widget _buildSearchTabBar(ThemeColors colors, SearchTab currentTab) {
@@ -1839,23 +1835,14 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     );
   }
 
-  /// 网格 + 底部分页条的通用容器。
+  /// 网格 + 末尾分页条的通用容器。
   Widget _buildPagedGrid({required Widget sliver, required Widget footer}) {
-    return Column(
-      children: [
-        Expanded(
-          child: CustomScrollView(
-            controller: _gridScrollController,
-            slivers: [
-              sliver,
-              const SliverToBoxAdapter(
-                child: SizedBox(height: AppSpacing.xxxl),
-              ),
-            ],
-          ),
-        ),
-        // 分页条常驻在网格下方（贴底），不跟着内容末尾滚动。
-        footer,
+    return CustomScrollView(
+      controller: _gridScrollController,
+      slivers: [
+        sliver,
+        // 分页条跟着网格滚到底部才出现，自身会避开迷你播放器。
+        SliverToBoxAdapter(child: footer),
       ],
     );
   }

@@ -797,17 +797,21 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
     );
     final list = ListView.builder(
       controller: _scrollController,
-      // 预留迷你播放器高度（56px + 底部 20px 间距），保证最后一首歌曲
-      // 能滚动到迷你播放器上方而不被遮挡；多选模式下还要避开批量操作栏。
+      // 分页条是列表最后一项，自己会让开迷你播放器，这里只在多选（分页条收起、
+      // 底部换成批量操作栏）时保留原来的让位。
       padding: EdgeInsets.only(
-        bottom:
-            bottomInset +
-            (selecting ? SongBatchActionBar.height + batchBarInset : 0),
+        bottom: selecting
+            ? bottomInset + SongBatchActionBar.height + batchBarInset
+            : AppSpacing.sm,
       ),
-      itemCount: visible.length,
+      itemCount: visible.length + (selecting ? 0 : 1),
       addAutomaticKeepAlives: false,
       addRepaintBoundaries: true,
       itemBuilder: (context, index) {
+        // 最后一项是分页条：滚到列表末尾才出现。
+        if (index == visible.length) {
+          return _buildPageFooter(colors, pageCount);
+        }
         final song = visible[index];
         // 页面内的序号按整体列表算，翻页后接着上一页继续编号。
         final songIndex = _pager.start + index;
@@ -846,17 +850,10 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
       },
     );
 
-    // 分页条常驻在列表下方（贴底），不再跟着列表末尾滚动；
-    // 多选时底部被批量操作栏占用，分页条暂时收起。
-    return Column(
-      children: [
-        Expanded(child: list),
-        if (!selecting) _buildPageFooter(colors, pageCount),
-      ],
-    );
+    return list;
   }
 
-  /// 常驻底部分页条（上面可带一行翻页状态提示）。
+  /// 列表末尾的分页条（上面可带一行翻页状态提示）。
   Widget _buildPageFooter(ThemeColors colors, int pageCount) {
     return Padding(
       padding: const EdgeInsets.only(top: AppSpacing.xs),

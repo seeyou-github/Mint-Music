@@ -557,37 +557,31 @@ class _CardGrid extends StatelessWidget {
           80.0,
           itemWidth - _RecentlyPlayedPageState._cardPadding * 2,
         );
-        return Column(
-          children: [
-            Expanded(
-              child: CustomScrollView(
-                controller: controller,
-                slivers: [
-                  SliverPadding(
-                    padding: const EdgeInsets.fromLTRB(
-                      AppSpacing.lg,
-                      AppSpacing.sm,
-                      AppSpacing.lg,
-                      0,
-                    ),
-                    sliver: SliverGrid(
-                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: columns,
-                        mainAxisSpacing: spacing,
-                        crossAxisSpacing: spacing,
-                        mainAxisExtent: coverSize + extraHeight,
-                      ),
-                      delegate: SliverChildBuilderDelegate(
-                        itemBuilder,
-                        childCount: itemCount,
-                      ),
-                    ),
-                  ),
-                ],
+        return CustomScrollView(
+          controller: controller,
+          slivers: [
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.lg,
+                AppSpacing.sm,
+                AppSpacing.lg,
+                0,
+              ),
+              sliver: SliverGrid(
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: columns,
+                  mainAxisSpacing: spacing,
+                  crossAxisSpacing: spacing,
+                  mainAxisExtent: coverSize + extraHeight,
+                ),
+                delegate: SliverChildBuilderDelegate(
+                  itemBuilder,
+                  childCount: itemCount,
+                ),
               ),
             ),
-            // 分页条常驻底部（不随网格滚动），并让开 Android 的迷你播放器。
-            ?footer,
+            // 分页条跟着网格滚到底部才出现，自身会避开迷你播放器。
+            if (footer != null) SliverToBoxAdapter(child: footer),
           ],
         );
       },

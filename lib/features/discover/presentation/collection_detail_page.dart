@@ -682,10 +682,12 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
         AppSpacing.sm,
         0,
         AppSpacing.sm,
-        AppSpacing.xxxl,
+        AppSpacing.sm,
       ),
-      itemCount: visible.length,
+      // 最后一项是分页条（滚到末尾才出现，自身会让开迷你播放器）。
+      itemCount: visible.length + 1,
       itemBuilder: (context, index) {
+        if (index == visible.length) return _pageFooter(colors, pageCount);
         final song = visible[index];
         // 序号按全局位置编号（跳页直达后缓冲区从当前页起，也要接续页码）；
         // 播放队列用的是缓冲区内的下标。
@@ -714,16 +716,10 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
         );
       },
     );
-    // 分页条常驻在列表下方（贴底），不跟着列表末尾滚动。
-    return Column(
-      children: [
-        Expanded(child: list),
-        _pageFooter(colors, pageCount),
-      ],
-    );
+    return list;
   }
 
-  /// 常驻底部分页条（上面可带一行翻页状态，不再显示「没有更多了」）。
+  /// 列表末尾的分页条（上面可带一行翻页状态，不再显示「没有更多了」）。
   Widget _pageFooter(ThemeColors colors, int pageCount) {
     return Column(
       mainAxisSize: MainAxisSize.min,

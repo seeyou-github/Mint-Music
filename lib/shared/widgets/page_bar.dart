@@ -309,6 +309,10 @@ class _PageBarState extends ConsumerState<PageBar> {
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppRadius.md),
       ),
+      // 分页条在列表末尾、紧挨着底部播放栏：向下展开会被屏幕底边挤回去，
+      // 结果正好压在播放栏上。按菜单高度整体上移，改成向上展开。
+      position: PopupMenuPosition.over,
+      offset: Offset(0, -(menuHeight + AppSpacing.md)),
       onSelected: _go,
       itemBuilder: (_) => [
         PopupMenuItem<int>(

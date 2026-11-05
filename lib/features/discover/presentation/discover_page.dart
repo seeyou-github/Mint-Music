@@ -1418,73 +1418,69 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
       });
     }
 
-    return Column(
-      children: [
-        Expanded(
-          child: CustomScrollView(
-            controller: _scrollController,
-            cacheExtent: 360,
-            slivers: [
-              SliverPadding(
-                padding: EdgeInsets.only(
-                  left: ResponsiveLayout.horizontalPadding(context),
-                  right: ResponsiveLayout.horizontalPadding(context),
-                  top: 0,
-                  bottom: AppSpacing.xxxl,
-                ),
-                sliver: SliverGrid(
-                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: crossAxisCount,
-                    mainAxisSpacing: isTablet ? 16 : AppSpacing.md,
-                    crossAxisSpacing: isTablet ? 16 : AppSpacing.md,
-                    childAspectRatio: isTablet ? 0.88 : 0.82,
+    return CustomScrollView(
+      controller: _scrollController,
+      cacheExtent: 360,
+      slivers: [
+        SliverPadding(
+          padding: EdgeInsets.only(
+            left: ResponsiveLayout.horizontalPadding(context),
+            right: ResponsiveLayout.horizontalPadding(context),
+            top: 0,
+            bottom: AppSpacing.md,
+          ),
+          sliver: SliverGrid(
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: crossAxisCount,
+              mainAxisSpacing: isTablet ? 16 : AppSpacing.md,
+              crossAxisSpacing: isTablet ? 16 : AppSpacing.md,
+              childAspectRatio: isTablet ? 0.88 : 0.82,
+            ),
+            delegate: SliverChildBuilderDelegate((context, index) {
+              final playlist = visible[index];
+              return RepaintBoundary(
+                child: _buildPlaylistCard(colors, playlist, index),
+              );
+            }, childCount: visible.length),
+          ),
+        ),
+        // 分页条跟着列表滚到底部才出现（不再常驻贴底），自身会避开迷你播放器。
+        SliverToBoxAdapter(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (notifier.loadingMore || _pagingLoading)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: AppSpacing.xs),
+                  child: SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
                   ),
-                  delegate: SliverChildBuilderDelegate((context, index) {
-                    final playlist = visible[index];
-                    return RepaintBoundary(
-                      child: _buildPlaylistCard(colors, playlist, index),
-                    );
-                  }, childCount: visible.length),
                 ),
+              if (notifier.loadMoreError != null)
+                LoadMoreFooter(
+                  status: LoadMoreStatus.error,
+                  colors: colors,
+                  message: notifier.loadMoreError,
+                  onRetry: () async {
+                    await notifier.fetchPlaylists(
+                      sortId: 'hot',
+                      tagId: ref.read(activeTagIdProvider),
+                      sourceId: ref.read(discoverSourceIdProvider),
+                    );
+                    if (mounted) await _ensurePlaylistPage();
+                  },
+                ),
+              PageBar(
+                currentPage: _playlistPager.page,
+                pageCount: pageCount,
+                loading: notifier.loadingMore || _pagingLoading,
+                docked: true,
+                onChanged: (page) => unawaited(_goToPlaylistPage(page)),
               ),
             ],
           ),
-        ),
-        // 分页条常驻底部（不随网格滚动），并让开 Android 的迷你播放器。
-        Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (notifier.loadingMore || _pagingLoading)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: AppSpacing.xs),
-                child: SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
-              ),
-            if (notifier.loadMoreError != null)
-              LoadMoreFooter(
-                status: LoadMoreStatus.error,
-                colors: colors,
-                message: notifier.loadMoreError,
-                onRetry: () async {
-                  await notifier.fetchPlaylists(
-                    sortId: 'hot',
-                    tagId: ref.read(activeTagIdProvider),
-                    sourceId: ref.read(discoverSourceIdProvider),
-                  );
-                  if (mounted) await _ensurePlaylistPage();
-                },
-              ),
-            PageBar(
-              currentPage: _playlistPager.page,
-              pageCount: pageCount,
-              loading: notifier.loadingMore || _pagingLoading,
-              docked: true,
-              onChanged: (page) => unawaited(_goToPlaylistPage(page)),
-            ),
-          ],
         ),
       ],
     );
@@ -2356,51 +2352,47 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
     _leaderboardPager.updatePageSize(_playlistPageRows * crossAxisCount);
     _leaderboardPager.clampTo(leaderboards.length, hasMore: false);
     final visible = _leaderboardPager.slice(leaderboards);
-    return Column(
-      children: [
-        Expanded(
-          child: CustomScrollView(
-            controller: _leaderboardScrollController,
-            cacheExtent: 360,
-            slivers: [
-              SliverPadding(
-                padding: EdgeInsets.only(
-                  left: ResponsiveLayout.horizontalPadding(context),
-                  right: ResponsiveLayout.horizontalPadding(context),
-                  bottom: AppSpacing.lg,
-                ),
-                sliver: SliverGrid(
-                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: crossAxisCount,
-                    mainAxisSpacing: isTablet ? 16 : AppSpacing.md,
-                    crossAxisSpacing: isTablet ? 16 : AppSpacing.md,
-                    childAspectRatio: isTablet ? 0.88 : 0.82,
-                  ),
-                  delegate: SliverChildBuilderDelegate(
-                    (context, index) =>
-                        _buildLeaderboardCard(colors, visible[index], index),
-                    childCount: visible.length,
-                    addAutomaticKeepAlives: false,
-                  ),
-                ),
-              ),
-            ],
+    return CustomScrollView(
+      controller: _leaderboardScrollController,
+      cacheExtent: 360,
+      slivers: [
+        SliverPadding(
+          padding: EdgeInsets.only(
+            left: ResponsiveLayout.horizontalPadding(context),
+            right: ResponsiveLayout.horizontalPadding(context),
+            bottom: AppSpacing.md,
+          ),
+          sliver: SliverGrid(
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: crossAxisCount,
+              mainAxisSpacing: isTablet ? 16 : AppSpacing.md,
+              crossAxisSpacing: isTablet ? 16 : AppSpacing.md,
+              childAspectRatio: isTablet ? 0.88 : 0.82,
+            ),
+            delegate: SliverChildBuilderDelegate(
+              (context, index) =>
+                  _buildLeaderboardCard(colors, visible[index], index),
+              childCount: visible.length,
+              addAutomaticKeepAlives: false,
+            ),
           ),
         ),
-        // 分页条常驻底部（不随网格滚动），并让开 Android 的迷你播放器。
-        PageBar(
-          currentPage: _leaderboardPager.page,
-          pageCount: _leaderboardPager.pageCount(
-            leaderboards.length,
-            hasMore: false,
+        // 分页条跟着网格滚到底部才出现，自身会避开迷你播放器。
+        SliverToBoxAdapter(
+          child: PageBar(
+            currentPage: _leaderboardPager.page,
+            pageCount: _leaderboardPager.pageCount(
+              leaderboards.length,
+              hasMore: false,
+            ),
+            docked: true,
+            onChanged: (page) {
+              setState(() => _leaderboardPager.jumpTo(page));
+              if (_leaderboardScrollController.hasClients) {
+                _leaderboardScrollController.jumpTo(0);
+              }
+            },
           ),
-          docked: true,
-          onChanged: (page) {
-            setState(() => _leaderboardPager.jumpTo(page));
-            if (_leaderboardScrollController.hasClients) {
-              _leaderboardScrollController.jumpTo(0);
-            }
-          },
         ),
       ],
     );
