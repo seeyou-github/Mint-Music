@@ -39,9 +39,10 @@ class _DayDelta {
 ///
 /// 存四类东西：
 ///
-/// * `play_totals`：累计总时长 / 播放次数（一行，只记累计值）；
+/// * `play_totals`：累计总时长 / 播放次数 / 听过的歌数（一行，只记累计值）；
 /// * `play_daily`：每天的累计时长 / 次数（周 / 月 / 年由它汇总，一年 365 行）；
 /// * `song_play_stats`：每首歌的播放次数 / 时长（「排行」分类的数据源）；
+///   「一年以上没听、且只播过 1 次」的歌会被定期清掉（见 [pruneOldSongs]）；
 /// * `song_play_progress`：每首歌「听到哪里」（由 `PlayProgressStore` 维护）。
 ///
 /// 这些数据是用户长期积累的（换设备后还要在），所以不能留在临时库——
@@ -127,14 +128,18 @@ class PlayStatsStore {
 
     try {
       final db = await AppDatabase.importantDatabase();
+      var newSongs = 0;
       await db.transaction((txn) async {
-        await _applyDeltas(txn, songs, daily);
+        newSongs = await _applyDeltas(txn, songs, daily);
         await _addTotals(
           txn,
           listenedMs: daily.values.fold(0, (sum, d) => sum + d.listenedMs),
           plays: songs.values.fold(0, (sum, d) => sum + d.playCount),
+          songCount: newSongs,
         );
       });
+      // 攒批写盘顺带看一眼老歌清理（一天最多一次）。
+      await _pruneIfDue();
     } catch (e) {
       debugPrint('[PlayStats] 写入听歌统计失败: $e');
       // 写失败就放回队列，下次再试（内存里仍是最新的）。
@@ -151,12 +156,13 @@ class PlayStatsStore {
     }
   }
 
-  /// 把增量写进三张表（只做 +，不覆盖已有累计值）。
-  static Future<void> _applyDeltas(
+  /// 把增量写进三张表（只做 +，不覆盖已有累计值）。返回新插入的歌曲行数。
+  static Future<int> _applyDeltas(
     DatabaseExecutor db,
     Map<String, _SongDelta> songs,
     Map<String, _DayDelta> daily,
   ) async {
+    var newSongs = 0;
     for (final entry in songs.entries) {
       final delta = entry.value;
       // 用 UPDATE ... SET x = x + ? 而不是 UPSERT：Android 7~10 自带的
@@ -184,6 +190,7 @@ class PlayStatsStore {
           'last_played_at': delta.lastPlayedAt,
           'data': delta.data ?? '{}',
         }, conflictAlgorithm: ConflictAlgorithm.replace);
+        newSongs++;
       }
     }
 
@@ -202,24 +209,28 @@ class PlayStatsStore {
         }, conflictAlgorithm: ConflictAlgorithm.replace);
       }
     }
+    return newSongs;
   }
 
   static Future<void> _addTotals(
     DatabaseExecutor db, {
     required int listenedMs,
     required int plays,
+    int songCount = 0,
   }) async {
-    if (listenedMs == 0 && plays == 0) return;
+    if (listenedMs == 0 && plays == 0 && songCount == 0) return;
     final updated = await db.rawUpdate(
       'UPDATE play_totals SET total_listened_ms = total_listened_ms + ?, '
-      'total_plays = total_plays + ?, updated_at = ? WHERE id = 1',
-      [listenedMs, plays, DateTime.now().millisecondsSinceEpoch],
+      'total_plays = total_plays + ?, song_count = song_count + ?, '
+      'updated_at = ? WHERE id = 1',
+      [listenedMs, plays, songCount, DateTime.now().millisecondsSinceEpoch],
     );
     if (updated == 0) {
       await db.insert('play_totals', {
         'id': 1,
         'total_listened_ms': listenedMs,
         'total_plays': plays,
+        'song_count': songCount,
         'updated_at': DateTime.now().millisecondsSinceEpoch,
       }, conflictAlgorithm: ConflictAlgorithm.replace);
     }
@@ -232,6 +243,7 @@ class PlayStatsStore {
     PlaybackStatsGranularity granularity = PlaybackStatsGranularity.day,
   }) async {
     await _migrateLegacyEvents();
+    await _pruneIfDue();
 
     var totalMs = 0;
     var totalPlays = 0;
@@ -243,11 +255,9 @@ class PlayStatsStore {
       if (totals.isNotEmpty) {
         totalMs = (totals.first['total_listened_ms'] as num?)?.toInt() ?? 0;
         totalPlays = (totals.first['total_plays'] as num?)?.toInt() ?? 0;
+        // 累计听过的歌数：老歌被清理后也不减，所以不能数表里的行数。
+        songCount = (totals.first['song_count'] as num?)?.toInt() ?? 0;
       }
-      final counted = await db.rawQuery(
-        'SELECT COUNT(*) AS n FROM song_play_stats',
-      );
-      songCount = (counted.first['n'] as num?)?.toInt() ?? 0;
       for (final row in await db.query(
         'play_daily',
         columns: ['day', 'listened_ms', 'plays'],
@@ -305,6 +315,7 @@ class PlayStatsStore {
     int limit = rankingLimit,
   }) async {
     await _migrateLegacyEvents();
+    await _pruneIfDue();
     // 先把攒在内存里的次数写下去：刚听完一首歌就打开「排行」时，榜单应该
     // 立刻包含这次播放（攒批写盘本来有 15 秒窗口）。
     await flush();
@@ -367,13 +378,62 @@ class PlayStatsStore {
         await txn.delete('play_daily');
         await txn.rawUpdate(
           'UPDATE play_totals SET total_listened_ms = 0, total_plays = 0, '
-          'updated_at = ? WHERE id = 1',
+          'song_count = 0, updated_at = ? WHERE id = 1',
           [DateTime.now().millisecondsSinceEpoch],
         );
       });
       await AppDatabase.checkpointImportant();
     } catch (e) {
       debugPrint('[PlayStats] 清空听歌统计失败: $e');
+    }
+  }
+
+  // ---------------------------------------------------------------- 清理
+
+  /// 老歌保留窗口（年）。
+  static const int keepYears = 1;
+
+  /// 本次运行最近一次清理的日期（`yyyy-MM-dd`）：一天最多清一次，
+  /// 不至于每 15 秒写盘就顺带删一遍。
+  String? _prunedDay;
+
+  Future<void> _pruneIfDue() async {
+    final today = _dayKey(DateTime.now());
+    if (_prunedDay == today) return;
+    _prunedDay = today;
+    await pruneOldSongs();
+  }
+
+  /// 删掉「一年以上没听过、且总播放次数不超过 1 次」的歌的统计行。
+  ///
+  /// 「排行」的数据源是 `song_play_stats`，听过的歌会一直累积；偶然听过
+  /// 一次、之后一年都没再听的歌留在榜里没意义，所以清掉。**播放过多次的
+  /// 老歌保留**——那是真正喜欢的歌，排行看的是全历史。
+  ///
+  /// 不影响「统计」页：总时长 / 次数 / 每天累计各有自己的表，「听过的歌」
+  /// 用的是 `play_totals.song_count` 这个累计值，清理不会让它变小。
+  Future<int> pruneOldSongs({DateTime? now}) async {
+    try {
+      final db = await AppDatabase.importantDatabase();
+      final current = now ?? DateTime.now();
+      // 「一年前」按日历年算（2 月 29 日之类自动落到 3 月 1 日，不影响清理）。
+      final cutoff = DateTime(
+        current.year - keepYears,
+        current.month,
+        current.day,
+      ).millisecondsSinceEpoch;
+      final removed = await db.delete(
+        'song_play_stats',
+        where: 'last_played_at < ? AND play_count <= 1',
+        whereArgs: [cutoff],
+      );
+      if (removed > 0) {
+        debugPrint('[PlayStats] 已清理 $removed 首一年以上没再听过的歌');
+      }
+      return removed;
+    } catch (e) {
+      debugPrint('[PlayStats] 清理老歌失败: $e');
+      return 0;
     }
   }
 
@@ -443,12 +503,14 @@ class PlayStatsStore {
       }
 
       final db = await AppDatabase.importantDatabase();
+      var newSongs = 0;
       await db.transaction((txn) async {
-        await _applyDeltas(txn, songs, daily);
+        newSongs = await _applyDeltas(txn, songs, daily);
         await _addTotals(
           txn,
           listenedMs: daily.values.fold(0, (sum, d) => sum + d.listenedMs),
           plays: daily.values.fold(0, (sum, d) => sum + d.plays),
+          songCount: newSongs,
         );
       });
       // 明细已经变成累计值了，清掉，省得两份数据对不上。
@@ -482,6 +544,7 @@ class PlayStatsStore {
         result['totals'] = {
           'listenedMs': totals.first['total_listened_ms'] ?? 0,
           'plays': totals.first['total_plays'] ?? 0,
+          'songCount': totals.first['song_count'] ?? 0,
           'updatedAt': totals.first['updated_at'] ?? 0,
         };
       }
@@ -575,10 +638,13 @@ class PlayStatsStore {
                 0,
                 (sum, row) => sum + ((row['plays'] as num?)?.toInt() ?? 0),
               );
+        final songCount = totals is Map
+            ? (totals['songCount'] as num?)?.toInt() ?? songs.length
+            : songs.length;
         await txn.rawUpdate(
           'UPDATE play_totals SET total_listened_ms = ?, total_plays = ?, '
-          'updated_at = ? WHERE id = 1',
-          [listenedMs, plays, DateTime.now().millisecondsSinceEpoch],
+          'song_count = ?, updated_at = ? WHERE id = 1',
+          [listenedMs, plays, songCount, DateTime.now().millisecondsSinceEpoch],
         );
       });
       await AppDatabase.checkpointImportant();

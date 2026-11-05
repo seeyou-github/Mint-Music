@@ -264,7 +264,8 @@ class AppDatabase {
       //     song_play_stats（每首歌播放次数 / 时长，排行用）、
       //     play_totals（累计总时长 / 播放次数）、
       //     play_daily（每天累计时长 / 次数）。
-      version: 3,
+      // v4：play_totals 加 `song_count`（累计「听过的歌」，清理老歌时不能跟着减）。
+      version: 4,
       onConfigure: (db) async {
         // WAL：写入不阻塞读取；synchronous=FULL：断电也不会丢已提交的事务。
         await _applyPragmas(
@@ -280,8 +281,36 @@ class AppDatabase {
       onUpgrade: (db, oldVersion, newVersion) async {
         // 建表语句都写成 IF NOT EXISTS，重复执行安全。
         await _createImportantSchema(db);
+        // 老库里缺的列在这里补（v3 → v4 的 play_totals.song_count）。
+        await _ensureImportantColumns(db);
       },
     );
+  }
+
+  /// 给已有的重要库补列（`CREATE TABLE IF NOT EXISTS` 不会给旧表加列）。
+  static Future<void> _ensureImportantColumns(Database db) async {
+    try {
+      final columns = await db.rawQuery('PRAGMA table_info(play_totals)');
+      final hasSongCount = columns.any(
+        (row) => '${row['name']}' == 'song_count',
+      );
+      if (hasSongCount) return;
+      await db.execute(
+        'ALTER TABLE play_totals ADD COLUMN song_count INTEGER NOT NULL '
+        'DEFAULT 0',
+      );
+      // 之前没记过这个数：按当前行数补一次（此时还没开始清理老歌，
+      // 行数就等于历史听过的歌数）。
+      final rows = await db.rawQuery(
+        'SELECT COUNT(*) AS n FROM song_play_stats',
+      );
+      final total = (rows.first['n'] as num?)?.toInt() ?? 0;
+      await db.execute('UPDATE play_totals SET song_count = ? WHERE id = 1', [
+        total,
+      ]);
+    } catch (e) {
+      debugPrint('[AppDatabase] 补充重要库字段失败: $e');
+    }
   }
 
   /// 重要库的建表语句（幂等）。
@@ -362,14 +391,23 @@ class AppDatabase {
       'CREATE INDEX IF NOT EXISTS idx_song_play_stats_rank '
       'ON song_play_stats (play_count DESC, listened_ms DESC)',
     );
+    // 「太久没听的老歌」清理（last_played_at < 一年前 且 只播过 1 次）按这个索引扫。
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_song_play_stats_last '
+      'ON song_play_stats (last_played_at)',
+    );
 
-    // 累计统计：只有一行（id = 1）。「听过的歌」直接数 song_play_stats 的行数，
-    // 不额外存一份计数，免得两处对不上。
+    // 累计统计：只有一行（id = 1）。
+    //
+    // `song_count` 是「听过的歌」的**累计**数量：每插入一首新歌的统计行就 +1，
+    // 之后即使那首歌因为太久没听被清理掉（见 `PlayStatsStore.pruneOldSongs`），
+    // 这个数字也不会减——统计说的是「一共听过多少首」。
     await db.execute('''
           CREATE TABLE IF NOT EXISTS play_totals (
             id INTEGER PRIMARY KEY CHECK (id = 1),
             total_listened_ms INTEGER NOT NULL DEFAULT 0,
             total_plays INTEGER NOT NULL DEFAULT 0,
+            song_count INTEGER NOT NULL DEFAULT 0,
             updated_at INTEGER NOT NULL DEFAULT 0
           )
         ''');
