@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 
 import '../../../core/storage/app_database.dart';
+import '../../../core/storage/app_preferences.dart';
 import '../domain/models/playlist.dart';
 import '../utils/favorite_playlist.dart';
 import '../../player/domain/models/song.dart';
@@ -22,8 +23,21 @@ class PlaylistRepository {
   /// 链，一次只跑一个；链尾吞掉错误，前一次失败不会卡死后续操作。
   static Future<void> _writeChain = Future.value();
 
+  /// 当前是否正在执行串行化里的写操作。
+  ///
+  /// [loadPlaylists] 会被写操作内部调用，它自己不能再排进 [_writeChain]
+  /// （会等自己而卡死）；靠这个标记判断要不要走串行化。
+  static bool _inSerialized = false;
+
   Future<T> _serialized<T>(Future<T> Function() action) {
-    final task = _writeChain.then((_) => action());
+    final task = _writeChain.then((_) async {
+      _inSerialized = true;
+      try {
+        return await action();
+      } finally {
+        _inSerialized = false;
+      }
+    });
     _writeChain = task.then((_) {}, onError: (Object _) {});
     return task;
   }
@@ -66,10 +80,40 @@ class PlaylistRepository {
           playlists.insert(0, favorites);
         }
       }
+      await _shrinkLegacySongs();
       return playlists;
     } catch (e) {
       debugPrint('PlaylistRepository.loadPlaylists error: $e');
       rethrow;
+    }
+  }
+
+  /// 一次性把老版本写下的收藏文件改写成「瘦身版」。
+  ///
+  /// 老版本把每首歌的插件原始数据（`lx`）整份存进 playlists.json：895 首歌
+  /// 能到 1.5MB，其中 950KB 是 `lx`。只改写入路径的话，老文件得等用户下次
+  /// 编辑歌单才会变小，所以升级后第一次加载时整体重写一遍。
+  ///
+  /// 标记只在写成功之后才置上；失败（磁盘满 / 文件被占用）下次启动会再试。
+  static const String _shrinkMigrationKey = 'persist_slim_songs_v1';
+
+  Future<void> _shrinkLegacySongs() async {
+    // 已经在一次写操作里（loadPlaylists 由 savePlaylist 等触发）：这次不写，
+    // 等下一次独立加载再做，避免排进自己正在等的链上。
+    if (_inSerialized) return;
+    try {
+      final prefs = await AppPreferences.getInstance();
+      if (prefs.getBool(_shrinkMigrationKey) == true) return;
+      await _serialized(() async {
+        // 重新读一遍文件再写：排队期间用户可能已经加过歌，用加载时那份
+        // 内存列表回写会把新加的改动抹掉。
+        final fresh = await loadPlaylists();
+        await savePlaylists(fresh);
+        await prefs.setBool(_shrinkMigrationKey, true);
+        debugPrint('[PlaylistRepository] 已把收藏文件改写为瘦身版');
+      });
+    } catch (e) {
+      debugPrint('[PlaylistRepository] 瘦身收藏文件失败: $e');
     }
   }
 

@@ -405,19 +405,144 @@ class Song {
 
   /// 持久化专用的瘦身版 JSON。
   ///
-  /// [toJson] 会带上整段歌词（`lrc`，逐字歌词一条几十 KB）和请求头
-  /// （`sourceHeaders`），落到 playlists.json / playback_state / 最近播放 /
-  /// 本地歌曲表里只会让文件与行无谓膨胀，而且：
+  /// [toJson] 会带上整段歌词（`lrc`，逐字歌词一条几十 KB）、请求头
+  /// （`sourceHeaders`）以及**插件回传的整份原始数据**（`lx`），落到
+  /// playlists.json / 热榜 / playback_state / 最近播放 / 本地歌曲表里只会让
+  /// 文件与行无谓膨胀，而且：
   ///
   /// * 歌词有专门的临时库缓存（LyricCache），播放时会重新取；
-  /// * 请求头跟随播放地址，过期后没有意义。
+  /// * 请求头跟随播放地址，过期后没有意义；
+  /// * `lx` 里真正会被用到的只有下面 [_persistLxKeys] 列的这些键（播放地址
+  ///   解析见 `MusicSourceManager._buildPluginMusicInfo`，专辑 id 见
+  ///   `SongActionSheet`，音质体积见 `QualitySizeFormatter`），其余是插件的
+  ///   原始字段、别名与重复封面地址。实测收藏 895 首歌里 `lx` 占 956KB。
+  ///
+  /// 另外去掉所有空值：`"bitrate": null` 这样的键每首歌有十几个、约 230 字节，
+  /// 900 首就是 200KB（[Song.fromJson] 对这些字段都有默认值）。
   ///
   /// 导出 / 分享等需要完整数据的场景仍用 [toJson]。
   Map<String, dynamic> toPersistJson() {
     final json = toJson();
     json.remove('lrc');
     json.remove('sourceHeaders');
+    final lx = json['lx'];
+    if (lx is Map) {
+      final slim = _slimLx(Map<String, dynamic>.from(lx));
+      if (slim.isEmpty) {
+        json.remove('lx');
+      } else {
+        json['lx'] = slim;
+      }
+    }
+    json.removeWhere((_, value) => _isPersistEmpty(value));
     return json;
+  }
+
+  /// 落盘时保留的 `lx` 键。
+  ///
+  /// 判断依据是「代码里真的读过它」：播放地址 / 歌词解析走
+  /// `_buildPluginMusicInfo` 的别名读取，专辑跳转读 `albumId`/`album`，
+  /// 音质体积读 `types`/`_types`/`typeMap`/`typeUrl` 与 `size*` 系列，
+  /// B 站分 P 读 `extra`。MusicFree 的原始 musicItem 也在 `extra` 里。
+  static const Set<String> _persistLxKeys = {
+    // 各平台的歌曲 id 别名
+    'songId',
+    'songid',
+    'copyrightId',
+    'songmid',
+    'mid',
+    // 酷狗 / 咪咕 / B 站用 hash 取地址
+    'hash',
+    'interval',
+    // 名称类（插件按不同平台字段名回传）
+    'name',
+    'songName',
+    'title',
+    'singer',
+    'artist',
+    'albumName',
+    'album_name',
+    // 专辑 id / mid
+    'albumId',
+    'albumid',
+    'albumMid',
+    'albummid',
+    'strMediaMid',
+    'album',
+    'al',
+    // 封面别名
+    'img',
+    'pic',
+    'picUrl',
+    'cover',
+    // 歌词地址
+    'lrcUrl',
+    'mrcUrl',
+    'trcUrl',
+    // 音质列表 / 体积
+    'types',
+    '_types',
+    'typeMap',
+    'typeUrl',
+    // 插件自定义附加数据（MusicFree 的原始 musicItem、B 站分 P 信息）
+    'extra',
+    'source',
+  };
+
+  static bool _isPersistEmpty(Object? value) {
+    if (value == null) return true;
+    if (value is String) return value.isEmpty;
+    if (value is List) return value.isEmpty;
+    if (value is Map) return value.isEmpty;
+    return false;
+  }
+
+  /// 同一个含义的多个字段名，按代码里的读取顺序排列。
+  ///
+  /// 插件原始数据经常把同一个值抄好几遍（B 站歌单里 `img` / `picUrl` /
+  /// `artwork` 是同一个封面地址，`name` / `title` 是同一个歌名），一首歌能
+  /// 多占 1KB 以上。每组只留**第一个非空**的值：读取顺序不变，所以
+  /// `_buildPluginMusicInfo` / `QualitySizeFormatter` 取到的结果完全一样。
+  ///
+  /// `copyrightId` 不参与去重：它既是 `songId` 的兜底，又是独立字段
+  /// （咪咕靠它取播放地址），两边都要有。
+  static const List<List<String>> _lxAliasGroups = [
+    ['songId', 'songid'],
+    ['songmid', 'mid'],
+    ['name', 'songName', 'title'],
+    ['singer', 'artist'],
+    ['albumName', 'album_name'],
+    ['albumId', 'albumid'],
+    ['albumMid', 'albummid'],
+    ['img', 'pic', 'picUrl', 'cover'],
+    ['album', 'al'],
+  ];
+
+  static Map<String, dynamic> _slimLx(Map<String, dynamic> lx) {
+    final duplicated = <String>{};
+    for (final group in _lxAliasGroups) {
+      var kept = false;
+      for (final key in group) {
+        if (kept) {
+          duplicated.add(key);
+          continue;
+        }
+        if (!_isPersistEmpty(lx[key])) kept = true;
+      }
+    }
+
+    final result = <String, dynamic>{};
+    lx.forEach((key, value) {
+      if (duplicated.contains(key)) return;
+      if (_isPersistEmpty(value)) return;
+      // `size320` / `size_h` / `fileSizeFlac` 之类按音质记体积的键都要留：
+      // `QualitySizeFormatter` 是靠「键名里带 size」扫出来的。
+      if (_persistLxKeys.contains(key) ||
+          key.toLowerCase().contains('size')) {
+        result[key] = value;
+      }
+    });
+    return result;
   }
 
   factory Song.fromJson(Map<String, dynamic> json) {

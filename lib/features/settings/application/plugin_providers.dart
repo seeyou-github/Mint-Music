@@ -124,8 +124,10 @@ class PluginsNotifier extends AsyncNotifier<List<PluginInfo>> {
   Future<void> uninstallPlugin(String id) async {
     final pluginService = ref.read(pluginServiceProvider);
     await pluginService.uninstallPlugin(id);
-    // 插件卸载 / 删除后它带来的音源都不存在了：清掉它们的「有热榜」标志位
-    // （热榜数据本身保留，重装后仍能看到；只是不再参与默认分类判断）。
+    // 插件没了，它带来的热榜数据一起删掉：音源 `平台id@插件id` 不会再出现，
+    // 留在临时库里只是十几 KB 的死数据（重装插件后需要重新添加榜单）。
+    await ref.read(hotBoardsProvider.notifier).removeForPlugin(id);
+    // 再清「有热榜」标志位（热榜数据被删后标志位也要跟上）。
     await ref.read(hotBoardSourceIdsProvider.notifier).clearPlugin(id);
     ref.invalidate(pluginInitializedProvider);
     ref.invalidateSelf();

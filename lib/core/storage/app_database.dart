@@ -80,6 +80,10 @@ class AppDatabase {
   ///
   /// 还原会清空 temp 目录，但 Windows 上数据库文件正被 SQLite 打开，
   /// 目录删除会静默失败；这里把表也清一遍，保证「清空临时数据」的语义。
+  ///
+  /// **`hot_boards` 故意不在这里**：热榜是用户自己挑的榜单，还原备份时应该
+  /// 保留（新版本的备份包里另有 `hotboards.json` 条目，存在时会覆盖它），
+  /// 否则从老备份还原一次，用户攒的榜单就全没了。
   static Future<void> clearAllCacheData() async {
     try {
       final db = await cacheDatabase();
@@ -299,7 +303,8 @@ class AppDatabase {
       // v4：新增 song_play_progress（已播放进度，用于「已听 N%」标签）。
       // v5 曾加过一张独立的 song_resume_position，现改为直接复用
       // song_play_progress（「最远听到哪」就是续播位置），v6 里连同旧表一起清掉。
-      version: 6,
+      // v7：新增 hot_boards（热榜从 settings.json 搬进临时库）。
+      version: 7,
       onConfigure: (db) async {
         // NORMAL：写 WAL 不用每次 fsync，浏览时缓存索引写入不至于卡顿。
         // 关键数据（本地歌曲 / 最近播放 / 搜索历史）写完后会显式
@@ -443,6 +448,23 @@ class AppDatabase {
             valid_till INTEGER NOT NULL DEFAULT 0,
             length INTEGER,
             touched INTEGER NOT NULL DEFAULT 0
+          )
+        ''');
+    // 热榜：用户从各音源添加的榜单 + 每个榜单前 10 首歌。
+    //
+    // 旧版本把它塞在设置文件的 `hot_boards_v2` 键里，5 个音源、15 个榜单就能
+    // 占 180KB（设置文件的 96%），于是「切一次深色模式」也要把整份设置重写
+    // 一遍。它对设置没有任何意义，属于「丢了可以从插件重新添加」的数据，
+    // 因此放临时库。
+    await db.execute('''
+          CREATE TABLE IF NOT EXISTS hot_boards (
+            id TEXT NOT NULL,
+            source TEXT NOT NULL DEFAULT '',
+            name TEXT NOT NULL DEFAULT '',
+            cover_url TEXT NOT NULL DEFAULT '',
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            data TEXT NOT NULL DEFAULT '{}',
+            PRIMARY KEY (id, source)
           )
         ''');
   }

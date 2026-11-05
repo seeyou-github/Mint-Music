@@ -161,6 +161,22 @@ class HotBoardsNotifier extends AsyncNotifier<List<HotBoard>> {
     await _update(all);
   }
 
+  /// 插件被卸载 / 删除：它带来的榜单一起删掉。
+  ///
+  /// 榜单 `source` 是 `平台id@插件id`（例如 `wy@1a19ca50dfa`），插件卸载后
+  /// 这个音源不可能再出现，留着只会在临时库里一直占地方（每个榜单 10 首歌、
+  /// 十几 KB）。用户重装插件后需要重新添加榜单。
+  Future<void> removeForPlugin(String pluginId) async {
+    final suffix = '@$pluginId';
+    final boards = [...await future];
+    final kept = [
+      for (final board in boards)
+        if (board.source != pluginId && !board.source.endsWith(suffix)) board,
+    ];
+    if (kept.length == boards.length) return;
+    await _update(kept);
+  }
+
   Future<void> _update(List<HotBoard> boards) async {
     final previous = state.valueOrNull ?? const <HotBoard>[];
     state = AsyncData(boards);

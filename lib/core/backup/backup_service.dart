@@ -9,6 +9,7 @@ import 'package:path/path.dart' as p;
 import '../platform/app_paths.dart';
 import '../storage/app_database.dart';
 import '../storage/app_preferences.dart';
+import '../../features/discover/data/hot_board_store.dart';
 
 /// 备份 / 还原服务。
 ///
@@ -16,9 +17,11 @@ import '../storage/app_preferences.dart';
 /// - `config/`：应用配置目录（`settings.json`、收藏歌单 `playlists.json`、
 ///   导入的字体等）
 /// - `plugin/`：插件脚本目录
+/// - `hotboards.json`：热榜（存在临时库 `hot_boards` 表里，不在 config 目录内）
 ///
 /// 还原时：
 /// - 用备份里的 `config` / `plugin` **覆盖**现有目录；
+/// - 有 `hotboards.json` 时用它覆盖临时库里的热榜；
 /// - **清空 `temp` 目录**（里面的本地歌曲索引等会失效，下次进入「本地」分类
 ///   会按配置里的扫描目录重新扫描一次）。
 class BackupService {
@@ -27,6 +30,12 @@ class BackupService {
   /// 压缩包内的目录名。
   static const String configDirEntry = 'config';
   static const String pluginDirEntry = 'plugin';
+
+  /// 压缩包内的热榜条目名。
+  ///
+  /// 热榜放在临时库的 `hot_boards` 表里（不在 config 目录内），所以单独打一个
+  /// JSON 条目，否则换设备还原后用户挑的榜单会全部丢失。
+  static const String hotBoardsEntry = 'hotboards.json';
 
   /// 备份文件名前缀。
   static const String backupFilePrefix = 'mintmusic-backup';
@@ -43,7 +52,7 @@ class BackupService {
 
   // ---------------------------------------------------------------- 备份
 
-  /// 生成一个备份压缩包（只含 config 与 plugin 两个目录）。
+  /// 生成一个备份压缩包（只含 config 与 plugin 两个目录 + 热榜）。
   static Future<Uint8List> createBackup() async {
     final archive = Archive();
     await _addDirectory(
@@ -56,6 +65,12 @@ class BackupService {
       await AppPaths.pluginDirectory(),
       pluginDirEntry,
     );
+    // 热榜在临时库里，单独序列化成一条 JSON 带进包。
+    final hotBoards = await HotBoardStore().exportJson();
+    if (hotBoards.isNotEmpty && hotBoards != '[]') {
+      final bytes = utf8.encode(hotBoards);
+      archive.addFile(ArchiveFile(hotBoardsEntry, bytes.length, bytes));
+    }
     final zipped = ZipEncoder().encode(archive);
     return Uint8List.fromList(zipped);
   }
@@ -110,6 +125,31 @@ class BackupService {
       await (await AppPreferences.getInstance()).reload();
     } catch (e) {
       debugPrint('[BackupService] 重载设置失败: $e');
+    }
+
+    // 4) 热榜：新版本的备份包里是独立条目；老备份没有这一条，它的热榜在
+    //    settings.json 的 `hot_boards_v2` 键里，会在 HotBoardStore 首次读取时
+    //    自动迁移进临时库，这里不用额外处理。
+    await _restoreHotBoards(archive);
+  }
+
+  /// 还原备份包里的热榜条目（没有就保持现有数据）。
+  static Future<void> _restoreHotBoards(Archive archive) async {
+    ArchiveFile? entry;
+    for (final file in archive.files) {
+      if (file.isFile && file.name == hotBoardsEntry) {
+        entry = file;
+        break;
+      }
+    }
+    if (entry == null) return;
+    try {
+      final raw = utf8.decode(entry.content as List<int>);
+      if (raw.trim().isEmpty) return;
+      await HotBoardStore().importJson(raw);
+      debugPrint('[BackupService] 已还原热榜');
+    } catch (e) {
+      debugPrint('[BackupService] 还原热榜失败: $e');
     }
   }
 
