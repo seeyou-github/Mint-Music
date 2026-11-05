@@ -23,8 +23,10 @@ import '../../features/player/application/mini_player_visibility.dart';
 /// [docked] 为 true 时表示分页条**常驻在内容区底部**（不是列表项），
 /// 会给自身补一段下内边距避开 Android 的迷你播放器，避免被播放栏盖住。
 ///
-/// 「第 N 页」下拉列出全部页码，选一个直达（Windows 上支持滚轮滚动和
-/// 按住鼠标拖动，另有常驻滚动条可拖）。总共只有 1 页时整个分页条不显示。
+/// 「第 N 页」下拉只列出**目前能确定的页码**：知道总页数时就是全部页码；
+/// 数据源不给总数时只列已经翻到过的页（猜不出来的一律不列）。选一个直达
+/// （Windows 上支持滚轮滚动和按住鼠标拖动，另有常驻滚动条可拖）。
+/// 总共只有 1 页时整个分页条不显示。
 class PageBar extends ConsumerStatefulWidget {
   const PageBar({
     super.key,
@@ -50,8 +52,9 @@ class PageBar extends ConsumerStatefulWidget {
   ///
   /// 数据源不给总条数、又还没翻到末尾时为 false：这时 [pageCount] 里那个
   /// 尾页是「再多留一页」的入口，并不是真的最后一页。界面上右侧那格就不写
-  /// 具体页码，改成省略号（看着像「后面还有，具体到第几页不知道」）；
-  /// 想跳到更后面的页仍可以从「第 N 页」下拉里选，不会有点不到的情况。
+  /// 具体页码，改成省略号（看着像「后面还有，具体到第几页不知道」），
+  /// **这一格可以点**，点它就去取下一页；「第 N 页」下拉里只列已经知道的
+  /// 页码，不会出现猜出来的页。
   final bool lastPageKnown;
 
   @override
@@ -82,6 +85,17 @@ class _PageBarState extends ConsumerState<PageBar> {
 
   int get _count => widget.pageCount < 1 ? 1 : widget.pageCount;
   int get _current => widget.currentPage.clamp(1, _count);
+
+  /// 目前能确定存在的页数。
+  ///
+  /// [PageBar.lastPageKnown] 为 false 时，[pageCount] 的最后一页只是「多留一页」
+  /// 的入口（还没取过），所以要减掉；当前页兜底算作已知，避免加载中的瞬时
+  /// 状态把页码从页码行里挤掉。下拉框只列到这一页为止。
+  int get _knownCount =>
+      widget.lastPageKnown ? _count : math.max(_current, _count - 1);
+
+  /// 末页未知、且后面还有没取过的页：页码行末尾那格是「…」入口，点它取下一页。
+  bool get _hasMorePage => !widget.lastPageKnown && _knownCount < _count;
 
   @override
   void dispose() {
@@ -142,12 +156,14 @@ class _PageBarState extends ConsumerState<PageBar> {
             final budget = constraints.maxWidth - stepArea;
 
             // 1) 先试「所有页码都显示」：放得下就不需要下拉。
+            //    末页未知时不把猜出来的那一页写成页码，末尾换成「…」入口。
             final allPages = <int?>[
-              for (var page = 1; page <= _count; page++) page,
+              for (var page = 1; page <= _knownCount; page++) page,
+              if (_hasMorePage) null,
             ];
             var showDropdown = false;
             List<int?> pages;
-            if (_windowWidth(context, allPages) <= budget) {
+            if (_pagesWidth(context, allPages) <= budget) {
               pages = allPages;
             } else {
               // 2) 放不下才出现省略号 + 下拉。当前页前后各留一页（9 10 11），
@@ -163,7 +179,7 @@ class _PageBarState extends ConsumerState<PageBar> {
                 includeLast: widget.lastPageKnown,
               );
               while (radius > 1 &&
-                  _windowWidth(context, pages) + _elementGap + dropdownWidth >
+                  _pagesWidth(context, pages) + _elementGap + dropdownWidth >
                       budget) {
                 radius--;
                 pages = _windowPages(
@@ -175,11 +191,20 @@ class _PageBarState extends ConsumerState<PageBar> {
               }
             }
 
+            // 末尾那一格如果是「末页未知」留下的省略号，就做成可点的入口：
+            // 点它取下一页（取到之后已知页数 +1，下拉里才会多出这一页）。
+            final moreIndex =
+                _hasMorePage && pages.isNotEmpty && pages.last == null
+                ? pages.length - 1
+                : -1;
+
             final pageChildren = <Widget>[
-              for (final page in pages)
-                page == null
-                    ? _buildEllipsis(context, colors)
-                    : _buildPageButton(context, colors, page),
+              for (var i = 0; i < pages.length; i++)
+                pages[i] == null
+                    ? (i == moreIndex
+                          ? _buildMoreButton(colors)
+                          : _buildEllipsis(context, colors))
+                    : _buildPageButton(context, colors, pages[i]!),
               if (showDropdown) ...[
                 const SizedBox(width: AppSpacing.xs),
                 _buildDropdown(colors),
@@ -215,7 +240,7 @@ class _PageBarState extends ConsumerState<PageBar> {
             // 左右边缘和上方的歌单 / 歌曲列表对齐（以前整组居中，比列表窄一截，
             // 看起来像浮在中间）。
             final contentWidth =
-                _windowWidth(context, pages) +
+                _pagesWidth(context, pages) +
                 (showDropdown ? AppSpacing.xs + _dropdownWidth(context) : 0) +
                 (wide ? (_stepButtonWidth + _stepGap) * 2 : 0);
             // 极端窄屏（超大字号 / 极小屏）放不下时退化成可横滚，避免溢出条纹。
@@ -318,13 +343,39 @@ class _PageBarState extends ConsumerState<PageBar> {
     );
   }
 
-  /// 「第 N 页」下拉：点开列出全部页码，选一个直达。
+  /// 页码行末尾的「…」入口：末页未知时点它去取下一页。
+  ///
+  /// 它不写成具体页码（那一页还没取过，纯属猜测），但必须可点，
+  /// 否则「不知道总页数」的列表就再也翻不到后面了。
+  Widget _buildMoreButton(ThemeColors colors) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: _elementGap / 2),
+      child: Semantics(
+        button: true,
+        label: context.tr('下一页'),
+        child: SizedBox(
+          height: _buttonHeight,
+          child: OutlinedButton(
+            onPressed: widget.loading ? null : () => _go(_count),
+            style: _buttonStyle(colors),
+            child: const ExcludeSemantics(child: Text('…')),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 「第 N 页」下拉：列出已知页码，选一个直达。
+  ///
+  /// 只列 [_knownCount]：不知道总页数时就是「已经翻到过」的页，猜出来的页
+  /// 不列；知道总页数时 [_knownCount] 等于总页数，等于列出全部页码。
   ///
   /// 列表可滚动：滚轮直接滚（Windows）、按住鼠标 / 触屏也能拖，
   /// 另有常驻滚动条可拖动快跳。
   Widget _buildDropdown(ThemeColors colors) {
+    final rows = _knownCount;
     final menuHeight =
-        math.min(_count, _maxMenuRows) * _menuItemHeight + AppSpacing.xs * 2;
+        math.min(rows, _maxMenuRows) * _menuItemHeight + AppSpacing.xs * 2;
     return PopupMenuButton<int>(
       enabled: !widget.loading,
       tooltip: context.tr('跳转到指定页'),
@@ -353,7 +404,7 @@ class _PageBarState extends ConsumerState<PageBar> {
                 child: ListView.builder(
                   controller: _menuScrollController,
                   padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
-                  itemCount: _count,
+                  itemCount: rows,
                   itemBuilder: (menuContext, index) =>
                       _buildMenuRow(menuContext, colors, index + 1),
                 ),
@@ -450,12 +501,27 @@ class _PageBarState extends ConsumerState<PageBar> {
     return text + 18 + AppSpacing.sm * 2 + 4;
   }
 
-  double _windowWidth(BuildContext context, List<int?> pages) {
+  /// 末尾「…」入口按按钮算宽度（它比纯文本的省略号宽一圈边框和内边距）。
+  double _moreButtonWidth(BuildContext context) {
+    final text = _textWidth(context, '…', _numberStyle);
+    return math.max(_buttonMinWidth, text + _buttonPadding * 2) + _elementGap;
+  }
+
+  /// 页码行总宽度：中间省略号按纯文本算，末尾的「…」入口按按钮算。
+  double _pagesWidth(BuildContext context, List<int?> pages) {
+    final moreIndex = _hasMorePage && pages.isNotEmpty && pages.last == null
+        ? pages.length - 1
+        : -1;
     var total = 0.0;
-    for (final page in pages) {
-      total += page == null
-          ? _ellipsisWidth(context)
-          : _pageButtonWidth(context, page);
+    for (var i = 0; i < pages.length; i++) {
+      final page = pages[i];
+      if (page != null) {
+        total += _pageButtonWidth(context, page);
+      } else if (i == moreIndex) {
+        total += _moreButtonWidth(context);
+      } else {
+        total += _ellipsisWidth(context);
+      }
     }
     return total;
   }
@@ -465,8 +531,8 @@ class _PageBarState extends ConsumerState<PageBar> {
   ///
   /// [includeLast] 为 false 表示末页未知：不把 [count] 当成「最后一页」列出来
   /// （它是为了能继续往后翻而多留的一页，不是真的末页），而是在末尾补一个
-  /// 省略号，表示「后面还有，具体到第几页不知道」。想跳到更后面的页仍可以
-  /// 从「第 N 页」下拉里选，不会有点不到的情况。
+  /// 省略号，表示「后面还有，具体到第几页不知道」——这个省略号在界面上是
+  /// 可点的，点它继续取下一页。
   static List<int?> _windowPages(
     int current,
     int count,

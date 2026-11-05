@@ -97,8 +97,9 @@ class PageSlicer {
     // 实际覆盖的页数收尾，否则上游总数偏大会留下空白末页。
     var pages = hasMore && _base > 1 && knownPages < _page ? _page : knownPages;
     // 还有更多但不知道到底有几页时，多留一个页码入口：点它才去接口取，
-    // 宁可多一页也不能「点不到后面的页」。这一页在界面上不写成具体页码
-    // （见 PageBar.lastPageKnown），避免 20 页的列表看起来像有 21 页。
+    // 宁可多一页也不能「点不到后面的页」。这一页在界面上不写成具体页码，
+    // 「第 N 页」下拉里也不列（见 PageBar.lastPageKnown），避免 20 页的列表
+    // 看起来像有 21 页。
     if (hasMore) pages += 1;
     return pages < 1 ? 1 : pages;
   }
