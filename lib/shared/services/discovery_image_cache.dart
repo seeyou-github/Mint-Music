@@ -12,21 +12,25 @@ import 'cache_paths.dart';
 ///
 /// 这类封面只在发现页、搜索页、歌单详情等处出现，单独放在缓存目录下的
 /// `image_discovery_cache`，和歌曲列表的 `image_cache` 分开，便于分别清理。
+///
+/// **过期从「最后一次使用」算起**：文件的修改时间既表示写入时间，也用
+/// [read] 成功读取时的「触摸」来刷新，所以一张每天都会看到的封面不会被删掉，
+/// 只有 30 天没再用过的才会清掉（数量超限时按同一时间戳淘汰）。
 class DiscoveryImageCache {
   DiscoveryImageCache._();
 
   static const String directoryName = 'image_discovery_cache';
 
-  /// 封面地址基本不会变化，缓存 30 天后重新下载。
+  /// 30 天没再用过就删掉、下次重新下载。
   static const Duration stalePeriod = Duration(days: 30);
 
-  /// 最多保留的封面数量，超出后淘汰最旧的文件。
+  /// 最多保留的封面数量，超出后淘汰最旧的（最久没用的）文件。
   static const int maxFiles = 400;
 
   static const int _minBytes = 100;
   static int _writesSincePrune = 0;
 
-  /// 按图片地址读取缓存；不存在、已过期或文件损坏时返回 null。
+  /// 按图片地址读取缓存；不存在、超过 30 天没用过或文件损坏时返回 null。
   static Future<Uint8List?> read(String url) async {
     try {
       final file = await _fileFor(url);
@@ -41,11 +45,24 @@ class DiscoveryImageCache {
         unawaited(_deleteQuietly(file));
         return null;
       }
+      // 用过了：把「最后使用时间」往后推，30 天从这次读起重新算。
+      unawaited(_touch(file, modified));
       return bytes;
     } catch (e) {
       debugPrint('[DiscoveryImageCache] 读取封面失败: $e');
       return null;
     }
+  }
+
+  /// 刷新文件的「最后使用时间」（就是 mtime）。
+  ///
+  /// 一天最多写一次：既能让 30 天窗口跟着使用走，也不会因为列表滚动、
+  /// 每次都写一遍文件元数据。
+  static Future<void> _touch(File file, DateTime modified) async {
+    if (DateTime.now().difference(modified) < const Duration(days: 1)) return;
+    try {
+      await file.setLastModified(DateTime.now());
+    } catch (_) {}
   }
 
   /// 写入封面缓存；失败只影响缓存，不影响页面显示。
@@ -82,7 +99,7 @@ class DiscoveryImageCache {
     } catch (_) {}
   }
 
-  /// 文件数超过上限时按写入时间淘汰旧文件，保留约 90%。
+  /// 文件数超过上限时按「最后使用时间」淘汰旧文件，保留约 90%。
   static Future<void> _pruneIfNeeded(Directory dir) async {
     try {
       final entries = <({File file, DateTime modified})>[];

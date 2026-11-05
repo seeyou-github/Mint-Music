@@ -39,6 +39,11 @@ class AppImageCache {
       _manager = CacheManager(
         Config(
           key,
+          // 30 天是「最后使用时间」的窗口，不是下载时间：
+          // flutter_cache_manager 清理时按索引里的 `touched` 判断
+          // （见 SqliteCacheInfoRepository.getOldObjects），而每次读到缓存都会
+          // 把 `touched` 刷成当前时间，所以常用的图片不会被删。
+          // `validTill` 只用来决定「要不要在后台重新下载一份」，两者互不影响。
           stalePeriod: const Duration(days: 30),
           maxNrOfCacheObjects: 800,
           // 缓存索引（索引 + 元数据）放进临时库：以前是一个 JSON 文件，
