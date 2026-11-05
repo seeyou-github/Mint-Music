@@ -114,15 +114,9 @@ class _DesktopLyricWindowState extends ConsumerState<DesktopLyricWindow> {
                 type: MaterialType.transparency,
                 child: Opacity(
                   opacity: DesktopLyricSettings.opacity,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.16),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                        color: Colors.white.withValues(alpha: 0.22),
-                      ),
-                    ),
-                    clipBehavior: Clip.antiAlias,
+                  child: SizedBox.expand(
+                    // 背景完全透明：不画底色、不画描边，和 Android 原生悬浮窗
+                    // 保持一致；文字在任意壁纸上都靠歌词行自身的阴影辨认。
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [

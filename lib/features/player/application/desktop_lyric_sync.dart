@@ -91,7 +91,11 @@ class DesktopLyricSyncController extends StateNotifier<DesktopLyricStatus>
   bool _syncing = false;
 
   Future<void> _bootstrap() async {
-    _overlay.setPositionListener(_onPositionChanged);
+    _overlay.setPositionListener(
+      _onPositionChanged,
+      // 长按原生歌词控件：原生侧已移除悬浮窗，这里把开关同步成关闭。
+      onCloseRequest: () => unawaited(disableDesktopLyric()),
+    );
     if (!_overlay.supported) {
       state = const DesktopLyricStatus(supported: false);
       return;
@@ -107,11 +111,22 @@ class DesktopLyricSyncController extends StateNotifier<DesktopLyricStatus>
     super.dispose();
   }
 
-  /// 从系统授权页返回后重新检查权限。
+  /// 前后台切换：进入应用隐藏桌面歌词，最小化 / 退到后台时显示。
+  ///
+  /// 显隐完全交给原生侧切 View.visibility（窗口与歌词数据都保留），Dart
+  /// 这里只发一次轻量通道调用，避免在后台走 addView / 重新拉歌词那一套。
+  /// 从系统授权页返回时仍然顺便重新检查一次权限。
   @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
+  void didChangeAppLifecycleState(AppLifecycleState appState) {
+    if (appState == AppLifecycleState.resumed) {
+      unawaited(_overlay.setForeground(true));
       unawaited(refreshPermission());
+      return;
+    }
+    if (appState == AppLifecycleState.paused ||
+        appState == AppLifecycleState.hidden ||
+        appState == AppLifecycleState.detached) {
+      unawaited(_overlay.setForeground(false));
     }
   }
 

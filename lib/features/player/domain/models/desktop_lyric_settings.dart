@@ -10,9 +10,10 @@ import 'dart:io';
 ///   这样屏幕尺寸/方向变化后位置依旧保持相对一致。
 /// - `playedColor` / `unplayColor` / `shadowColor`:已播放、未播放、描边阴影颜色
 ///
-/// 显示行数、不透明度、锁定歌词窗都已固定下来，不再暴露给用户：
+/// 显示行数、透明度、锁定歌词窗都已固定下来，不再暴露给用户：
 /// - 固定显示 2 行（上下两个固定槽位，按当前行奇偶交替）；
-/// - 固定 80% 不透明度；
+/// - 控件背景完全透明（Android 原生悬浮窗与 Flutter 回退层都不画底色），
+///   文字可读性由阴影保证；
 /// - 始终不锁定（可拖动、可点击）。
 class DesktopLyricSettings {
   const DesktopLyricSettings({
@@ -23,13 +24,14 @@ class DesktopLyricSettings {
     required this.playedColor,
     required this.unplayColor,
     required this.shadowColor,
+    this.customColors = const <String>[],
   });
 
   /// 桌面歌词固定显示的行数。
   static const int lineCount = 2;
 
-  /// 桌面歌词固定的不透明度（80%）。
-  static const double opacity = 0.8;
+  /// 内容整体不透明度：背景透明后不再压暗文字。
+  static const double opacity = 1.0;
 
   /// 默认配置。
   ///
@@ -73,6 +75,10 @@ class DesktopLyricSettings {
   /// 歌词描边/阴影颜色,ARGB。
   final int shadowColor;
 
+  /// 「新增颜色」保存的自定义色板（ARGB hex：`#AARRGGBB` 或 `#RRGGBB`）。
+  /// 三个颜色设置共用一份，随桌面歌词设置一起持久化。
+  final List<String> customColors;
+
   DesktopLyricSettings copyWith({
     bool? enable,
     double? fontSize,
@@ -81,6 +87,7 @@ class DesktopLyricSettings {
     int? playedColor,
     int? unplayColor,
     int? shadowColor,
+    List<String>? customColors,
   }) {
     return DesktopLyricSettings(
       enable: enable ?? this.enable,
@@ -90,6 +97,7 @@ class DesktopLyricSettings {
       playedColor: playedColor ?? this.playedColor,
       unplayColor: unplayColor ?? this.unplayColor,
       shadowColor: shadowColor ?? this.shadowColor,
+      customColors: customColors ?? this.customColors,
     );
   }
 
@@ -103,6 +111,7 @@ class DesktopLyricSettings {
     'playedColor': playedColor,
     'unplayColor': unplayColor,
     'shadowColor': shadowColor,
+    'customColors': customColors,
   };
 
   static DesktopLyricSettings fromJson(Map<String, dynamic> json) {
@@ -137,6 +146,9 @@ class DesktopLyricSettings {
           readNum(json['unplayColor'])?.toInt() ?? defaults.unplayColor,
       shadowColor:
           readNum(json['shadowColor'])?.toInt() ?? defaults.shadowColor,
+      customColors: json['customColors'] is List
+          ? (json['customColors'] as List).whereType<String>().toList()
+          : const <String>[],
     );
   }
 
@@ -163,7 +175,16 @@ class DesktopLyricSettings {
         other.positionY == positionY &&
         other.playedColor == playedColor &&
         other.unplayColor == unplayColor &&
-        other.shadowColor == shadowColor;
+        other.shadowColor == shadowColor &&
+        _sameColors(other.customColors, customColors);
+  }
+
+  static bool _sameColors(List<String> a, List<String> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i].toUpperCase() != b[i].toUpperCase()) return false;
+    }
+    return true;
   }
 
   @override
@@ -175,5 +196,6 @@ class DesktopLyricSettings {
     playedColor,
     unplayColor,
     shadowColor,
+    Object.hashAll([for (final c in customColors) c.toUpperCase()]),
   );
 }

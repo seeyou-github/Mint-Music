@@ -11,10 +11,14 @@ class HsvColorPicker extends StatefulWidget {
     required this.initialColor,
     required this.onSave,
     required this.onCancel,
+    this.showAlpha = false,
   });
 
   /// 打开时的初始颜色。
   final Color initialColor;
+
+  /// 是否显示透明度滑条（桌面歌词阴影颜色需要带 alpha）。
+  final bool showAlpha;
 
   /// 点击「保存」时回调选中的颜色。
   final ValueChanged<Color> onSave;
@@ -30,6 +34,7 @@ class _HsvColorPickerState extends State<HsvColorPicker> {
   late double _hue;
   late double _saturation;
   late double _value;
+  late double _alpha;
 
   @override
   void initState() {
@@ -38,17 +43,27 @@ class _HsvColorPickerState extends State<HsvColorPicker> {
     _hue = hsv.hue;
     _saturation = hsv.saturation;
     _value = hsv.value;
+    _alpha = widget.showAlpha ? widget.initialColor.a : 1.0;
   }
 
-  Color get _color => HSVColor.fromAHSV(1, _hue, _saturation, _value).toColor();
+  Color get _color =>
+      HSVColor.fromAHSV(_alpha, _hue, _saturation, _value).toColor();
 
-  String get _hex => _toHex(_color);
+  Color get _opaqueColor =>
+      HSVColor.fromAHSV(1, _hue, _saturation, _value).toColor();
+
+  String get _hex => widget.showAlpha ? _toArgbHex(_color) : _toHex(_color);
 
   static String _toHex(Color color) {
     final r = (color.r * 255).round().toRadixString(16).padLeft(2, '0');
     final g = (color.g * 255).round().toRadixString(16).padLeft(2, '0');
     final b = (color.b * 255).round().toRadixString(16).padLeft(2, '0');
     return '#${r.toUpperCase()}${g.toUpperCase()}${b.toUpperCase()}';
+  }
+
+  static String _toArgbHex(Color color) {
+    final a = (color.a * 255).round().toRadixString(16).padLeft(2, '0');
+    return '#${a.toUpperCase()}${_toHex(color).substring(1)}';
   }
 
   void _updateHue(double dx, double width) {
@@ -200,7 +215,65 @@ class _HsvColorPickerState extends State<HsvColorPicker> {
             );
           },
         ),
-        const SizedBox(height: 16),
+        if (widget.showAlpha) ...[
+          Text(
+            '透明度 ${(_alpha * 100).round()}%',
+            style: const TextStyle(fontSize: 13),
+          ),
+          const SizedBox(height: 6),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final width = math.min(constraints.maxWidth, 260.0);
+              return GestureDetector(
+                onPanDown: (d) => setState(
+                  () => _alpha = (d.localPosition.dx / math.max(width, 1.0))
+                      .clamp(0.0, 1.0),
+                ),
+                onPanUpdate: (d) => setState(
+                  () => _alpha = (d.localPosition.dx / math.max(width, 1.0))
+                      .clamp(0.0, 1.0),
+                ),
+                child: SizedBox(
+                  width: width,
+                  height: 20,
+                  child: Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      Container(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(10),
+                          gradient: LinearGradient(
+                            colors: [
+                              _opaqueColor.withValues(alpha: 0),
+                              _opaqueColor,
+                            ],
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        left: (_alpha * width) - 8,
+                        top: -2,
+                        child: Container(
+                          width: 16,
+                          height: 24,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: _color,
+                            border: Border.all(
+                              color: theme.colorScheme.onSurface,
+                              width: 2,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+          const SizedBox(height: 16),
+        ],
         // 预览 + 色值
         Row(
           children: [

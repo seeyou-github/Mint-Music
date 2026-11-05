@@ -29,8 +29,13 @@ class DesktopLyricOverlay {
   /// 是否为 Windows（原生实现是独立桌面窗口,行为与 Android 悬浮窗不同）。
   bool get isWindows => Platform.isWindows;
 
-  /// 监听原生侧拖动结束后回传的位置(屏幕百分比)。
-  void setPositionListener(void Function(double x, double y)? onChanged) {
+  /// 监听原生侧回传的事件：
+  /// - `onPositionChanged`：拖动结束后的位置(屏幕百分比)；
+  /// - `onLongPressClose`：长按歌词控件关闭桌面歌词。
+  void setPositionListener(
+    void Function(double x, double y)? onChanged, {
+    void Function()? onCloseRequest,
+  }) {
     _channel.setMethodCallHandler((call) async {
       if (call.method == 'onPositionChanged' && onChanged != null) {
         final args = call.arguments;
@@ -40,6 +45,8 @@ class DesktopLyricOverlay {
             (args['y'] as num?)?.toDouble() ?? 0,
           );
         }
+      } else if (call.method == 'onLongPressClose') {
+        onCloseRequest?.call();
       }
       return null;
     });
@@ -104,6 +111,24 @@ class DesktopLyricOverlay {
     }
   }
 
+  /// 告诉原生侧应用是否在前台：进入应用隐藏桌面歌词，最小化 / 后台显示。
+  ///
+  /// 原生侧只切换 View 的可见性，不销毁窗口，所以后台显示时不需要重新
+  /// 拉取歌词或重新锚定进度（Flutter 退到后台后的异步通道可能被节流）。
+  /// 仅 Android 支持；Windows 是独立顶层窗口，不走这个通道方法。
+  Future<void> setForeground(bool foreground) async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _channel.invokeMethod<void>('setForeground', {
+        'foreground': foreground,
+      });
+    } on PlatformException {
+      // 忽略
+    } on MissingPluginException {
+      // 忽略
+    }
+  }
+
   Future<void> updateConfig(
     DesktopLyricSettings settings, {
     String? fontFamily,
@@ -114,7 +139,7 @@ class DesktopLyricOverlay {
     if (!supported) return;
     try {
       await _channel.invokeMethod<void>('updateConfig', {
-        // 固定显示 2 行；不透明度由原生侧固定为 80%。
+        // 固定显示 2 行；窗口背景保持完全透明。
         'fontSize': settings.fontSize * fontSizeRate,
         'playedColor': settings.playedColor,
         'unplayColor': settings.unplayColor,

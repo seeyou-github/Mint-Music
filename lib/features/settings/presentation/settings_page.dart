@@ -1546,6 +1546,9 @@ class _AppearanceContent extends ConsumerWidget {
             _lyricColorPresets,
             s.playedColor,
             (v) => update((cur) => cur.copyWith(playedColor: v)),
+            customHex: s.customColors,
+            onCustomChanged: (list) =>
+                update((cur) => cur.copyWith(customColors: list)),
           ),
         ),
         SettingDivider(colors: colors),
@@ -1561,6 +1564,9 @@ class _AppearanceContent extends ConsumerWidget {
             _lyricColorPresets,
             s.unplayColor,
             (v) => update((cur) => cur.copyWith(unplayColor: v)),
+            customHex: s.customColors,
+            onCustomChanged: (list) =>
+                update((cur) => cur.copyWith(customColors: list)),
           ),
         ),
         SettingDivider(colors: colors),
@@ -1576,6 +1582,11 @@ class _AppearanceContent extends ConsumerWidget {
             _shadowColorPresets,
             s.shadowColor,
             (v) => update((cur) => cur.copyWith(shadowColor: v)),
+            customHex: s.customColors,
+            onCustomChanged: (list) =>
+                update((cur) => cur.copyWith(customColors: list)),
+            // 阴影预设都带 alpha，自定义时也要能调透明度。
+            allowAlpha: true,
           ),
         ),
       ],
@@ -1704,14 +1715,178 @@ Widget _colorSwatch(int argb, ThemeColors colors) {
   );
 }
 
+/// ARGB 整数 -> `#AARRGGBB`（桌面歌词自定义色板的统一存储格式）。
+String _desktopLyricArgbHex(int argb) =>
+    '#${argb.toUnsigned(32).toRadixString(16).toUpperCase().padLeft(8, '0')}';
+
+/// 解析 `#AARRGGBB` / `#RRGGBB`，非法值返回 null。
+int? _desktopLyricParseHex(String hex) {
+  var code = hex.trim().replaceFirst('#', '').toUpperCase();
+  if (code.length == 6) code = 'FF$code';
+  if (code.length != 8) return null;
+  return int.tryParse(code, radix: 16);
+}
+
+/// 长按自定义色：编辑 / 删除（与主题色「新增颜色」的交互一致）。
+void _showDesktopLyricCustomActions(
+  BuildContext context,
+  ThemeColors colors,
+  String hex, {
+  required void Function() onEdit,
+  required void Function() onDelete,
+}) {
+  showModalBottomSheet<void>(
+    useRootNavigator: true,
+    context: context,
+    sheetAnimationStyle: _settingsSheetAnimationStyle,
+    backgroundColor: colors.surface,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+    ),
+    builder: (actionContext) => SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.lg,
+              vertical: AppSpacing.md,
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 24,
+                  height: 24,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Color(_desktopLyricParseHex(hex) ?? 0xFF000000),
+                    border: Border.all(color: colors.divider, width: 1),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  '${actionContext.tr('自定义颜色')} $hex',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: colors.textPrimary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          SettingDivider(colors: colors),
+          ListTile(
+            leading: Icon(Icons.edit_outlined, color: colors.textSecondary),
+            title: Text(
+              actionContext.tr('编辑颜色'),
+              style: TextStyle(color: colors.textPrimary),
+            ),
+            onTap: () {
+              Navigator.pop(actionContext);
+              onEdit();
+            },
+          ),
+          ListTile(
+            leading: Icon(Icons.delete_outline, color: colors.error),
+            title: Text(
+              actionContext.tr('删除颜色'),
+              style: TextStyle(color: colors.textPrimary),
+            ),
+            onTap: () {
+              Navigator.pop(actionContext);
+              onDelete();
+            },
+          ),
+          const SizedBox(height: AppSpacing.md),
+        ],
+      ),
+    ),
+  );
+}
+
+/// 桌面歌词颜色选择：内置预设 + 用户新增的自定义颜色。
+///
+/// 交互与「主题色」的新增颜色一致：HSV 取色面板新增、长按自定义色编辑/删除，
+/// 自定义色板保存在 [DesktopLyricSettings.customColors] 里随设置一起持久化。
+/// [allowAlpha] 为 true 时取色面板多一条透明度滑条（阴影颜色需要）。
 void _showDesktopLyricColorPicker(
   BuildContext context,
   ThemeColors colors,
   String title,
   List<(String, int)> presets,
   int currentArgb,
-  ValueChanged<int> onSelected,
-) {
+  ValueChanged<int> onSelected, {
+  required List<String> customHex,
+  required ValueChanged<List<String>> onCustomChanged,
+  bool allowAlpha = false,
+}) {
+  final seen = <int>{};
+  final items = <(String, int)>[];
+  for (final item in presets) {
+    if (seen.add(item.$2)) items.add(item);
+  }
+  final customSet = <int>{};
+  for (final hex in customHex) {
+    final argb = _desktopLyricParseHex(hex);
+    if (argb != null) customSet.add(argb);
+    if (argb != null && seen.add(argb)) items.add(('自定义', argb));
+  }
+
+  void reopen(List<String> nextCustom, int nextCurrent) {
+    if (!context.mounted) return;
+    _showDesktopLyricColorPicker(
+      context,
+      colors,
+      title,
+      presets,
+      nextCurrent,
+      onSelected,
+      customHex: nextCustom,
+      onCustomChanged: onCustomChanged,
+      allowAlpha: allowAlpha,
+    );
+  }
+
+  void openEditor({String? editingHex}) {
+    final initial = Color(
+      editingHex == null
+          ? currentArgb
+          : (_desktopLyricParseHex(editingHex) ?? currentArgb),
+    );
+    showModalBottomSheet<void>(
+      useRootNavigator: true,
+      context: context,
+      sheetAnimationStyle: _settingsSheetAnimationStyle,
+      backgroundColor: colors.surface,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (editorContext) => SafeArea(
+        child: SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.all(AppSpacing.lg),
+            child: HsvColorPicker(
+              initialColor: initial,
+              showAlpha: allowAlpha,
+              onCancel: () => Navigator.pop(editorContext),
+              onSave: (color) {
+                Navigator.pop(editorContext);
+                final argb = color.toARGB32();
+                final hex = _desktopLyricArgbHex(argb);
+                onSelected(argb);
+                final next = _upsertCustomColor(customHex, hex, editingHex);
+                onCustomChanged(next);
+                reopen(next, argb);
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   showModalBottomSheet(
     useRootNavigator: true,
     context: context,
@@ -1720,7 +1895,7 @@ void _showDesktopLyricColorPicker(
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
     ),
-    builder: (context) => SafeArea(
+    builder: (sheetContext) => SafeArea(
       child: Padding(
         padding: const EdgeInsets.all(AppSpacing.lg),
         child: Column(
@@ -1739,7 +1914,7 @@ void _showDesktopLyricColorPicker(
             ),
             const SizedBox(height: AppSpacing.md),
             Text(
-              context.tr(title),
+              sheetContext.tr(title),
               style: TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.w600,
@@ -1750,14 +1925,38 @@ void _showDesktopLyricColorPicker(
             Wrap(
               spacing: 16,
               runSpacing: 16,
-              children: presets.map((item) {
+              children: items.map((item) {
                 final isSelected = item.$2 == currentArgb;
                 final color = Color(item.$2);
+                final isCustom = customSet.contains(item.$2);
                 return GestureDetector(
                   onTap: () {
                     onSelected(item.$2);
-                    Navigator.pop(context);
+                    Navigator.pop(sheetContext);
                   },
+                  onLongPress: isCustom
+                      ? () => _showDesktopLyricCustomActions(
+                          sheetContext,
+                          colors,
+                          _desktopLyricArgbHex(item.$2),
+                          onEdit: () {
+                            Navigator.pop(sheetContext);
+                            openEditor(
+                              editingHex: _desktopLyricArgbHex(item.$2),
+                            );
+                          },
+                          onDelete: () {
+                            final next = customHex
+                                .where(
+                                  (h) => _desktopLyricParseHex(h) != item.$2,
+                                )
+                                .toList();
+                            onCustomChanged(next);
+                            Navigator.pop(sheetContext);
+                            reopen(next, currentArgb);
+                          },
+                        )
+                      : null,
                   child: SizedBox(
                     width: 64,
                     child: Column(
@@ -1788,7 +1987,7 @@ void _showDesktopLyricColorPicker(
                         ),
                         const SizedBox(height: 6),
                         Text(
-                          context.tr(item.$1),
+                          sheetContext.tr(item.$1),
                           style: TextStyle(
                             fontSize: 11,
                             color: isSelected
@@ -1803,6 +2002,22 @@ void _showDesktopLyricColorPicker(
                   ),
                 );
               }).toList(),
+            ),
+            if (customHex.isNotEmpty) ...[
+              const SizedBox(height: AppSpacing.md),
+              Text(
+                sheetContext.tr('长按自定义颜色可编辑或删除'),
+                style: TextStyle(fontSize: 12, color: colors.textHint),
+              ),
+            ],
+            const SizedBox(height: AppSpacing.md),
+            OutlinedButton.icon(
+              onPressed: () {
+                Navigator.pop(sheetContext);
+                openEditor();
+              },
+              icon: const Icon(Icons.colorize, size: 18),
+              label: Text(sheetContext.tr('新增颜色')),
             ),
             const SizedBox(height: AppSpacing.lg),
           ],

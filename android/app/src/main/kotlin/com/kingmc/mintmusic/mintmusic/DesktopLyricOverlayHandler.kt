@@ -6,27 +6,30 @@ import android.content.Intent
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
+import android.text.Spannable
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.TextUtils
+import android.text.style.ForegroundColorSpan
 import android.text.style.RelativeSizeSpan
 import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.TextView
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
@@ -40,15 +43,24 @@ import kotlin.math.roundToInt
  */
 class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.MethodCallHandler {
 
+    private data class WordTiming(
+        val text: String,
+        val startMs: Long,
+        val endMs: Long,
+    )
+
     private data class LyricLineData(
         val time: Long,
+        val endTime: Long,
         val text: String,
         val translation: String?,
         val roman: String?,
+        val words: List<WordTiming>,
     )
 
     /** 一个固定槽位的内容：主歌词 + 可选的翻译 / 罗马音。 */
     private data class SlotContent(
+        val line: LyricLineData?,
         val text: String,
         val translation: String?,
         val roman: String?,
@@ -62,7 +74,17 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
     private var rootView: LinearLayout? = null
     private var slotRows: List<TextView> = emptyList()
     private var layoutParams: WindowManager.LayoutParams? = null
-    private var backgroundDrawable: GradientDrawable? = null
+
+    /// 应用是否在前台。前台时只把窗口设为 INVISIBLE（不 removeView），
+    /// 原生侧的歌词数据与时钟都保留，回到后台可以立刻显示。
+    private var appForeground = true
+
+    // ---- 当前行的进度着色状态 ----
+    private var activeTextView: TextView? = null
+    private var activeSpannable: Spannable? = null
+    private var activeMainLength = 0
+    private var activeLine: LyricLineData? = null
+    private var lastHighlightChars = -1
 
     // ---- 配置 ----
     private var fontSizeSp = 18f
@@ -114,6 +136,11 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
                 applyPlayState(positionMs, args?.get("isPlaying") == true)
                 result.success(true)
             }
+            "setForeground" -> {
+                val args = call.arguments as? Map<*, *>
+                setForeground(args?.get("foreground") != false)
+                result.success(true)
+            }
             else -> result.notImplemented()
         }
     }
@@ -146,6 +173,7 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
 
     private fun show(): Boolean {
         if (rootView != null) {
+            applyWindowVisibility()
             applyContent()
             return true
         }
@@ -201,9 +229,10 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
             rootView = root
             slotRows = rows
             layoutParams = lp
-            applyBackground()
+            // 背景完全透明：根 View 不设 background / 描边，窗口 alpha 也是 1.0。
             rebuildHandle()
             applyContent()
+            applyWindowVisibility()
             // 首帧之后才能拿到真实高度,再按百分比精确定位一次。
             root.post { applyPositionPercent() }
             true
@@ -218,9 +247,11 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
 
     private fun hide() {
         val root = rootView ?: return
-        stopTicker()
+        stopTicker() // 内部同时停掉行时钟与进度着色轮询
+        cancelLongPress()
         // 复位行号，下次 show 时才会重新写入内容（否则会被"行号未变"判断跳过）
         activeIndex = -1
+        clearHighlightState()
         try {
             windowManager.removeView(root)
         } catch (_: Throwable) {
@@ -235,6 +266,36 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
         layoutParams = null
     }
 
+    /**
+     * 应用前后台切换：只改 View 的可见性，不 removeView。
+     *
+     * 原生侧的歌词数据与单调时钟都保留着，回到后台可以立刻显示，不需要
+     * Dart 在后台再走一轮（后台时 Flutter 的异步通道可能被节流）。
+     */
+    private fun setForeground(foreground: Boolean) {
+        appForeground = foreground
+        applyWindowVisibility()
+        if (foreground) {
+            stopProgressTicker()
+        } else if (playing && rootView != null) {
+            applyProgressHighlight(force = true)
+            scheduleProgress()
+        }
+    }
+
+    private fun applyWindowVisibility() {
+        val root = rootView ?: return
+        val lp = layoutParams ?: return
+        // 进入应用时隐藏桌面歌词，最小化 / 后台时才显示。
+        val target = if (appForeground) View.INVISIBLE else View.VISIBLE
+        if (root.visibility != target) root.visibility = target
+        val flags = buildFlags()
+        if (lp.flags != flags) {
+            lp.flags = flags
+            safeUpdateLayout()
+        }
+    }
+
     @Suppress("DEPRECATION")
     private fun overlayWindowType(): Int {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -245,10 +306,16 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
     }
 
     private fun buildFlags(): Int {
-        return WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+        var flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
             WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
             WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+        // 前台时窗口只是 INVISIBLE、仍挂在 WindowManager 上（要保留歌词数据和
+        // 时钟），必须一并关掉触摸，否则这块透明窗口会吃掉应用顶部的点击。
+        if (appForeground) {
+            flags = flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        }
+        return flags
     }
 
     /**
@@ -300,16 +367,9 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
         root.addView(handle, 0)
     }
 
-    private fun applyBackground() {
-        val root = rootView ?: return
-        val drawable = backgroundDrawable ?: GradientDrawable().also { backgroundDrawable = it }
-        drawable.cornerRadius = 10f * appContext.resources.displayMetrics.density
-        drawable.setColor(Color.argb(41, 0, 0, 0))
-        drawable.setStroke(1, Color.argb(56, 255, 255, 255))
-        root.background = drawable
-    }
-
     // ------------------------------------------------------------------ 配置
+    // 悬浮窗背景保持完全透明：不设 background、不画描边，窗口 alpha 也是 1.0。
+    // 文字在任意壁纸上都能看清靠的是每行 TextView 的 setShadowLayer。
 
     private fun applyConfig(args: Map<*, *>?) {
         if (args == null) return
@@ -331,11 +391,11 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
         // 悬浮窗宽度固定为屏幕宽度（100%）。
         lp.width = screenWidth().coerceAtLeast(120)
         lp.height = contentHeight()
-        applyBackground()
         rebuildHandle()
         root.setOnTouchListener(createTouchListener(root))
         // 样式/尺寸变更直接刷新内容，不做翻页动画。
         applyContent()
+        applyWindowVisibility()
         root.post { applyPositionPercent() }
         safeUpdateLayout()
     }
@@ -388,11 +448,24 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
         val raw = args?.get("lines") as? List<*> ?: return
         lines = raw.mapNotNull { item ->
             val map = item as? Map<*, *> ?: return@mapNotNull null
+            // Dart 侧会下发「行结束时间」和逐字时间轴（普通 LRC 只有行级时间），
+            // 当前行的进度着色要用它们算「已经唱到哪个字」。
+            val wordsRaw = map["words"] as? List<*>
+            val words = wordsRaw.orEmpty().mapNotNull { w ->
+                val wm = w as? Map<*, *> ?: return@mapNotNull null
+                WordTiming(
+                    text = wm["t"] as? String ?: "",
+                    startMs = (wm["s"] as? Number)?.toLong() ?: 0L,
+                    endMs = (wm["e"] as? Number)?.toLong() ?: 0L,
+                )
+            }
             LyricLineData(
                 time = (map["time"] as? Number)?.toLong() ?: 0L,
+                endTime = (map["endTime"] as? Number)?.toLong() ?: 0L,
                 text = map["text"] as? String ?: "",
                 translation = map["translation"] as? String,
                 roman = map["roman"] as? String,
+                words = words,
             )
         }.sortedBy { it.time }
         val previousSubLineCount = subLineCount()
@@ -426,7 +499,7 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
      */
     private fun buildSlots(): List<SlotContent> {
         val slots = MutableList(FIXED_LINE_COUNT) {
-            SlotContent("", null, null, false)
+            SlotContent(null, "", null, null, false)
         }
         if (lines.isEmpty()) return slots
         val hasActive = activeIndex in lines.indices
@@ -438,6 +511,7 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
             if (lineIndex >= lines.size) continue
             val line = lines[lineIndex]
             slots[slot] = SlotContent(
+                line = line,
                 text = line.text,
                 translation = line.translation?.takeIf {
                     showTranslation && it.isNotBlank()
@@ -458,13 +532,16 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
     private fun applyContent() {
         val rows = slotRows
         if (rows.isEmpty()) return
+        clearHighlightState()
         val slots = buildSlots()
         for (i in rows.indices) {
             val tv = rows[i]
-            val slot = slots.getOrNull(i) ?: SlotContent("", null, null, false)
+            val slot = slots.getOrNull(i) ?: SlotContent(null, "", null, null, false)
             tv.typeface = lyricTypeface
             tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSizeSp)
-            tv.setTextColor(if (slot.active) playedColor else unplayColor)
+            // 基色一律是「未播放」；当前行已唱过的部分由 ForegroundColorSpan
+            // 按进度单独涂成 playedColor，不再整行刷成已播放色。
+            tv.setTextColor(unplayColor)
             tv.gravity = Gravity.CENTER_HORIZONTAL or Gravity.CENTER_VERTICAL
             tv.setShadowLayer(4f, 1f, 1f, shadowColor)
 
@@ -490,7 +567,17 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
             }
             slot.translation?.let { appendSub(it) }
             slot.roman?.let { appendSub(it) }
-            tv.text = builder
+            // SPANNABLE：TextView 会挂 ChangeWatcher，之后改 span 能自动重绘。
+            // 这里从 tv.text 取回实际对象（setText 可能复制一份）。
+            tv.setText(builder, TextView.BufferType.SPANNABLE)
+
+            if (slot.active) {
+                activeTextView = tv
+                activeSpannable = tv.text as? Spannable
+                activeMainLength = slot.text.length
+                activeLine = slot.line
+                applyProgressHighlight(force = true)
+            }
 
             if (hasSub) {
                 tv.setSingleLine(false)
@@ -518,7 +605,121 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
         visibility = View.INVISIBLE
     }
 
+    // ------------------------------------------------------------ 播放进度着色
+
+    private fun clearHighlightState() {
+        activeTextView = null
+        activeSpannable = null
+        activeMainLength = 0
+        activeLine = null
+        lastHighlightChars = -1
+    }
+
+    /**
+     * 当前行按播放进度分成「已唱 / 未唱」两段颜色。
+     *
+     * 只改两个 ForegroundColorSpan，不重新 setText、不改窗口尺寸；字符数没变
+     * 时直接跳过，避免每次 tick 都 invalidate。
+     */
+    private fun applyProgressHighlight(force: Boolean = false) {
+        val spannable = activeSpannable ?: return
+        val line = activeLine ?: return
+        val mainLen = activeMainLength
+        val chars = playedCharCount(line, currentMediaTimeMs()).coerceIn(0, mainLen)
+        if (!force && chars == lastHighlightChars) return
+        lastHighlightChars = chars
+        for (span in spannable.getSpans(0, mainLen, ForegroundColorSpan::class.java)) {
+            spannable.removeSpan(span)
+        }
+        if (chars > 0) {
+            spannable.setSpan(
+                ForegroundColorSpan(playedColor), 0, chars,
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+            )
+        }
+        if (chars < mainLen) {
+            spannable.setSpan(
+                ForegroundColorSpan(unplayColor), chars, mainLen,
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+            )
+        }
+        activeTextView?.invalidate()
+    }
+
+    /** 这一行已经唱过的字符数（逐字歌词按字时间轴，普通 LRC 按行时间线性插值）。 */
+    private fun playedCharCount(line: LyricLineData, nowMs: Long): Int {
+        val text = line.text
+        if (text.isEmpty()) return 0
+        val words = line.words
+        if (words.size > 1 && words.any { it.endMs > it.startMs }) {
+            var chars = 0
+            for (word in words) {
+                val len = word.text.length
+                if (len == 0) continue
+                if (nowMs >= word.endMs) {
+                    chars += len
+                    continue
+                }
+                if (nowMs <= word.startMs) break
+                val duration = (word.endMs - word.startMs).coerceAtLeast(1L)
+                val ratio = ((nowMs - word.startMs).toFloat() / duration).coerceIn(0f, 1f)
+                chars += (len * ratio).roundToInt()
+                break
+            }
+            return chars.coerceIn(0, text.length)
+        }
+        val start = line.time
+        val end = if (line.endTime > start) line.endTime else start + DEFAULT_LINE_MS
+        val ratio = ((nowMs - start).toFloat() / (end - start)).coerceIn(0f, 1f)
+        return (text.length * ratio).roundToInt()
+    }
+
+    /** 进度着色的轮询：只在播放中、窗口可见（应用在后台）时运行。 */
+    private var progressScheduled = false
+    private val progressRunnable = Runnable {
+        progressScheduled = false
+        applyProgressHighlight()
+        if (playing && rootView != null && !appForeground) scheduleProgress()
+    }
+
+    private fun scheduleProgress() {
+        if (progressScheduled) return
+        progressScheduled = true
+        mainHandler.postDelayed(progressRunnable, PROGRESS_TICK_MS)
+    }
+
+    private fun stopProgressTicker() {
+        if (progressScheduled) {
+            mainHandler.removeCallbacks(progressRunnable)
+            progressScheduled = false
+        }
+    }
+
     // ------------------------------------------------------------------ 拖动
+
+    private val touchSlopPx =
+        ViewConfiguration.get(appContext).scaledTouchSlop.toFloat()
+    private val longPressMs = ViewConfiguration.getLongPressTimeout().toLong()
+    private var downRawX = 0f
+    private var downRawY = 0f
+    private var longPressTriggered = false
+    private var movedBeyondSlop = false
+
+    /** 长按桌面歌词控件：关闭悬浮窗并通知 Dart 把开关置为关闭。 */
+    private val longPressRunnable = Runnable {
+        if (longPressTriggered || movedBeyondSlop || rootView == null) return@Runnable
+        longPressTriggered = true
+        hide()
+        try {
+            channel?.invokeMethod("onLongPressClose", null)
+        } catch (_: Throwable) {
+            // Dart 侧可能已经销毁。
+        }
+    }
+
+    private fun cancelLongPress() {
+        mainHandler.removeCallbacks(longPressRunnable)
+    }
 
     @SuppressLint("ClickableViewAccessibility")
     private fun createTouchListener(root: View): View.OnTouchListener {
@@ -528,7 +729,13 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
                 MotionEvent.ACTION_DOWN -> {
                     lastTouchRawX = event.rawX
                     lastTouchRawY = event.rawY
+                    downRawX = event.rawX
+                    downRawY = event.rawY
                     dragging = false
+                    longPressTriggered = false
+                    movedBeyondSlop = false
+                    cancelLongPress()
+                    mainHandler.postDelayed(longPressRunnable, longPressMs)
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
@@ -536,6 +743,13 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
                     val dy = event.rawY - lastTouchRawY
                     lastTouchRawX = event.rawX
                     lastTouchRawY = event.rawY
+                    // 手指移动超过阈值就当作拖动，取消长按，避免挪动窗口时误关闭。
+                    if (abs(event.rawX - downRawX) + abs(event.rawY - downRawY) >
+                        touchSlopPx
+                    ) {
+                        movedBeyondSlop = true
+                        cancelLongPress()
+                    }
                     lp.x = (lp.x + dx).roundToInt().coerceIn(0, maxOffsetX(root))
                     lp.y = (lp.y + dy).roundToInt().coerceIn(0, maxOffsetY(root))
                     dragging = true
@@ -543,7 +757,8 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    if (dragging) notifyPositionChanged(root)
+                    cancelLongPress()
+                    if (dragging && !longPressTriggered) notifyPositionChanged(root)
                     dragging = false
                     true
                 }
@@ -665,6 +880,14 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
 
         refresh()
         if (!isPlaying) setActiveIndex(indexForTime(lastKnownMediaMs))
+        // 进度着色只在「正在播放 + 窗口可见（应用在后台）」时轮询；
+        // 前台时窗口是 INVISIBLE，没必要耗电刷新。
+        if (isPlaying && rootView != null && !appForeground) {
+            applyProgressHighlight(force = true)
+            scheduleProgress()
+        } else {
+            stopProgressTicker()
+        }
     }
 
     /**
@@ -734,6 +957,7 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
     private fun stopTicker() {
         playing = false
         cancelScheduled()
+        stopProgressTicker()
     }
 
     /** 由 MainActivity 注入,用于把拖动后的位置回传给 Dart。 */
@@ -748,8 +972,12 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
         private const val HANDLE_HEIGHT_DP = 22f
         /// 桌面歌词固定显示两个槽位。
         private const val FIXED_LINE_COUNT = 2
-        /// 不透明度固定 80%。
-        private const val WINDOW_OPACITY = 0.8f
+        /// 窗口整体不透明；「背景完全透明」靠根 View 不设 background 实现。
+        private const val WINDOW_OPACITY = 1.0f
+        /// 当前行进度着色的刷新间隔（只在播放 + 窗口可见时运行）。
+        private const val PROGRESS_TICK_MS = 100L
+        /// 普通 LRC 缺行结束时间时，按一行 4 秒估算进度。
+        private const val DEFAULT_LINE_MS = 4000L
         /// 翻译 / 罗马音相对主歌词的字号比例。
         private const val SUB_TEXT_SCALE = 0.62f
         /// 重新锚定的死区:偏差小于它时认为是通道延迟/抖动,不重设时钟。
