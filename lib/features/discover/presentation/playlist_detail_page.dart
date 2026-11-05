@@ -20,6 +20,7 @@ import '../../../shared/widgets/song_selection.dart';
 import '../../plugin/application/plugin_providers.dart';
 import '../application/discover_providers.dart';
 import '../../../features/player/application/playback_context.dart';
+import '../../player/application/mini_player_visibility.dart';
 import '../../library/application/recently_played_providers.dart';
 import '../../library/domain/models/recently_played.dart';
 import '../domain/models/playlist_page.dart';
@@ -491,12 +492,8 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
                     // 没歌（迷你播放器是空占位）或宽屏侧边栏布局时直接贴底。
                     bottom: ResponsiveLayout.batchBarBottomInset(
                       context,
-                      // 没有歌在播时迷你播放器是空占位，操作栏应该直接贴底。
-                      miniPlayerVisible: ref.watch(
-                        playbackControllerProvider.select(
-                          (s) => s.currentSong != null,
-                        ),
-                      ),
+                      // 播放栏没显示时（没歌在播，或当前页面隐藏了播放栏）操作栏直接贴底。
+                      miniPlayerVisible: ref.watch(miniPlayerVisibleProvider),
                     ),
                     child: SongBatchActionBar(
                       colors: colors,
@@ -787,9 +784,7 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
     // 多选时批量操作栏紧贴迷你播放器，列表底部要一并让开。
     final batchBarInset = ResponsiveLayout.batchBarBottomInset(
       context,
-      miniPlayerVisible: ref.watch(
-        playbackControllerProvider.select((s) => s.currentSong != null),
-      ),
+      miniPlayerVisible: ref.watch(miniPlayerVisibleProvider),
     );
 
     // 只渲染当前页（每页 50 首）；播放 / 队列仍用完整列表。
@@ -997,6 +992,7 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
   void _showMoreActions(BuildContext context, ThemeColors colors, playlist) {
     final bottomPadding = MediaQuery.of(context).padding.bottom;
     showModalBottomSheet(
+      useRootNavigator: true,
       context: context,
       backgroundColor: Colors.transparent,
       builder: (ctx) => Container(

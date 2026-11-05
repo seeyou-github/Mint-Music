@@ -203,7 +203,8 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
         ResponsiveLayout.horizontalPadding(context),
         AppSpacing.sm,
         ResponsiveLayout.horizontalPadding(context),
-        AppSpacing.xxxl,
+        // 底部多留一段，最后一行电台卡片才不会被悬浮的迷你播放器挡住。
+        AppSpacing.miniPlayerHeight + AppSpacing.lg,
       ),
       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: crossAxisCount,

@@ -98,6 +98,7 @@ Future<String?> showPluginSourcePicker(
 
   final colors = ref.read(themeColorsProvider);
   return showModalBottomSheet<String>(
+    useRootNavigator: true,
     context: context,
     backgroundColor: colors.surface,
     shape: const RoundedRectangleBorder(

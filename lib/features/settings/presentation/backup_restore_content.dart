@@ -282,6 +282,7 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
   /// 弹出远端备份列表让用户选择（可删除远端备份）。
   Future<RemoteBackupFile?> _pickRemoteFile(List<RemoteBackupFile> files) {
     return showModalBottomSheet<RemoteBackupFile>(
+      useRootNavigator: true,
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,

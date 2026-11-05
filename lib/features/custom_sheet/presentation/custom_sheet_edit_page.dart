@@ -470,6 +470,7 @@ class _CustomSheetEditPageState extends ConsumerState<CustomSheetEditPage> {
   Future<void> _showCategoryManager() async {
     final colors = ref.read(themeColorsProvider);
     await showModalBottomSheet<void>(
+      useRootNavigator: true,
       context: context,
       isScrollControlled: true,
       backgroundColor: colors.surface,

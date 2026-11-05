@@ -991,6 +991,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
   void _showSheetMenu(CustomSheet sheet) {
     final colors = ref.read(themeColorsProvider);
     showModalBottomSheet<void>(
+      useRootNavigator: true,
       context: context,
       backgroundColor: colors.surface,
       shape: const RoundedRectangleBorder(
@@ -1097,7 +1098,8 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
           padding: EdgeInsets.only(
             left: ResponsiveLayout.horizontalPadding(context),
             right: ResponsiveLayout.horizontalPadding(context),
-            bottom: AppSpacing.xxxl,
+            // 自定义歌单不分页，底部要让开悬浮的迷你播放器。
+            bottom: AppSpacing.miniPlayerHeight + AppSpacing.xxl,
           ),
           sliver: SliverGrid(
             gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
@@ -1225,6 +1227,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
   ) {
     final sheetHeight = MediaQuery.sizeOf(context).height * 0.6;
     showModalBottomSheet(
+      useRootNavigator: true,
       context: context,
       isScrollControlled: true,
       sheetAnimationStyle: const AnimationStyle(
@@ -1762,7 +1765,9 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
             horizontalPadding,
             AppSpacing.sm,
             horizontalPadding,
-            AppSpacing.xxxl,
+            // 热榜不分页、底下没有分页条，这里要让开悬浮的迷你播放器，
+            // 否则滚到最后一张卡片会被播放栏盖住。
+            AppSpacing.miniPlayerHeight + AppSpacing.xxl,
           ),
           sliver: SliverToBoxAdapter(
             child: LayoutBuilder(
@@ -2173,6 +2178,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
   ) {
     final sheetHeight = MediaQuery.sizeOf(context).height * 0.72;
     return showModalBottomSheet<void>(
+      useRootNavigator: true,
       context: context,
       isScrollControlled: true,
       sheetAnimationStyle: const AnimationStyle(

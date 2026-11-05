@@ -253,6 +253,7 @@ class SongActionSheet extends ConsumerStatefulWidget {
     );
 
     showModalBottomSheet(
+      useRootNavigator: true,
       context: context,
       sheetAnimationStyle: _sheetAnimationStyle,
       backgroundColor: AppColors.surface,
@@ -1079,6 +1080,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
     final currentSpeed = ref.read(playbackSpeedProvider);
     const speeds = ['0.5x', '0.75x', '1.0x', '1.25x', '1.5x', '2.0x'];
     showModalBottomSheet(
+      useRootNavigator: true,
       context: context,
       sheetAnimationStyle: _sheetAnimationStyle,
       backgroundColor: Colors.transparent,
@@ -1206,6 +1208,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
   /// 等开关都已移除（行为固定），字体相关三项直接放在这一层。
   void _showLyricSettings() {
     showModalBottomSheet(
+      useRootNavigator: true,
       context: context,
       sheetAnimationStyle: _sheetAnimationStyle,
       backgroundColor: Colors.transparent,
@@ -1361,6 +1364,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
     final currentLabel = map[current] ?? '系统默认';
 
     return showModalBottomSheet(
+      useRootNavigator: true,
       context: ctx,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
@@ -1403,6 +1407,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
     ProviderContainer container,
   ) {
     return showModalBottomSheet(
+      useRootNavigator: true,
       context: ctx,
       sheetAnimationStyle: _sheetAnimationStyle,
       backgroundColor: Colors.transparent,
@@ -1475,6 +1480,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
     final weights = ['400 正常', '500 中等', '600 半粗', '700 粗', '800 特粗', '900 黑'];
 
     return showModalBottomSheet(
+      useRootNavigator: true,
       context: ctx,
       sheetAnimationStyle: _sheetAnimationStyle,
       backgroundColor: Colors.transparent,
@@ -1693,6 +1699,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
         // navContext remains valid because it's from the root navigator.
         final bottomPadding = MediaQuery.of(navContext).padding.bottom;
         showModalBottomSheet(
+          useRootNavigator: true,
           context: navContext,
           sheetAnimationStyle: _sheetAnimationStyle,
           backgroundColor: Colors.transparent,

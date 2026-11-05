@@ -68,6 +68,7 @@ class SleepTimerMenuTile extends ConsumerWidget {
 /// 打开定时关闭设置窗口。窗口内实时显示剩余倒计时。
 Future<void> showSleepTimerPicker(BuildContext context) {
   return showModalBottomSheet(
+    useRootNavigator: true,
     context: context,
     sheetAnimationStyle: _sheetAnimationStyle,
     backgroundColor: Colors.transparent,

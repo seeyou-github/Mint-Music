@@ -18,6 +18,7 @@ import '../../../shared/widgets/music_cover_image.dart';
 import '../../../shared/widgets/song_selection.dart';
 import '../application/local_providers.dart';
 import '../../player/application/playback_context.dart';
+import '../../player/application/mini_player_visibility.dart';
 import '../../library/domain/models/recently_played.dart';
 import '../data/local_music_repository.dart';
 import '../../player/application/playback_controller.dart';
@@ -247,12 +248,8 @@ class _LocalPageState extends ConsumerState<LocalPage> {
                       // 没歌（迷你播放器是空占位）或宽屏侧边栏布局时直接贴底。
                       bottom: ResponsiveLayout.batchBarBottomInset(
                         context,
-                        // 没有歌在播时迷你播放器是空占位，操作栏应该直接贴底。
-                        miniPlayerVisible: ref.watch(
-                          playbackControllerProvider.select(
-                            (s) => s.currentSong != null,
-                          ),
-                        ),
+                        // 播放栏没显示时（没歌在播，或当前页面隐藏了播放栏）操作栏直接贴底。
+                        miniPlayerVisible: ref.watch(miniPlayerVisibleProvider),
                       ),
                       child: SongBatchActionBar(
                         colors: colors,
@@ -559,9 +556,7 @@ class _LocalPageState extends ConsumerState<LocalPage> {
     // 多选时批量操作栏紧贴迷你播放器，列表底部要一并让开。
     final batchBarInset = ResponsiveLayout.batchBarBottomInset(
       context,
-      miniPlayerVisible: ref.watch(
-        playbackControllerProvider.select((s) => s.currentSong != null),
-      ),
+      miniPlayerVisible: ref.watch(miniPlayerVisibleProvider),
     );
     return Stack(
       children: [

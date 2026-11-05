@@ -16,6 +16,7 @@ Future<void> showRadioCategoryManagerSheet(
   required ValueChanged<RadioCategory> onCreated,
 }) {
   return showModalBottomSheet<void>(
+    useRootNavigator: true,
     context: context,
     isScrollControlled: true,
     sheetAnimationStyle: const AnimationStyle(

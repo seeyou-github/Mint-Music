@@ -6,11 +6,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../../core/l10n/l10n.dart';
+import '../../core/router/current_route_provider.dart';
 import '../../core/router/navigation_shell_provider.dart';
 import '../../core/theme/app_spacing.dart';
 import '../../core/theme/theme_provider.dart';
 import '../../core/utils/responsive_layout.dart';
 import '../../features/player/presentation/mini_player.dart';
+import '../../features/player/application/mini_player_visibility.dart';
 import '../../features/player/application/playback_controller.dart';
 import '../../features/player/domain/services/cover_color_extractor.dart';
 import '../../features/download/application/download_providers.dart';
@@ -31,6 +33,9 @@ class _AppShellState extends ConsumerState<AppShell> {
   /// 通知权限提示每个会话只弹一次。
   bool _notificationPromptShown = false;
 
+  /// 当前挂着的路由器，用来监听「页面切换」以决定是否显示迷你播放器。
+  GoRouter? _router;
+
   @override
   void initState() {
     super.initState();
@@ -41,6 +46,9 @@ class _AppShellState extends ConsumerState<AppShell> {
       // 这样各分类自己的页面栈（已打开的二级页面）才能被保留。
       if (!mounted) return;
       ref.read(navigationShellProvider.notifier).state = widget.navigationShell;
+      // 首帧也要记一次当前页面：直接从「最近播放」等页面冷启动时，
+      // 路由不会再发通知，迷你播放器得按当前页隐藏。
+      _syncRoutePath();
     });
     // 启动时自动检查更新（需开启「启动时检查更新」开关）
     WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -53,6 +61,43 @@ class _AppShellState extends ConsumerState<AppShell> {
         await showUpdateDialog(context, info);
       }
     });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final router = GoRouter.of(context);
+    if (identical(router, _router)) return;
+    _router?.routerDelegate.removeListener(_handleRouteChanged);
+    _router = router;
+    router.routerDelegate.addListener(_handleRouteChanged);
+    // didChangeDependencies 仍在 build 阶段，写 provider 会撞上
+    // 「不能在建树期间修改 provider」的断言，推迟到帧结束。
+    _handleRouteChanged();
+  }
+
+  @override
+  void dispose() {
+    _router?.routerDelegate.removeListener(_handleRouteChanged);
+    super.dispose();
+  }
+
+  /// 页面切换：把当前路径写进 [currentRoutePathProvider]。
+  ///
+  /// 路由解析（含首帧）会在这个部件的 build 期间发通知，直接改 provider 会
+  /// 落在 build 阶段，所以统一推迟到帧结束再写。
+  void _handleRouteChanged() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _syncRoutePath();
+    });
+  }
+
+  void _syncRoutePath() {
+    final router = _router;
+    if (router == null || !mounted) return;
+    final path = currentPageUri(router).path;
+    if (path.isEmpty || path == ref.read(currentRoutePathProvider)) return;
+    ref.read(currentRoutePathProvider.notifier).state = path;
   }
 
   /// Android 播放通知依赖通知权限，缺少时弹框提醒用户开启。
@@ -159,17 +204,21 @@ class _AppShellState extends ConsumerState<AppShell> {
 
   /// Phone layout: bottom navigation bar (current behavior).
   Widget _buildPhoneLayout(ThemeColors colors) {
+    // 「我的」里的设置 / 插件管理 / 下载 / 听歌识曲 / 最近播放这些页面底部
+    // 有自己的内容（列表、分页条），进去时把迷你播放器收起来，页面才能铺到底。
+    final showMiniPlayer = ref.watch(miniPlayerVisibleProvider);
     return Scaffold(
       backgroundColor: colors.background,
       body: Stack(
         children: [
           RepaintBoundary(child: widget.navigationShell),
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 5,
-            child: RepaintBoundary(child: const MiniPlayer()),
-          ),
+          if (showMiniPlayer)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 5,
+              child: RepaintBoundary(child: const MiniPlayer()),
+            ),
         ],
       ),
       bottomNavigationBar: RepaintBoundary(

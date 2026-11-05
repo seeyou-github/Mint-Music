@@ -449,6 +449,7 @@ void _showBottomPicker(
   ValueChanged<String> onSelected,
 ) {
   showModalBottomSheet(
+    useRootNavigator: true,
     context: context,
     sheetAnimationStyle: _settingsSheetAnimationStyle,
     backgroundColor: colors.surface,
@@ -921,6 +922,7 @@ class _AppearanceContent extends ConsumerWidget {
   }) {
     final container = ProviderScope.containerOf(context);
     showModalBottomSheet<void>(
+      useRootNavigator: true,
       context: context,
       sheetAnimationStyle: _settingsSheetAnimationStyle,
       backgroundColor: colors.surface,
@@ -1171,6 +1173,7 @@ class _AppearanceContent extends ConsumerWidget {
     required VoidCallback onDelete,
   }) {
     showModalBottomSheet<void>(
+      useRootNavigator: true,
       context: context,
       sheetAnimationStyle: _settingsSheetAnimationStyle,
       backgroundColor: colors.surface,
@@ -1248,6 +1251,7 @@ class _AppearanceContent extends ConsumerWidget {
     required ValueChanged<String> onSave,
   }) {
     showModalBottomSheet<void>(
+      useRootNavigator: true,
       context: context,
       sheetAnimationStyle: _settingsSheetAnimationStyle,
       backgroundColor: colors.surface,
@@ -1322,6 +1326,7 @@ class _AppearanceContent extends ConsumerWidget {
     ThemeColors colors,
   ) async {
     await showModalBottomSheet(
+      useRootNavigator: true,
       context: context,
       sheetAnimationStyle: _settingsSheetAnimationStyle,
       backgroundColor: colors.surface,
@@ -1708,6 +1713,7 @@ void _showDesktopLyricColorPicker(
   ValueChanged<int> onSelected,
 ) {
   showModalBottomSheet(
+    useRootNavigator: true,
     context: context,
     sheetAnimationStyle: _settingsSheetAnimationStyle,
     backgroundColor: colors.surface,

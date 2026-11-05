@@ -468,6 +468,7 @@ class _LyricPageState extends ConsumerState<LyricPage> {
   void _showMoreMenu(Song? song) {
     if (song == null) return;
     showModalBottomSheet(
+      useRootNavigator: true,
       context: context,
       sheetAnimationStyle: const AnimationStyle(
         duration: Duration(milliseconds: 220),
@@ -548,6 +549,7 @@ class _LyricPageState extends ConsumerState<LyricPage> {
     final currentSpeed = ref.read(playbackSpeedProvider);
     const speeds = ['0.5x', '0.75x', '1.0x', '1.25x', '1.5x', '2.0x'];
     showModalBottomSheet(
+      useRootNavigator: true,
       context: context,
       sheetAnimationStyle: const AnimationStyle(
         duration: Duration(milliseconds: 220),
@@ -630,6 +632,7 @@ class _LyricPageState extends ConsumerState<LyricPage> {
           .where((p) => p.id != '__favorites__')
           .toList();
       showModalBottomSheet(
+        useRootNavigator: true,
         context: context,
         backgroundColor: Colors.transparent,
         builder: (ctx) => Container(

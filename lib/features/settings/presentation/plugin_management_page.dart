@@ -1443,6 +1443,7 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
 
   void _showAddPluginSheet(ThemeColors colors) {
     showModalBottomSheet(
+      useRootNavigator: true,
       context: context,
       backgroundColor: colors.surface,
       isScrollControlled: true,

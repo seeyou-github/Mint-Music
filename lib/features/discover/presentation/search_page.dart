@@ -22,6 +22,7 @@ import '../../../shared/widgets/song_selection.dart';
 import '../application/discover_providers.dart' as discover;
 import '../application/search_providers.dart';
 import '../../player/application/playback_context.dart';
+import '../../player/application/mini_player_visibility.dart';
 import '../../library/domain/models/recently_played.dart';
 import '../../library/application/playlist_providers.dart';
 import '../domain/models/playlist.dart';
@@ -658,7 +659,10 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                           child: hotTagsAsync.when(
                             data: (hotTags) => ListView(
                               padding: const EdgeInsets.only(
-                                bottom: AppSpacing.xxxl,
+                                // 底部让开悬浮的迷你播放器，最后一个标签不被挡住。
+                                bottom:
+                                    AppSpacing.miniPlayerHeight +
+                                    AppSpacing.xxl,
                               ),
                               children: [
                                 if (searchHistory.isNotEmpty)
@@ -729,12 +733,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                     // 没歌（迷你播放器是空占位）或宽屏侧边栏布局时直接贴底。
                     bottom: ResponsiveLayout.batchBarBottomInset(
                       context,
-                      // 没有歌在播时迷你播放器是空占位，操作栏应该直接贴底。
-                      miniPlayerVisible: ref.watch(
-                        playbackControllerProvider.select(
-                          (s) => s.currentSong != null,
-                        ),
-                      ),
+                      // 播放栏没显示时（没歌在播，或当前页面隐藏了播放栏）操作栏直接贴底。
+                      miniPlayerVisible: ref.watch(miniPlayerVisibleProvider),
                     ),
                     child: SongBatchActionBar(
                       colors: colors,
@@ -1370,9 +1370,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     // 多选时批量操作栏紧贴迷你播放器，列表底部要一并让开。
     final batchBarInset = ResponsiveLayout.batchBarBottomInset(
       context,
-      miniPlayerVisible: ref.watch(
-        playbackControllerProvider.select((s) => s.currentSong != null),
-      ),
+      miniPlayerVisible: ref.watch(miniPlayerVisibleProvider),
     );
 
     final list = ListView.builder(

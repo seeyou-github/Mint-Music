@@ -20,6 +20,7 @@ class SharePreviewDialog extends StatefulWidget {
     Playlist? playlist,
   }) {
     return showModalBottomSheet(
+      useRootNavigator: true,
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,

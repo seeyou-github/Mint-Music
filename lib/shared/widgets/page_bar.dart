@@ -8,7 +8,7 @@ import '../../core/l10n/l10n.dart';
 import '../../core/theme/app_spacing.dart';
 import '../../core/theme/theme_provider.dart';
 import '../../core/utils/responsive_layout.dart';
-import '../../features/player/application/playback_controller.dart';
+import '../../features/player/application/mini_player_visibility.dart';
 
 /// 列表底部的胶囊分页条，加载中禁用导航。
 ///
@@ -87,17 +87,26 @@ class _PageBarState extends ConsumerState<PageBar> {
 
   @override
   Widget build(BuildContext context) {
-    // 只有 1 页：页码、上一页/下一页、下拉都没什么可翻的，整个分页条不显示。
-    if (_count <= 1) return const SizedBox.shrink();
+    final miniPlayerVisible = ref.watch(miniPlayerVisibleProvider);
+    // 只有 1 页：页码、上一页/下一页、下拉都没什么可翻的，分页条本身不显示。
+    // 但常驻底部的位置不能空着——迷你播放器浮在页面之上，留一段空白让
+    // 列表最后一行能滚到播放栏上方（分页条不出现时就没有别的让位手段了）。
+    if (_count <= 1) {
+      if (!widget.docked) return const SizedBox.shrink();
+      return SizedBox(
+        height: ResponsiveLayout.batchBarBottomInset(
+          context,
+          miniPlayerVisible: miniPlayerVisible,
+        ),
+      );
+    }
     final colors = ref.watch(themeColorsProvider);
 
-    // 常驻底部时让开迷你播放器（没歌在播时它就是空占位，不用让）。
+    // 常驻底部时让开迷你播放器（没歌在播、或当前页面隐藏了播放栏时不用让）。
     final bottomInset = widget.docked
         ? ResponsiveLayout.batchBarBottomInset(
             context,
-            miniPlayerVisible: ref.watch(
-              playbackControllerProvider.select((s) => s.currentSong != null),
-            ),
+            miniPlayerVisible: miniPlayerVisible,
           )
         : 0.0;
 
