@@ -223,20 +223,15 @@ class AppDatabase {
   }
 
   static Future<Database> _openImportant({bool inMemory = false}) async {
-    // 重要库已经不再使用（我的收藏 / 收藏歌单都改成了 JSON 文件
-    // `AppData\config\playlists.json`），这里只有「旧版本留下的文件」才会打开，
-    // 用于一次性迁移；文件不存在时用内存库，**不再生成 `AppData\db` 目录**。
+    // 重要库：我的收藏 + 收藏歌单（`playlists` / `playlist_songs`）。
+    //
+    // 收藏一度改成 JSON 文件（`config/playlists.json`），上千首时每次收藏
+    // 一首歌都要「读整个文件 → 改 → 全量写回」（实测 2000 首约 80ms + 2MB
+    // 落盘），于是又搬回数据库：单曲增删变成一行 INSERT / DELETE。
     var path = inMemoryDatabasePath;
     if (!inMemory) {
-      try {
-        final root = await AppPaths.rootDirectory();
-        final legacy = File(p.join(root.path, 'db', 'mintmusic.db'));
-        if (await legacy.exists()) {
-          path = legacy.path;
-        }
-      } catch (_) {
-        // 取不到路径就用内存库
-      }
+      final dir = await AppPaths.databaseDirectory();
+      path = p.join(dir.path, 'mintmusic.db');
     }
     return openDatabase(
       path,
@@ -261,6 +256,13 @@ class AppDatabase {
   }
 
   /// 重要库的建表语句（幂等）。
+  ///
+  /// * `playlists`：歌单元数据。`data` 存整条歌单 JSON（不含 songs），
+  ///   保证以后给 [Playlist] 加字段时不用改表。
+  /// * `playlist_songs`：歌单里的歌，`data` 是 `Song.toPersistJson()`。
+  ///   `sort_order` 升序即展示顺序（新收藏的歌插在最前面，用负数递减，
+  ///   避免每次都把整张表往后挪）；`added_at` 是**这一条记录最后一次变更**
+  ///   的时间，跨设备逐首合并时用来判断谁更新。
   static Future<void> _createImportantSchema(Database db) async {
     await db.execute('''
           CREATE TABLE IF NOT EXISTS playlists (

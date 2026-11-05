@@ -203,9 +203,10 @@ class PlaylistsNotifier extends AsyncNotifier<List<Playlist>> {
 
   Future<void> addSongsToPlaylist(String playlistId, List<Song> songs) async {
     final repo = ref.read(playlistRepositoryProvider);
-    for (final song in songs) {
-      await repo.addSongToPlaylist(playlistId, _songForStorage(song));
-    }
+    // 批量加歌走一个事务：逐首加的话每首都要查一遍歌单，几百首会很慢。
+    await repo.addSongsToPlaylist(playlistId, [
+      for (final song in songs) _songForStorage(song),
+    ]);
     ref.invalidateSelf();
     _syncToRemote();
   }

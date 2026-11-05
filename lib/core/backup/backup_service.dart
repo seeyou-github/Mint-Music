@@ -10,18 +10,22 @@ import '../platform/app_paths.dart';
 import '../storage/app_database.dart';
 import '../storage/app_preferences.dart';
 import '../../features/discover/data/hot_board_store.dart';
+import '../../features/library/data/playlist_repository.dart';
+import '../../features/library/data/playlist_store.dart';
 
 /// 备份 / 还原服务。
 ///
 /// 备份内容（压缩包内）：
-/// - `config/`：应用配置目录（`settings.json`、收藏歌单 `playlists.json`、
-///   导入的字体等）
+/// - `config/`：应用配置目录（`settings.json`、删除墓碑、导入的字体、
+///   电台 / 自定义歌单封面等）
 /// - `plugin/`：插件脚本目录
 /// - `hotboards.json`：热榜（存在临时库 `hot_boards` 表里，不在 config 目录内）
+/// - `playlists.json`：收藏（我的收藏 + 歌单，存在重要库的两张表里）
 ///
 /// 还原时：
 /// - 用备份里的 `config` / `plugin` **覆盖**现有目录；
-/// - 有 `hotboards.json` 时用它覆盖临时库里的热榜；
+/// - 有 `hotboards.json` / `playlists.json` 时把它们写回数据库；老备份的收藏
+///   还在 `config/playlists.json` 里，也照样能还原；
 /// - **清空 `temp` 目录**（里面的本地歌曲索引等会失效，下次进入「本地」分类
 ///   会按配置里的扫描目录重新扫描一次）。
 class BackupService {
@@ -36,6 +40,13 @@ class BackupService {
   /// 热榜放在临时库的 `hot_boards` 表里（不在 config 目录内），所以单独打一个
   /// JSON 条目，否则换设备还原后用户挑的榜单会全部丢失。
   static const String hotBoardsEntry = 'hotboards.json';
+
+  /// 压缩包内的收藏快照条目名。
+  ///
+  /// 收藏（我的收藏 + 歌单）在重要库的两张表里，同样不在 config 目录内；
+  /// 备份时导出成一份和旧版 `config/playlists.json` 结构一致的快照。
+  /// 老备份包里的 `config/playlists.json` 也照样能还原（见 [_restorePlaylists]）。
+  static const String playlistsEntry = 'playlists.json';
 
   /// 备份文件名前缀。
   static const String backupFilePrefix = 'mintmusic-backup';
@@ -70,6 +81,12 @@ class BackupService {
     if (hotBoards.isNotEmpty && hotBoards != '[]') {
       final bytes = utf8.encode(hotBoards);
       archive.addFile(ArchiveFile(hotBoardsEntry, bytes.length, bytes));
+    }
+    // 收藏也单独导出（在重要库里，不在 config 目录内）。
+    final playlists = await PlaylistRepository().exportAll();
+    if (playlists.isNotEmpty) {
+      final bytes = utf8.encode(jsonEncode(playlists));
+      archive.addFile(ArchiveFile(playlistsEntry, bytes.length, bytes));
     }
     final zipped = ZipEncoder().encode(archive);
     return Uint8List.fromList(zipped);
@@ -127,10 +144,46 @@ class BackupService {
       debugPrint('[BackupService] 重载设置失败: $e');
     }
 
-    // 4) 热榜：新版本的备份包里是独立条目；老备份没有这一条，它的热榜在
-    //    settings.json 的 `hot_boards_v2` 键里，会在 HotBoardStore 首次读取时
-    //    自动迁移进临时库，这里不用额外处理。
+    // 4) 热榜 / 收藏：都在数据库里，单独从条目还原（老备份的收藏还在
+    //    `config/playlists.json`，见 [_restorePlaylists]）。
     await _restoreHotBoards(archive);
+    await _restorePlaylists(archive);
+  }
+
+  /// 还原收藏（我的收藏 + 歌单）。
+  ///
+  /// 优先用新备份里的顶层 `playlists.json` 条目；老备份没有这一条，收藏在
+  /// `config/playlists.json`（已经随 config 目录还原到磁盘上了），直接读它。
+  static Future<void> _restorePlaylists(Archive archive) async {
+    if (!AppDatabase.isPersistent) {
+      // 数据库没能落盘（降级成内存库）：导入只写进内存，退出就没了。
+      // 保留原文件，下次正常启动时会自动迁移。
+      return;
+    }
+    try {
+      List<Map<String, dynamic>>? snapshot;
+      for (final file in archive.files) {
+        if (!file.isFile || file.name != playlistsEntry) continue;
+        final decoded = jsonDecode(utf8.decode(file.content as List<int>));
+        if (decoded is List) {
+          snapshot = [
+            for (final item in decoded)
+              if (item is Map)
+                item.map((key, value) => MapEntry('$key', value)),
+          ];
+        }
+        break;
+      }
+      snapshot ??= await PlaylistStore.readLegacySnapshot();
+      if (snapshot == null || snapshot.isEmpty) return;
+      await PlaylistRepository().importAll(snapshot);
+      // 老备份还原出来的文件已经进库了，删掉，避免下次启动再迁移一遍，
+      // 也免得备份包里一直带着一份几百 KB 的过期数据。
+      await PlaylistStore.deleteLegacyFiles();
+      debugPrint('[BackupService] 已还原 ${snapshot.length} 个歌单');
+    } catch (e) {
+      debugPrint('[BackupService] 还原收藏失败: $e');
+    }
   }
 
   /// 还原备份包里的热榜条目（没有就保持现有数据）。

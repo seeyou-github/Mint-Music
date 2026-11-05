@@ -63,8 +63,8 @@ class Playlist {
     };
   }
 
-  /// 落盘（playlists.json）用的瘦身版：歌曲不带整段歌词 / 请求头，
-  /// 见 [Song.toPersistJson]。导出 / 分享用 [toJson] 保持完整。
+  /// 落盘 / 同步快照用的瘦身版：歌曲不带整段歌词 / 请求头、插件原始数据
+  /// 也裁掉，见 [Song.toPersistJson]。导出 / 分享用 [toJson] 保持完整。
   Map<String, dynamic> toPersistJson() {
     return {
       'id': id,

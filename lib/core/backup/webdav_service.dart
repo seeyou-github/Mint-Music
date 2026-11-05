@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io' show gzip;
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart' as dio;
@@ -370,24 +371,39 @@ class WebDavService {
 
   // ---------------------------------------------------------------- 歌单同步
 
-  /// 歌单同步文件名（远端 `<远端根>/playlists.json`）。
+  /// 歌单同步文件名（远端 `<远端根>/playlists.json.gz`）。
   static const String playlistFileName = 'playlists.json';
+
+  /// 压缩后的歌单文件名。
+  ///
+  /// 上千首收藏序列化后 2MB 上下，gzip 能压到 14%（约 300KB），手机流量上传
+  /// 差别很明显。老版本只会读写未压缩的 [playlistFileName]，所以远端还留着
+  /// 那份文件时，写入会同时更新它（见 [writeRemotePlaylists]）。
+  static const String playlistCompressedName = 'playlists.json.gz';
+
+  String _playlistPath(String name) =>
+      playlistDir.isEmpty ? name : '$playlistDir/$name';
 
   /// 读取远端歌单 JSON。
   ///
-  /// 仅在远端文件确实不存在（404）时返回 null；网络 / 鉴权等错误一律
-  /// 向上抛出，避免把「读取失败」误当成「远端没有歌单」而覆盖远端数据。
+  /// 优先读压缩版；没有（404）时回退到老版本的未压缩文件。
+  /// 仅在远端确实不存在时返回 null；网络 / 鉴权等错误一律向上抛出，
+  /// 避免把「读取失败」误当成「远端没有歌单」而覆盖远端数据。
   Future<Map<String, dynamic>?> readRemotePlaylists() async {
     _requireConfigured();
-    final target = playlistDir.isEmpty
-        ? playlistFileName
-        : '$playlistDir/$playlistFileName';
     var bytes = Uint8List(0);
     try {
-      bytes = await _readBytes(target);
+      bytes = await _readBytes(_playlistPath(playlistCompressedName));
+      // 万一服务器上那个 `.gz` 实际是没压缩的旧文件，解压失败就按原文解析。
+      bytes = _gunzipOrRaw(bytes);
     } on WebDavException catch (e) {
-      if (e.statusCode == 404) return null;
-      rethrow;
+      if (e.statusCode != 404) rethrow;
+      try {
+        bytes = await _readBytes(_playlistPath(playlistFileName));
+      } on WebDavException catch (e2) {
+        if (e2.statusCode == 404) return null;
+        rethrow;
+      }
     }
     if (bytes.isEmpty) return null;
     final decoded = jsonDecode(utf8.decode(bytes));
@@ -395,18 +411,50 @@ class WebDavService {
     throw const WebDavException('远端歌单文件格式错误：不是有效的 JSON 对象');
   }
 
-  /// 写入远端歌单 JSON。
+  /// 写入远端歌单 JSON（压缩）。
   Future<void> writeRemotePlaylists(Map<String, dynamic> data) async {
     _requireConfigured();
     await _ensureDir(playlistDir);
-    final target = playlistDir.isEmpty
-        ? playlistFileName
-        : '$playlistDir/$playlistFileName';
     final text = jsonEncode({
       ...data,
       'deviceName': config.deviceName,
       'updatedAt': data['updatedAt'] ?? DateTime.now().millisecondsSinceEpoch,
     });
-    await _writeBytes(target, Uint8List.fromList(utf8.encode(text)));
+    final bytes = Uint8List.fromList(utf8.encode(text));
+    await _writeBytes(
+      _playlistPath(playlistCompressedName),
+      Uint8List.fromList(gzip.encode(bytes)),
+    );
+    // 远端还留着一份未压缩文件 → 说明有老版本客户端在同步，一并更新它，
+    // 否则老端读不到新数据，会把整份旧歌单再推回来。
+    if (await _remoteFileExists(playlistFileName)) {
+      await _writeBytes(_playlistPath(playlistFileName), bytes);
+    }
+  }
+
+  Uint8List _gunzipOrRaw(Uint8List bytes) {
+    if (bytes.isEmpty) return bytes;
+    try {
+      return Uint8List.fromList(gzip.decode(bytes));
+    } catch (_) {
+      return bytes;
+    }
+  }
+
+  /// 远端目录里是否有这个文件（一次 PROPFIND）。
+  Future<bool> _remoteFileExists(String name) async {
+    try {
+      final client = _buildClient();
+      final dir = playlistDir.isEmpty ? '/' : playlistDir;
+      final items = await client.readDir(dir, _cancelToken);
+      for (final item in items) {
+        final dyn = item as dynamic;
+        if (dyn.isDir == true) continue;
+        if ('${dyn.name}' == name) return true;
+      }
+    } catch (_) {
+      // 查不到就当作没有：少写一份兼容文件不影响新版本自己同步。
+    }
+    return false;
   }
 }
