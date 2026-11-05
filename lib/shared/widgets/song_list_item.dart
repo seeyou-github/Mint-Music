@@ -125,6 +125,8 @@ class SongListItem extends ConsumerWidget {
         MediaQuery.orientationOf(context) == Orientation.portrait ||
         MediaQuery.sizeOf(context).width < 520;
     final blocked = ref.watch(blacklistProvider).isBlocked(song);
+    // 行尾是不是「更多」按钮（自定义 trailing / 多选 / 关掉菜单时都不是）。
+    final hasMenuButton = trailing == null && showMenuButton && !selectionMode;
     final effectiveTap = selectionMode
         ? () => onSelectionToggle?.call(song)
         : blocked
@@ -150,11 +152,13 @@ class SongListItem extends ConsumerWidget {
             ? colors.primary.withValues(alpha: 0.08)
             : Colors.transparent,
         child: Padding(
-          // 右侧留白减半：行尾的「更多」按钮不再离屏幕边缘那么远，列表右边
-          // 空出一大条的问题就没了（左侧保持原样，序号照旧贴边）。
-          padding: const EdgeInsets.only(
+          // 行尾是「更多」按钮时不额外留白：图标本身在 20dp 的框里只占中间
+          // 约 4dp，按钮宽度也收窄了（见 _buildMenuButton），靠它们就能让三个
+          // 点距屏幕右缘 ≈12dp，和序号距左缘的 12dp 对齐。
+          // 行尾换成自定义内容（下载进度、勾选等）时仍保留原来的留白。
+          padding: EdgeInsets.only(
             left: AppSpacing.md,
-            right: AppSpacing.md / 2,
+            right: hasMenuButton ? 0 : AppSpacing.md / 2,
             top: AppSpacing.sm,
             bottom: AppSpacing.sm,
           ),
@@ -605,12 +609,26 @@ class SongListItem extends ConsumerWidget {
     );
   }
 
+  /// 「更多」按钮的宽度：图标 20，左右各留 4。
+  ///
+  /// 行尾内边距为 0 时，三个点距屏幕右缘 ≈ 4 + 8.3（more_vert 图标里那三个点
+  /// 本身只占中间 4dp）≈ 12dp，正好和序号距屏幕左缘的 12dp 对齐。
+  static const double _menuButtonWidth = 28;
+
   Widget _buildMenuButton(ThemeColors colors, BuildContext context) {
     return IconButton(
       icon: Icon(Icons.more_vert, size: 20, color: colors.textHint),
       onPressed: onMenuTap ?? () => SongActionSheet.show(context, song: song),
-      padding: EdgeInsets.zero,
-      constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+      // 默认 IconButton 带 48dp 的最小点击区（tapTargetSize: padded），20dp 的
+      // 图标居中后在右边白留 14dp；光调行内边距压不下去，蓝色高亮区也会
+      // 顶到屏幕边缘。这里改成 shrinkWrap 并固定 28dp 宽，图标离边缘的距离
+      // 才是可控的。
+      style: IconButton.styleFrom(
+        padding: EdgeInsets.zero,
+        minimumSize: const Size(_menuButtonWidth, 36),
+        maximumSize: const Size(_menuButtonWidth, 36),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
     );
   }
 
