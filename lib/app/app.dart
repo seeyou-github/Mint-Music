@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../core/l10n/app_locale.dart';
 import '../core/l10n/l10n.dart';
+import '../core/platform/window_title_bar.dart';
 import '../core/theme/app_theme.dart';
 import '../core/theme/app_typography.dart';
 import '../core/theme/theme_provider.dart';
@@ -36,6 +37,8 @@ class _AppState extends ConsumerState<App> {
   @override
   void initState() {
     super.initState();
+    // 启动时先把标题栏涂成当前背景色（之后由 build 里的 listen 跟随变化）。
+    WindowTitleBar.apply(ref.read(themeColorsProvider).background);
     // 开启「歌单实时同步」时，进入应用先与远端同步一次歌单。
     WidgetsBinding.instance.addPostFrameCallback(
       (_) => _syncPlaylistsOnStartup(),
@@ -115,6 +118,13 @@ class _AppState extends ConsumerState<App> {
     final appFontFamily = ref.watch(appFontSelectedProvider);
     // 同步全局语言,供非 widget 场景(如歌词控制器)使用
     currentLocale = appLocale;
+
+    // Windows：系统标题栏（最顶上的窗口栏）跟着主题背景色走，
+    // 设置里改「背景颜色」后立刻生效；其它平台该方法内部直接跳过。
+    ref.listen(
+      themeColorsProvider,
+      (previous, next) => WindowTitleBar.apply(next.background),
+    );
 
     // Listen for plugin initialization completion to trigger update check
     ref.listen(pluginInitializedProvider, (previous, next) {
