@@ -366,15 +366,29 @@ class _QuickMatchPageState extends ConsumerState<QuickMatchPage> {
             const SizedBox(width: AppSpacing.xs),
           ],
           if (_hasActiveFilter)
-            TextButton(
-              onPressed: () => setState(() {
+            // 不能用 TextButton：它自带 40~48 的最小高度和点击扩展区，
+            // 一旦出现就会把整行撑高，其它筛选按钮被垂直居中 → 上方凭空
+            // 多出一截空白。这里用和筛选按钮同高的普通文本。
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => setState(() {
                 for (final field in LocalSongField.values) {
                   _filters[field] = FieldFilter.any;
                 }
               }),
-              child: Text(
-                context.tr('清空筛选'),
-                style: TextStyle(fontSize: 12, color: colors.primary),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.xs,
+                  vertical: 5,
+                ),
+                child: Text(
+                  context.tr('清空筛选'),
+                  style: TextStyle(
+                    fontSize: 12,
+                    height: 1.2,
+                    color: colors.primary,
+                  ),
+                ),
               ),
             ),
         ],
@@ -407,6 +421,10 @@ class _QuickMatchPageState extends ConsumerState<QuickMatchPage> {
               context.tr(_fieldLabel(field)),
               style: TextStyle(
                 fontSize: 12,
+                // 固定行高：选中后会多出「有 / 无」这两个小字，字号不同会
+                // 让行高变化，筛选栏跟着忽高忽低。锁定 1.2 倍后两种状态
+                // 的高度一致，点筛选按钮不再顶动下面的列表。
+                height: 1.2,
                 color: active ? color : colors.textSecondary,
                 fontWeight: active ? FontWeight.w600 : FontWeight.normal,
               ),
@@ -417,6 +435,7 @@ class _QuickMatchPageState extends ConsumerState<QuickMatchPage> {
                 state == FieldFilter.has ? context.tr('有') : context.tr('无'),
                 style: TextStyle(
                   fontSize: 11,
+                  height: 1.2,
                   fontWeight: FontWeight.w700,
                   color: color,
                 ),
