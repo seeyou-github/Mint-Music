@@ -918,15 +918,7 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
       children: [
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
-          child: Row(
-            children: [
-              Expanded(child: _buildSearchFields(colors)),
-              const SizedBox(width: AppSpacing.sm),
-              _buildSearchButton(colors, sources),
-              const SizedBox(width: AppSpacing.sm),
-              _buildSourceButton(colors, sources, sourceId),
-            ],
-          ),
+          child: _buildSearchHeader(colors, sources, sourceId),
         ),
         const SizedBox(height: AppSpacing.md),
         if (candidate != null) ...[
@@ -1130,44 +1122,71 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
     });
   }
 
-  /// 搜索输入区：文件里歌名 + 歌手都有标签时是两个框（按这两个字段精确匹配），
-  /// 否则一个关键词框。
-  Widget _buildSearchFields(ThemeColors colors) {
+  /// 搜索输入区。
+  ///
+  /// 文件里歌名 + 歌手都有标签时是「两个输入框各占一行」，右侧各配一个按钮
+  /// （第一行音源、第二行搜索）——两个框并排放在一行里时，手机宽度下每个只剩
+  /// 一百来像素，歌名稍长就看不全，用户会以为输入框坏了。
+  /// 只有一个关键词框时仍是一行：输入框 + 搜索 + 音源。
+  Widget _buildSearchHeader(
+    ThemeColors colors,
+    List<SourceInfo> sources,
+    String sourceId,
+  ) {
     if (_splitSearchFields) {
-      return Row(
+      return Column(
         children: [
-          Expanded(
-            child: _buildSearchInput(
-              colors,
-              controller: _searchTitleController,
-              label: context.tr('歌曲'),
-              hint: context.tr('歌曲名'),
-            ),
+          Row(
+            children: [
+              Expanded(
+                child: _buildSearchInput(
+                  colors,
+                  controller: _searchTitleController,
+                  hint: context.tr('歌曲'),
+                ),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              _buildSourceButton(colors, sources, sourceId),
+            ],
           ),
-          const SizedBox(width: AppSpacing.sm),
-          Expanded(
-            child: _buildSearchInput(
-              colors,
-              controller: _searchArtistController,
-              label: context.tr('歌手'),
-              hint: context.tr('歌手'),
-            ),
+          const SizedBox(height: AppSpacing.sm),
+          Row(
+            children: [
+              Expanded(
+                child: _buildSearchInput(
+                  colors,
+                  controller: _searchArtistController,
+                  hint: context.tr('歌手'),
+                ),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              _buildSearchButton(colors, sources),
+            ],
           ),
         ],
       );
     }
-    return _buildSearchInput(
-      colors,
-      controller: _searchController,
-      icon: Icons.search,
-      hint: context.tr('输入关键词搜索 (歌曲名 歌手)'),
+    return Row(
+      children: [
+        Expanded(
+          child: _buildSearchInput(
+            colors,
+            controller: _searchController,
+            icon: Icons.search,
+            hint: context.tr('输入关键词搜索 (歌曲名 歌手)'),
+          ),
+        ),
+        const SizedBox(width: AppSpacing.sm),
+        _buildSearchButton(colors, sources),
+        const SizedBox(width: AppSpacing.sm),
+        _buildSourceButton(colors, sources, sourceId),
+      ],
     );
   }
 
   Widget _buildSearchInput(
     ThemeColors colors, {
     required TextEditingController controller,
-    String? label,
     String? hint,
     IconData? icon,
   }) {
@@ -1180,10 +1199,6 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
       ),
       child: Row(
         children: [
-          if (label != null) ...[
-            Text(label, style: TextStyle(fontSize: 12, color: colors.textHint)),
-            const SizedBox(width: AppSpacing.sm),
-          ],
           if (icon != null) ...[
             Icon(icon, size: 18, color: colors.textHint),
             const SizedBox(width: AppSpacing.sm),
@@ -1202,11 +1217,22 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
               style: TextStyle(color: colors.textPrimary, fontSize: 14),
             ),
           ),
-          if (controller.text.isNotEmpty)
-            GestureDetector(
-              onTap: () => setState(controller.clear),
-              child: Icon(Icons.close, size: 18, color: colors.textHint),
-            ),
+          // 有内容才显示清除按钮：用 ValueListenableBuilder 单独监听输入，
+          // 不用整页 setState（以前只在别的操作触发重建时才冒出来）。
+          ValueListenableBuilder<TextEditingValue>(
+            valueListenable: controller,
+            builder: (context, value, _) {
+              if (value.text.isEmpty) return const SizedBox.shrink();
+              return GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => setState(controller.clear),
+                child: Padding(
+                  padding: const EdgeInsets.only(left: AppSpacing.xs),
+                  child: Icon(Icons.close, size: 18, color: colors.textHint),
+                ),
+              );
+            },
+          ),
         ],
       ),
     );
@@ -1217,14 +1243,15 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
     return GestureDetector(
       onTap: enabled ? () => unawaited(_handleSearch()) : null,
       child: Container(
+        // 和音源按钮同一尺寸的圆形：两行输入框里各放一个，右边缘才能对齐。
+        width: _searchBarHeight,
         height: _searchBarHeight,
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
         alignment: Alignment.center,
         decoration: BoxDecoration(
           color: enabled
               ? colors.primary
               : colors.primary.withValues(alpha: 0.4),
-          borderRadius: BorderRadius.circular(AppRadius.full),
+          shape: BoxShape.circle,
         ),
         child: _searching
             ? SizedBox(
@@ -1238,7 +1265,7 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
             : Text(
                 context.tr('搜索'),
                 style: TextStyle(
-                  fontSize: 14,
+                  fontSize: 13,
                   fontWeight: FontWeight.w600,
                   color: colors.textOnPrimary,
                 ),
