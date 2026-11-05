@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -813,8 +814,13 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
           return _buildPageFooter(colors, pageCount);
         }
         final song = visible[index];
-        // 页面内的序号按整体列表算，翻页后接着上一页继续编号。
-        final songIndex = _pager.start + index;
+        // 序号按全局位置编号（第 4 页仍是 151~200）：跳页直达会把缓冲区
+        // 重定位到目标页（rebase 后 `start` 归零），必须用 `absoluteStart`
+        // 才不会把每一页都重新编成 1~50。
+        final displayIndex = _pager.absoluteStart + index;
+        // 播放队列用的是缓冲区内的下标：跳页后 `songs` 只剩目标页那几十首，
+        // 拿全局序号当 startIndex 会越界，表现为「点谁都播最后一首」。
+        final bufferIndex = _pager.start + index;
 
         // 高亮当前正在播放的歌曲，与本地音乐页面保持一致
         final currentSongId = ref
@@ -825,9 +831,14 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
 
         return SongListItem(
           song: song,
-          index: songIndex,
-          // 序号列宽度按整张歌单的最大序号（总数）自适应。
-          maxIndex: _total ?? songs.length,
+          index: displayIndex,
+          // 序号列宽度按「全局最大序号」算：跳页直达后缓冲区只剩一页数据
+          // （songs.length 很小、总数又可能拿不到），只按条数算会把 151
+          // 这种三位序号裁成两位宽度。
+          maxIndex: math.max(
+            _total ?? 0,
+            _pager.absoluteStart + visible.length,
+          ),
           isPlaying: isPlaying,
           showPlayedTag: true,
           selectionMode: selecting,
@@ -842,7 +853,7 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
               name: _playlistTitle,
             );
             final controller = ref.read(playbackControllerProvider.notifier);
-            await controller.setQueue(songs, startIndex: songIndex);
+            await controller.setQueue(songs, startIndex: bufferIndex);
           },
           onMenuTap: () =>
               SongActionSheet.show(context, song: song, playlistSongs: songs),

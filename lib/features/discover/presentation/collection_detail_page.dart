@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -696,8 +697,12 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
         return SongListItem(
           song: song,
           index: displayIndex,
-          // 序号列按整张专辑 / 作者的最大序号（总数）自适应宽度。
-          maxIndex: _total ?? songs.length,
+          // 序号列按「全局最大序号」算：跳页直达后缓冲区只剩一页数据，
+          // 只按 songs.length 算会把三位序号裁成两位宽度。
+          maxIndex: math.max(
+            _total ?? 0,
+            _pager.absoluteStart + visible.length,
+          ),
           isPlaying: currentSongId == song.id,
           showPlayedTag: true,
           onPlayTap: () async {
