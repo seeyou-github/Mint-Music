@@ -490,7 +490,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
           ),
           const Spacer(),
           // 搜索入口：圆形图标按钮，和右侧切换音源按钮完全同款
-          // （同样 40 的圆底 + 同样 24 的居中图标）。
+          // （同样 40 的圆底 + 同样 38 的居中图标）。
           GestureDetector(
             onTap: () => context.push('/search'),
             child: Container(
@@ -552,7 +552,10 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
 
   /// 两个圆底按钮里图标的直径：必须共用同一个值，否则铺满整圆的音源圆标
   /// 会比放大镜明显「大一圈」（见 _buildTabBar 的说明）。
-  static const double _circleIconSize = 24;
+  ///
+  /// 38 是相对 40 圆底留一圈极窄的边：既保留音源圆标原本饱满的观感，
+  /// 又不让它顶到按钮边缘显得比搜索按钮更大。改这里两个按钮一起变。
+  static const double _circleIconSize = 38;
 
   void _showSourceMenu(
     BuildContext context,
