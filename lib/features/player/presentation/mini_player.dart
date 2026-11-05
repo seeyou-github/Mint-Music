@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -12,11 +14,38 @@ import '../application/root_overlay_tracker.dart';
 import '../domain/models/song.dart';
 import 'widgets/play_queue_sheet.dart';
 
-class MiniPlayer extends ConsumerWidget {
+class MiniPlayer extends ConsumerStatefulWidget {
   const MiniPlayer({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<MiniPlayer> createState() => _MiniPlayerState();
+}
+
+class _MiniPlayerState extends ConsumerState<MiniPlayer> {
+  /// 横向滑动的累计位移（Android 左右滑动切歌用）。
+  double _swipeDx = 0;
+
+  /// 横向滑动结束：往左滑切下一首、往右滑切上一首。
+  ///
+  /// 位移不够时看甩动速度，避免轻轻一碰就误切歌。
+  void _onSwipeEnd(DragEndDetails details) {
+    final velocity = details.primaryVelocity ?? 0;
+    final dx = _swipeDx;
+    _swipeDx = 0;
+    if (dx.abs() < 64 && velocity.abs() < 200) return;
+    final swipeLeft = dx.abs() >= 64 ? dx < 0 : velocity < 0;
+    final controller = ref.read(playbackControllerProvider.notifier);
+    if (swipeLeft) {
+      controller.next();
+      return;
+    }
+    // 电台模式下队列由电台接管，没有「上一首」。
+    if (ref.read(radioModeProvider)) return;
+    controller.previous();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     // 桌面/平板（侧边栏布局）下播放器固定在左侧导航栏底部（SidebarPlayer），
     // 这里返回空占位，避免页面里再出现一个重复的迷你播放器。
     if (ResponsiveLayout.shouldShowSidebar(context)) {
@@ -63,6 +92,13 @@ class MiniPlayer extends ConsumerWidget {
           }
           context.push('/player/full');
         },
+        // Android：左右滑动播放栏切歌（左滑下一首、右滑上一首）。
+        // 只挂横向手势，纵向滚动不受影响，点按仍然进播放详情页。
+        onHorizontalDragStart: Platform.isAndroid ? (_) => _swipeDx = 0 : null,
+        onHorizontalDragUpdate: Platform.isAndroid
+            ? (details) => _swipeDx += details.delta.dx
+            : null,
+        onHorizontalDragEnd: Platform.isAndroid ? _onSwipeEnd : null,
         child: Container(
           height: height,
           margin: EdgeInsets.symmetric(

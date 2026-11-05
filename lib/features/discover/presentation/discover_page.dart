@@ -441,7 +441,6 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
   }
 
   Widget _buildHeader(BuildContext context, ThemeColors colors) {
-    final isTablet = ResponsiveLayout.isTablet(context);
     final tab = ref.watch(discoverTabProvider);
     final sourceId = ref.watch(discoverSourceIdProvider);
     final sources = ref.watch(discoverSupportedSourcesProvider);
@@ -489,18 +488,19 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
             onTap: () => ref.read(discoverTabProvider.notifier).state =
                 DiscoverTab.radio,
           ),
-          const SizedBox(width: AppSpacing.md),
-          // 搜索框
-          Expanded(
-            child: Align(
-              alignment: Alignment.centerRight,
-              child: ConstrainedBox(
-                constraints: BoxConstraints(
-                  minWidth: 140,
-                  maxWidth: isTablet ? 420 : 300,
-                ),
-                child: _buildSearchBar(context, colors),
+          const Spacer(),
+          // 搜索入口：圆形图标按钮，和右侧切换音源按钮同尺寸
+          GestureDetector(
+            onTap: () => context.push('/search'),
+            child: Container(
+              width: _searchBarHeight,
+              height: _searchBarHeight,
+              decoration: BoxDecoration(
+                color: colors.surface,
+                shape: BoxShape.circle,
               ),
+              alignment: Alignment.center,
+              child: Icon(Icons.search, size: 20, color: colors.textSecondary),
             ),
           ),
           const SizedBox(width: AppSpacing.sm),
@@ -541,36 +541,8 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
     );
   }
 
-  /// 搜索框与切换音源按钮共用的高度（两者视觉高度保持一致）。
+  /// 顶部两个圆形按钮（搜索 / 切换音源）的直径，保持视觉高度一致。
   static const double _searchBarHeight = 40;
-
-  Widget _buildSearchBar(BuildContext context, ThemeColors colors) {
-    return GestureDetector(
-      onTap: () => context.push('/search'),
-      child: Container(
-        height: _searchBarHeight,
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-        decoration: BoxDecoration(
-          color: colors.surface,
-          borderRadius: BorderRadius.circular(AppRadius.full),
-        ),
-        child: Row(
-          children: [
-            Icon(Icons.search, size: 18, color: colors.textHint),
-            const SizedBox(width: AppSpacing.sm),
-            Expanded(
-              child: Text(
-                context.tr('搜索音乐、歌手...'),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(color: colors.textHint, fontSize: 14),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 
   void _showSourceMenu(
     BuildContext context,
