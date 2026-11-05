@@ -460,11 +460,11 @@ final autoUpdateProvider = StateProvider<bool>((ref) => false);
 final closeToTrayProvider = StateProvider<bool>((ref) => true);
 final cacheDirProvider = StateProvider<String>((ref) => '');
 
-/// 插件自动检测更新（默认关闭）。
+/// 插件自动检测更新：固定关闭。
 ///
-/// 关闭时：进入插件管理页不会自动检查更新，应用启动时也不会自动检查
-/// 插件更新（用户仍可手动点击「检查更新」）。
-final pluginAutoCheckUpdateProvider = StateProvider<bool>((ref) => false);
+/// 插件管理页不再提供该开关，用户需要更新时用页面右上角的「检查更新」手动检查，
+/// 应用启动、进入插件管理页都不会自动检查插件更新。
+final pluginAutoCheckUpdateProvider = Provider<bool>((ref) => false);
 
 // -- app language (界面语言) --
 // 参考 Mio-Music 的 AppLocale 设置:默认简体中文,可切换繁体中文。
@@ -700,8 +700,6 @@ final settingsInitProvider = FutureProvider<void>((ref) async {
   ref.read(autoCacheMusicProvider.notifier).state = true;
   ref.read(autoUpdateProvider.notifier).state = svc.getAutoUpdate();
   ref.read(closeToTrayProvider.notifier).state = svc.getCloseToTray();
-  ref.read(pluginAutoCheckUpdateProvider.notifier).state = svc
-      .getPluginAutoCheckUpdate();
   ref.read(cacheDirProvider.notifier).state = await svc.getCacheDir();
 });
 

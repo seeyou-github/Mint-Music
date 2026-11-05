@@ -58,10 +58,11 @@ class LibraryPage extends ConsumerWidget {
     );
   }
 
-  /// 顶部：只放操作按钮，靠左排列。
+  /// 顶部：新建歌单靠左，导入 / 同步靠右。
   ///
   /// 原来这里有一个「我的收藏」标题占住左侧、把按钮全推到右边；底部导航已经
-  /// 标明当前是「收藏」分类，标题冗余，去掉后按钮直接从左边开始。
+  /// 标明当前是「收藏」分类，标题冗余，去掉后按钮从左边开始。现在把创建类
+  /// 操作留在左边，导入 / 同步这类数据操作推到右边，两组分开更易点。
   Widget _buildHeader(BuildContext context, ThemeColors colors, WidgetRef ref) {
     return Padding(
       padding: EdgeInsets.symmetric(
@@ -69,83 +70,84 @@ class LibraryPage extends ConsumerWidget {
         vertical: AppSpacing.md,
       ),
       child: Row(
-        children: [_buildActionButtons(context, colors, ref)],
+        children: [
+          _buildCreateButton(context, colors, ref),
+          const Spacer(),
+          _buildImportButton(context, colors, ref),
+          const SizedBox(width: AppSpacing.sm),
+          const PlaylistSyncButton(),
+        ],
       ),
     );
   }
 
-  Widget _buildActionButtons(
+  Widget _buildCreateButton(
     BuildContext context,
     ThemeColors colors,
     WidgetRef ref,
   ) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        GestureDetector(
-          onTap: () => _showCreateDialog(context, colors, ref),
-          child: Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: AppSpacing.md,
-              vertical: 6,
-            ),
-            decoration: BoxDecoration(
-              color: colors.primary,
-              borderRadius: BorderRadius.circular(AppRadius.full),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.add, size: 14, color: colors.textOnPrimary),
-                const SizedBox(width: AppSpacing.xs),
-                Text(
-                  context.tr('新建歌单'),
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
-                    color: colors.textOnPrimary,
-                  ),
-                ),
-              ],
-            ),
-          ),
+    return GestureDetector(
+      onTap: () => _showCreateDialog(context, colors, ref),
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md,
+          vertical: 6,
         ),
-        const SizedBox(width: AppSpacing.sm),
-        GestureDetector(
-          onTap: () => _showImportDialog(context, colors, ref),
-          child: Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: AppSpacing.md,
-              vertical: 6,
-            ),
-            decoration: BoxDecoration(
-              border: Border.all(color: colors.divider),
-              borderRadius: BorderRadius.circular(AppRadius.full),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  Icons.file_download,
-                  size: 14,
-                  color: colors.textSecondary,
-                ),
-                const SizedBox(width: AppSpacing.xs),
-                Text(
-                  context.tr('导入'),
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
-                    color: colors.textSecondary,
-                  ),
-                ),
-              ],
-            ),
-          ),
+        decoration: BoxDecoration(
+          color: colors.primary,
+          borderRadius: BorderRadius.circular(AppRadius.full),
         ),
-        const SizedBox(width: AppSpacing.sm),
-        const PlaylistSyncButton(),
-      ],
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.add, size: 14, color: colors.textOnPrimary),
+            const SizedBox(width: AppSpacing.xs),
+            Text(
+              context.tr('新建歌单'),
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: colors.textOnPrimary,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildImportButton(
+    BuildContext context,
+    ThemeColors colors,
+    WidgetRef ref,
+  ) {
+    return GestureDetector(
+      onTap: () => _showImportDialog(context, colors, ref),
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md,
+          vertical: 6,
+        ),
+        decoration: BoxDecoration(
+          border: Border.all(color: colors.divider),
+          borderRadius: BorderRadius.circular(AppRadius.full),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.file_download, size: 14, color: colors.textSecondary),
+            const SizedBox(width: AppSpacing.xs),
+            Text(
+              context.tr('导入'),
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: colors.textSecondary,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 

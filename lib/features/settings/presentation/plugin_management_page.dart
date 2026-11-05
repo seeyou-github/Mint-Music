@@ -62,18 +62,6 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
     super.initState();
     // Subscribe to plugin-initiated update notices (from lx.send('updateAlert')).
     _subscribeToUpdateNotices();
-    // Auto-check for updates when the page loads.
-    // 默认关闭「自动检测更新」：只有用户主动打开开关后，进入本页才会
-    // 自动检查更新（否则仍可点右上角刷新按钮手动检查）。
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      if (!ref.read(pluginAutoCheckUpdateProvider)) return;
-      // 嵌入设置页时每次切标签都会重建本页，避免重复请求：
-      // 已有检查结果就不再自动检查，用户仍可点右上角刷新。
-      if (ref.read(pluginUpdateResultsProvider).isEmpty) {
-        _checkAllUpdates();
-      }
-    });
   }
 
   @override
@@ -342,14 +330,7 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
               sliver: SliverMainAxisGroup(
                 slivers: [
                   SliverToBoxAdapter(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        _buildAutoUpdateSection(colors),
-                        const SizedBox(height: AppSpacing.lg),
-                        _buildDataSourceSection(colors, dataSources),
-                      ],
-                    ),
+                    child: _buildDataSourceSection(colors, dataSources),
                   ),
                   _buildReorderablePluginSliver(
                     colors,
@@ -590,48 +571,6 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
     } finally {
       if (mounted) setState(() => _isSavingPluginOrder = false);
     }
-  }
-
-  /// 「自动检测更新」开关（默认关闭）。
-  ///
-  /// 关闭时进入本页不会自动检查插件更新，需要用户点击右上角的刷新按钮。
-  Widget _buildAutoUpdateSection(ThemeColors colors) {
-    final enabled = ref.watch(pluginAutoCheckUpdateProvider);
-    return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.md,
-        vertical: AppSpacing.sm,
-      ),
-      decoration: BoxDecoration(
-        color: colors.surface,
-        borderRadius: BorderRadius.circular(AppRadius.md),
-        border: Border.all(color: colors.divider.withValues(alpha: 0.5)),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.system_update_alt, size: 18, color: colors.textSecondary),
-          const SizedBox(width: AppSpacing.sm),
-          Expanded(
-            child: Text(
-              context.tr('自动检测更新'),
-              style: TextStyle(fontSize: 14, color: colors.textPrimary),
-            ),
-          ),
-          Switch(
-            value: enabled,
-            onChanged: (value) {
-              ref.read(pluginAutoCheckUpdateProvider.notifier).state = value;
-              final container = ProviderScope.containerOf(context);
-              unawaited(
-                container
-                    .read(settingsServiceProvider.future)
-                    .then((svc) => svc.setPluginAutoCheckUpdate(value)),
-              );
-            },
-          ),
-        ],
-      ),
-    );
   }
 
   Widget _buildPluginSourceRow(

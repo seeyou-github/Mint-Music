@@ -433,12 +433,6 @@ class SettingsService {
   Future<void> setDefaultSourceId(String v) =>
       _prefs.setString('default_source_id', v);
 
-  // -- plugin auto check update (default off) --
-  bool getPluginAutoCheckUpdate() =>
-      _prefs.getBool('plugin_auto_check_update') ?? false;
-  Future<void> setPluginAutoCheckUpdate(bool v) =>
-      _prefs.setBool('plugin_auto_check_update', v);
-
   // -- close to tray --
   bool getCloseToTray() => _prefs.getBool('close_to_tray') ?? true;
   Future<void> setCloseToTray(bool v) => _prefs.setBool('close_to_tray', v);
