@@ -314,6 +314,9 @@ void FlutterWindow::HandleDesktopLyricCall(
             GetInt(arguments, "unplayColor", static_cast<int>(0xFFFFFFFF))),
         static_cast<unsigned int>(
             GetInt(arguments, "shadowColor", static_cast<int>(0xFF000000))),
+        // 文字描边：颜色 alpha=0 表示关闭，宽度是占字号的比例。
+        static_cast<unsigned int>(GetInt(arguments, "strokeColor", 0)),
+        GetDouble(arguments, "strokeWidth", 0.06),
         GetDouble(arguments, "positionX", 50),
         GetDouble(arguments, "positionY", 85), font_family, font_path,
         GetInt(arguments, "fontWeight", 500));

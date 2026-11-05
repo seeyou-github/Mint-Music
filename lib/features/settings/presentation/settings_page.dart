@@ -1589,6 +1589,39 @@ class _AppearanceContent extends ConsumerWidget {
             allowAlpha: true,
           ),
         ),
+        SettingDivider(colors: colors),
+        SettingRow(
+          icon: Icons.border_color,
+          title: '描边颜色',
+          trailing: _colorSwatch(s.strokeColor, colors),
+          colors: colors,
+          onTap: () => _showDesktopLyricColorPicker(
+            context,
+            colors,
+            '描边颜色',
+            _strokeColorPresets,
+            s.strokeColor,
+            (v) => update((cur) => cur.copyWith(strokeColor: v)),
+            customHex: s.customColors,
+            onCustomChanged: (list) =>
+                update((cur) => cur.copyWith(customColors: list)),
+            // 可以做半透明描边，取色面板同样开放透明度。
+            allowAlpha: true,
+          ),
+        ),
+        SettingDivider(colors: colors),
+        _SettingSlider(
+          icon: Icons.line_weight,
+          title: '描边宽度',
+          subtitle: '按字体大小的比例，设为 0 则不描边',
+          value: s.strokeWidth,
+          min: 0,
+          max: 0.2,
+          divisions: 20,
+          valueLabel: '${(s.strokeWidth * 100).round()}%',
+          colors: colors,
+          onChanged: (v) => update((cur) => cur.copyWith(strokeWidth: v)),
+        ),
       ],
     );
   }
@@ -1696,6 +1729,19 @@ const _shadowColorPresets = <(String, int)>[
   ('浓阴影', 0xCC000000),
   ('白色描边', 0x99FFFFFF),
   ('主题蓝', 0x993B82F6),
+];
+
+/// 桌面歌词文字描边颜色预设。
+///
+/// 「无描边」用全透明色表示，原生侧检测到 alpha=0 就整层跳过绘制。
+const _strokeColorPresets = <(String, int)>[
+  ('无描边', 0x00000000),
+  ('白色', 0xFFFFFFFF),
+  ('浅灰', 0xFFD1D5DB),
+  ('黑色', 0xFF000000),
+  ('深蓝', 0xFF1E3A8A),
+  ('薄荷绿', 0xFF07C556),
+  ('半透明白', 0x99FFFFFF),
 ];
 
 Widget _colorSwatch(int argb, ThemeColors colors) {

@@ -259,6 +259,8 @@ void DesktopLyricWindow::UpdateConfig(int font_size,
                                        unsigned int played_color,
                                        unsigned int unplay_color,
                                        unsigned int shadow_color,
+                                       unsigned int stroke_color,
+                                       double stroke_width_ratio,
                                        double position_x,
                                        double position_y,
                                        const std::wstring& font_family,
@@ -269,6 +271,8 @@ void DesktopLyricWindow::UpdateConfig(int font_size,
   played_color_ = played_color;
   unplay_color_ = unplay_color;
   shadow_color_ = shadow_color;
+  stroke_color_ = stroke_color;
+  stroke_width_ratio_ = std::clamp(stroke_width_ratio, 0.0, 0.2);
   position_x_ = position_x;
   position_y_ = position_y;
 
@@ -729,37 +733,10 @@ void DesktopLyricWindow::Paint() {
         static_cast<int>(std::lround(eased * marquee_overflow_px_));
   }
 
-  // 把一段文字画到蒙版（黑底白字），再按颜色合成到画布。
-  // 每个歌词元素只画一行：超长时不换行，由调用方传入横向偏移做滚动。
-  //
-  // [clip_right] 为合成时的右边界（画布像素坐标，-1 表示不裁剪）。当前播放行
-  // 用它把「已经唱到」的部分单独染成已播放颜色，边界按进度线性推进，所以
-  // 唱到某个字时这个字会被从左往右一点点擦亮。
-  auto draw_text = [&](HFONT font, const std::wstring& text, int y,
-                       int row_height, unsigned int color, int alpha_scale,
-                       int left, int top_offset, UINT format, int draw_width,
-                       int clip_right) {
-    if (text.empty() || row_height <= 0 || draw_width <= 0) {
-      return;
-    }
-    // 只处理文字实际覆盖的那块区域：逐帧重绘时整窗扫描在高分屏上很吃 CPU。
-    const int rect_left = std::max(0, left);
-    const int rect_right = std::min(width, left + draw_width);
-    const int rect_top = std::max(0, y + top_offset);
-    const int rect_bottom = std::min(height, y + top_offset + row_height);
-    if (rect_left >= rect_right || rect_top >= rect_bottom) {
-      return;
-    }
-    const size_t row_span = static_cast<size_t>(rect_right - rect_left) * 4;
-    for (int py = rect_top; py < rect_bottom; py++) {
-      std::memset(mask + static_cast<size_t>(py) * width + rect_left, 0,
-                  row_span);
-    }
-    ::SelectObject(mask_dc, font);
-    RECT text_rect{left, y + top_offset, left + draw_width,
-                   y + top_offset + row_height};
-    ::DrawTextW(mask_dc, text.c_str(), -1, &text_rect, format | DT_NOPREFIX);
-
+  // 把蒙版（黑底白字）按颜色合成到画布；[clip_right] 用于逐字填充。
+  auto composite = [&](unsigned int color, int alpha_scale, int clip_right,
+                       int rect_left, int rect_right, int rect_top,
+                       int rect_bottom) {
     int x_end = rect_right;
     if (clip_right >= 0) {
       x_end = std::min(x_end, std::max(rect_left, clip_right));
@@ -793,6 +770,97 @@ void DesktopLyricWindow::Paint() {
     }
   };
 
+  // 文字描边：把 DrawText 记录成 GDI 路径，用白色画笔把字形轮廓描到蒙版，
+  // 再按描边颜色合成。之后正常 DrawText 会填满字形内部，只露出外侧描边，
+  // 因此描边颜色与当前行的逐字进度着色互不干扰。
+  //
+  // 注意：GDI 路径只记录 TrueType/矢量字体的字形轮廓（默认微软雅黑可用）；
+  // 位图字体下描边会被跳过，但文字本身不受影响。
+  const bool stroke_enabled =
+      (stroke_color_ >> 24) != 0 && stroke_width_ratio_ > 0.0;
+  // 轮廓线以字形边界为中心，内侧一半会被填充层盖住，所以画笔取两倍宽度。
+  const int stroke_pen_width = std::clamp(
+      static_cast<int>(std::lround(font_size_ * stroke_width_ratio_ * 2.0)),
+      2, 48);
+
+  auto draw_stroke = [&](HFONT font, const std::wstring& text, int y,
+                         int row_height, int left, int top_offset,
+                         UINT format, int draw_width) {
+    if (!stroke_enabled || text.empty() || row_height <= 0 ||
+        draw_width <= 0) {
+      return;
+    }
+    // 描边会向字形四周外扩半个线宽，扫描区域要留出余量，否则边缘被裁掉。
+    const int pad = stroke_pen_width / 2 + 2;
+    const int rect_left = std::max(0, left - pad);
+    const int rect_right = std::min(width, left + draw_width + pad);
+    const int rect_top = std::max(0, y + top_offset - pad);
+    const int rect_bottom = std::min(height, y + top_offset + row_height + pad);
+    if (rect_left >= rect_right || rect_top >= rect_bottom) {
+      return;
+    }
+    const size_t row_span =
+        static_cast<size_t>(rect_right - rect_left) * 4;
+    for (int py = rect_top; py < rect_bottom; py++) {
+      std::memset(mask + static_cast<size_t>(py) * width + rect_left, 0,
+                  row_span);
+    }
+    ::SelectObject(mask_dc, font);
+    RECT text_rect{left, y + top_offset, left + draw_width,
+                   y + top_offset + row_height};
+    ::BeginPath(mask_dc);
+    // 路径 bracket 内 DrawText 只记录轮廓，不往蒙版上落像素。
+    ::DrawTextW(mask_dc, text.c_str(), -1, &text_rect,
+                format | DT_NOPREFIX);
+    ::EndPath(mask_dc);
+    HPEN pen = ::CreatePen(PS_SOLID, stroke_pen_width, RGB(255, 255, 255));
+    if (pen != nullptr) {
+      HGDIOBJ old_pen = ::SelectObject(mask_dc, pen);
+      ::StrokePath(mask_dc);
+      ::SelectObject(mask_dc, old_pen);
+      ::DeleteObject(pen);
+    }
+    // 清掉路径，避免影响后面正常的 DrawText。
+    ::AbortPath(mask_dc);
+    composite(stroke_color_, 100, -1, rect_left, rect_right, rect_top,
+              rect_bottom);
+  };
+
+  // 把一段文字画到蒙版（黑底白字），再按颜色合成到画布。
+  // 每个歌词元素只画一行：超长时不换行，由调用方传入横向偏移做滚动。
+  //
+  // [clip_right] 为合成时的右边界（画布像素坐标，-1 表示不裁剪）。当前播放行
+  // 用它把「已经唱到」的部分单独染成已播放颜色，边界按进度线性推进，所以
+  // 唱到某个字时这个字会被从左往右一点点擦亮。
+  auto draw_text = [&](HFONT font, const std::wstring& text, int y,
+                       int row_height, unsigned int color, int alpha_scale,
+                       int left, int top_offset, UINT format, int draw_width,
+                       int clip_right) {
+    if (text.empty() || row_height <= 0 || draw_width <= 0) {
+      return;
+    }
+    // 只处理文字实际覆盖的那块区域：逐帧重绘时整窗扫描在高分屏上很吃 CPU。
+    const int rect_left = std::max(0, left);
+    const int rect_right = std::min(width, left + draw_width);
+    const int rect_top = std::max(0, y + top_offset);
+    const int rect_bottom = std::min(height, y + top_offset + row_height);
+    if (rect_left >= rect_right || rect_top >= rect_bottom) {
+      return;
+    }
+    const size_t row_span = static_cast<size_t>(rect_right - rect_left) * 4;
+    for (int py = rect_top; py < rect_bottom; py++) {
+      std::memset(mask + static_cast<size_t>(py) * width + rect_left, 0,
+                  row_span);
+    }
+    ::SelectObject(mask_dc, font);
+    RECT text_rect{left, y + top_offset, left + draw_width,
+                   y + top_offset + row_height};
+    ::DrawTextW(mask_dc, text.c_str(), -1, &text_rect, format | DT_NOPREFIX);
+
+    composite(color, alpha_scale, clip_right, rect_left, rect_right,
+              rect_top, rect_bottom);
+  };
+
   // 当前行的播放进度（0 ~ 1），用于逐字填充。
   // 逐字歌词按每个字的时间 + 字宽换算，与播放详情页一致；普通 LRC
   // 没有逐字时间轴，退回整行线性插值。
@@ -824,6 +892,9 @@ void DesktopLyricWindow::Paint() {
         draw_text(font_, element.text, y, line_height, shadow_color_, 60,
                   left + 1, 1, format, draw_width, -1);
       }
+      // 描边：整行只画一次，之后未播放 / 已播放填充只覆盖字形内部。
+      draw_stroke(font_, element.text, y, line_height, left, 0, format,
+                  draw_width);
       if (element.active) {
         // 未唱到的部分用「未播放颜色」铺底。
         draw_text(font_, element.text, y, line_height, unplay_color_, 100,
@@ -858,6 +929,10 @@ void DesktopLyricWindow::Paint() {
                   DT_SINGLELINE | DT_VCENTER | DT_CENTER | DT_END_ELLIPSIS,
                   width, -1);
       }
+      draw_stroke(sub_font_, element.translation, translation_y,
+                  sub_line_height, 0, 0,
+                  DT_SINGLELINE | DT_VCENTER | DT_CENTER | DT_END_ELLIPSIS,
+                  width);
       draw_text(sub_font_, element.translation, translation_y, sub_line_height,
                 unplay_color_, 80, 0, 0,
                 DT_SINGLELINE | DT_VCENTER | DT_CENTER | DT_END_ELLIPSIS,
@@ -872,6 +947,9 @@ void DesktopLyricWindow::Paint() {
                   DT_SINGLELINE | DT_VCENTER | DT_CENTER | DT_END_ELLIPSIS,
                   width, -1);
       }
+      draw_stroke(sub_font_, element.roman, roman_y, sub_line_height, 0, 0,
+                  DT_SINGLELINE | DT_VCENTER | DT_CENTER | DT_END_ELLIPSIS,
+                  width);
       draw_text(sub_font_, element.roman, roman_y, sub_line_height,
                 unplay_color_, 80, 0, 0,
                 DT_SINGLELINE | DT_VCENTER | DT_CENTER | DT_END_ELLIPSIS,

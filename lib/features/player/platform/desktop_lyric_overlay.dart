@@ -144,6 +144,9 @@ class DesktopLyricOverlay {
         'playedColor': settings.playedColor,
         'unplayColor': settings.unplayColor,
         'shadowColor': settings.shadowColor,
+        // 文字描边：颜色 alpha=0 或宽度为 0 时原生侧不画描边。
+        'strokeColor': settings.strokeColor,
+        'strokeWidth': settings.strokeWidth,
         'positionX': settings.positionX,
         'positionY': settings.positionY,
         // 歌词设置里的字体 / 字重（字体路径为空时按族名使用系统字体）。

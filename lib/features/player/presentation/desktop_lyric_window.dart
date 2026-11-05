@@ -306,19 +306,15 @@ class DesktopLyricPanel extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           if (text.isNotEmpty)
-            Text(
+            _lyricText(
               text,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
+              fontSize: fontSize,
               style: _styleFor(active: slot.active, fontSize: fontSize),
             ),
           if (translation.isNotEmpty)
-            Text(
+            _lyricText(
               translation,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
+              fontSize: fontSize * 0.62,
               style: _styleFor(
                 active: slot.active,
                 isSub: true,
@@ -326,11 +322,9 @@ class DesktopLyricPanel extends StatelessWidget {
               ),
             ),
           if (roman.isNotEmpty)
-            Text(
+            _lyricText(
               roman,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
+              fontSize: fontSize * 0.62,
               style: _styleFor(
                 active: slot.active,
                 isSub: true,
@@ -339,6 +333,46 @@ class DesktopLyricPanel extends StatelessWidget {
             ),
         ],
       ),
+    );
+  }
+
+  /// 文字描边：底层用 STROKE 画笔画一次字形轮廓，上层按正常颜色填充。
+  ///
+  /// 与原生侧一样，描边色完全透明或宽度为 0 时退回单个 Text，默认状态
+  /// 不增加任何绘制开销。[fontSize] 传这一行的实际字号，子行描边会相应变细。
+  Widget _lyricText(
+    String text, {
+    required TextStyle style,
+    required double fontSize,
+  }) {
+    Widget line(TextStyle textStyle) => Text(
+      text,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      textAlign: TextAlign.center,
+      style: textStyle,
+    );
+
+    final strokeWidth = fontSize * settings.strokeWidth * 2;
+    final transparent = (settings.strokeColor & 0xFF000000) == 0;
+    if (transparent || strokeWidth <= 0) return line(style);
+
+    final strokePaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeWidth
+      ..color = Color(settings.strokeColor);
+    // TextStyle 不允许 color 与 foreground 同时存在，描边层要另建一份：
+    // 字体相关属性保持一致，且不复制阴影（否则轮廓会被阴影糊成一团）。
+    final strokeStyle = TextStyle(
+      foreground: strokePaint,
+      fontFamily: style.fontFamily,
+      fontSize: style.fontSize,
+      height: style.height,
+      fontWeight: style.fontWeight,
+    );
+    return Stack(
+      alignment: Alignment.center,
+      children: [line(strokeStyle), line(style)],
     );
   }
 

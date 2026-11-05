@@ -64,6 +64,8 @@ class DesktopLyricWindow {
                     unsigned int played_color,
                     unsigned int unplay_color,
                     unsigned int shadow_color,
+                    unsigned int stroke_color,
+                    double stroke_width_ratio,
                     double position_x,
                     double position_y,
                     const std::wstring& font_family,
@@ -151,6 +153,9 @@ class DesktopLyricWindow {
   unsigned int played_color_ = 0xFFFFFFFF;
   unsigned int unplay_color_ = 0xFFB0B0B0;
   unsigned int shadow_color_ = 0xFF000000;
+  // 文字描边：alpha=0 表示关闭；宽度按字号比例换算成像素，跨平台一致。
+  unsigned int stroke_color_ = 0x00000000;
+  double stroke_width_ratio_ = 0.06;
   double position_x_ = 50.0;
   // 与 Dart 侧默认值一致（水平居中、靠近工作区底部）：配置下发前首次显示
   // 也不会先出现在顶部再跳到底部。

@@ -3,7 +3,9 @@ package com.kingmc.mintmusic.mintmusic
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.net.Uri
@@ -25,6 +27,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowManager
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import io.flutter.plugin.common.MethodCall
@@ -67,12 +70,24 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
         val active: Boolean,
     )
 
+    /**
+     * 一个固定槽位的两层文字：描边层在下、填充层在上。
+     *
+     * 分开两层是为了不干扰填充层的 ForegroundColorSpan 逐字着色：span 会改写
+     * TextPaint 的颜色，若在同一个 TextView 里先画描边就会被染成歌词色。
+     */
+    private data class SlotRow(
+        val frame: FrameLayout,
+        val stroke: StrokeTextView,
+        val fill: TextView,
+    )
+
     private val appContext = context.applicationContext
     private val windowManager: WindowManager =
         appContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
 
     private var rootView: LinearLayout? = null
-    private var slotRows: List<TextView> = emptyList()
+    private var slotRows: List<SlotRow> = emptyList()
     private var layoutParams: WindowManager.LayoutParams? = null
 
     /// 应用是否在前台。前台时只把窗口设为 INVISIBLE（不 removeView），
@@ -91,6 +106,9 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
     private var playedColor = Color.parseColor("#07C556")
     private var unplayColor = Color.WHITE
     private var shadowColor = Color.argb(153, 0, 0, 0)
+    // 文字描边：透明色表示关闭；宽度存「占字号的比例」，绘制时再换算成 px。
+    private var strokeColor = Color.TRANSPARENT
+    private var strokeWidthRatio = 0.06f
     private var positionXPercent = 3.0
     private var positionYPercent = 8.0
 
@@ -188,12 +206,33 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
         val lyricContainer = LinearLayout(appContext).apply {
             orientation = LinearLayout.VERTICAL
         }
-        val rows = ArrayList<TextView>(FIXED_LINE_COUNT)
+        val rows = ArrayList<SlotRow>(FIXED_LINE_COUNT)
         for (i in 0 until FIXED_LINE_COUNT) {
-            val tv = newRowTextView()
-            rows.add(tv)
+            val stroke = newStrokeTextView()
+            val fill = newFillTextView()
+            // 两层用完全相同的布局参数叠在一起；先添加的描边层先绘制，
+            // 填充层盖住字形内部，只露出外侧那一半描边。
+            val frame = FrameLayout(appContext).apply {
+                addView(
+                    stroke,
+                    FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.MATCH_PARENT,
+                        FrameLayout.LayoutParams.MATCH_PARENT,
+                        Gravity.CENTER,
+                    ),
+                )
+                addView(
+                    fill,
+                    FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.MATCH_PARENT,
+                        FrameLayout.LayoutParams.MATCH_PARENT,
+                        Gravity.CENTER,
+                    ),
+                )
+            }
+            rows.add(SlotRow(frame, stroke, fill))
             lyricContainer.addView(
-                tv,
+                frame,
                 LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT,
                     0,
@@ -377,6 +416,9 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
         playedColor = (args["playedColor"] as? Number)?.toInt() ?: playedColor
         unplayColor = (args["unplayColor"] as? Number)?.toInt() ?: unplayColor
         shadowColor = (args["shadowColor"] as? Number)?.toInt() ?: shadowColor
+        strokeColor = (args["strokeColor"] as? Number)?.toInt() ?: strokeColor
+        strokeWidthRatio = (args["strokeWidth"] as? Number)?.toFloat()
+            ?.coerceIn(0f, 0.2f) ?: strokeWidthRatio
         positionXPercent = (args["positionX"] as? Number)?.toDouble() ?: positionXPercent
         positionYPercent = (args["positionY"] as? Number)?.toDouble() ?: positionYPercent
         fontFamily = args["fontFamily"] as? String ?: ""
@@ -535,41 +577,42 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
         clearHighlightState()
         val slots = buildSlots()
         for (i in rows.indices) {
-            val tv = rows[i]
+            val row = rows[i]
+            val stroke = row.stroke
+            val tv = row.fill
             val slot = slots.getOrNull(i) ?: SlotContent(null, "", null, null, false)
-            tv.typeface = lyricTypeface
-            tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSizeSp)
+
+            // 两层的字体 / 字号 / 对齐必须完全一致，否则描边会和文字错位。
+            for (target in listOf(stroke, tv)) {
+                target.typeface = lyricTypeface
+                target.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSizeSp)
+                target.gravity = Gravity.CENTER_HORIZONTAL or Gravity.CENTER_VERTICAL
+            }
+            // 描边层只画轮廓，不带阴影；填充层维持原有的阴影与逐字着色。
+            stroke.setTextColor(strokeColor)
+            stroke.strokeColor = strokeColor
+            stroke.strokeWidthPx = currentStrokeWidthPx()
+            stroke.setShadowLayer(0f, 0f, 0f, 0)
             // 基色一律是「未播放」；当前行已唱过的部分由 ForegroundColorSpan
             // 按进度单独涂成 playedColor，不再整行刷成已播放色。
             tv.setTextColor(unplayColor)
-            tv.gravity = Gravity.CENTER_HORIZONTAL or Gravity.CENTER_VERTICAL
             tv.setShadowLayer(4f, 1f, 1f, shadowColor)
 
             val hasSub = !slot.translation.isNullOrBlank() || !slot.roman.isNullOrBlank()
             if (slot.text.isBlank() && !hasSub) {
+                stroke.text = ""
                 tv.text = ""
-                tv.visibility = View.INVISIBLE
+                row.frame.visibility = View.INVISIBLE
                 continue
             }
-            tv.visibility = View.VISIBLE
+            row.frame.visibility = View.VISIBLE
 
-            val builder = SpannableStringBuilder(slot.text)
-            fun appendSub(text: String) {
-                if (text.isBlank()) return
-                val start = builder.length
-                builder.append('\n').append(text)
-                builder.setSpan(
-                    RelativeSizeSpan(SUB_TEXT_SCALE),
-                    start,
-                    builder.length,
-                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
-                )
-            }
-            slot.translation?.let { appendSub(it) }
-            slot.roman?.let { appendSub(it) }
+            // 两层各建一份文本：填充层之后会挂 ForegroundColorSpan，
+            // 共用同一个 Spannable 会把描边层也染成歌词色。
+            stroke.setText(buildSlotText(slot), TextView.BufferType.SPANNABLE)
             // SPANNABLE：TextView 会挂 ChangeWatcher，之后改 span 能自动重绘。
             // 这里从 tv.text 取回实际对象（setText 可能复制一份）。
-            tv.setText(builder, TextView.BufferType.SPANNABLE)
+            tv.setText(buildSlotText(slot), TextView.BufferType.SPANNABLE)
 
             if (slot.active) {
                 activeTextView = tv
@@ -579,30 +622,65 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
                 applyProgressHighlight(force = true)
             }
 
-            if (hasSub) {
-                tv.setSingleLine(false)
-                tv.maxLines = 1 + subLineCount()
-                tv.ellipsize = TextUtils.TruncateAt.END
-                tv.marqueeRepeatLimit = 0
-                tv.isSelected = false
-            } else {
-                // 单行且超长时使用系统跑马灯横向滚动。
-                tv.setSingleLine(true)
-                tv.ellipsize = TextUtils.TruncateAt.MARQUEE
-                tv.marqueeRepeatLimit = -1
-                tv.isSelected = true
+            for (target in listOf(stroke, tv)) {
+                if (hasSub) {
+                    target.setSingleLine(false)
+                    target.maxLines = 1 + subLineCount()
+                    target.ellipsize = TextUtils.TruncateAt.END
+                    target.marqueeRepeatLimit = 0
+                    target.isSelected = false
+                } else {
+                    // 单行且超长时使用系统跑马灯横向滚动；两层连续启动，
+                    // 滚动相位保持一致，描边不会和文字错开。
+                    target.setSingleLine(true)
+                    target.ellipsize = TextUtils.TruncateAt.MARQUEE
+                    target.marqueeRepeatLimit = -1
+                    target.isSelected = true
+                }
             }
         }
     }
 
-    private fun newRowTextView(): TextView = TextView(appContext).apply {
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSizeSp)
-        includeFontPadding = false
-        setLineSpacing(0f, 1.15f)
-        gravity = Gravity.CENTER
-        setTextColor(unplayColor)
-        typeface = lyricTypeface
-        visibility = View.INVISIBLE
+    /** 主歌词 + 翻译 / 罗马音（只带字号 span，不带任何颜色 span）。 */
+    private fun buildSlotText(slot: SlotContent): SpannableStringBuilder {
+        val builder = SpannableStringBuilder(slot.text)
+        fun appendSub(text: String) {
+            if (text.isBlank()) return
+            val start = builder.length
+            builder.append('\n').append(text)
+            builder.setSpan(
+                RelativeSizeSpan(SUB_TEXT_SCALE),
+                start,
+                builder.length,
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+            )
+        }
+        slot.translation?.let { appendSub(it) }
+        slot.roman?.let { appendSub(it) }
+        return builder
+    }
+
+    /** 描边线宽（px）。STROKE 以字形轮廓为中心，内侧一半会被填充层盖住，故乘 2。 */
+    private fun currentStrokeWidthPx(): Float {
+        val fontPx = fontSizeSp * appContext.resources.displayMetrics.scaledDensity
+        return fontPx * strokeWidthRatio * 2f
+    }
+
+    private fun newStrokeTextView(): StrokeTextView =
+        StrokeTextView(appContext).apply { applyCommonRowStyle(this) }
+
+    private fun newFillTextView(): TextView =
+        TextView(appContext).apply { applyCommonRowStyle(this) }
+
+    private fun applyCommonRowStyle(tv: TextView) {
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSizeSp)
+        tv.includeFontPadding = false
+        tv.setLineSpacing(0f, 1.15f)
+        tv.gravity = Gravity.CENTER
+        tv.setTextColor(unplayColor)
+        tv.typeface = lyricTypeface
+        // 显隐由外层 FrameLayout 控制，两层自身始终可见。
+        tv.visibility = View.VISIBLE
     }
 
     // ------------------------------------------------------------ 播放进度着色
@@ -1002,5 +1080,33 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
             activeRoot = null
             activeWindowManager = null
         }
+    }
+}
+
+/**
+ * 只画字形轮廓的 TextView，与填充层叠在同一个 FrameLayout 里形成文字描边。
+ *
+ * 之所以单独一层：填充层当前行的逐字着色靠 ForegroundColorSpan 改写
+ * TextPaint.color，若在同一层里先画描边就会被染成歌词色，描边颜色无法自定义。
+ * 这一层的文本不带任何颜色 span，onDraw 里临时切成 STROKE 即可。
+ */
+private class StrokeTextView(context: Context) : TextView(context) {
+    var strokeColor: Int = Color.TRANSPARENT
+    var strokeWidthPx: Float = 0f
+
+    override fun onDraw(canvas: Canvas) {
+        // 透明色 / 宽度 0 = 不描边：整层不绘制，零额外开销。
+        if (Color.alpha(strokeColor) == 0 || strokeWidthPx <= 0f) return
+        val textPaint = paint
+        val oldStyle = textPaint.style
+        val oldWidth = textPaint.strokeWidth
+        val oldColor = textPaint.color
+        textPaint.style = Paint.Style.STROKE
+        textPaint.strokeWidth = strokeWidthPx
+        textPaint.color = strokeColor
+        super.onDraw(canvas)
+        textPaint.style = oldStyle
+        textPaint.strokeWidth = oldWidth
+        textPaint.color = oldColor
     }
 }

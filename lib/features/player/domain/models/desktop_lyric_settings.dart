@@ -8,12 +8,14 @@ import 'dart:io';
 /// - `fontSize`:歌词字号(px)
 /// - `positionX` / `positionY`:窗口位置,以「可移动空间」的百分比存储,
 ///   这样屏幕尺寸/方向变化后位置依旧保持相对一致。
-/// - `playedColor` / `unplayColor` / `shadowColor`:已播放、未播放、描边阴影颜色
+/// - `playedColor` / `unplayColor` / `shadowColor`:已播放、未播放、阴影颜色
+/// - `strokeColor` / `strokeWidth`:文字描边颜色与宽度（宽度按字号比例存，
+///   换算成像素后各平台字号不同也能保持同样的观感）
 ///
 /// 显示行数、透明度、锁定歌词窗都已固定下来，不再暴露给用户：
 /// - 固定显示 2 行（上下两个固定槽位，按当前行奇偶交替）；
 /// - 控件背景完全透明（Android 原生悬浮窗与 Flutter 回退层都不画底色），
-///   文字可读性由阴影保证；
+///   文字可读性由阴影与描边保证；
 /// - 始终不锁定（可拖动、可点击）。
 class DesktopLyricSettings {
   const DesktopLyricSettings({
@@ -24,6 +26,8 @@ class DesktopLyricSettings {
     required this.playedColor,
     required this.unplayColor,
     required this.shadowColor,
+    required this.strokeColor,
+    required this.strokeWidth,
     this.customColors = const <String>[],
   });
 
@@ -47,6 +51,10 @@ class DesktopLyricSettings {
     playedColor: 0xFF07C556,
     unplayColor: 0xFFFFFFFF,
     shadowColor: 0x99000000,
+    // 默认不描边：老用户升级后观感不变，想要描边在设置里选颜色即可。
+    // 描边宽度按「字号的比例」存，Windows 50px 与手机 18sp 都能得到同样粗细。
+    strokeColor: 0x00000000,
+    strokeWidth: 0.06,
   );
 
   /// 当前配置版本。
@@ -72,11 +80,20 @@ class DesktopLyricSettings {
   /// 未播放歌词颜色,ARGB。
   final int unplayColor;
 
-  /// 歌词描边/阴影颜色,ARGB。
+  /// 歌词阴影颜色,ARGB。
   final int shadowColor;
 
+  /// 文字描边颜色,ARGB。完全透明（alpha=0）表示不描边。
+  final int strokeColor;
+
+  /// 文字描边宽度,占歌词字号的比例（0 ~ 0.2）。
+  ///
+  /// 原生侧按 `字号 × 比例` 换算成像素线宽；存比例而不是像素，是为了让
+  /// Windows（默认 50px）与 Android（默认 18sp）的描边看起来一样粗。
+  final double strokeWidth;
+
   /// 「新增颜色」保存的自定义色板（ARGB hex：`#AARRGGBB` 或 `#RRGGBB`）。
-  /// 三个颜色设置共用一份，随桌面歌词设置一起持久化。
+  /// 四个颜色设置共用一份，随桌面歌词设置一起持久化。
   final List<String> customColors;
 
   DesktopLyricSettings copyWith({
@@ -87,6 +104,8 @@ class DesktopLyricSettings {
     int? playedColor,
     int? unplayColor,
     int? shadowColor,
+    int? strokeColor,
+    double? strokeWidth,
     List<String>? customColors,
   }) {
     return DesktopLyricSettings(
@@ -97,6 +116,8 @@ class DesktopLyricSettings {
       playedColor: playedColor ?? this.playedColor,
       unplayColor: unplayColor ?? this.unplayColor,
       shadowColor: shadowColor ?? this.shadowColor,
+      strokeColor: strokeColor ?? this.strokeColor,
+      strokeWidth: strokeWidth ?? this.strokeWidth,
       customColors: customColors ?? this.customColors,
     );
   }
@@ -111,6 +132,8 @@ class DesktopLyricSettings {
     'playedColor': playedColor,
     'unplayColor': unplayColor,
     'shadowColor': shadowColor,
+    'strokeColor': strokeColor,
+    'strokeWidth': strokeWidth,
     'customColors': customColors,
   };
 
@@ -146,6 +169,13 @@ class DesktopLyricSettings {
           readNum(json['unplayColor'])?.toInt() ?? defaults.unplayColor,
       shadowColor:
           readNum(json['shadowColor'])?.toInt() ?? defaults.shadowColor,
+      // 老配置没有描边字段：回落到「透明 = 不描边」，保持原有观感。
+      strokeColor:
+          readNum(json['strokeColor'])?.toInt() ?? defaults.strokeColor,
+      strokeWidth:
+          (readNum(json['strokeWidth'])?.toDouble() ?? defaults.strokeWidth)
+              .clamp(0.0, 0.2)
+              .toDouble(),
       customColors: json['customColors'] is List
           ? (json['customColors'] as List).whereType<String>().toList()
           : const <String>[],
@@ -176,6 +206,8 @@ class DesktopLyricSettings {
         other.playedColor == playedColor &&
         other.unplayColor == unplayColor &&
         other.shadowColor == shadowColor &&
+        other.strokeColor == strokeColor &&
+        other.strokeWidth == strokeWidth &&
         _sameColors(other.customColors, customColors);
   }
 
@@ -196,6 +228,8 @@ class DesktopLyricSettings {
     playedColor,
     unplayColor,
     shadowColor,
+    strokeColor,
+    strokeWidth,
     Object.hashAll([for (final c in customColors) c.toUpperCase()]),
   );
 }
