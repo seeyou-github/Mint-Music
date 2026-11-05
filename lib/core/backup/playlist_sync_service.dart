@@ -37,76 +37,146 @@ class PlaylistSyncService {
   /// 拉取远端歌单并与本地合并，然后把合并结果推回远端。
   ///
   /// 返回本地歌单是否发生了实际变化。
+  ///
+  /// [webdav] 带取消令牌时（见 `SyncAttempt`）：用户中途停止同步会让请求以
+  /// `DioException(cancel)` 失败，这里会把已经写了一半的本地歌单 / 墓碑还原成
+  /// 同步前的内容，再抛出异常，避免留下「合并到一半」的歌单文件。
   static Future<bool> pullAndMerge(WebDavService webdav) async {
     // 远端不存在（404）时才返回 null；网络错误会抛异常，绝不能继续 push，
     // 否则会把「读取失败」误当成「远端没有数据」而覆盖远端。
     final remote = await webdav.readRemotePlaylists();
+    _throwIfCancelled(webdav);
     final localPlaylists = await _readLocalPlaylists();
     final localTombstones = await PlaylistStore.readTombstones();
 
-    final tombstones = <String, int>{...localTombstones};
-    if (remote != null) {
-      _parseRemoteTombstones(remote).forEach((id, deletedAt) {
-        if (deletedAt > (tombstones[id] ?? 0)) tombstones[id] = deletedAt;
-      });
-    }
-    _pruneTombstones(tombstones);
+    // 本次同步实际写下去的内容：中止回滚前用它确认「本地没被别处改过」。
+    List<Map<String, dynamic>>? writtenPlaylists;
+    Map<String, int>? writtenTombstones;
+    try {
+      final tombstones = <String, int>{...localTombstones};
+      if (remote != null) {
+        _parseRemoteTombstones(remote).forEach((id, deletedAt) {
+          if (deletedAt > (tombstones[id] ?? 0)) tombstones[id] = deletedAt;
+        });
+      }
+      _pruneTombstones(tombstones);
 
-    if (remote == null) {
-      final activeTombstones = _activeTombstones(tombstones, localPlaylists);
-      await PlaylistStore.writeTombstones(activeTombstones);
-      await _pushSnapshot(webdav, localPlaylists, activeTombstones);
-      return true;
-    }
+      if (remote == null) {
+        final activeTombstones = _activeTombstones(tombstones, localPlaylists);
+        _throwIfCancelled(webdav);
+        await PlaylistStore.writeTombstones(activeTombstones);
+        writtenTombstones = activeTombstones;
+        await _pushSnapshot(webdav, localPlaylists, activeTombstones);
+        return true;
+      }
 
-    final remotePlaylists = remote['playlists'];
-    final merged = <String, Map<String, dynamic>>{};
+      final remotePlaylists = remote['playlists'];
+      final merged = <String, Map<String, dynamic>>{};
 
-    // 先放入本地歌单；已经被删除（墓碑新于歌单更新时间）的跳过。
-    for (final item in localPlaylists) {
-      final json = _normalize(item);
-      final id = _idOf(json);
-      if (id.isEmpty) continue;
-      final deletedAt = tombstones[id];
-      if (deletedAt != null && deletedAt > _updatedAt(json)) continue;
-      merged[id] = json;
-    }
-
-    // 合并远端歌单：本地没有的直接加入；两边都有时取较新的一份。
-    if (remotePlaylists is List) {
-      for (final item in remotePlaylists) {
-        if (item is! Map) continue;
+      // 先放入本地歌单；已经被删除（墓碑新于歌单更新时间）的跳过。
+      for (final item in localPlaylists) {
         final json = _normalize(item);
         final id = _idOf(json);
         if (id.isEmpty) continue;
         final deletedAt = tombstones[id];
         if (deletedAt != null && deletedAt > _updatedAt(json)) continue;
+        merged[id] = json;
+      }
 
-        final local = merged[id];
-        if (local == null) {
-          merged[id] = json;
-          continue;
+      // 合并远端歌单：本地没有的直接加入；两边都有时取较新的一份。
+      if (remotePlaylists is List) {
+        for (final item in remotePlaylists) {
+          if (item is! Map) continue;
+          final json = _normalize(item);
+          final id = _idOf(json);
+          if (id.isEmpty) continue;
+          final deletedAt = tombstones[id];
+          if (deletedAt != null && deletedAt > _updatedAt(json)) continue;
+
+          final local = merged[id];
+          if (local == null) {
+            merged[id] = json;
+            continue;
+          }
+          if (id == favoritesId) {
+            merged[id] = _mergeFavorites(local, json);
+          } else if (_updatedAt(json) > _updatedAt(local)) {
+            merged[id] = json;
+          }
         }
-        if (id == favoritesId) {
-          merged[id] = _mergeFavorites(local, json);
-        } else if (_updatedAt(json) > _updatedAt(local)) {
-          merged[id] = json;
+      }
+
+      // 写本地之前再确认一次没被停止：停止后不该再落盘。
+      _throwIfCancelled(webdav);
+
+      final mergedList = _ordered(merged);
+      final changed = !_samePlaylists(localPlaylists, mergedList);
+      if (changed) {
+        await _writeLocalPlaylists(mergedList);
+        writtenPlaylists = mergedList;
+      }
+
+      final activeTombstones = _activeTombstones(tombstones, mergedList);
+      if (!_sameTombstones(localTombstones, activeTombstones)) {
+        _throwIfCancelled(webdav);
+        await PlaylistStore.writeTombstones(activeTombstones);
+        writtenTombstones = activeTombstones;
+      }
+      _throwIfCancelled(webdav);
+      await _pushSnapshot(webdav, mergedList, activeTombstones);
+      return changed;
+    } catch (e) {
+      // 只有「被取消 / 被停止」才回滚；普通网络失败保留已合并的结果
+      // （和以前一致，避免把用户刚合并进来的远端歌单又丢掉）。
+      if (webdav.isCancelled) {
+        await _rollbackLocal(
+          beforePlaylists: localPlaylists,
+          beforeTombstones: localTombstones,
+          writtenPlaylists: writtenPlaylists,
+          writtenTombstones: writtenTombstones,
+        );
+      }
+      rethrow;
+    }
+  }
+
+  /// 已取消（超时 / 用户停止）就立刻中止，不再继续写本地或推送远端。
+  static void _throwIfCancelled(WebDavService webdav) {
+    if (webdav.isCancelled) {
+      throw const WebDavException('同步已停止');
+    }
+  }
+
+  /// 把本地歌单 / 墓碑还原成同步前的内容（用于同步被中途停止）。
+  ///
+  /// 只有「当前内容仍等于本次同步写下去的内容」才还原：这期间如果在别的页面
+  /// 又改了歌单（或同步前那次本地读取本身就不完整），就保持现状不动，
+  /// 不能拿旧快照把用户的新改动一起抹掉。
+  static Future<void> _rollbackLocal({
+    required List<Map<String, dynamic>> beforePlaylists,
+    required Map<String, int> beforeTombstones,
+    required List<Map<String, dynamic>>? writtenPlaylists,
+    required Map<String, int>? writtenTombstones,
+  }) async {
+    if (writtenPlaylists != null) {
+      final current = await _readLocalPlaylists();
+      if (_samePlaylists(current, writtenPlaylists)) {
+        debugPrint('[PlaylistSyncService] 同步被停止，还原本地歌单');
+        await _writeLocalPlaylists(beforePlaylists);
+      } else {
+        debugPrint('[PlaylistSyncService] 本地歌单已被其它改动覆盖，跳过还原');
+      }
+    }
+    if (writtenTombstones != null) {
+      final current = await PlaylistStore.readTombstones();
+      if (_sameTombstones(current, writtenTombstones)) {
+        try {
+          await PlaylistStore.writeTombstones(beforeTombstones);
+        } catch (e) {
+          debugPrint('[PlaylistSyncService] 还原删除墓碑失败: $e');
         }
       }
     }
-
-    final mergedList = _ordered(merged);
-    final changed = !_samePlaylists(localPlaylists, mergedList);
-    if (changed) {
-      await _writeLocalPlaylists(mergedList);
-    }
-
-    final activeTombstones = _activeTombstones(tombstones, mergedList);
-    if (!_sameTombstones(localTombstones, activeTombstones)) {
-      await PlaylistStore.writeTombstones(activeTombstones);
-    }
-    await _pushSnapshot(webdav, mergedList, activeTombstones);
-    return changed;
   }
 
   static Timer? _debounceTimer;

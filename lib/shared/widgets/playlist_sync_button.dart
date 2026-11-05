@@ -30,18 +30,37 @@ class _PlaylistSyncButtonState extends ConsumerState<PlaylistSyncButton> {
   /// 首次 1 分钟超时，重试 2 分钟超时。
   int _attempt = 0;
 
+  /// 正在进行的这次同步（点「同步中」按钮时用它取消）。
+  SyncAttempt? _current;
+
+  /// 这次结束是用户主动点停的（不是超时 / 网络错误），不弹失败框。
+  bool _stopped = false;
+
   @override
   void dispose() {
     _successTimer?.cancel();
+    // 离开页面不主动取消：同步会在后台跑完（有超时兜底），
+    // 回来时按钮恢复成空闲态即可。
     super.dispose();
   }
 
-  /// 用户点击 / 首次进入：从第 1 次尝试开始计时。
+  /// 用户点击：空闲时开始同步，同步中再点一次就是「停止」。
   Future<void> _sync() async {
-    if (_phase == _SyncPhase.syncing) return;
+    if (_phase == _SyncPhase.syncing) {
+      _stop();
+      return;
+    }
     _successTimer?.cancel();
     _attempt = 0;
     await _runSync();
+  }
+
+  /// 停止当前同步：取消底层 HTTP 请求，已改动到一半的本地歌单会被还原。
+  void _stop() {
+    final op = _current;
+    if (op == null || _stopped) return;
+    _stopped = true;
+    op.cancel('已停止同步');
   }
 
   /// 真正执行一次同步（超时按 [_attempt] 决定：首次 1 分钟，重试 2 分钟）。
@@ -51,14 +70,16 @@ class _PlaylistSyncButtonState extends ConsumerState<PlaylistSyncButton> {
     setState(() => _phase = _SyncPhase.syncing);
 
     final config = ref.read(webDavConfigProvider);
+    final op = SyncAttempt(_attempt);
+    _current = op;
+    _stopped = false;
     try {
       if (!config.isConfigured) {
         throw const WebDavException('未配置 WebDAV：请先在「设置 → 备份还原」中填写 WebDAV 地址');
       }
       // 整次尝试（等本地歌单 + 拉取合并）共用一个超时，避免服务器
       // 「连上了但一直不回」时界面无限停在「同步中」。
-      // 超时会连带取消底层 HTTP 请求（迟到的响应不会被合并）。
-      final op = SyncAttempt(_attempt);
+      // 超时 / 手动停止都会取消底层 HTTP 请求（迟到的响应不会被合并）。
       await op.run(() async {
         // 确保本地歌单（含「我的收藏」）已就绪，再与远端合并。
         await ref.read(playlistsProvider.future);
@@ -66,17 +87,35 @@ class _PlaylistSyncButtonState extends ConsumerState<PlaylistSyncButton> {
           WebDavService(config, cancelToken: op.cancelToken),
         );
       }());
-      if (!mounted) return;
+      // 旧的一次同步（已被新的点击取代）不再影响界面。
+      if (!mounted || !identical(_current, op)) return;
       ref.invalidate(playlistsProvider);
       setState(() => _phase = _SyncPhase.success);
       _successTimer = Timer(const Duration(seconds: 2), () {
         if (mounted) setState(() => _phase = _SyncPhase.idle);
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || !identical(_current, op)) return;
       setState(() => _phase = _SyncPhase.idle);
+      if (_stopped) {
+        _toastStopped();
+        return;
+      }
       await _showFailure(describeWebDavError(e));
+    } finally {
+      if (identical(_current, op)) _current = null;
     }
+  }
+
+  /// 提示「已停止同步」（比弹框轻，停止是用户自己的操作）。
+  void _toastStopped() {
+    if (!mounted) return;
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(
+        content: Text(context.tr('已停止同步')),
+        duration: const Duration(seconds: 2),
+      ),
+    );
   }
 
   Future<void> _showFailure(String reason) async {
@@ -117,52 +156,63 @@ class _PlaylistSyncButtonState extends ConsumerState<PlaylistSyncButton> {
 
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onTap: syncing ? null : _sync,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.md,
-          vertical: 6,
-        ),
-        decoration: BoxDecoration(
-          color: success
-              ? colors.success.withValues(alpha: 0.08)
-              : Colors.transparent,
-          border: Border.all(color: success ? colors.success : colors.divider),
-          borderRadius: BorderRadius.circular(AppRadius.full),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (syncing)
-              SizedBox(
-                width: 14,
-                height: 14,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: colors.primary,
-                ),
-              )
-            else
-              Icon(
-                success ? Icons.check_circle : Icons.sync,
-                size: 14,
-                color: foreground,
-              ),
-            const SizedBox(width: AppSpacing.xs),
-            Text(
-              success
-                  ? context.tr('已同步')
-                  : syncing
-                  ? context.tr('同步中')
-                  : context.tr('同步'),
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w500,
-                color: foreground,
-              ),
+      // 同步中再点一次 = 停止（会取消底层请求，并把改到一半的本地歌单还原）。
+      onTap: _sync,
+      child: Tooltip(
+        message: syncing
+            ? context.tr('点击停止同步')
+            : success
+            ? context.tr('已同步')
+            : context.tr('同步歌单'),
+        waitDuration: const Duration(milliseconds: 600),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.md,
+            vertical: 6,
+          ),
+          decoration: BoxDecoration(
+            color: success
+                ? colors.success.withValues(alpha: 0.08)
+                : Colors.transparent,
+            border: Border.all(
+              color: success ? colors.success : colors.divider,
             ),
-          ],
+            borderRadius: BorderRadius.circular(AppRadius.full),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (syncing)
+                SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: colors.primary,
+                  ),
+                )
+              else
+                Icon(
+                  success ? Icons.check_circle : Icons.sync,
+                  size: 14,
+                  color: foreground,
+                ),
+              const SizedBox(width: AppSpacing.xs),
+              Text(
+                success
+                    ? context.tr('已同步')
+                    : syncing
+                    ? context.tr('同步中')
+                    : context.tr('同步'),
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  color: foreground,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
