@@ -166,6 +166,17 @@ class LocalMusicRepository {
         .substring(0, 16);
   }
 
+  /// MediaStore 给的「专辑」是不是拿所在文件夹名顶替的。
+  ///
+  /// 文件里没有专辑标签时，Android 的 MediaStore 会用父目录名填 ALBUM 列
+  /// （通话录音 = `Call Recordings`、下载目录 = `Download`…）。这种值不是
+  /// 真实专辑，不能当成专辑信息显示。
+  static bool _isFolderNameFallback(String album, String filePath) {
+    final folderName = p.basename(p.dirname(filePath)).trim();
+    if (folderName.isEmpty) return false;
+    return album.toLowerCase() == folderName.toLowerCase();
+  }
+
   /// 根据文件扩展名推断音频比特率（用于本地音乐音质显示）
   int? _inferBitrateFromExtension(String filePath) {
     final ext = p.extension(filePath).toLowerCase();
@@ -330,11 +341,20 @@ class LocalMusicRepository {
                     : '未知艺术家')
               : rawArtist;
           final rawAlbum = audio.album ?? '';
-          final album = rawAlbum.isEmpty || rawAlbum == '<unknown>'
-              ? ((metadata.album?.isNotEmpty ?? false)
-                    ? metadata.album!
-                    : '未知专辑')
-              : rawAlbum;
+          // MediaStore 对没有专辑标签的文件（通话录音、下载的音频…）会拿
+          // **所在文件夹名**当专辑（这里是 `Call Recordings`），看着像专辑信息，
+          // 其实文件里根本没写。文件标签里读到专辑就以标签为准；标签里没有时，
+          // 只有 MediaStore 给的值不像文件夹名才采用，否则按「无专辑」处理，
+          // 与桌面端（读不到标签就是「未知专辑」）保持一致。
+          final tagAlbum = metadata.album?.trim() ?? '';
+          final mediaAlbum = rawAlbum.trim();
+          final album = tagAlbum.isNotEmpty
+              ? tagAlbum
+              : (mediaAlbum.isEmpty ||
+                        mediaAlbum == '<unknown>' ||
+                        _isFolderNameFallback(mediaAlbum, filePath)
+                    ? '未知专辑'
+                    : mediaAlbum);
           final duration = (audio.duration ?? 0) ~/ 1000;
 
           // 内嵌歌词：记下「有没有」「是不是逐字」，快速匹配页据此筛选，
