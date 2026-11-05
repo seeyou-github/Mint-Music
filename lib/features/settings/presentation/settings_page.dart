@@ -1571,26 +1571,6 @@ class _AppearanceContent extends ConsumerWidget {
         ),
         SettingDivider(colors: colors),
         SettingRow(
-          icon: Icons.blur_on,
-          title: '阴影颜色',
-          trailing: _colorSwatch(s.shadowColor, colors),
-          colors: colors,
-          onTap: () => _showDesktopLyricColorPicker(
-            context,
-            colors,
-            '阴影颜色',
-            _shadowColorPresets,
-            s.shadowColor,
-            (v) => update((cur) => cur.copyWith(shadowColor: v)),
-            customHex: s.customColors,
-            onCustomChanged: (list) =>
-                update((cur) => cur.copyWith(customColors: list)),
-            // 阴影预设都带 alpha，自定义时也要能调透明度。
-            allowAlpha: true,
-          ),
-        ),
-        SettingDivider(colors: colors),
-        SettingRow(
           icon: Icons.border_color,
           title: '描边颜色',
           trailing: _colorSwatch(s.strokeColor, colors),
@@ -1721,16 +1701,6 @@ const _lyricColorPresets = <(String, int)>[
   ('浅灰', 0xFFBDBDBD),
 ];
 
-/// 桌面歌词可用的阴影颜色预设（含透明度）。
-const _shadowColorPresets = <(String, int)>[
-  ('无阴影', 0x00000000),
-  ('淡阴影', 0x66000000),
-  ('标准阴影', 0x99000000),
-  ('浓阴影', 0xCC000000),
-  ('白色描边', 0x99FFFFFF),
-  ('主题蓝', 0x993B82F6),
-];
-
 /// 桌面歌词文字描边颜色预设。
 ///
 /// 「无描边」用全透明色表示，原生侧检测到 alpha=0 就整层跳过绘制。
@@ -1855,7 +1825,7 @@ void _showDesktopLyricCustomActions(
 ///
 /// 交互与「主题色」的新增颜色一致：HSV 取色面板新增、长按自定义色编辑/删除，
 /// 自定义色板保存在 [DesktopLyricSettings.customColors] 里随设置一起持久化。
-/// [allowAlpha] 为 true 时取色面板多一条透明度滑条（阴影颜色需要）。
+/// [allowAlpha] 为 true 时取色面板多一条透明度滑条（描边颜色需要）。
 void _showDesktopLyricColorPicker(
   BuildContext context,
   ThemeColors colors,
