@@ -557,6 +557,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           pageCount: pager.pageCount(loaded, hasMore: hasMore, total: total),
           loading: loading || _pagingLoading,
           docked: true,
+          // 数据源没给总数、也还没翻到末尾：最后一页是猜的，不写成具体页码。
+          lastPageKnown: !hasMore || total != null,
           onChanged: onPage,
         ),
       ],

@@ -738,6 +738,8 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
           pageCount: pageCount,
           loading: _loadingMore || _pagingLoading,
           docked: true,
+          // 没拿到总数、也还没翻到末尾：最后一页是猜的，不写成具体页码。
+          lastPageKnown: _isEnd || _total != null,
           onChanged: (page) => unawaited(_goToPage(page)),
         ),
       ],

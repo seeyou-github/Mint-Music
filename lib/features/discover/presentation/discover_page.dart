@@ -1449,6 +1449,8 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
                 pageCount: pageCount,
                 loading: notifier.loadingMore || _pagingLoading,
                 docked: true,
+                // 没拿到总数、也还没翻到末尾：最后一页是猜的，不写成具体页码。
+                lastPageKnown: notifier.noMore || notifier.total != null,
                 onChanged: (page) => unawaited(_goToPlaylistPage(page)),
               ),
             ],

@@ -90,18 +90,16 @@ class PageSlicer {
     }
     if (loaded <= 0) {
       if (_base <= 1) return 1;
-      // 跳页直达后缓冲区只剩目标页：页数就是目标页本身，不能再多留一格
-      // （否则点第 20 页会冒出第 21 页）。
-      return _page;
+      return _page + (hasMore ? 1 : 0);
     }
     final knownPages = _base - 1 + ((loaded + pageSize - 1) ~/ pageSize);
     // 还有更多时，正在加载的远页不能被收回；加载结束后就要按缓冲区
     // 实际覆盖的页数收尾，否则上游总数偏大会留下空白末页。
     var pages = hasMore && _base > 1 && knownPages < _page ? _page : knownPages;
-    // 「下一张还没取的页」这个入口只适用于连续追加（缓冲区从第 1 页开始）。
-    // 跳页直达后 [_base] > 1，缓冲区已经不在第 1 页，再 +1 会把总页数多算
-    // 一页——20 页的列表点进第 20 页后凭空多出第 21 页。
-    if (hasMore && _base <= 1) pages += 1;
+    // 还有更多但不知道到底有几页时，多留一个页码入口：点它才去接口取，
+    // 宁可多一页也不能「点不到后面的页」。这一页在界面上不写成具体页码
+    // （见 PageBar.lastPageKnown），避免 20 页的列表看起来像有 21 页。
+    if (hasMore) pages += 1;
     return pages < 1 ? 1 : pages;
   }
 
