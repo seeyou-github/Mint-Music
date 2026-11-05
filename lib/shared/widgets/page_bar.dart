@@ -26,7 +26,9 @@ import '../../features/player/application/mini_player_visibility.dart';
 /// 「第 N 页」下拉只列出**目前能确定的页码**：知道总页数时就是全部页码；
 /// 数据源不给总数时只列已经翻到过的页（猜不出来的一律不列）。选一个直达
 /// （Windows 上支持滚轮滚动和按住鼠标拖动，另有常驻滚动条可拖）。
-/// 总共只有 1 页时整个分页条不显示。
+///
+/// 末页未知时页码行是 `1 2 3 4 5 … 20 …`：20 是已知的最后一页，最后的
+/// 省略号可以点，点它继续取下一页。总共只有 1 页时整个分页条不显示。
 class PageBar extends ConsumerStatefulWidget {
   const PageBar({
     super.key,
@@ -51,10 +53,10 @@ class PageBar extends ConsumerStatefulWidget {
   /// 是否确定「最后一页」是第几页。
   ///
   /// 数据源不给总条数、又还没翻到末尾时为 false：这时 [pageCount] 里那个
-  /// 尾页是「再多留一页」的入口，并不是真的最后一页。界面上右侧那格就不写
-  /// 具体页码，改成省略号（看着像「后面还有，具体到第几页不知道」），
-  /// **这一格可以点**，点它就去取下一页；「第 N 页」下拉里只列已经知道的
-  /// 页码，不会出现猜出来的页。
+  /// 尾页是「再多留一页」的入口，并不是真的最后一页。界面上不把它写成页码：
+  /// 页码行末尾先显示已知的最后一页，再跟一个可点的省略号
+  /// （`1 2 3 4 5 … 20 …`），点省略号去取下一页；「第 N 页」下拉里也只列
+  /// 已经知道的页码，不会出现猜出来的页。
   final bool lastPageKnown;
 
   @override
@@ -168,25 +170,22 @@ class _PageBarState extends ConsumerState<PageBar> {
             } else {
               // 2) 放不下才出现省略号 + 下拉。当前页前后各留一页（9 10 11），
               //    再缩就只能去掉相邻页了，所以半径最小为 1。
+              //    页码窗口按「已知页数」算，末页未知时末尾再补一个「…」入口，
+              //    看起来就是 `1 2 3 4 5 … 20 …`：末尾那个 20 是已知的最后一页，
+              //    它后面的省略号表示「20 之后还有，但不知道第几页」。
               showDropdown = true;
               final dropdownWidth = _dropdownWidth(context);
               final maxRadius = wide ? 5 : 4;
               var radius = maxRadius;
-              pages = _windowPages(
-                _current,
-                _count,
-                radius,
-                includeLast: widget.lastPageKnown,
+              pages = _withMoreEntry(
+                _windowPages(_current, _knownCount, radius),
               );
               while (radius > 1 &&
                   _pagesWidth(context, pages) + _elementGap + dropdownWidth >
                       budget) {
                 radius--;
-                pages = _windowPages(
-                  _current,
-                  _count,
-                  radius,
-                  includeLast: widget.lastPageKnown,
+                pages = _withMoreEntry(
+                  _windowPages(_current, _knownCount, radius),
                 );
               }
             }
@@ -526,28 +525,26 @@ class _PageBarState extends ConsumerState<PageBar> {
     return total;
   }
 
+  /// 末页未知时，页码行末尾再补一个省略号入口（点它取下一页）。
+  ///
+  /// 补在「已知的最后一页」之后，所以末页未知时页码行看起来是
+  /// `1 2 3 4 5 … 20 …`：20 是已经确定存在的最后一页，最后的省略号表示
+  /// 「20 之后还有，只是还不知道第几页」。
+  List<int?> _withMoreEntry(List<int?> pages) =>
+      _hasMorePage ? [...pages, null] : pages;
+
   /// 页码窗口：首页 + 末页 + 当前页 ± [radius]。页数少到窗口能盖住就全显；
   /// 缺两页以上用省略号（null），只缺一页直接补齐。
   ///
-  /// [includeLast] 为 false 表示末页未知：不把 [count] 当成「最后一页」列出来
-  /// （它是为了能继续往后翻而多留的一页，不是真的末页），而是在末尾补一个
-  /// 省略号，表示「后面还有，具体到第几页不知道」——这个省略号在界面上是
-  /// 可点的，点它继续取下一页。
-  static List<int?> _windowPages(
-    int current,
-    int count,
-    int radius, {
-    bool includeLast = true,
-  }) {
-    if (includeLast && count <= radius * 2 + 1) {
+  /// [count] 传「已知页数」：末页未知时不含那个还没取过的猜测页，
+  /// 猜出来的页码由 [_withMoreEntry] 用省略号代替。
+  static List<int?> _windowPages(int current, int count, int radius) {
+    if (count <= radius * 2 + 1) {
       return [for (var page = 1; page <= count; page++) page];
     }
-    final keep = <int>{1, current, if (includeLast) count};
+    final keep = <int>{1, count};
     for (var page = current - radius; page <= current + radius; page++) {
-      // 末页未知时，[count] 那一格只在「它就是当前页」时才作为页码出现。
-      if (page >= 1 && page <= count && (includeLast || page != count)) {
-        keep.add(page);
-      }
+      if (page >= 1 && page <= count) keep.add(page);
     }
     final sorted = keep.where((page) => page >= 1 && page <= count).toList()
       ..sort();
@@ -562,10 +559,6 @@ class _PageBarState extends ConsumerState<PageBar> {
         }
       }
       result.add(sorted[i]);
-    }
-    // 末页未知：末尾补省略号，和「中间缺页」的省略号一样表示还有内容。
-    if (!includeLast && sorted.isNotEmpty && sorted.last < count) {
-      result.add(null);
     }
     return result;
   }
