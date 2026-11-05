@@ -158,6 +158,17 @@ class _MusicCoverImageState extends State<MusicCoverImage> {
     }
   }
 
+  /// 换了一张图（列表复用组件、编辑标签后切歌）时先清掉旧字节。
+  ///
+  /// 否则旧图会一直留在 `_bytes` 里：新歌没有封面时 `_onError` 只把
+  /// `_loading` 置 false，`_bytes` 仍是上一张，于是「上一首的封面残留到
+  /// 下一首」（筛选后第一行显示成别的歌的封面就是这个原因）。
+  void _dropStaleBytes(String nextKey) {
+    if (_lastKey == nextKey) return;
+    _bytes = null;
+    _loading = true;
+  }
+
   void _load() {
     _seenRevision = _MusicCoverImageState._revision;
     final url = widget.url;
@@ -184,6 +195,7 @@ class _MusicCoverImageState extends State<MusicCoverImage> {
       });
       return;
     }
+    _dropStaleBytes(cacheKey);
     _lastKey = cacheKey;
 
     // 内存缓存命中
@@ -286,6 +298,7 @@ class _MusicCoverImageState extends State<MusicCoverImage> {
       });
       return;
     }
+    _dropStaleBytes(songId);
     _lastKey = songId;
 
     _loading = true;
