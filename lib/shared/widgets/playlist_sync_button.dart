@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/backup/playlist_sync_service.dart';
+import '../../core/backup/sync_timeout.dart';
 import '../../core/backup/webdav_service.dart';
 import '../../core/l10n/l10n.dart';
 import '../../core/theme/app_spacing.dart';
@@ -25,14 +26,27 @@ class _PlaylistSyncButtonState extends ConsumerState<PlaylistSyncButton> {
   _SyncPhase _phase = _SyncPhase.idle;
   Timer? _successTimer;
 
+  /// 本次同步是第几次尝试（1 = 用户刚点的这次，2 起是「重新同步」）。
+  /// 首次 1 分钟超时，重试 2 分钟超时。
+  int _attempt = 0;
+
   @override
   void dispose() {
     _successTimer?.cancel();
     super.dispose();
   }
 
+  /// 用户点击 / 首次进入：从第 1 次尝试开始计时。
   Future<void> _sync() async {
     if (_phase == _SyncPhase.syncing) return;
+    _successTimer?.cancel();
+    _attempt = 0;
+    await _runSync();
+  }
+
+  /// 真正执行一次同步（超时按 [_attempt] 决定：首次 1 分钟，重试 2 分钟）。
+  Future<void> _runSync() async {
+    _attempt += 1;
     _successTimer?.cancel();
     setState(() => _phase = _SyncPhase.syncing);
 
@@ -41,9 +55,13 @@ class _PlaylistSyncButtonState extends ConsumerState<PlaylistSyncButton> {
       if (!config.isConfigured) {
         throw const WebDavException('未配置 WebDAV：请先在「设置 → 备份还原」中填写 WebDAV 地址');
       }
-      // 确保本地歌单（含「我的收藏」）已就绪，再与远端合并。
-      await ref.read(playlistsProvider.future);
-      await PlaylistSyncService.pullAndMerge(WebDavService(config));
+      // 整次尝试（等本地歌单 + 拉取合并）共用一个超时，避免服务器
+      // 「连上了但一直不回」时界面无限停在「同步中」。
+      await SyncTimeout.guard(() async {
+        // 确保本地歌单（含「我的收藏」）已就绪，再与远端合并。
+        await ref.read(playlistsProvider.future);
+        await PlaylistSyncService.pullAndMerge(WebDavService(config));
+      }(), attempt: _attempt);
       if (!mounted) return;
       ref.invalidate(playlistsProvider);
       setState(() => _phase = _SyncPhase.success);
@@ -83,7 +101,7 @@ class _PlaylistSyncButtonState extends ConsumerState<PlaylistSyncButton> {
         ],
       ),
     );
-    if (retry == true && mounted) await _sync();
+    if (retry == true && mounted) await _runSync();
   }
 
   @override

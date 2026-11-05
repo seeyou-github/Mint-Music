@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/backup/playlist_sync_service.dart';
 import '../../../core/backup/playlist_sync_status.dart';
+import '../../../core/backup/sync_timeout.dart';
 import '../../../core/backup/webdav_service.dart';
 import '../../settings/application/settings_providers.dart';
 import '../data/playlist_repository.dart';
@@ -28,8 +29,11 @@ Future<String?> syncPlaylistsNow(WidgetRef ref) async {
   status.start();
   try {
     // 先确保本地歌单已就绪（首次启动会创建「我的收藏」），避免用空数据覆盖远端。
-    await ref.read(playlistsProvider.future);
-    await PlaylistSyncService.pullAndMerge(WebDavService(config));
+    // 整次同步套 1 分钟超时：服务器连上了却不回话时不能一直挂着。
+    await SyncTimeout.guard(() async {
+      await ref.read(playlistsProvider.future);
+      await PlaylistSyncService.pullAndMerge(WebDavService(config));
+    }(), attempt: 1);
     ref.invalidate(playlistsProvider);
     status.succeed();
     return null;

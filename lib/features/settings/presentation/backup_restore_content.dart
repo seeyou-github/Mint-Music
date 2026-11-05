@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/backup/backup_service.dart';
+import '../../../core/backup/sync_timeout.dart';
 import '../../../core/backup/webdav_service.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
@@ -38,6 +39,10 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
   final _deviceController = TextEditingController();
 
   bool _busy = false;
+
+  /// 备份上传 / 远端还原的第几次尝试：首次 1 分钟超时，重试 2 分钟超时。
+  int _backupAttempt = 0;
+  int _restoreAttempt = 0;
 
   @override
   void initState() {
@@ -192,18 +197,30 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
   // ---------------------------------------------------------------- WebDAV
 
   Future<void> _backupToWebDav() async {
+    if (_busy) return;
+    _backupAttempt = 0;
+    await _runBackupToWebDav();
+  }
+
+  /// 真正执行一次「备份并上传」（超时按 [_backupAttempt]：首次 1 分钟，重试 2 分钟）。
+  Future<void> _runBackupToWebDav() async {
     final config = _config;
     if (!config.isConfigured) {
       _toast(tr('请先填写 WebDAV 地址'), error: true);
       return;
     }
     if (_busy) return;
+    _backupAttempt += 1;
     setState(() => _busy = true);
     _showProgress(tr('正在备份并上传到 WebDAV...'));
     try {
       final bytes = await BackupService.createBackup();
       final fileName = BackupService.buildBackupFileName();
-      await WebDavService(config).uploadBackup(bytes, fileName);
+      // 服务器「连上了但一直不回」时不能让进度条无限转，整次上传套超时。
+      await SyncTimeout.guard(
+        WebDavService(config).uploadBackup(bytes, fileName),
+        attempt: _backupAttempt,
+      );
       _closeProgress();
       _toast(tr('备份上传成功'));
     } catch (e) {
@@ -214,31 +231,42 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
         tr('备份上传失败：${describeWebDavError(e)}'),
       );
       // 延后到当前流程收尾之后再重试，避免 busy 状态被 finally 提前清掉。
-      if (retry) unawaited(Future.microtask(_backupToWebDav));
+      if (retry) unawaited(Future.microtask(_runBackupToWebDav));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
 
   Future<void> _restoreFromWebDav() async {
+    if (_busy) return;
+    _restoreAttempt = 0;
+    await _runRestoreFromWebDav();
+  }
+
+  /// 真正执行一次「读取列表 → 下载还原」（超时按 [_restoreAttempt]）。
+  Future<void> _runRestoreFromWebDav() async {
     final config = _config;
     if (!config.isConfigured) {
       _toast(tr('请先填写 WebDAV 地址'), error: true);
       return;
     }
     if (_busy) return;
+    _restoreAttempt += 1;
     setState(() => _busy = true);
     _showProgress(tr('正在读取 WebDAV 备份列表...'));
     List<RemoteBackupFile> files;
     try {
-      files = await WebDavService(config).listBackups();
+      files = await SyncTimeout.guard(
+        WebDavService(config).listBackups(),
+        attempt: _restoreAttempt,
+      );
     } catch (e) {
       _closeProgress();
       if (!mounted) return;
       final retry = await _showRetryDialog(
         tr('读取备份列表失败：${describeWebDavError(e)}'),
       );
-      if (retry) unawaited(Future.microtask(_restoreFromWebDav));
+      if (retry) unawaited(Future.microtask(_runRestoreFromWebDav));
       if (mounted) setState(() => _busy = false);
       return;
     }
@@ -263,7 +291,10 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
     setState(() => _busy = true);
     _showProgress(tr('正在下载并还原...'));
     try {
-      final bytes = await WebDavService(config).downloadBackup(picked.path);
+      final bytes = await SyncTimeout.guard(
+        WebDavService(config).downloadBackup(picked.path),
+        attempt: _restoreAttempt,
+      );
       await BackupService.restoreBackup(bytes);
       _closeProgress();
       _toast(tr('还原完成，请重启应用'));
@@ -273,7 +304,7 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
       final retry = await _showRetryDialog(
         tr('还原失败：${describeWebDavError(e)}'),
       );
-      if (retry) unawaited(Future.microtask(_restoreFromWebDav));
+      if (retry) unawaited(Future.microtask(_runRestoreFromWebDav));
     } finally {
       if (mounted) setState(() => _busy = false);
     }

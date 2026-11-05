@@ -16,6 +16,7 @@ import '../features/settings/application/font_providers.dart';
 import '../features/settings/application/plugin_providers.dart';
 import '../features/settings/application/settings_providers.dart';
 import '../core/backup/playlist_sync_service.dart';
+import '../core/backup/sync_timeout.dart';
 import '../core/backup/webdav_service.dart';
 import '../features/library/application/playlist_providers.dart';
 import '../features/settings/data/plugin_repository.dart';
@@ -54,7 +55,11 @@ class _AppState extends ConsumerState<App> {
       } catch (e) {
         debugPrint('[App] 本地歌单加载失败，仍尝试远端同步: $e');
       }
-      await PlaylistSyncService.pullAndMerge(WebDavService(config));
+      // 启动时的一次性同步同样套 1 分钟超时，避免启动流程被卡住。
+      await SyncTimeout.guard(
+        PlaylistSyncService.pullAndMerge(WebDavService(config)),
+        attempt: 1,
+      );
       if (!mounted) return;
       ref.invalidate(playlistsProvider);
     } catch (e) {
