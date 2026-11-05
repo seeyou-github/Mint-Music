@@ -315,8 +315,11 @@ class AppDatabase {
         await _createCacheSchema(db);
       },
       onUpgrade: (db, oldVersion, newVersion) async {
-        // 图片缓存索引只是缓存，直接重建；其余表用 IF NOT EXISTS 补齐。
-        await db.execute('DROP TABLE IF EXISTS cache_index');
+        // 图片缓存索引只在 v6 那次结构变动时重建。v6 → v7 只是多了热榜表，
+        // 保留索引，不然升级后所有封面都要重新下载一遍。
+        if (oldVersion < 6) {
+          await db.execute('DROP TABLE IF EXISTS cache_index');
+        }
         // v5 短暂存在过的「上次播放位置」表已废弃：续播改为复用
         // song_play_progress（最远听到哪就是续播位置），旧表直接删掉。
         await db.execute('DROP TABLE IF EXISTS song_resume_position');
