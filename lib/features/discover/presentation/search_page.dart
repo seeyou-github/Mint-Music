@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -1403,8 +1404,13 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         return SongListItem(
           song: song,
           index: songIndex,
-          // 序号列宽度按搜索结果的总条数自适应（不知道总数时用已加载条数）。
-          maxIndex: state.total ?? songs.length,
+          // 序号列宽度按「全局最大下标」算：跳页直达后缓冲区只剩目标页那几十首
+          // （`songs.length` 很小、总数又可能拿不到），只按条数算宽度会把
+          // 950 这种三位序号裁成两位宽度，看起来像「序号显示不全」。
+          maxIndex: math.max(
+            state.total ?? 0,
+            _songPager.absoluteStart + visible.length,
+          ),
           showIndex: true,
           showCover: true,
           showQuality: true,
