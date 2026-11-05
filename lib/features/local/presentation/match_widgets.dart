@@ -476,6 +476,8 @@ class _CoverPreviewState extends State<_CoverPreview> {
                 url: widget.song.coverUrl,
                 songId: widget.song.id,
                 mediaStoreId: widget.song.mediaStoreId,
+                // 缓存 / MediaStore 都没有时，现场从音频文件里抽内嵌封面。
+                filePath: widget.song.filePath,
                 width: _size,
                 height: _size,
                 fit: BoxFit.cover,

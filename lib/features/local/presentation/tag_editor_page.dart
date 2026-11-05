@@ -535,7 +535,13 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
   Widget _buildCoverSection(ThemeColors colors) {
     final song = _song;
     if (song == null) return const SizedBox.shrink();
-    final hasCover = song.coverUrl != null || song.hasCover;
+    // 索引里的 hasCover 只反映「扫描时记录到有封面」。老索引（Android 端
+    // 以前扫描根本不读文件标签）可能把它记成 false，而文件里其实有内嵌封面
+    // ——这里把刚读出来的文件标签也算一个依据，避免有封面却显示「无封面」。
+    final hasCover =
+        song.coverUrl != null ||
+        song.hasCover ||
+        (_fileMeta?.artwork?.isNotEmpty ?? false);
     return Center(
       child: Column(
         children: [
@@ -556,6 +562,8 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
                     url: song.coverUrl,
                     songId: song.id,
                     mediaStoreId: song.mediaStoreId,
+                    // 缓存 / MediaStore 都取不到时，现场从音频文件里抽内嵌封面。
+                    filePath: song.filePath,
                     width: 160,
                     height: 160,
                     fit: BoxFit.cover,
@@ -1370,6 +1378,8 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
       album: _albumController.text,
       year: int.tryParse(_yearController.text.trim()) ?? song.year,
       genre: _genreController.text,
+      // 「原歌曲」卡片同样要能显示文件里的内嵌封面（老索引可能记成 false）。
+      hasCover: song.hasCover || (_fileMeta?.artwork?.isNotEmpty ?? false),
     );
   }
 

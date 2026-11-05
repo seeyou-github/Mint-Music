@@ -307,27 +307,61 @@ class LocalMusicRepository {
             continue;
           }
 
+          // MediaStore 只提供标题 / 歌手 / 专辑 / 时长，年份、流派、注释、
+          // 内嵌歌词、内嵌封面它都不给。不在这里补读一次文件标签，索引里这几个
+          // 字段就永远是空的——表现是「文件明明带封面 / 年代 / 歌词，匹配歌曲页
+          // 却显示 -，按『封面 有』筛选也筛不出来（反而出现在『无封面』里），
+          // 编辑标签页还显示成无封面」；而列表能显示封面是因为封面图是走
+          // MediaStore 单独取的，跟索引里的 hasCover 是两回事。
+          //
+          // 只在用户主动扫描时发生（进度条照常走），不是每次启动都读。
+          final metadata = await LocalMetadataReader.read(filePath);
+
           final id = _genId(filePath);
           final title = audio.title.isNotEmpty
               ? audio.title
-              : p.basenameWithoutExtension(filePath);
-          final artist = audio.artist ?? '未知艺术家';
-          final album = audio.album ?? '未知专辑';
+              : ((metadata.title?.isNotEmpty ?? false)
+                    ? metadata.title!
+                    : p.basenameWithoutExtension(filePath));
+          final rawArtist = audio.artist ?? '';
+          final artist = rawArtist.isEmpty || rawArtist == '<unknown>'
+              ? ((metadata.artist?.isNotEmpty ?? false)
+                    ? metadata.artist!
+                    : '未知艺术家')
+              : rawArtist;
+          final rawAlbum = audio.album ?? '';
+          final album = rawAlbum.isEmpty || rawAlbum == '<unknown>'
+              ? ((metadata.album?.isNotEmpty ?? false)
+                    ? metadata.album!
+                    : '未知专辑')
+              : rawAlbum;
           final duration = (audio.duration ?? 0) ~/ 1000;
+
+          // 内嵌歌词：记下「有没有」「是不是逐字」，快速匹配页据此筛选，
+          // 不用为了看状态把每个文件再读一遍。
+          final embeddedLyric = metadata.lyrics?.trim() ?? '';
+          final hasEmbeddedLyric = embeddedLyric.isNotEmpty;
+          final hasEmbeddedWordLyric =
+              hasEmbeddedLyric && detectWordLyricFormat(embeddedLyric) != null;
 
           final song = Song(
             id: id,
             title: title,
-            artist: artist == '<unknown>' ? '未知艺术家' : artist,
-            album: album == '<unknown>' ? '未知专辑' : album,
+            artist: artist,
+            album: album,
             duration: duration > 0 ? duration : 0,
             source: 'local',
             filePath: filePath,
             sourceUrl: filePath,
-            hasCover: false,
+            hasCover: metadata.artwork != null,
             coverKey: _genCoverKey(filePath),
             mediaStoreId: audio.id,
             bitrate: _inferBitrateFromExtension(filePath),
+            year: metadata.year,
+            genre: metadata.genre,
+            comment: metadata.comment,
+            hasLyric: hasEmbeddedLyric,
+            hasWordLyric: hasEmbeddedWordLyric,
           );
 
           final existing = _songsMap[id];
