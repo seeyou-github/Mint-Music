@@ -1067,15 +1067,22 @@ class _RankRowState extends ConsumerState<_RankRow> {
           ),
           child: Row(
             children: [
-              SizedBox(
-                // 名次列：宽度按榜单最大名次的位数自适应（最多 100 名），
-                // 数字水平居中；列后留的间距与列表左内边距相同，所以
-                // 「屏幕左边缘 → 数字」和「数字 → 封面」两段一样宽。
-                width: songIndexWidth(
-                  context,
-                  maxIndex: widget.queue.length,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
+              ConstrainedBox(
+                // 弹性宽度：按最大名次量一个「最小宽度」，文字实际更宽时列
+                // 自己伸展，三位数（100）不会再被裁成「10 / 0」。
+                //
+                // 不能用固定 SizedBox：songIndexWidth 内部按系统默认字体量
+                // '888'，而这里 Text 继承的是应用字体（SourceHanSerif），
+                // 两种字体的数字宽度不完全一致，恰好够的宽度会差几个像素。
+                // minWidth 保证所有行在两位数时仍对齐、数字水平居中；
+                // 「屏幕左边缘 → 名次」与「名次 → 封面」两段间距保持相等。
+                constraints: BoxConstraints(
+                  minWidth: songIndexWidth(
+                    context,
+                    maxIndex: widget.queue.length,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
                 child: Text(
                   '${widget.rank}',
