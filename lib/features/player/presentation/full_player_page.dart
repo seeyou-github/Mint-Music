@@ -813,7 +813,7 @@ class _PlayerSourceTag extends ConsumerWidget {
   }
 }
 
-class _PlayerCoverPage extends ConsumerWidget {
+class _PlayerCoverPage extends ConsumerStatefulWidget {
   final bool isPlaying;
   final VoidCallback? onTapCover;
 
@@ -825,7 +825,7 @@ class _PlayerCoverPage extends ConsumerWidget {
   /// 指定高度、左边缘与歌曲信息对齐；其它布局保持居中。
   final Alignment alignment;
 
-  /// 暂停时封面缩小动画的锚点。各布局统一用 [Alignment.bottomLeft]：
+  /// 暂停时封面缩小的锚点。各布局统一用 [Alignment.bottomLeft]：
   /// 收缩时左边缘、底边都不动，歌名 / 歌手与可见封面的左对齐和间距保持不变。
   final Alignment scaleAlignment;
 
@@ -838,59 +838,7 @@ class _PlayerCoverPage extends ConsumerWidget {
   });
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    ref.watch(currentSongIdentityProvider);
-    final song = ref.read(playbackControllerProvider).currentSong;
-    final bgMode = ref.watch(fullScreenBackgroundModeProvider);
-    final coverColorAsync = ref.watch(currentCoverColorProvider);
-    final dominantColor = coverColorAsync.whenOrNull(
-      data: (result) => result?.dominantColor,
-    );
-    final coverSize = this.coverSize ?? ResponsiveLayout.albumArtSize(context);
-    final radius = ResponsiveLayout.isTablet(context) ? 28.0 : 24.0;
-    final borderRadius = math.min(radius, coverSize * 0.12);
-
-    return Align(
-      alignment: alignment,
-      child: GestureDetector(
-        onTap: onTapCover,
-        // 播放 / 暂停时的 500ms 缩放缓动去掉了：它每次切换播放状态都会让
-        // 封面（带大面积阴影与裁切）重新合成一遍。暂停态保留 0.95 的静态缩放，
-        // 用 Transform 直接给变换矩阵，不参与布局也不产生动画 ticker。
-        child: Transform.scale(
-          scale: isPlaying ? 1.0 : 0.95,
-          alignment: scaleAlignment,
-          child: Container(
-            width: coverSize,
-            height: coverSize,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(borderRadius),
-              boxShadow: [
-                BoxShadow(
-                  color:
-                      bgMode == FullScreenBackgroundMode.theme &&
-                          dominantColor != null
-                      ? coverDarkBackgroundColor(
-                          dominantColor,
-                          lightness: 0.22,
-                        ).withValues(alpha: 0.45)
-                      : Colors.black.withValues(alpha: 0.5),
-                  blurRadius: math.min(50, coverSize * 0.16),
-                  offset: Offset(0, math.min(25, coverSize * 0.08)),
-                ),
-              ],
-            ),
-            clipBehavior: Clip.antiAlias,
-            child: _buildCoverImage(
-              song,
-              coverSize,
-              ref.read(musicSourceManagerProvider),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
+  ConsumerState<_PlayerCoverPage> createState() => _PlayerCoverPageState();
 
   static Widget _buildCoverImage(
     Song? song,
@@ -951,6 +899,90 @@ class _PlayerCoverPage extends ConsumerWidget {
         ),
       ),
       child: const Icon(Icons.music_note, size: 60, color: Colors.white24),
+    );
+  }
+}
+
+class _PlayerCoverPageState extends ConsumerState<_PlayerCoverPage> {
+  /// 已经真正播放过的歌曲 id。
+  ///
+  /// 切歌时播放状态会先变 false（上一首 completed、解析地址 / 缓冲中），
+  /// 一直持续到新歌真正开始播；如果这时按 `isPlaying` 把封面缩到 0.95，
+  /// 开始播放的瞬间就会突然放大 5%，也就是「切歌时封面有个放大动作」。
+  /// 因此只有「同一首歌已经播过、之后才停下来」（用户主动暂停）才缩小。
+  /// 用 id 而不是 [currentSongIdentityProvider] 的完整 hash：歌词、封面地址
+  /// 在播放中被补齐时 hash 会变，不该让暂停态的封面突然弹回原尺寸。
+  String? _playedSongId;
+
+  @override
+  Widget build(BuildContext context) {
+    // 仍然订阅歌曲身份：封面地址 / 歌词补齐后要换图。
+    ref.watch(currentSongIdentityProvider);
+    final playback = ref.read(playbackControllerProvider);
+    final songId = playback.currentSong?.id;
+    if (widget.isPlaying) _playedSongId = songId;
+    // 自然播完时会有「上一首 completed」的一帧 isPlaying=false，紧接着就
+    // 自动切下一首；这一帧也不能缩，否则同样会闪一下再放大。
+    final durationMs = playback.duration.inMilliseconds;
+    final nearEnd =
+        durationMs > 0 && playback.position.inMilliseconds >= durationMs - 500;
+    final shrink =
+        !widget.isPlaying &&
+        _playedSongId != null &&
+        _playedSongId == songId &&
+        !playback.isLoading &&
+        !playback.isBuffering &&
+        !nearEnd;
+    final song = playback.currentSong;
+    final bgMode = ref.watch(fullScreenBackgroundModeProvider);
+    final coverColorAsync = ref.watch(currentCoverColorProvider);
+    final dominantColor = coverColorAsync.whenOrNull(
+      data: (result) => result?.dominantColor,
+    );
+    final coverSize =
+        widget.coverSize ?? ResponsiveLayout.albumArtSize(context);
+    final radius = ResponsiveLayout.isTablet(context) ? 28.0 : 24.0;
+    final borderRadius = math.min(radius, coverSize * 0.12);
+
+    return Align(
+      alignment: widget.alignment,
+      child: GestureDetector(
+        onTap: widget.onTapCover,
+        // 播放 / 暂停时的 500ms 缩放缓动去掉了：它每次切换播放状态都会让
+        // 封面（带大面积阴影与裁切）重新合成一遍。这里只保留静态 Transform，
+        // 不参与布局也不产生动画 ticker；切歌过渡期一律保持 1.0。
+        child: Transform.scale(
+          scale: shrink ? 0.95 : 1.0,
+          alignment: widget.scaleAlignment,
+          child: Container(
+            width: coverSize,
+            height: coverSize,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(borderRadius),
+              boxShadow: [
+                BoxShadow(
+                  color:
+                      bgMode == FullScreenBackgroundMode.theme &&
+                          dominantColor != null
+                      ? coverDarkBackgroundColor(
+                          dominantColor,
+                          lightness: 0.22,
+                        ).withValues(alpha: 0.45)
+                      : Colors.black.withValues(alpha: 0.5),
+                  blurRadius: math.min(50, coverSize * 0.16),
+                  offset: Offset(0, math.min(25, coverSize * 0.08)),
+                ),
+              ],
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: _PlayerCoverPage._buildCoverImage(
+              song,
+              coverSize,
+              ref.read(musicSourceManagerProvider),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
