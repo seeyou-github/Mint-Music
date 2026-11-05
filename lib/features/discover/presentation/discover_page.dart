@@ -63,7 +63,8 @@ class _CategoryScrollBehavior extends MaterialScrollBehavior {
 /// 榜单分类：热榜（自定义展示的榜单 TOP 10）/ 所有（音源榜单列表）。
 enum _LeaderboardCategory { hot, all }
 
-class _DiscoverPageState extends ConsumerState<DiscoverPage> {
+class _DiscoverPageState extends ConsumerState<DiscoverPage>
+    with SingleTickerProviderStateMixin {
   final ScrollController _scrollController = ScrollController();
   final GlobalKey _sourceButtonKey = GlobalKey();
   bool _hasInitialized = false;
@@ -119,6 +120,34 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
   /// 本次横向滑动累计的位移（判断是不是一次「明确的」左右滑）。
   double _tabSwipeDx = 0;
 
+  /// 顶部分类切换时的「侧向滑入」动画。
+  ///
+  /// 和迷你播放器切歌一样，只用一个 `SlideTransition` 做 Transform 平移：
+  /// 一层 GPU transform，不像 AnimatedSwitcher 那样同时构建 / 绘制新旧两份
+  /// 列表子树。三个分类各是长列表，这一点对性能尤其重要。
+  late final AnimationController _tabSlideController = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 220),
+  );
+  Animation<Offset> _tabSlideOffset = const AlwaysStoppedAnimation(Offset.zero);
+
+  /// [fromRight] 为 true 表示切到「下一个」分类：内容从右侧进场。
+  void _playTabSlideIn({required bool fromRight}) {
+    // 只有 Android 上才有左右滑动切分类；桌面点标签保持原来的即时切换。
+    if (!Platform.isAndroid) return;
+    _tabSlideOffset =
+        Tween<Offset>(
+          begin: Offset(fromRight ? 0.06 : -0.06, 0),
+          end: Offset.zero,
+        ).animate(
+          CurvedAnimation(
+            parent: _tabSlideController,
+            curve: Curves.easeOutCubic,
+          ),
+        );
+    _tabSlideController.forward(from: 0);
+  }
+
   @override
   void initState() {
     super.initState();
@@ -127,6 +156,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
 
   @override
   void dispose() {
+    _tabSlideController.dispose();
     _scrollController.dispose();
     _leaderboardScrollController.dispose();
     super.dispose();
@@ -255,6 +285,18 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
     final colors = ref.watch(themeColorsProvider);
     final tab = ref.watch(discoverTabProvider);
 
+    // 分类切换（左右滑或点顶部标签）都做一次侧向滑入。按 _tabOrder 的
+    // 距离判断方向：走一格是「下一个」→ 从右侧进场；往回一格 → 从左侧；
+    // 循环绕回（电台 → 歌单）也算下一个，方向跟手势一致。
+    ref.listen<DiscoverTab>(discoverTabProvider, (previous, next) {
+      if (previous == null || previous == next) return;
+      final from = _tabOrder.indexOf(previous);
+      final to = _tabOrder.indexOf(next);
+      if (from < 0 || to < 0) return;
+      final forward = (to - from + _tabOrder.length) % _tabOrder.length == 1;
+      _playTabSlideIn(fromRight: forward);
+    });
+
     ref.listen<String>(defaultSourceIdProvider, (previous, next) {
       if (previous != null && previous != next) {
         ref.read(discoverSourceIdProvider.notifier).state = next;
@@ -345,11 +387,14 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
                     ? _onTabSwipeUpdate
                     : null,
                 onHorizontalDragEnd: Platform.isAndroid ? _onTabSwipeEnd : null,
-                child: switch (tab) {
-                  DiscoverTab.playlists => _buildPlaylistsTab(colors),
-                  DiscoverTab.leaderboards => _buildLeaderboardsTab(colors),
-                  DiscoverTab.radio => const RadioPanel(),
-                },
+                child: SlideTransition(
+                  position: _tabSlideOffset,
+                  child: switch (tab) {
+                    DiscoverTab.playlists => _buildPlaylistsTab(colors),
+                    DiscoverTab.leaderboards => _buildLeaderboardsTab(colors),
+                    DiscoverTab.radio => const RadioPanel(),
+                  },
+                ),
               ),
             ),
           ],

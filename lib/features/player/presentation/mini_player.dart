@@ -21,9 +21,39 @@ class MiniPlayer extends ConsumerStatefulWidget {
   ConsumerState<MiniPlayer> createState() => _MiniPlayerState();
 }
 
-class _MiniPlayerState extends ConsumerState<MiniPlayer> {
+class _MiniPlayerState extends ConsumerState<MiniPlayer>
+    with SingleTickerProviderStateMixin {
   /// 横向滑动的累计位移（Android 左右滑动切歌用）。
   double _swipeDx = 0;
+
+  /// 切歌时的「侧向滑入」动画。
+  ///
+  /// 只平移内容那一行（`SlideTransition` = FractionalTranslation，一层 GPU
+  /// transform，不会像 AnimatedSwitcher 那样同时构建 / 绘制新旧两份子树），
+  /// 所以一次切歌除了这 200ms 的 transform 之外几乎没有额外开销。
+  late final AnimationController _slideController = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 200),
+  );
+  Animation<Offset> _slideOffset = const AlwaysStoppedAnimation(Offset.zero);
+
+  /// [fromRight] 为 true 表示「下一首」：内容从右侧进场；false 为「上一首」。
+  void _playSlideIn({required bool fromRight}) {
+    _slideOffset =
+        Tween<Offset>(
+          begin: Offset(fromRight ? 0.14 : -0.14, 0),
+          end: Offset.zero,
+        ).animate(
+          CurvedAnimation(parent: _slideController, curve: Curves.easeOutCubic),
+        );
+    _slideController.forward(from: 0);
+  }
+
+  @override
+  void dispose() {
+    _slideController.dispose();
+    super.dispose();
+  }
 
   /// 横向滑动结束：往左滑切下一首、往右滑切上一首。
   ///
@@ -37,11 +67,15 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer> {
     final controller = ref.read(playbackControllerProvider.notifier);
     if (swipeLeft) {
       controller.next();
+      // 左滑 = 下一首：新内容从右侧滑入。
+      _playSlideIn(fromRight: true);
       return;
     }
     // 电台模式下队列由电台接管，没有「上一首」。
     if (ref.read(radioModeProvider)) return;
     controller.previous();
+    // 右滑 = 上一首：新内容从左侧滑入。
+    _playSlideIn(fromRight: false);
   }
 
   @override
@@ -101,6 +135,8 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer> {
         onHorizontalDragEnd: Platform.isAndroid ? _onSwipeEnd : null,
         child: Container(
           height: height,
+          // 内容侧向滑入时裁掉越出圆角的部分：背景与阴影保持不动。
+          clipBehavior: Clip.antiAlias,
           margin: EdgeInsets.symmetric(
             horizontal: isTablet ? 12 : AppSpacing.sm,
           ),
@@ -115,124 +151,127 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer> {
               ),
             ],
           ),
-          child: Row(
-            children: [
-              const SizedBox(width: AppSpacing.xs),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(artRadius),
-                child: Container(
-                  width: artSize,
-                  height: artSize,
-                  decoration: BoxDecoration(color: colors.surfaceVariant),
-                  child: _buildCover(colors, song, artSize),
+          child: SlideTransition(
+            position: _slideOffset,
+            child: Row(
+              children: [
+                const SizedBox(width: AppSpacing.xs),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(artRadius),
+                  child: Container(
+                    width: artSize,
+                    height: artSize,
+                    decoration: BoxDecoration(color: colors.surfaceVariant),
+                    child: _buildCover(colors, song, artSize),
+                  ),
                 ),
-              ),
-              const SizedBox(width: AppSpacing.sm),
-              Expanded(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      song.title,
-                      style: TextStyle(
-                        fontSize: titleFontSize,
-                        fontWeight: FontWeight.w500,
-                        color: colors.textPrimary,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 1),
-                    Text(
-                      song.artist,
-                      style: TextStyle(
-                        fontSize: subtitleFontSize,
-                        color: colors.textHint,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
-                ),
-              ),
-              // 控制按钮紧凑靠右：间距略小于默认 IconButton 视觉边距，
-              // 上一首 / 播放暂停 / 下一首 / 播放队列四个按钮排成一组。
-              IconButton(
-                visualDensity: VisualDensity.compact,
-                padding: const EdgeInsets.symmetric(horizontal: 4),
-                constraints: const BoxConstraints(minWidth: 32),
-                icon: Icon(
-                  Icons.skip_previous,
-                  size: iconSize,
-                  color: radioMode ? disabledColor : colors.textSecondary,
-                ),
-                onPressed: radioMode ? null : () => controller.previous(),
-              ),
-              IconButton(
-                visualDensity: VisualDensity.compact,
-                padding: const EdgeInsets.symmetric(horizontal: 4),
-                constraints: const BoxConstraints(minWidth: 32),
-                icon: SizedBox(
-                  // 图标与加载动画放在同样大小的方框里，避免加载动画出现 /
-                  // 消失时迷你播放器高度变化。
-                  width: playIconSize,
-                  height: playIconSize,
-                  child: isLoading
-                      ? Center(
-                          child: SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: colors.textPrimary,
-                            ),
-                          ),
-                        )
-                      : Icon(
-                          isPlaying ? Icons.pause : Icons.play_arrow,
-                          size: playIconSize,
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        song.title,
+                        style: TextStyle(
+                          fontSize: titleFontSize,
+                          fontWeight: FontWeight.w500,
                           color: colors.textPrimary,
                         ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 1),
+                      Text(
+                        song.artist,
+                        style: TextStyle(
+                          fontSize: subtitleFontSize,
+                          color: colors.textHint,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
                 ),
-                // 遵循 CeruMusic/Sollin-Music：加载期间禁用按钮，
-                // 避免用户在 URL 获取 / 换源过程中连点导致状态错乱。
-                onPressed: isLoading
-                    ? null
-                    : () => controller.togglePlayPause(),
-              ),
-              IconButton(
-                visualDensity: VisualDensity.compact,
-                padding: const EdgeInsets.symmetric(horizontal: 4),
-                constraints: const BoxConstraints(minWidth: 32),
-                icon: Icon(
-                  Icons.skip_next,
-                  size: iconSize,
-                  color: colors.textSecondary,
+                // 控制按钮紧凑靠右：间距略小于默认 IconButton 视觉边距，
+                // 上一首 / 播放暂停 / 下一首 / 播放队列四个按钮排成一组。
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  constraints: const BoxConstraints(minWidth: 32),
+                  icon: Icon(
+                    Icons.skip_previous,
+                    size: iconSize,
+                    color: radioMode ? disabledColor : colors.textSecondary,
+                  ),
+                  onPressed: radioMode ? null : () => controller.previous(),
                 ),
-                onPressed: () => controller.next(),
-              ),
-              IconButton(
-                visualDensity: VisualDensity.compact,
-                padding: const EdgeInsets.only(left: 4, right: 8),
-                constraints: const BoxConstraints(minWidth: 32),
-                icon: Icon(
-                  Icons.queue_music,
-                  size: iconSize,
-                  color: radioMode ? disabledColor : colors.textSecondary,
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  constraints: const BoxConstraints(minWidth: 32),
+                  icon: SizedBox(
+                    // 图标与加载动画放在同样大小的方框里，避免加载动画出现 /
+                    // 消失时迷你播放器高度变化。
+                    width: playIconSize,
+                    height: playIconSize,
+                    child: isLoading
+                        ? Center(
+                            child: SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: colors.textPrimary,
+                              ),
+                            ),
+                          )
+                        : Icon(
+                            isPlaying ? Icons.pause : Icons.play_arrow,
+                            size: playIconSize,
+                            color: colors.textPrimary,
+                          ),
+                  ),
+                  // 遵循 CeruMusic/Sollin-Music：加载期间禁用按钮，
+                  // 避免用户在 URL 获取 / 换源过程中连点导致状态错乱。
+                  onPressed: isLoading
+                      ? null
+                      : () => controller.togglePlayPause(),
                 ),
-                // 与全屏播放页相同的播放队列面板，点击直接弹出，无需跳转
-                onPressed: radioMode
-                    ? null
-                    : () {
-                        showPlayQueueSheet(
-                          context,
-                          playbackState: ref.read(playbackControllerProvider),
-                          controller: controller,
-                        );
-                      },
-              ),
-            ],
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  constraints: const BoxConstraints(minWidth: 32),
+                  icon: Icon(
+                    Icons.skip_next,
+                    size: iconSize,
+                    color: colors.textSecondary,
+                  ),
+                  onPressed: () => controller.next(),
+                ),
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.only(left: 4, right: 8),
+                  constraints: const BoxConstraints(minWidth: 32),
+                  icon: Icon(
+                    Icons.queue_music,
+                    size: iconSize,
+                    color: radioMode ? disabledColor : colors.textSecondary,
+                  ),
+                  // 与全屏播放页相同的播放队列面板，点击直接弹出，无需跳转
+                  onPressed: radioMode
+                      ? null
+                      : () {
+                          showPlayQueueSheet(
+                            context,
+                            playbackState: ref.read(playbackControllerProvider),
+                            controller: controller,
+                          );
+                        },
+                ),
+              ],
+            ),
           ),
         ),
       ),
