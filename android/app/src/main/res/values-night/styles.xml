@@ -14,5 +14,7 @@
          This Theme is only used starting with V2 of Flutter's Android embedding. -->
     <style name="NormalTheme" parent="@android:style/Theme.Black.NoTitleBar">
         <item name="android:windowBackground">?android:colorBackground</item>
+        <!-- 沉浸式状态栏：与 values/styles.xml 一致，见那里的说明。 -->
+        <item name="android:statusBarColor">@android:color/transparent</item>
     </style>
 </resources>

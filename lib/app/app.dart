@@ -1,5 +1,6 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../core/l10n/app_locale.dart';
@@ -9,6 +10,7 @@ import '../core/theme/app_theme.dart';
 import '../core/theme/app_typography.dart';
 import '../core/theme/theme_provider.dart';
 import '../core/router/app_router.dart';
+import '../core/theme/system_bars.dart';
 import '../core/theme/system_brightness_sync.dart';
 import '../core/utils/responsive_layout.dart';
 import '../features/player/presentation/desktop_lyric_window.dart';
@@ -39,6 +41,9 @@ class _AppState extends ConsumerState<App> {
     super.initState();
     // 启动时先把标题栏涂成当前背景色（之后由 build 里的 listen 跟随变化）。
     WindowTitleBar.apply(ref.read(themeColorsProvider).background);
+    // 状态栏 / 系统栏样式：首帧之前就下发一次，避免启动瞬间还是系统默认的
+    // 黑色（或带对比度遮罩）状态栏。之后由 build 里的 AnnotatedRegion 跟随。
+    SystemBars.apply(light: ref.read(isLightThemeActiveProvider));
     // 开启「歌单实时同步」时，进入应用先与远端同步一次歌单。
     WidgetsBinding.instance.addPostFrameCallback(
       (_) => _syncPlaylistsOnStartup(),
@@ -116,6 +121,8 @@ class _AppState extends ConsumerState<App> {
     final appLocale = ref.watch(appLocaleProvider);
     // 应用字体：设置里导入并选中的字体（为空则用默认字体）。
     final appFontFamily = ref.watch(appFontSelectedProvider);
+    // 当前是否为浅色外观：状态栏图标的明暗跟着它走。
+    final isLightActive = ref.watch(isLightThemeActiveProvider);
     // 同步全局语言,供非 widget 场景(如歌词控制器)使用
     currentLocale = appLocale;
 
@@ -163,7 +170,7 @@ class _AppState extends ConsumerState<App> {
             final isTablet = ResponsiveLayout.isTablet(context);
             // 桌面歌词层与路由内容同级,因此会悬浮在所有页面/弹窗之上。
             // StackFit.passthrough 保证 Navigator 依旧拿到铺满屏幕的紧约束。
-            return Listener(
+            final content = Listener(
               // 鼠标侧键「后退」(Windows 上的 XButton1) 触发的指针事件。
               // 放在路由之上，因此所有一级/二级页面都能响应。
               behavior: HitTestBehavior.translucent,
@@ -201,6 +208,14 @@ class _AppState extends ConsumerState<App> {
                   const DesktopLyricLayer(),
                 ],
               ),
+            );
+            // 状态栏样式：透明 + 关掉系统给透明状态栏叠的半透明遮罩，
+            // 让状态栏与页面背景完全同色（见 SystemBars 的说明）。
+            // 用 AnnotatedRegion 而不是只调一次 SystemChrome，是为了跟随
+            // 「浅色 / 深色 / 跟随系统」切换，也避免被页面自身的系统栏设置覆盖。
+            return AnnotatedRegion<SystemUiOverlayStyle>(
+              value: SystemBars.overlayStyle(light: isLightActive),
+              child: content,
             );
           },
         ),
