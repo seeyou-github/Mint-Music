@@ -57,8 +57,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   final PageSlicer _songPager = PageSlicer(pageSize: 30);
   int? _songPageSize;
 
-  /// 歌单 / 专辑 / 作者搜索结果每页 10 行（每行多少列 × 10 就是每页条数）。
-  static const int _resultPageRows = 10;
+  /// 歌单 / 专辑 / 作者搜索结果每页 30 行（每行多少列 × 30 就是每页条数）。
+  static const int _resultPageRows = 30;
   final PageSlicer _playlistPager = PageSlicer(pageSize: _resultPageRows);
   final PageSlicer _albumPager = PageSlicer(pageSize: _resultPageRows);
   final PageSlicer _artistPager = PageSlicer(pageSize: _resultPageRows);
@@ -1624,7 +1624,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     final width = MediaQuery.sizeOf(context).width;
     final columns = Platform.isAndroid ? 3 : math.max(2, (width / 260).ceil());
     final pager = _collectionPager(type);
-    // 每页 10 行：每页条数 = 10 × 列数。
+    // 每页 30 行：每页条数 = 30 × 列数。
     pager.updatePageSize(_resultPageRows * columns);
     pager.clampTo(
       state.results.length,
@@ -1788,7 +1788,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     final crossAxisCount = ResponsiveLayout.gridCrossAxisCount(context);
     final isTablet = ResponsiveLayout.isTablet(context);
 
-    // 每页 10 行：每页条数 = 10 × 列数。
+    // 每页 30 行：每页条数 = 30 × 列数。
     _playlistPager.updatePageSize(_resultPageRows * crossAxisCount);
     _playlistPager.clampTo(
       state.playlists.length,
