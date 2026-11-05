@@ -52,8 +52,9 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   final _gridScrollController = ScrollController();
 
   // ---- 分页 ----
-  /// 搜索歌曲每页条数：按接口首页实际返回量（25~50）决定，首屏回来后再设置。
-  final PageSlicer _songPager = PageSlicer(pageSize: 30);
+  /// 搜索歌曲每页 50 首（接口一次只返回 25~30 首，缺的会自动追加补齐）。
+  static const int _songPageRows = 50;
+  final PageSlicer _songPager = PageSlicer(pageSize: _songPageRows);
   int? _songPageSize;
 
   /// 歌单 / 专辑 / 作者搜索结果每页 30 行（每行多少列 × 30 就是每页条数）。
@@ -319,12 +320,13 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     _artistPager.reset();
   }
 
-  /// 歌曲每页条数按接口首页实际返回量来定（25~50）。
+  /// 第一次拿到结果时把分页条切到固定每页 50 首。
   void _syncSongPageSize(int loaded) {
     if (_songPageSize != null || loaded <= 0) return;
-    final size = loaded.clamp(25, 50);
-    _songPageSize = size;
-    _songPager.updatePageSize(size);
+    // 歌曲列表固定每页 50 首（接口一次只给 25~30 首，不够的由 _ensureSongPage
+    // 继续追加补齐）。
+    _songPageSize = _songPageRows;
+    _songPager.updatePageSize(_songPageRows);
   }
 
   /// 目标页是否超出「缓冲区 + 下一页」的连续范围。
@@ -1339,7 +1341,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       hasMore: state.hasMore,
       total: state.total,
     );
-    // 只渲染当前页（每页按接口首页返回量，25~50 首）。
+    // 只渲染当前页（每页 50 首）。
     final visible = _songPager.slice(songs);
     if (_songPager.missing(songs.length, hasMore: state.hasMore) > 0 &&
         !state.isLoadingMore &&

@@ -17,6 +17,7 @@ import '../../features/library/application/playlist_providers.dart';
 import '../../features/library/domain/models/playlist.dart';
 import '../../features/library/domain/models/recently_played.dart';
 import '../../features/blacklist/application/blacklist_providers.dart';
+import '../../features/player/application/desktop_lyric_sync.dart';
 import '../../features/player/application/playback_context.dart';
 import '../../features/player/application/playback_controller.dart';
 import '../../features/player/domain/models/song.dart';
@@ -544,7 +545,9 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                     skipPop: true,
                   ),
                   // 「下载」「启用桌面歌词」「定时」已经挪到播放页的图标按钮上了。
-                  // Android 端的倍速也挪到播放页，这里不再重复。
+                  // 桌面端的桌面歌词按钮在播放页底部；Android 那个位置让给了倍速，
+                  // 开关改放到这里（见 _buildDesktopLyricItem）。
+                  if (Platform.isAndroid) _buildDesktopLyricItem(colors),
                   if (!Platform.isAndroid) _buildSpeedItem(colors),
                   // 本地歌曲没有在线歌词可搜：改为「编辑标签」。
                   if (widget.song.isLocal)
@@ -933,6 +936,51 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                 fontSize: 15,
                 color: labelColor ?? colors.textPrimary,
               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 「桌面歌词」开关（Android 播放页「更多」）。
+  ///
+  /// 桌面端的开关是播放页底部那颗「词」按钮，Android 把那个位置让给了倍速，
+  /// 所以放进「更多」菜单：点一下即时开关，弹层不关，方便确认状态。
+  Widget _buildDesktopLyricItem(ThemeColors colors) {
+    final enabled = ref.watch(
+      desktopLyricSettingsProvider.select((s) => s.enable),
+    );
+    final sync = ref.read(desktopLyricSyncProvider.notifier);
+    void toggle() {
+      if (enabled) {
+        unawaited(sync.disableDesktopLyric());
+      } else {
+        unawaited(sync.enableDesktopLyric());
+      }
+    }
+
+    return InkWell(
+      onTap: toggle,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.lg,
+          vertical: AppSpacing.xs,
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.lyrics_outlined, size: 22, color: colors.textSecondary),
+            const SizedBox(width: AppSpacing.md),
+            Expanded(
+              child: Text(
+                context.tr('桌面歌词'),
+                style: TextStyle(fontSize: 15, color: colors.textPrimary),
+              ),
+            ),
+            Switch(
+              value: enabled,
+              onChanged: (_) => toggle(),
+              activeThumbColor: colors.primary,
             ),
           ],
         ),

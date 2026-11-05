@@ -87,6 +87,19 @@ class _PageBarState extends ConsumerState<PageBar> {
 
   // ------------------------------------------------------------ UI
 
+  /// 分页条与底部迷你播放器之间的让位高度。
+  ///
+  /// 用 `miniPlayerReservedHeight`（播放器高度 + 它与导航栏之间那 5px 间隙）
+  /// 再额外加一点间距，分页条才不会和播放栏贴在一起。
+  /// 不能用 `batchBarBottomInset`：那个是给自带 8px 下外边距的批量操作栏算的，
+  /// 分页条没有那段外边距，直接套会往播放栏里陷 8px。
+  double _miniPlayerInset(bool visible) {
+    if (!visible) return 0;
+    final reserved = ResponsiveLayout.miniPlayerReservedHeight(context);
+    if (reserved <= 0) return 0;
+    return reserved + AppSpacing.sm;
+  }
+
   @override
   Widget build(BuildContext context) {
     final miniPlayerVisible = ref.watch(miniPlayerVisibleProvider);
@@ -95,21 +108,13 @@ class _PageBarState extends ConsumerState<PageBar> {
     // 列表最后一行能滚到播放栏上方（分页条不出现时就没有别的让位手段了）。
     if (_count <= 1) {
       if (!widget.docked) return const SizedBox.shrink();
-      return SizedBox(
-        height: ResponsiveLayout.batchBarBottomInset(
-          context,
-          miniPlayerVisible: miniPlayerVisible,
-        ),
-      );
+      return SizedBox(height: _miniPlayerInset(miniPlayerVisible));
     }
     final colors = ref.watch(themeColorsProvider);
 
     // 常驻底部时让开迷你播放器（没歌在播、或当前页面隐藏了播放栏时不用让）。
     final bottomInset = widget.docked
-        ? ResponsiveLayout.batchBarBottomInset(
-            context,
-            miniPlayerVisible: miniPlayerVisible,
-          )
+        ? _miniPlayerInset(miniPlayerVisible)
         : 0.0;
 
     return Padding(
