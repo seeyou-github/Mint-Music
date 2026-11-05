@@ -90,7 +90,11 @@ class _RecentlyPlayedPageState extends ConsumerState<RecentlyPlayedPage> {
           if (!Platform.isAndroid) ...[
             GestureDetector(
               onTap: () => context.pop(),
-              child: Icon(Icons.arrow_back, size: 24, color: colors.textPrimary),
+              child: Icon(
+                Icons.arrow_back,
+                size: 24,
+                color: colors.textPrimary,
+              ),
             ),
             const SizedBox(width: AppSpacing.md),
           ],
@@ -203,6 +207,7 @@ class _RecentlyPlayedPageState extends ConsumerState<RecentlyPlayedPage> {
             );
           },
           footer: PageBar(
+            docked: true,
             currentPage: _songsPager.page,
             pageCount: _songsPager.pageCount(items.length, hasMore: false),
             onChanged: (page) =>
@@ -291,6 +296,7 @@ class _RecentlyPlayedPageState extends ConsumerState<RecentlyPlayedPage> {
           itemBuilder: (context, index) =>
               _PlaylistCard(playlist: visible[index]),
           footer: PageBar(
+            docked: true,
             currentPage: _playlistsPager.page,
             pageCount: _playlistsPager.pageCount(
               playlists.length,
@@ -551,38 +557,37 @@ class _CardGrid extends StatelessWidget {
           80.0,
           itemWidth - _RecentlyPlayedPageState._cardPadding * 2,
         );
-        return CustomScrollView(
-          controller: controller,
-          slivers: [
-            SliverPadding(
-              padding: const EdgeInsets.fromLTRB(
-                AppSpacing.lg,
-                AppSpacing.sm,
-                AppSpacing.lg,
-                0,
-              ),
-              sliver: SliverGrid(
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: columns,
-                  mainAxisSpacing: spacing,
-                  crossAxisSpacing: spacing,
-                  mainAxisExtent: coverSize + extraHeight,
-                ),
-                delegate: SliverChildBuilderDelegate(
-                  itemBuilder,
-                  childCount: itemCount,
-                ),
-              ),
-            ),
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.only(
-                  top: AppSpacing.xs,
-                  bottom: AppSpacing.xxxl,
-                ),
-                child: footer ?? const SizedBox.shrink(),
+        return Column(
+          children: [
+            Expanded(
+              child: CustomScrollView(
+                controller: controller,
+                slivers: [
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(
+                      AppSpacing.lg,
+                      AppSpacing.sm,
+                      AppSpacing.lg,
+                      0,
+                    ),
+                    sliver: SliverGrid(
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: columns,
+                        mainAxisSpacing: spacing,
+                        crossAxisSpacing: spacing,
+                        mainAxisExtent: coverSize + extraHeight,
+                      ),
+                      delegate: SliverChildBuilderDelegate(
+                        itemBuilder,
+                        childCount: itemCount,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
+            // 分页条常驻底部（不随网格滚动），并让开 Android 的迷你播放器。
+            ?footer,
           ],
         );
       },

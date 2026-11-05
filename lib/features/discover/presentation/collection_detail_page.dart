@@ -676,7 +676,7 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
       hasMore: !_isEnd,
       total: _total,
     );
-    return ListView.builder(
+    final list = ListView.builder(
       controller: _scrollController,
       padding: const EdgeInsets.fromLTRB(
         AppSpacing.sm,
@@ -684,11 +684,8 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
         AppSpacing.sm,
         AppSpacing.xxxl,
       ),
-      itemCount: visible.length + 1,
+      itemCount: visible.length,
       itemBuilder: (context, index) {
-        if (index >= visible.length) {
-          return _pageFooter(colors, pageCount);
-        }
         final song = visible[index];
         // 序号按全局位置编号（跳页直达后缓冲区从当前页起，也要接续页码）；
         // 播放队列用的是缓冲区内的下标。
@@ -717,9 +714,16 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
         );
       },
     );
+    // 分页条常驻在列表下方（贴底），不跟着列表末尾滚动。
+    return Column(
+      children: [
+        Expanded(child: list),
+        _pageFooter(colors, pageCount),
+      ],
+    );
   }
 
-  /// 列表底部：翻页状态 + 分页条（「没有更多了」不再展示）。
+  /// 常驻底部分页条（上面可带一行翻页状态，不再显示「没有更多了」）。
   Widget _pageFooter(ThemeColors colors, int pageCount) {
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -737,6 +741,7 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
           currentPage: _pager.page,
           pageCount: pageCount,
           loading: _loadingMore || _pagingLoading,
+          docked: true,
           onChanged: (page) => unawaited(_goToPage(page)),
         ),
       ],

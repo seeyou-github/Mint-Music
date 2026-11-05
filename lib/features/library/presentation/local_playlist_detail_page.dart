@@ -1274,105 +1274,109 @@ class _LocalPlaylistDetailPageState
     final visible = _pager.slice(_sortedSongs);
     final pageCount = _pager.pageCount(_sortedSongs.length, hasMore: false);
     final pageStart = _pager.start;
-    return Stack(
-      children: [
-        ListView.builder(
-          controller: _scrollController,
-          // 预留迷你播放器高度（56px + 底部 20px 间距），保证最后一首歌曲
-          // 能滚动到迷你播放器上方而不被遮挡；多选模式下还要避开批量操作栏。
-          padding: EdgeInsets.only(
-            bottom:
+    final list = ListView.builder(
+      controller: _scrollController,
+      // 预留迷你播放器高度（56px + 底部 20px 间距），保证最后一首歌曲
+      // 能滚动到迷你播放器上方而不被遮挡；多选模式下还要避开批量操作栏。
+      padding: EdgeInsets.only(
+        bottom:
             bottomInset +
             (selecting ? SongBatchActionBar.height + batchBarInset : 0),
-          ),
-          itemCount: visible.length + 1,
-          addAutomaticKeepAlives: false,
-          addRepaintBoundaries: true,
-          itemBuilder: (context, index) {
-            if (index >= visible.length) {
-              return _buildPageFooter(pageCount);
-            }
-            final song = visible[index];
-            // 序号按整体列表算，翻页后接着上一页继续编号。
-            final songIndex = pageStart + index;
-            // 高亮当前正在播放的歌曲，与本地音乐页面保持一致
-            final item = Builder(
-              builder: (context) {
-                final playbackState = ref.read(playbackControllerProvider);
-                final isPlaying = playbackState.currentSong?.id == song.id;
-                return SongListItem(
-                  song: song,
-                  index: songIndex,
-                  maxIndex: _sortedSongs.length,
-                  isPlaying: isPlaying,
-                  showPlayedTag: true,
-                  selectionMode: selecting,
-                  selected: _selection.isSelected(song.id),
-                  onSelectionToggle: (s) => _selection.toggle(s.id),
-                  // 长按进入批量选择模式
-                  onLongPress: () => _enterSelection(song),
-                  onPlayTap: () {
-                    PlaybackContext.instance.set(
-                      PlaybackSourceType.playlist,
-                      id: playlist.id,
-                      name: playlist.name,
-                    );
-                    final controller = ref.read(
-                      playbackControllerProvider.notifier,
-                    );
-                    controller.setQueue(
-                      applyFavoriteSource(
-                        _sortedSongs,
-                        playlist.favoriteSource,
-                      ),
-                      startIndex: songIndex,
-                    );
-                  },
-                  onMenuTap: () => SongActionSheet.show(
-                    context,
-                    song: song,
-                    playlistSongs: _sortedSongs,
-                    // 「我的收藏」本身用上面的收藏开关取消收藏即可，不再重复显示移除。
-                    showRemove: playlist.id != '__favorites__',
-                    onRemove: () =>
-                        _removeSongFromCurrentPlaylist(playlist, song),
-                  ),
+      ),
+      itemCount: visible.length,
+      addAutomaticKeepAlives: false,
+      addRepaintBoundaries: true,
+      itemBuilder: (context, index) {
+        final song = visible[index];
+        // 序号按整体列表算，翻页后接着上一页继续编号。
+        final songIndex = pageStart + index;
+        // 高亮当前正在播放的歌曲，与本地音乐页面保持一致
+        final item = Builder(
+          builder: (context) {
+            final playbackState = ref.read(playbackControllerProvider);
+            final isPlaying = playbackState.currentSong?.id == song.id;
+            return SongListItem(
+              song: song,
+              index: songIndex,
+              maxIndex: _sortedSongs.length,
+              isPlaying: isPlaying,
+              showPlayedTag: true,
+              selectionMode: selecting,
+              selected: _selection.isSelected(song.id),
+              onSelectionToggle: (s) => _selection.toggle(s.id),
+              // 长按进入批量选择模式
+              onLongPress: () => _enterSelection(song),
+              onPlayTap: () {
+                PlaybackContext.instance.set(
+                  PlaybackSourceType.playlist,
+                  id: playlist.id,
+                  name: playlist.name,
+                );
+                final controller = ref.read(
+                  playbackControllerProvider.notifier,
+                );
+                controller.setQueue(
+                  applyFavoriteSource(_sortedSongs, playlist.favoriteSource),
+                  startIndex: songIndex,
                 );
               },
-            );
-            // 多选模式下禁用右滑删除，避免与选择手势冲突
-            if (selecting) return item;
-            return Dismissible(
-              key: Key('${playlist.id}_${song.id}'),
-              direction: DismissDirection.endToStart,
-              background: Container(
-                alignment: Alignment.centerRight,
-                padding: const EdgeInsets.only(right: AppSpacing.lg),
-                color: colors.error,
-                child: Icon(Icons.delete, color: colors.textOnPrimary),
+              onMenuTap: () => SongActionSheet.show(
+                context,
+                song: song,
+                playlistSongs: _sortedSongs,
+                // 「我的收藏」本身用上面的收藏开关取消收藏即可，不再重复显示移除。
+                showRemove: playlist.id != '__favorites__',
+                onRemove: () => _removeSongFromCurrentPlaylist(playlist, song),
               ),
-              confirmDismiss: (_) =>
-                  _confirmRemoveSong(context, colors, playlist, song),
-              onDismissed: (_) {
-                ref
-                    .read(playlistsProvider.notifier)
-                    .removeSongFromPlaylist(playlist.id, song.id);
-              },
-              child: item,
             );
           },
+        );
+        // 多选模式下禁用右滑删除，避免与选择手势冲突
+        if (selecting) return item;
+        return Dismissible(
+          key: Key('${playlist.id}_${song.id}'),
+          direction: DismissDirection.endToStart,
+          background: Container(
+            alignment: Alignment.centerRight,
+            padding: const EdgeInsets.only(right: AppSpacing.lg),
+            color: colors.error,
+            child: Icon(Icons.delete, color: colors.textOnPrimary),
+          ),
+          confirmDismiss: (_) =>
+              _confirmRemoveSong(context, colors, playlist, song),
+          onDismissed: (_) {
+            ref
+                .read(playlistsProvider.notifier)
+                .removeSongFromPlaylist(playlist.id, song.id);
+          },
+          child: item,
+        );
+      },
+    );
+    // 分页条常驻在列表下方（贴底），不跟着列表末尾滚动；
+    // 多选时底部被批量操作栏占用，分页条暂时收起。
+    return Column(
+      children: [
+        Expanded(
+          child: Stack(
+            children: [
+              list,
+              // 定位当前播放歌曲的悬浮按钮（右下角，避开底部分页条）
+              if (!selecting) _buildLocateFab(colors),
+            ],
+          ),
         ),
-        // 定位当前播放歌曲的悬浮按钮（右下角，避开底部迷你播放器）
-        if (!selecting) _buildLocateFab(colors),
+        if (!selecting) _buildPageFooter(pageCount),
       ],
     );
   }
 
-  /// 列表底部分页条：本地歌单 / 收藏的歌单 / 榜单 / 专辑 / 作者共用。
+  /// 常驻底部分页条：本地歌单 / 收藏的歌单 / 榜单 / 专辑 / 作者共用。
   Widget _buildPageFooter(int pageCount) {
     return PageBar(
       currentPage: _pager.page,
       pageCount: pageCount,
+      docked: true,
       onChanged: _goToPage,
     );
   }

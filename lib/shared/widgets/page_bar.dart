@@ -7,13 +7,19 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/l10n/l10n.dart';
 import '../../core/theme/app_spacing.dart';
 import '../../core/theme/theme_provider.dart';
+import '../../core/utils/responsive_layout.dart';
+import '../../features/player/application/playback_controller.dart';
 
 /// 列表底部的胶囊分页条，加载中禁用导航。
 ///
-/// - 窄屏（<760）：页码按钮 + 「第 N 页」下拉。页码窗口按宽度自适应：
-///   首页 + 当前页附近的页码 + 末页，跨页用省略号；宽度不够时缩到只剩
-///   首页 / 当前页 / 末页 + 下拉。
-/// - 宽屏（>=760）：上一页 + 页码按钮 + 下一页 + 「第 N 页」下拉。
+/// 布局规则（按宽度自适应，全部居中）：
+/// - 所有页码都能放下 → 只显示页码按钮，**不显示「第 N 页」下拉**；
+/// - 放不下时 → 首页 + 当前页前后各一页 + 末页，跨页用省略号，
+///   右侧紧跟「第 N 页」下拉（下拉紧挨着最后一个页码按钮）；
+/// - 宽屏（>=760）额外在两端加「上一页 / 下一页」。
+///
+/// [docked] 为 true 时表示分页条**常驻在内容区底部**（不是列表项），
+/// 会给自身补一段下内边距避开 Android 的迷你播放器，避免被播放栏盖住。
 ///
 /// 「第 N 页」下拉列出全部页码，选一个直达（Windows 上支持滚轮滚动和
 /// 按住鼠标拖动，另有常驻滚动条可拖）。总共只有 1 页时整个分页条不显示。
@@ -25,6 +31,7 @@ class PageBar extends ConsumerStatefulWidget {
     required this.onChanged,
     this.loading = false,
     this.padding,
+    this.docked = false,
   });
 
   final int currentPage;
@@ -33,22 +40,31 @@ class PageBar extends ConsumerStatefulWidget {
   final bool loading;
   final EdgeInsetsGeometry? padding;
 
+  /// 常驻底部：自动让开迷你播放器。
+  final bool docked;
+
   @override
   ConsumerState<PageBar> createState() => _PageBarState();
 }
 
 class _PageBarState extends ConsumerState<PageBar> {
-  /// 页码按钮 / 省略号 / 步进按钮 / 下拉按钮的估算宽度（算窗口大小时用）。
-  static const double _pageButtonWidth = 36;
-  static const double _ellipsisWidth = 24;
-  static const double _stepButtonWidth = 84;
-  static const double _dropdownWidth = 100;
-  static const double _elementGap = 4;
+  /// 页码按钮：最小宽度 + 左右内边距 + 间距（真实宽度按文字量出来）。
+  static const double _buttonMinWidth = 28;
+  static const double _buttonHeight = 36;
+  static const double _buttonPadding = 6;
+  static const double _elementGap = 2;
+
+  /// 宽屏的「上一页 / 下一页」估算宽度、与页码区的间距。
+  static const double _stepButtonWidth = 78;
+  static const double _stepGap = AppSpacing.sm;
+
   static const double _wideBreakpoint = 760;
   static const double _menuItemHeight = 44;
 
   /// 页码下拉一次最多显示几行，超出部分滚动。
   static const int _maxMenuRows = 9;
+
+  static const TextStyle _numberStyle = TextStyle(fontSize: 12);
 
   /// 页码下拉菜单的滚动控制器（Scrollbar 拖动需要）。
   final ScrollController _menuScrollController = ScrollController();
@@ -74,84 +90,106 @@ class _PageBarState extends ConsumerState<PageBar> {
     // 只有 1 页：页码、上一页/下一页、下拉都没什么可翻的，整个分页条不显示。
     if (_count <= 1) return const SizedBox.shrink();
     final colors = ref.watch(themeColorsProvider);
+
+    // 常驻底部时让开迷你播放器（没歌在播时它就是空占位，不用让）。
+    final bottomInset = widget.docked
+        ? ResponsiveLayout.batchBarBottomInset(
+            context,
+            miniPlayerVisible: ref.watch(
+              playbackControllerProvider.select((s) => s.currentSong != null),
+            ),
+          )
+        : 0.0;
+
     return Padding(
-      padding:
-          widget.padding ??
-          const EdgeInsets.symmetric(
-            horizontal: AppSpacing.md,
-            vertical: AppSpacing.sm,
-          ),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final wide = constraints.maxWidth >= _wideBreakpoint;
-          final radius = _fitRadius(constraints.maxWidth, wide: wide);
-          final pages = _windowPages(_current, _count, radius);
-          final pageButtons = Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
+      padding: EdgeInsets.only(bottom: bottomInset),
+      child: Padding(
+        padding:
+            widget.padding ??
+            const EdgeInsets.symmetric(
+              horizontal: AppSpacing.md,
+              vertical: AppSpacing.sm,
+            ),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final wide = constraints.maxWidth >= _wideBreakpoint;
+            final stepArea = wide ? (_stepButtonWidth + _stepGap) * 2 : 0.0;
+            final budget = constraints.maxWidth - stepArea;
+
+            // 1) 先试「所有页码都显示」：放得下就不需要下拉。
+            final allPages = <int?>[
+              for (var page = 1; page <= _count; page++) page,
+            ];
+            var showDropdown = false;
+            List<int?> pages;
+            if (_windowWidth(context, allPages) <= budget) {
+              pages = allPages;
+            } else {
+              // 2) 放不下才出现省略号 + 下拉。当前页前后各留一页（9 10 11），
+              //    再缩就只能去掉相邻页了，所以半径最小为 1。
+              showDropdown = true;
+              final dropdownWidth = _dropdownWidth(context);
+              final maxRadius = wide ? 5 : 4;
+              var radius = maxRadius;
+              pages = _windowPages(_current, _count, radius);
+              while (radius > 1 &&
+                  _windowWidth(context, pages) + _elementGap + dropdownWidth >
+                      budget) {
+                radius--;
+                pages = _windowPages(_current, _count, radius);
+              }
+            }
+
+            final pageChildren = <Widget>[
               for (final page in pages)
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 2),
-                  child: page == null
-                      ? ExcludeSemantics(
-                          child: Text(
-                            '…',
-                            style: TextStyle(color: colors.textHint),
-                          ),
-                        )
-                      : _buildPageButton(colors, page),
-                ),
-            ],
-          );
-          final dropdown = _buildDropdown(colors);
-          if (!wide) {
-            // 窄屏：页码一行 + 右侧下拉（窗口按宽度算好，极端情况页码区可滚）。
-            return Row(
-              children: [
-                Expanded(
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: pageButtons,
-                  ),
-                ),
-                const SizedBox(width: AppSpacing.sm),
-                dropdown,
+                page == null
+                    ? _buildEllipsis(context, colors)
+                    : _buildPageButton(context, colors, page),
+              if (showDropdown) ...[
+                const SizedBox(width: AppSpacing.xs),
+                _buildDropdown(colors),
               ],
-            );
-          }
-          final previous = _buildStepButton(
-            colors,
-            label: widget.loading ? context.tr('加载中') : context.tr('上一页'),
-            icon: Icons.chevron_left,
-            enabled: _current > 1 && !widget.loading,
-            onTap: () => _go(_current - 1),
-          );
-          final next = _buildStepButton(
-            colors,
-            label: widget.loading ? context.tr('加载中') : context.tr('下一页'),
-            icon: Icons.chevron_right,
-            iconAfter: true,
-            enabled: _current < _count && !widget.loading,
-            onTap: () => _go(_current + 1),
-          );
-          return Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              previous,
-              const SizedBox(width: AppSpacing.sm),
-              Flexible(
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: pageButtons,
+            ];
+
+            final children = <Widget>[
+              if (wide) ...[
+                _buildStepButton(
+                  colors,
+                  label: widget.loading ? context.tr('加载中') : context.tr('上一页'),
+                  icon: Icons.chevron_left,
+                  enabled: _current > 1 && !widget.loading,
+                  onTap: () => _go(_current - 1),
+                ),
+                const SizedBox(width: _stepGap),
+              ],
+              ...pageChildren,
+              if (wide) ...[
+                const SizedBox(width: _stepGap),
+                _buildStepButton(
+                  colors,
+                  label: widget.loading ? context.tr('加载中') : context.tr('下一页'),
+                  icon: Icons.chevron_right,
+                  iconAfter: true,
+                  enabled: _current < _count && !widget.loading,
+                  onTap: () => _go(_current + 1),
+                ),
+              ],
+            ];
+
+            // 居中：内容比一行窄时正中显示；极端窄屏（超大字号 / 极小屏）
+            // 放不下时退化成可横滚，避免出现溢出条纹。
+            return SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minWidth: constraints.maxWidth),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: children,
                 ),
               ),
-              const SizedBox(width: AppSpacing.sm),
-              next,
-              const SizedBox(width: AppSpacing.sm),
-              dropdown,
-            ],
-          );
-        },
+            );
+          },
+        ),
       ),
     );
   }
@@ -167,8 +205,8 @@ class _PageBarState extends ConsumerState<PageBar> {
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppRadius.full),
       ),
-      minimumSize: const Size(32, 40),
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
+      minimumSize: const Size(_buttonMinWidth, _buttonHeight),
+      padding: const EdgeInsets.symmetric(horizontal: _buttonPadding),
       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
       textStyle: TextStyle(
         fontSize: 12,
@@ -185,34 +223,55 @@ class _PageBarState extends ConsumerState<PageBar> {
     required VoidCallback onTap,
     bool iconAfter = false,
   }) {
-    return OutlinedButton(
-      onPressed: enabled ? onTap : null,
-      style: _buttonStyle(colors),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (!iconAfter) Icon(icon, size: 16),
-          Flexible(
-            child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
-          ),
-          if (iconAfter) Icon(icon, size: 16),
-        ],
+    return SizedBox(
+      height: _buttonHeight,
+      child: OutlinedButton(
+        onPressed: enabled ? onTap : null,
+        style: _buttonStyle(colors),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (!iconAfter) Icon(icon, size: 16),
+            Flexible(
+              child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+            ),
+            if (iconAfter) Icon(icon, size: 16),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildPageButton(ThemeColors colors, int page) {
+  Widget _buildPageButton(BuildContext context, ThemeColors colors, int page) {
     final selected = page == _current;
-    return MergeSemantics(
-      child: Semantics(
-        selected: selected,
-        label: context.tr('第 $page 页'),
-        child: OutlinedButton(
-          onPressed: !widget.loading && !selected
-              ? () => _go(page)
-              : null,
-          style: _buttonStyle(colors, selected: selected),
-          child: ExcludeSemantics(child: Text('$page')),
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: _elementGap / 2),
+      child: MergeSemantics(
+        child: Semantics(
+          selected: selected,
+          label: context.tr('第 $page 页'),
+          child: SizedBox(
+            height: _buttonHeight,
+            child: OutlinedButton(
+              onPressed: !widget.loading && !selected ? () => _go(page) : null,
+              style: _buttonStyle(colors, selected: selected),
+              child: ExcludeSemantics(child: Text('$page')),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 省略号：宽度与相邻元素一致，不参与点击。
+  Widget _buildEllipsis(BuildContext context, ThemeColors colors) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: _elementGap / 2),
+      child: ExcludeSemantics(
+        child: Text(
+          '…',
+          maxLines: 1,
+          style: TextStyle(fontSize: 12, color: colors.textHint),
         ),
       ),
     );
@@ -259,7 +318,7 @@ class _PageBarState extends ConsumerState<PageBar> {
         ),
       ],
       child: Container(
-        height: 40,
+        height: _buttonHeight,
         padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
         decoration: BoxDecoration(
           border: Border.all(color: colors.divider),
@@ -283,11 +342,7 @@ class _PageBarState extends ConsumerState<PageBar> {
   }
 
   /// 下拉里的一行页码。[menuContext] 在弹层内部，用于带值关闭弹层。
-  Widget _buildMenuRow(
-    BuildContext menuContext,
-    ThemeColors colors,
-    int page,
-  ) {
+  Widget _buildMenuRow(BuildContext menuContext, ThemeColors colors, int page) {
     final selected = page == _current;
     return InkWell(
       onTap: () => Navigator.of(menuContext).pop(page),
@@ -316,24 +371,48 @@ class _PageBarState extends ConsumerState<PageBar> {
     );
   }
 
-  /// 按可用宽度估当前页两侧最多保留几页：从最大半径往下试，放不下就缩，
-  /// 最窄只剩首页 / 当前页 / 末页（+ 省略号）。
-  int _fitRadius(double available, {required bool wide}) {
-    var reserved = _dropdownWidth + _elementGap;
-    if (wide) reserved += (_stepButtonWidth + _elementGap) * 2;
-    final budget = available - reserved;
-    final maxRadius = wide ? 5 : 3;
-    for (var radius = maxRadius; radius >= 0; radius--) {
-      final width = _windowPages(_current, _count, radius).fold<double>(
-        0,
-        (sum, page) =>
-            sum +
-            (page == null ? _ellipsisWidth : _pageButtonWidth) +
-            _elementGap,
-      );
-      if (width <= budget) return radius;
+  // ------------------------------------------------------- 宽度估算
+
+  /// 单行文本在当前字体 / 系统字号缩放下的宽度。
+  double _textWidth(BuildContext context, String text, TextStyle style) {
+    final base = Theme.of(context).textTheme.bodyMedium ?? const TextStyle();
+    final painter = TextPainter(
+      text: TextSpan(text: text, style: base.merge(style)),
+      maxLines: 1,
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+    )..layout();
+    final width = painter.width;
+    painter.dispose();
+    return width;
+  }
+
+  double _pageButtonWidth(BuildContext context, int page) {
+    final text = _textWidth(context, '$page', _numberStyle);
+    return math.max(_buttonMinWidth, text + _buttonPadding * 2) + _elementGap;
+  }
+
+  double _ellipsisWidth(BuildContext context) =>
+      _textWidth(context, '…', _numberStyle) + _elementGap;
+
+  /// 下拉按钮宽度：「第 N 页」文字 + 箭头 + 左右内边距 + 边框。
+  double _dropdownWidth(BuildContext context) {
+    final text = _textWidth(
+      context,
+      context.tr('第 $_current 页'),
+      const TextStyle(fontSize: 12),
+    );
+    return text + 18 + AppSpacing.sm * 2 + 4;
+  }
+
+  double _windowWidth(BuildContext context, List<int?> pages) {
+    var total = 0.0;
+    for (final page in pages) {
+      total += page == null
+          ? _ellipsisWidth(context)
+          : _pageButtonWidth(context, page);
     }
-    return 0;
+    return total;
   }
 
   /// 页码窗口：首页 + 末页 + 当前页 ± [radius]。页数少到窗口能盖住就全显；

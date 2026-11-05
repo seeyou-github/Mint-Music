@@ -473,10 +473,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     final pager = _collectionPager(type);
     setState(() => pager.jumpTo(page));
     if (_gridScrollController.hasClients) _gridScrollController.jumpTo(0);
-    final loaded = ref
-        .read(collectionSearchProvider(type))
-        .results
-        .length;
+    final loaded = ref.read(collectionSearchProvider(type)).results.length;
     if (_beyondBuffer(pager, page, loaded)) {
       final ok = await ref
           .read(collectionSearchProvider(type).notifier)
@@ -507,9 +504,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         }
         if (state.loadingMore || state.loadMoreError != null) break;
         final before = state.results.length;
-        await ref
-            .read(collectionSearchProvider(type).notifier)
-            .loadMore();
+        await ref.read(collectionSearchProvider(type).notifier).loadMore();
         if (!mounted) return;
         if (ref.read(collectionSearchProvider(type)).results.length == before) {
           break;
@@ -558,6 +553,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           currentPage: pager.page,
           pageCount: pager.pageCount(loaded, hasMore: hasMore, total: total),
           loading: loading || _pagingLoading,
+          docked: true,
           onChanged: onPage,
         ),
       ],
@@ -842,7 +838,11 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           if (!Platform.isAndroid) ...[
             GestureDetector(
               onTap: () => context.pop(),
-              child: Icon(Icons.arrow_back, size: 24, color: colors.textPrimary),
+              child: Icon(
+                Icons.arrow_back,
+                size: 24,
+                color: colors.textPrimary,
+              ),
             ),
             const SizedBox(width: AppSpacing.sm),
           ],
@@ -1375,7 +1375,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       ),
     );
 
-    return ListView.builder(
+    final list = ListView.builder(
       controller: _resultsScrollController,
       // 多选模式下为底部批量操作栏留出空间
       padding: EdgeInsets.only(
@@ -1383,13 +1383,11 @@ class _SearchPageState extends ConsumerState<SearchPage> {
             bottomInset +
             (selecting ? SongBatchActionBar.height + batchBarInset : 0),
       ),
-      // 最后一格是分页条
-      itemCount: visible.length + 1,
+      itemCount: visible.length,
       cacheExtent: 360,
       addAutomaticKeepAlives: false,
       addRepaintBoundaries: true,
       itemBuilder: (context, index) {
-        if (index >= visible.length) return footer;
         final song = visible[index];
         // 序号按全局位置编号（跳页直达后缓冲区从当前页起，也要接续页码）
         final songIndex = _songPager.absoluteStart + index;
@@ -1441,6 +1439,14 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           },
         );
       },
+    );
+    // 分页条常驻在列表下方（贴底），不跟着列表末尾滚动；
+    // 多选时底部被批量操作栏占用，分页条暂时收起。
+    return Column(
+      children: [
+        Expanded(child: list),
+        if (!selecting) footer,
+      ],
     );
   }
 
@@ -1665,9 +1671,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         loading: state.loadingMore,
         error: state.loadMoreError,
         onRetry: () => unawaited(
-          ref
-              .read(collectionSearchProvider(type).notifier)
-              .retryLoadMore(),
+          ref.read(collectionSearchProvider(type).notifier).retryLoadMore(),
         ),
         onPage: (page) => unawaited(_goToCollectionPage(type, page)),
       ),
@@ -1840,12 +1844,21 @@ class _SearchPageState extends ConsumerState<SearchPage> {
 
   /// 网格 + 底部分页条的通用容器。
   Widget _buildPagedGrid({required Widget sliver, required Widget footer}) {
-    return CustomScrollView(
-      controller: _gridScrollController,
-      slivers: [
-        sliver,
-        SliverToBoxAdapter(child: footer),
-        const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.xxxl)),
+    return Column(
+      children: [
+        Expanded(
+          child: CustomScrollView(
+            controller: _gridScrollController,
+            slivers: [
+              sliver,
+              const SliverToBoxAdapter(
+                child: SizedBox(height: AppSpacing.xxxl),
+              ),
+            ],
+          ),
+        ),
+        // 分页条常驻在网格下方（贴底），不跟着内容末尾滚动。
+        footer,
       ],
     );
   }

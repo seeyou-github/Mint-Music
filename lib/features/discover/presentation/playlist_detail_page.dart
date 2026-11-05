@@ -470,9 +470,10 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
                           const Center(child: CircularProgressIndicator()),
                       error: (error, __) => LoadErrorView(
                         colors: colors,
-                        message: error
-                            .toString()
-                            .replaceFirst('Exception: ', ''),
+                        message: error.toString().replaceFirst(
+                          'Exception: ',
+                          '',
+                        ),
                         onRetry: () {
                           ref.invalidate(
                             playlistDetailProvider(widget.playlistId),
@@ -808,13 +809,10 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
             bottomInset +
             (selecting ? SongBatchActionBar.height + batchBarInset : 0),
       ),
-      itemCount: visible.length + 1,
+      itemCount: visible.length,
       addAutomaticKeepAlives: false,
       addRepaintBoundaries: true,
       itemBuilder: (context, index) {
-        if (index >= visible.length) {
-          return _buildPageFooter(colors, pageCount);
-        }
         final song = visible[index];
         // 页面内的序号按整体列表算，翻页后接着上一页继续编号。
         final songIndex = _pager.start + index;
@@ -853,10 +851,17 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
       },
     );
 
-    return list;
+    // 分页条常驻在列表下方（贴底），不再跟着列表末尾滚动；
+    // 多选时底部被批量操作栏占用，分页条暂时收起。
+    return Column(
+      children: [
+        Expanded(child: list),
+        if (!selecting) _buildPageFooter(colors, pageCount),
+      ],
+    );
   }
 
-  /// 列表底部：翻页状态提示 + 分页条。
+  /// 常驻底部分页条（上面可带一行翻页状态提示）。
   Widget _buildPageFooter(ThemeColors colors, int pageCount) {
     return Padding(
       padding: const EdgeInsets.only(top: AppSpacing.xs),
@@ -877,6 +882,7 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
             currentPage: _pager.page,
             pageCount: pageCount,
             loading: _loadingMore || _pagingLoading,
+            docked: true,
             onChanged: (page) => unawaited(_goToPage(page)),
           ),
         ],
