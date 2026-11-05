@@ -499,10 +499,14 @@ final cacheDirSizeProvider = FutureProvider<String>((ref) async {
 
 enum FullScreenBackgroundMode { theme, cover, dark }
 
-final fullScreenBackgroundModeProvider =
-    StateProvider<FullScreenBackgroundMode>(
-      (ref) => FullScreenBackgroundMode.theme,
-    );
+/// 播放详情页背景模式：**固定为「跟随主题」**。
+///
+/// 设置里的「播放详情页背景 → 背景模式」选项已删除（用户要求统一固定），
+/// 这里不再读取本地保存的旧值，用户的旧选择会在下次启动后被忽略。
+/// 保留枚举与播放页的分支实现，方便以后需要时再放开。
+final fullScreenBackgroundModeProvider = Provider<FullScreenBackgroundMode>(
+  (ref) => FullScreenBackgroundMode.theme,
+);
 
 // -- app version (loaded once) --
 final appVersionProvider = FutureProvider<String>((ref) async {
@@ -699,13 +703,6 @@ final settingsInitProvider = FutureProvider<void>((ref) async {
   ref.read(pluginAutoCheckUpdateProvider.notifier).state = svc
       .getPluginAutoCheckUpdate();
   ref.read(cacheDirProvider.notifier).state = await svc.getCacheDir();
-  final bgMode = svc.getFullScreenBgMode();
-  ref
-      .read(fullScreenBackgroundModeProvider.notifier)
-      .state = FullScreenBackgroundMode.values.firstWhere(
-    (e) => e.name == bgMode,
-    orElse: () => FullScreenBackgroundMode.theme,
-  );
 });
 
 Future<void> persistSetting(

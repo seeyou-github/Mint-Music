@@ -680,7 +680,6 @@ class _AppearanceContent extends ConsumerWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _buildThemeGroup(context, ref, colors),
-        _buildBackgroundModeGroup(context, ref, colors),
         // 桌面歌词的设置放在外观设置的最底部。
         _buildDesktopLyricGroup(context, ref, colors),
       ],
@@ -1501,68 +1500,6 @@ class _AppearanceContent extends ConsumerWidget {
               icon: Icon(Icons.delete_outline, size: 18, color: colors.error),
               tooltip: context.tr('删除'),
             ),
-    );
-  }
-
-  /// 播放详情页背景（原「全屏播放背景」）。
-  Widget _buildBackgroundModeGroup(
-    BuildContext context,
-    WidgetRef ref,
-    ThemeColors colors,
-  ) {
-    final bgMode = ref.watch(fullScreenBackgroundModeProvider);
-    final modeLabels = {
-      FullScreenBackgroundMode.theme: '跟随主题',
-      FullScreenBackgroundMode.cover: '封面模糊',
-      FullScreenBackgroundMode.dark: '纯黑背景',
-    };
-    final currentLabel = modeLabels[bgMode] ?? '纯黑背景';
-    return SettingGroup(
-      title: '播放详情页背景',
-      colors: colors,
-      children: [
-        SettingRow(
-          icon: Icons.wallpaper,
-          title: '背景模式',
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                context.tr(currentLabel),
-                style: TextStyle(fontSize: 13, color: colors.textHint),
-              ),
-              const SizedBox(width: 4),
-              Icon(Icons.chevron_right, size: 18, color: colors.textHint),
-            ],
-          ),
-          colors: colors,
-          onTap: () => _showBottomPicker(
-            context,
-            colors,
-            '背景模式',
-            ['跟随主题', '封面模糊', '纯黑背景'],
-            currentLabel,
-            (v) {
-              final map = {
-                '跟随主题': FullScreenBackgroundMode.theme,
-                '封面模糊': FullScreenBackgroundMode.cover,
-                '纯黑背景': FullScreenBackgroundMode.dark,
-              };
-              final container = ProviderScope.containerOf(context);
-              container.read(fullScreenBackgroundModeProvider.notifier).state =
-                  map[v] ?? FullScreenBackgroundMode.dark;
-              unawaited(
-                _doPersist(
-                  container,
-                  (s) => s.setFullScreenBgMode(
-                    v == '纯黑背景' ? 'dark' : (v == '跟随主题' ? 'theme' : 'cover'),
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-      ],
     );
   }
 
