@@ -44,7 +44,15 @@ class FullPlayerPage extends ConsumerStatefulWidget {
 }
 
 class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
-  final _pageController = PageController(initialPage: 0);
+  /// Android 竖屏用「循环翻页」：偶数索引 = 封面页、奇数索引 = 歌词页。
+  /// 页序交替后，往左滑（索引 +1）和往右滑（索引 -1）都会换页，连续同方向
+  /// 滑动就是来回切换；起始停在居中的偶数页，两边都留够页数。
+  static const int _loopBasePage = 1000;
+  static const int _loopPageCount = 2001;
+
+  final _pageController = PageController(
+    initialPage: Platform.isAndroid ? _loopBasePage : 0,
+  );
   int _currentPage = 0;
   bool _lyricsRequested = false;
   bool _lyricsPageBuilt = false;
@@ -107,6 +115,37 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
       setState(() => _lyricsPageBuilt = true);
     }
     _ensureLyricsLoaded();
+  }
+
+  /// 逻辑页索引：0 封面、1 歌词。
+  ///
+  /// Android 竖屏是循环翻页，页面索引会一直增长 / 减少，只能按奇偶换算。
+  int _logicalPageOf(int index) => Platform.isAndroid ? index % 2 : index;
+
+  /// 切到逻辑页（0 封面 / 1 歌词）。
+  ///
+  /// Android 循环翻页时只走一格：当前索引是偶数（封面）就 +1、奇数（歌词）就
+  /// -1，所以动画方向由当前位置决定，和手势方向一致；其它平台仍是 0/1 两页。
+  void _goToPage(int page) {
+    if (!_pageController.hasClients) return;
+    if (page == 1) _activateLyricsPage();
+    if (!Platform.isAndroid) {
+      _pageController.jumpToPage(page);
+      return;
+    }
+    final current = (_pageController.page ?? _loopBasePage.toDouble()).round();
+    final onCover = current.isEven;
+    if (onCover == (page == 0)) return;
+    _pageController.animateToPage(
+      onCover ? current + 1 : current - 1,
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  /// 点封面页空白处 / 歌词页任意处：封面与歌词互相切换（Android）。
+  void _handlePageTap() {
+    _goToPage(_currentPage == 0 ? 1 : 0);
   }
 
   @override
@@ -213,11 +252,8 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
                       _PlayerHeader(
                         currentPage: _currentPage,
                         onBack: () => _beginExit(),
-                        onTogglePage: () {
-                          final next = _currentPage == 0 ? 1 : 0;
-                          if (next == 1) _activateLyricsPage();
-                          _pageController.jumpToPage(next);
-                        },
+                        onTogglePage: () =>
+                            _goToPage(_currentPage == 0 ? 1 : 0),
                       ),
                       Expanded(
                         child: LayoutBuilder(
@@ -239,25 +275,40 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
                                 ),
                               ),
                             );
-                            return Stack(
-                              clipBehavior: Clip.none,
-                              children: [
-                                Positioned.fill(
-                                  child: PageView.builder(
-                                    controller: _pageController,
-                                    physics:
-                                        const NeverScrollableScrollPhysics(),
-                                    itemCount: 2,
-                                    onPageChanged: (index) {
-                                      if (mounted) {
-                                        setState(() => _currentPage = index);
-                                      }
-                                      if (index == 1) _activateLyricsPage();
-                                    },
-                                    itemBuilder: (context, index) {
-                                      if (index == 0) {
-                                        return _KeepAlivePage(
-                                          child: Padding(
+                            return GestureDetector(
+                              // Android：封面页点整块空白（音源标签、封面、歌名
+                              // 歌手、下方空白）切到歌词页，歌词页点任意处切回
+                              // 封面页。其它平台保持原有的点击目标。
+                              behavior: HitTestBehavior.opaque,
+                              onTap: Platform.isAndroid ? _handlePageTap : null,
+                              child: Stack(
+                                clipBehavior: Clip.none,
+                                children: [
+                                  Positioned.fill(
+                                    child: PageView.builder(
+                                      controller: _pageController,
+                                      // Android：左右都能滑，任意方向滑一下就在
+                                      // 封面 / 歌词之间切一页（页序「封面、歌词、
+                                      // 封面…」交替，所以连续同向滑动也是来回切，
+                                      // 动画方向跟着手势走）。null 用 PageView
+                                      // 默认的分页物理曲线（带平台回弹 / 越界效果）。
+                                      physics: Platform.isAndroid
+                                          ? null
+                                          : const NeverScrollableScrollPhysics(),
+                                      itemCount: Platform.isAndroid
+                                          ? _loopPageCount
+                                          : 2,
+                                      onPageChanged: (index) {
+                                        final page = _logicalPageOf(index);
+                                        if (mounted) {
+                                          setState(() => _currentPage = page);
+                                        }
+                                        if (page == 1) _activateLyricsPage();
+                                      },
+                                      itemBuilder: (context, index) {
+                                        final page = _logicalPageOf(index);
+                                        if (page == 0) {
+                                          final coverPage = Padding(
                                             padding: EdgeInsets.only(
                                               left: coverLeft,
                                               right: coverLeft,
@@ -272,79 +323,69 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
                                               // 与歌名的左对齐和间距都不变。
                                               scaleAlignment:
                                                   Alignment.bottomLeft,
-                                              onTapCover: () {
-                                                if (_currentPage == 0) {
-                                                  _activateLyricsPage();
-                                                  _pageController.jumpToPage(1);
-                                                }
-                                              },
                                             ),
-                                          ),
-                                        );
-                                      }
-                                      if (!_lyricsPageBuilt) {
-                                        return const SizedBox.expand();
-                                      }
-                                      const lyricsPage = _PlayerLyricsPage();
-                                      return _KeepAlivePage(
-                                        // Android：点歌词区域切回封面页。
-                                        child: Platform.isAndroid
-                                            ? GestureDetector(
-                                                behavior:
-                                                    HitTestBehavior.translucent,
-                                                onTap: () {
-                                                  if (_currentPage == 1) {
-                                                    _pageController.jumpToPage(
-                                                      0,
-                                                    );
-                                                  }
-                                                },
-                                                child: lyricsPage,
-                                              )
-                                            : lyricsPage,
-                                      );
-                                    },
+                                          );
+                                          // 循环翻页每滑一次就换一个索引，
+                                          // 不能挂 keep-alive：否则每次翻页的
+                                          // 歌词页都会被留在内存里。
+                                          return Platform.isAndroid
+                                              ? coverPage
+                                              : _KeepAlivePage(
+                                                  child: coverPage,
+                                                );
+                                        }
+                                        if (!_lyricsPageBuilt &&
+                                            !Platform.isAndroid) {
+                                          return const SizedBox.expand();
+                                        }
+                                        const lyricsPage = _PlayerLyricsPage();
+                                        return Platform.isAndroid
+                                            ? lyricsPage
+                                            : _KeepAlivePage(child: lyricsPage);
+                                      },
+                                    ),
                                   ),
-                                ),
-                                // 竖屏封面页：歌名 / 歌手与操作按钮行解绑——
-                                // 歌名 / 歌手跟随封面（左对齐封面左边缘、
-                                // 紧贴封面底部）；操作按钮行跟随进度条
-                                // （bottom 锚定在进度条正上方，左右与进度条
-                                // 对齐，spaceBetween 均匀分布 5 个按钮）。
-                                // 窗口高度变化时两者各自移动、互不牵连。
-                                if (_currentPage == 0) ...[
-                                  // 封面上方的音源标签：居中，宽度不超过封面。
-                                  Positioned(
-                                    left: coverLeft,
-                                    right: coverLeft,
-                                    top: coverTopGap,
-                                    child: Center(
-                                      child: _PlayerSourceTag(
-                                        maxWidth: actualCoverSize,
+                                  // 竖屏封面页：歌名 / 歌手与操作按钮行解绑——
+                                  // 歌名 / 歌手跟随封面（左对齐封面左边缘、
+                                  // 紧贴封面底部）；操作按钮行跟随进度条
+                                  // （bottom 锚定在进度条正上方，左右与进度条
+                                  // 对齐，spaceBetween 均匀分布 5 个按钮）。
+                                  // 窗口高度变化时两者各自移动、互不牵连。
+                                  if (_currentPage == 0) ...[
+                                    // 封面上方的音源标签：居中，宽度不超过封面。
+                                    Positioned(
+                                      left: coverLeft,
+                                      right: coverLeft,
+                                      top: coverTopGap,
+                                      child: Center(
+                                        child: _PlayerSourceTag(
+                                          maxWidth: actualCoverSize,
+                                        ),
                                       ),
                                     ),
-                                  ),
-                                  Positioned(
-                                    left: coverLeft,
-                                    right: coverLeft,
-                                    top:
-                                        coverTop +
-                                        actualCoverSize +
-                                        _portraitInfoGap,
-                                    child: _PlayerSongInfo(
-                                      padded: false,
-                                      showInlineLyric: Platform.isAndroid,
-                                      showActions: false,
+                                    Positioned(
+                                      left: coverLeft,
+                                      right: coverLeft,
+                                      top:
+                                          coverTop +
+                                          actualCoverSize +
+                                          _portraitInfoGap,
+                                      child: _PlayerSongInfo(
+                                        padded: false,
+                                        showInlineLyric: Platform.isAndroid,
+                                        showActions: false,
+                                      ),
                                     ),
-                                  ),
-                                  Positioned(
-                                    left: PlayerProgressBar.horizontalPadding,
-                                    right: PlayerProgressBar.horizontalPadding,
-                                    bottom: 0,
-                                    child: const _PlayerActions(),
-                                  ),
+                                    Positioned(
+                                      left: PlayerProgressBar.horizontalPadding,
+                                      right:
+                                          PlayerProgressBar.horizontalPadding,
+                                      bottom: 0,
+                                      child: const _PlayerActions(),
+                                    ),
+                                  ],
                                 ],
-                              ],
+                              ),
                             );
                           },
                         ),
