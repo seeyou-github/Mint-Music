@@ -19,6 +19,9 @@ import '../../features/player/application/mini_player_visibility.dart';
 /// - 宽屏（>=760）额外在两端加「上一页 / 下一页」。
 /// - 整行横向铺满：第一个元素贴列表左边、最后一个贴右边，和上方的
 ///   歌单 / 歌曲列表左右边缘对齐，中间的空隙均分。
+///   但**可见页码不多（默认 6 页以内）时不铺满**：整组居中、间距固定，
+///   第一个 / 最后一个页码不再被拉到屏幕两端（2 页时分页条会被撑成一条
+///   横贯全屏的空白，看起来像坏了）。
 ///
 /// [docked] 为 true 时表示分页条**常驻在内容区底部**（不是列表项），
 /// 会给自身补一段下内边距避开 Android 的迷你播放器，避免被播放栏盖住。
@@ -69,6 +72,13 @@ class _PageBarState extends ConsumerState<PageBar> {
   static const double _buttonHeight = 36;
   static const double _buttonPadding = 6;
   static const double _elementGap = 2;
+
+  /// 可见页码不超过这么多时，分页条不再铺满整行，而是整组居中。
+  ///
+  /// 页码少（尤其是只有 2~6 页）时用 spaceBetween 会把首/尾两个页码顶到
+  /// 屏幕两边，中间空出一大片，看着像「1 ……… 2」。超过这个数量后按钮本身
+  /// 已经占满宽度，铺满才能和上面的歌单 / 歌曲列表左右对齐。
+  static const int compactMaxPages = 6;
 
   /// 宽屏的「上一页 / 下一页」估算宽度、与页码区的间距。
   static const double _stepButtonWidth = 78;
@@ -235,13 +245,19 @@ class _PageBarState extends ConsumerState<PageBar> {
               ],
             ];
 
-            // 铺满整行、间距均分：第一个页码贴左边、「第 N 页」下拉贴右边，
-            // 左右边缘和上方的歌单 / 歌曲列表对齐（以前整组居中，比列表窄一截，
-            // 看起来像浮在中间）。
+            // 页码很少时不铺满整行：整组居中、间距固定，首/尾页码不再被拉到
+            // 屏幕两边（铺满时 2 个页码会分居左右两端）。宽屏带「上一页 /
+            // 下一页」的布局保持铺满，那两个按钮本来就要和列表边缘对齐。
+            final compact = !wide && pages.length <= compactMaxPages;
+            final compactGap =
+                compact && children.length > 1
+                ? (children.length - 1) * AppSpacing.sm
+                : 0.0;
             final contentWidth =
                 _pagesWidth(context, pages) +
                 (showDropdown ? AppSpacing.xs + _dropdownWidth(context) : 0) +
-                (wide ? (_stepButtonWidth + _stepGap) * 2 : 0);
+                (wide ? (_stepButtonWidth + _stepGap) * 2 : 0) +
+                compactGap;
             // 极端窄屏（超大字号 / 极小屏）放不下时退化成可横滚，避免溢出条纹。
             if (contentWidth > constraints.maxWidth) {
               return SingleChildScrollView(
@@ -249,6 +265,16 @@ class _PageBarState extends ConsumerState<PageBar> {
                 child: Row(mainAxisSize: MainAxisSize.min, children: children),
               );
             }
+
+            if (compact) {
+              return Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                spacing: AppSpacing.sm,
+                children: children,
+              );
+            }
+            // 铺满整行、间距均分：第一个页码贴左边、「第 N 页」下拉贴右边，
+            // 左右边缘和上方的歌单 / 歌曲列表对齐。
             return Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: children,
