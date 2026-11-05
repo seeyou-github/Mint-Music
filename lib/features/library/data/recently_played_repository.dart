@@ -57,12 +57,21 @@ class RecentlyPlayedRepository {
 
   int get _pendingCount => _pendingSongs.length + _pendingPlaylists.length;
 
+  /// 最近播放的保留窗口（年）。超过这个时间没再听 / 没再打开就清掉，
+  /// 免得「最近播放」越攒越长、看着也不像「最近」。
+  static const int keepYears = 1;
+
+  /// 本次运行最近一次清理的日期（`yyyy-MM-dd`），一天最多清一次。
+  String? _prunedDay;
+
   // ---------------------------------------------------------------- 读取
 
   Future<List<RecentlyPlayedItem>> loadHistory() async {
     // 已经在内存里了就直接用：待写数据还没落盘时，数据库里是旧数据。
     final cached = _cache;
     if (cached != null) return cached;
+
+    await _pruneIfDue();
 
     final history = <RecentlyPlayedItem>[];
     try {
@@ -103,6 +112,8 @@ class RecentlyPlayedRepository {
     final cached = _playlistsCache;
     if (cached != null) return cached;
 
+    await _pruneIfDue();
+
     final playlists = <RecentlyPlayedPlaylist>[];
     try {
       final db = await AppDatabase.cacheDatabase();
@@ -125,6 +136,50 @@ class RecentlyPlayedRepository {
     }
     _playlistsCache = playlists;
     return playlists;
+  }
+
+  // ---------------------------------------------------------------- 清理
+
+  Future<void> _pruneIfDue() async {
+    final now = DateTime.now();
+    final today = '${now.year}-${now.month}-${now.day}';
+    if (_prunedDay == today) return;
+    _prunedDay = today;
+    await pruneOldEntries();
+  }
+
+  /// 清掉一年以上没再听过的歌、没再打开过的歌单（一天最多一次）。
+  ///
+  /// 「最近播放」只保留近一年：既控制表的大小，也免得列表里全是去年的歌。
+  /// 这里只删临时库里的浏览记录，听歌统计 / 排行在重要库、不受影响。
+  Future<void> pruneOldEntries({DateTime? now}) async {
+    final current = now ?? DateTime.now();
+    final cutoff = DateTime(
+      current.year - keepYears,
+      current.month,
+      current.day,
+    ).millisecondsSinceEpoch;
+    try {
+      final db = await AppDatabase.cacheDatabase();
+      final songs = await db.delete(
+        'recently_played',
+        where: 'played_at < ?',
+        whereArgs: [cutoff],
+      );
+      final playlists = await db.delete(
+        'recently_played_playlists',
+        where: 'opened_at < ?',
+        whereArgs: [cutoff],
+      );
+      if (songs > 0 || playlists > 0) {
+        debugPrint(
+          '[RecentlyPlayed] 已清理 $songs 条一年前的播放记录 / '
+          '$playlists 个一年前的歌单',
+        );
+      }
+    } catch (e) {
+      debugPrint('[RecentlyPlayed] 清理一年前的记录失败: $e');
+    }
   }
 
   /// 听歌统计（累计总时长 / 次数 / 听过的歌 / 按粒度聚合的柱状数据）。

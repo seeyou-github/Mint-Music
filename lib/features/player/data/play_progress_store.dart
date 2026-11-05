@@ -37,6 +37,13 @@ class PlayProgressStore {
   /// 旧临时库那张表的迁移标记（`db_migrated_play_progress`）。
   static const String _migrationModule = 'play_progress';
 
+  /// 进度保留窗口（年）。超过这个时间没再听过的歌，进度会被清掉；
+  /// **收藏过的歌（以及收藏歌单里的歌）永久保留**。
+  static const int keepYears = 1;
+
+  /// 本次运行最近一次清理的日期（`yyyy-MM-dd`），一天最多清一次。
+  String? _prunedDay;
+
   /// 迁移只执行一次，并发调用共用同一个 Future。
   Future<void>? _migration;
 
@@ -51,6 +58,7 @@ class PlayProgressStore {
   /// 读取全部已播放进度。
   Future<Map<String, PlayedProgress>> loadAll() async {
     await (_migration ??= _migrateLegacy());
+    await _pruneIfDue();
     final result = <String, PlayedProgress>{};
     try {
       final db = await AppDatabase.importantDatabase();
@@ -96,6 +104,47 @@ class PlayProgressStore {
     }
   }
 
+  // ---------------------------------------------------------------- 清理
+
+  Future<void> _pruneIfDue() async {
+    final now = DateTime.now();
+    final today = '${now.year}-${now.month}-${now.day}';
+    if (_prunedDay == today) return;
+    _prunedDay = today;
+    await pruneOldProgress();
+  }
+
+  /// 清掉一年以上没更新过的「已听进度」，但收藏过的歌永久保留。
+  ///
+  /// 「收藏过」= 在 `playlist_songs` 里出现（我的收藏是一个歌单，收藏的专辑 /
+  /// 作者也都是歌单，所以一条 `NOT IN (SELECT song_id FROM playlist_songs)`
+  /// 就能把它们全排除掉）。这两个表都在重要库，可以直接跨表删。
+  Future<int> pruneOldProgress({DateTime? now}) async {
+    try {
+      final db = await AppDatabase.importantDatabase();
+      final current = now ?? DateTime.now();
+      final cutoff = DateTime(
+        current.year - keepYears,
+        current.month,
+        current.day,
+      ).millisecondsSinceEpoch;
+      final removed = await db.delete(
+        'song_play_progress',
+        where:
+            'updated_at < ? AND song_id NOT IN '
+            '(SELECT song_id FROM playlist_songs)',
+        whereArgs: [cutoff],
+      );
+      if (removed > 0) {
+        debugPrint('[PlayProgress] 已清理 $removed 条一年前的已听进度');
+      }
+      return removed;
+    } catch (e) {
+      debugPrint('[PlayProgress] 清理旧进度失败: $e');
+      return 0;
+    }
+  }
+
   Future<void> _persist() async {
     if (_pending.isEmpty) return;
     final entries = Map<String, PlayedProgress>.of(_pending);
@@ -116,6 +165,8 @@ class PlayProgressStore {
         }
         await batch.commit(noResult: true);
       });
+      // 长时间不关应用时也要有机会清理（一天最多一次）。
+      await _pruneIfDue();
     } catch (e) {
       debugPrint('[PlayProgress] 写入已播放进度失败: $e');
       // 写失败就放回队列，下次再试（已存在的不覆盖更新的进度）。
