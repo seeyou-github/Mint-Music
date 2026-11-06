@@ -210,16 +210,20 @@ class DesktopLyricHandle extends StatelessWidget {
             size: 14,
             color: Colors.white.withValues(alpha: 0.7),
           ),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Text(
-              context.tr('桌面歌词'),
-              style: TextStyle(
-                fontSize: 10,
-                color: Colors.white.withValues(alpha: 0.55),
+          // Android 上不再显示「桌面歌词」文字，只留这条拖动把手。
+          // 其它平台维持原样（Windows 用的是独立窗口，不走这里）。
+          if (!Platform.isAndroid) ...[
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                context.tr('桌面歌词'),
+                style: TextStyle(
+                  fontSize: 10,
+                  color: Colors.white.withValues(alpha: 0.55),
+                ),
               ),
             ),
-          ),
+          ],
         ],
       ),
     );

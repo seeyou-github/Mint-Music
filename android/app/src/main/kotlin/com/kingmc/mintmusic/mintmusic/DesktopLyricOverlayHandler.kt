@@ -14,11 +14,9 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
-import android.text.Spannable
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.TextUtils
-import android.text.style.ForegroundColorSpan
 import android.text.style.RelativeSizeSpan
 import android.util.Log
 import android.util.TypedValue
@@ -73,13 +71,14 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
     /**
      * 一个固定槽位的两层文字：描边层在下、填充层在上。
      *
-     * 分开两层是为了不干扰填充层的 ForegroundColorSpan 逐字着色：span 会改写
-     * TextPaint 的颜色，若在同一个 TextView 里先画描边就会被染成歌词色。
+     * 分开两层是为了不干扰填充层的进度着色：填充层要把「已唱」部分按像素裁剪
+     * 重画成另一种颜色（会临时改写 TextPaint 的颜色），若在同一个 TextView 里
+     * 先画描边就会被染成歌词色。
      */
     private data class SlotRow(
         val frame: FrameLayout,
         val stroke: StrokeTextView,
-        val fill: TextView,
+        val fill: ProgressFillTextView,
     )
 
     private val appContext = context.applicationContext
@@ -95,11 +94,10 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
     private var appForeground = true
 
     // ---- 当前行的进度着色状态 ----
-    private var activeTextView: TextView? = null
-    private var activeSpannable: Spannable? = null
-    private var activeMainLength = 0
+    private var activeFillView: ProgressFillTextView? = null
     private var activeLine: LyricLineData? = null
-    private var lastHighlightChars = -1
+    /** 上一次画出的已唱比例，用来跳过没有变化的 tick。 */
+    private var lastFraction = -1f
 
     // ---- 配置 ----
     private var fontSizeSp = 18f
@@ -386,8 +384,8 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
             root.removeViewAt(0)
         }
 
+        // 顶部这条只作为拖动 / 长按的操作带，不再显示「桌面歌词」文字。
         val handle = TextView(appContext).apply {
-            text = "桌面歌词"
             textSize = 10f
             setTextColor(Color.argb(140, 255, 255, 255))
             gravity = Gravity.CENTER_VERTICAL or Gravity.START
@@ -593,10 +591,15 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
             stroke.strokeColor = strokeColor
             stroke.strokeWidthPx = currentStrokeWidthPx()
             stroke.setShadowLayer(0f, 0f, 0f, 0)
-            // 基色一律是「未播放」；当前行已唱过的部分由 ForegroundColorSpan
-            // 按进度单独涂成 playedColor，不再整行刷成已播放色。
+            // 基色一律是「未播放」；当前行已唱过的部分由填充层按已唱宽度
+            // 裁剪重画成 playedColor，不再整行刷成已播放色。
             tv.setTextColor(unplayColor)
-            tv.setShadowLayer(4f, 1f, 1f, shadowColor)
+            tv.setShadowLayer(SHADOW_RADIUS, SHADOW_DX, SHADOW_DY, shadowColor)
+            tv.playedColor = playedColor
+            tv.shadowRadiusPx = SHADOW_RADIUS
+            tv.shadowDx = SHADOW_DX
+            tv.shadowDy = SHADOW_DY
+            tv.shadowTint = shadowColor
 
             val hasSub = !slot.translation.isNullOrBlank() || !slot.roman.isNullOrBlank()
             if (slot.text.isBlank() && !hasSub) {
@@ -607,17 +610,13 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
             }
             row.frame.visibility = View.VISIBLE
 
-            // 两层各建一份文本：填充层之后会挂 ForegroundColorSpan，
-            // 共用同一个 Spannable 会把描边层也染成歌词色。
+            // 两层各建一份文本：填充层绘制时会临时改写 TextPaint 的颜色，
+            // 共用同一个 Spannable 容易把描边层也带上歌词色。
             stroke.setText(buildSlotText(slot), TextView.BufferType.SPANNABLE)
-            // SPANNABLE：TextView 会挂 ChangeWatcher，之后改 span 能自动重绘。
-            // 这里从 tv.text 取回实际对象（setText 可能复制一份）。
             tv.setText(buildSlotText(slot), TextView.BufferType.SPANNABLE)
 
             if (slot.active) {
-                activeTextView = tv
-                activeSpannable = tv.text as? Spannable
-                activeMainLength = slot.text.length
+                activeFillView = tv
                 activeLine = slot.line
                 applyProgressHighlight(force = true)
             }
@@ -669,8 +668,8 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
     private fun newStrokeTextView(): StrokeTextView =
         StrokeTextView(appContext).apply { applyCommonRowStyle(this) }
 
-    private fun newFillTextView(): TextView =
-        TextView(appContext).apply { applyCommonRowStyle(this) }
+    private fun newFillTextView(): ProgressFillTextView =
+        ProgressFillTextView(appContext).apply { applyCommonRowStyle(this) }
 
     private fun applyCommonRowStyle(tv: TextView) {
         tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSizeSp)
@@ -686,70 +685,66 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
     // ------------------------------------------------------------ 播放进度着色
 
     private fun clearHighlightState() {
-        activeTextView = null
-        activeSpannable = null
-        activeMainLength = 0
+        activeFillView?.clearProgress()
+        activeFillView = null
         activeLine = null
-        lastHighlightChars = -1
+        lastFraction = -1f
     }
 
     /**
-     * 当前行按播放进度分成「已唱 / 未唱」两段颜色。
+     * 把当前行的播放进度交给填充层，由它按「已唱宽度」做像素级裁剪。
      *
-     * 只改两个 ForegroundColorSpan，不重新 setText、不改窗口尺寸；字符数没变
-     * 时直接跳过，避免每次 tick 都 invalidate。
+     * 比例没变（小于千分之一）时直接跳过，避免每个 tick 都 invalidate。
      */
     private fun applyProgressHighlight(force: Boolean = false) {
-        val spannable = activeSpannable ?: return
+        val view = activeFillView ?: return
         val line = activeLine ?: return
-        val mainLen = activeMainLength
-        val chars = playedCharCount(line, currentMediaTimeMs()).coerceIn(0, mainLen)
-        if (!force && chars == lastHighlightChars) return
-        lastHighlightChars = chars
-        for (span in spannable.getSpans(0, mainLen, ForegroundColorSpan::class.java)) {
-            spannable.removeSpan(span)
-        }
-        if (chars > 0) {
-            spannable.setSpan(
-                ForegroundColorSpan(playedColor), 0, chars,
-                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
-            )
-        }
-        if (chars < mainLen) {
-            spannable.setSpan(
-                ForegroundColorSpan(unplayColor), chars, mainLen,
-                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
-            )
-        }
-        activeTextView?.invalidate()
+        val fraction = playedFraction(line, currentMediaTimeMs(), view.paint)
+        if (!force && abs(fraction - lastFraction) < 0.0015f) return
+        lastFraction = fraction
+        view.setProgress(fraction)
     }
 
-    /** 这一行已经唱过的字符数（逐字歌词按字时间轴，普通 LRC 按行时间线性插值）。 */
-    private fun playedCharCount(line: LyricLineData, nowMs: Long): Int {
-        val text = line.text
-        if (text.isEmpty()) return 0
+    /**
+     * 当前行已唱比例（0~1）。
+     *
+     * 逐字歌词按「每个字的起止时间 + 实测字宽」累计已唱宽度，再除以整行宽度；
+     * 这和 Windows 桌面歌词、播放详情页的逐字高亮是同一套算法。普通 LRC 没有
+     * 逐字时间轴，退回整行时间线性插值。
+     *
+     * 注意：分母必须是**整行**宽度。边量边累加、又在当前字处 break 的话，
+     * 分母只含已唱到当前字的宽度，比率会恒接近 1，表现为一句刚开始就填满。
+     */
+    private fun playedFraction(line: LyricLineData, nowMs: Long, paint: Paint): Float {
         val words = line.words
         if (words.size > 1 && words.any { it.endMs > it.startMs }) {
-            var chars = 0
-            for (word in words) {
-                val len = word.text.length
-                if (len == 0) continue
-                if (nowMs >= word.endMs) {
-                    chars += len
-                    continue
-                }
-                if (nowMs <= word.startMs) break
-                val duration = (word.endMs - word.startMs).coerceAtLeast(1L)
-                val ratio = ((nowMs - word.startMs).toFloat() / duration).coerceIn(0f, 1f)
-                chars += (len * ratio).roundToInt()
-                break
+            val widths = FloatArray(words.size)
+            var total = 0f
+            for (i in words.indices) {
+                widths[i] = paint.measureText(words[i].text).coerceAtLeast(1f)
+                total += widths[i]
             }
-            return chars.coerceIn(0, text.length)
+            if (total > 0f) {
+                var sung = 0f
+                for (i in words.indices) {
+                    val word = words[i]
+                    val start = word.startMs
+                    val end = if (word.endMs > start) word.endMs else start + 1
+                    if (nowMs <= start) break // 这个字还没唱到，后面的都没唱
+                    if (nowMs >= end) {
+                        sung += widths[i] // 整个字唱完
+                        continue
+                    }
+                    // 唱到这个字中间：按时间在字宽里线性推进，后面的都没唱。
+                    sung += widths[i] * (nowMs - start).toFloat() / (end - start)
+                    break
+                }
+                return (sung / total).coerceIn(0f, 1f)
+            }
         }
         val start = line.time
         val end = if (line.endTime > start) line.endTime else start + DEFAULT_LINE_MS
-        val ratio = ((nowMs - start).toFloat() / (end - start)).coerceIn(0f, 1f)
-        return (text.length * ratio).roundToInt()
+        return ((nowMs - start).toFloat() / (end - start)).coerceIn(0f, 1f)
     }
 
     /** 进度着色的轮询：只在播放中、窗口可见（应用在后台）时运行。 */
@@ -1053,7 +1048,16 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
         /// 窗口整体不透明；「背景完全透明」靠根 View 不设 background 实现。
         private const val WINDOW_OPACITY = 1.0f
         /// 当前行进度着色的刷新间隔（只在播放 + 窗口可见时运行）。
-        private const val PROGRESS_TICK_MS = 100L
+        ///
+        /// 已唱宽度是按像素裁剪的，刷新间隔直接决定填充的顺滑度：原来的 100ms
+        /// （10fps）下一个字只摊到一两帧，看起来仍是整字跳；这里按 30fps 刷新，
+        /// 填充前沿每帧只走几个像素，肉眼看是连续的，同时只有 60fps 一半的重绘
+        /// 开销。只在播放 + 应用在后台时运行，绘制范围也只限两行文字。
+        private const val PROGRESS_TICK_MS = 33L
+        /// 歌词阴影（与填充层 onDraw 里临时去掉阴影后恢复时用的参数保持一致）。
+        private const val SHADOW_RADIUS = 4f
+        private const val SHADOW_DX = 1f
+        private const val SHADOW_DY = 1f
         /// 普通 LRC 缺行结束时间时，按一行 4 秒估算进度。
         private const val DEFAULT_LINE_MS = 4000L
         /// 翻译 / 罗马音相对主歌词的字号比例。
@@ -1084,10 +1088,100 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
 }
 
 /**
+ * 填充层 TextView：进度按「像素裁剪」绘制，而不是按整字换色。
+ *
+ * 改动前当前行用 ForegroundColorSpan 一段一段改颜色，进度只能整字跳，看起来
+ * 就是「一个字一个字往前走」。这里沿用 Windows 桌面歌词的做法：先按未播放色
+ * 画整行，再按已播放色把「已唱宽度」以内的部分重画一遍，裁剪边界随播放时间
+ * 连续推进，单个字内部同样是线性的。
+ */
+private class ProgressFillTextView(context: Context) : TextView(context) {
+    /** 当前行的已播放色（由外层按设置同步）。 */
+    var playedColor: Int = Color.WHITE
+
+    // 阴影参数自己存一份：重画已播放部分时要临时去掉阴影，画完再按原参数恢复。
+    var shadowRadiusPx: Float = 0f
+    var shadowDx: Float = 0f
+    var shadowDy: Float = 0f
+    var shadowTint: Int = Color.TRANSPARENT
+
+    /** 是否为当前播放行：只有它需要分段着色。 */
+    private var shading = false
+
+    /** 已唱比例（0~1，按整行文字宽度）。 */
+    private var sungFraction = 0f
+
+    fun clearProgress() {
+        if (!shading && sungFraction == 0f) return
+        shading = false
+        sungFraction = 0f
+        invalidate()
+    }
+
+    fun setProgress(fraction: Float) {
+        val clamped = fraction.coerceIn(0f, 1f)
+        if (shading && abs(clamped - sungFraction) < 0.0008f) return
+        shading = true
+        sungFraction = clamped
+        invalidate()
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        val layout = layout
+        if (!shading || layout == null || layout.lineCount == 0) {
+            super.onDraw(canvas)
+            return
+        }
+        // 第一遍：整行按「未播放」色铺底（阴影、翻译 / 罗马音都在这一遍里）。
+        super.onDraw(canvas)
+        val fraction = sungFraction.coerceIn(0f, 1f)
+        if (fraction <= 0f) return
+
+        val textPaint = paint
+        val oldColor = textPaint.color
+        val contentWidth =
+            (width - compoundPaddingLeft - compoundPaddingRight).toFloat()
+        val lineWidth = layout.getLineWidth(0)
+        // 已唱宽度：普通行从文字实际起点（居中时由 Layout 给出偏移）算起；
+        // 超长行会被系统跑马灯横向滚动，文字起点一直在变、无法固定裁剪，
+        // 改成按可视宽度扫过，进度依旧是线性的，不会退回整字跳。
+        val clipRight = when {
+            // 整行唱完：直接铺满，避免最后一笔抗锯齿边缘残留未播放色。
+            fraction >= 1f -> width.toFloat()
+            lineWidth <= contentWidth + 0.5f ->
+                compoundPaddingLeft + layout.getLineLeft(0) + lineWidth * fraction
+            else -> width * fraction
+        }
+
+        // 只重画主歌词那一行：翻译 / 罗马音保持未播放色（与 Windows 一致）。
+        // 上下各多留 2px，避免行高边界把字形的顶部 / 底部切掉。
+        val innerHeight = height - compoundPaddingTop - compoundPaddingBottom
+        val voffset =
+            if (layout.height < innerHeight) (innerHeight - layout.height) / 2 else 0
+        val bandTop =
+            (compoundPaddingTop + voffset + layout.getLineTop(0) - 2).toFloat()
+        val bandBottom =
+            (compoundPaddingTop + voffset + layout.getLineBottom(0) + 2).toFloat()
+
+        canvas.save()
+        canvas.clipRect(0f, bandTop, clipRight, bandBottom)
+        textPaint.color = playedColor
+        // 已播放部分不再画阴影：和上面那一遍的阴影叠在一起会明显发黑。
+        textPaint.setShadowLayer(0f, 0f, 0f, 0)
+        super.onDraw(canvas)
+        if (shadowRadiusPx > 0f) {
+            textPaint.setShadowLayer(shadowRadiusPx, shadowDx, shadowDy, shadowTint)
+        }
+        textPaint.color = oldColor
+        canvas.restore()
+    }
+}
+
+/**
  * 只画字形轮廓的 TextView，与填充层叠在同一个 FrameLayout 里形成文字描边。
  *
- * 之所以单独一层：填充层当前行的逐字着色靠 ForegroundColorSpan 改写
- * TextPaint.color，若在同一层里先画描边就会被染成歌词色，描边颜色无法自定义。
+ * 之所以单独一层：填充层的进度着色会临时改写 TextPaint.color，若在同一层里
+ * 先画描边就会被染成歌词色，描边颜色无法自定义。
  * 这一层的文本不带任何颜色 span，onDraw 里临时切成 STROKE 即可。
  */
 private class StrokeTextView(context: Context) : TextView(context) {
