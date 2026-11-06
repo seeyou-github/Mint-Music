@@ -108,12 +108,27 @@ class _PlayQueueSheetContentState
   final ScrollController _listScrollController = ScrollController();
 
   @override
+  void initState() {
+    super.initState();
+    // 打开弹层就把当前播放歌曲滚进可视区。必须等首帧布局完成：列表要先有
+    // 视口，`maxScrollExtent`（以及 controller 的 clients）才是有效的。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _locateCurrentSong(animate: false);
+    });
+  }
+
+  @override
   void dispose() {
     _listScrollController.dispose();
     super.dispose();
   }
 
-  void _locateCurrentSong() {
+  /// 把当前播放歌曲滚进可视区。
+  ///
+  /// [animate] 为 false 时直接跳到位：打开弹层的瞬间列表就停在当前歌曲上，
+  /// 不会出现「弹层滑上来之后列表自己再滚一下」的观感。
+  void _locateCurrentSong({bool animate = true}) {
     final state = ref.read(playbackControllerProvider);
     final index = state.currentIndex;
     if (index < 0 || index >= state.queue.length) {
@@ -126,6 +141,7 @@ class _PlayQueueSheetContentState
         _listScrollController,
         index: index,
         itemExtent: _kQueueItemExtent,
+        duration: animate ? const Duration(milliseconds: 260) : Duration.zero,
       ),
     );
   }
@@ -135,6 +151,19 @@ class _PlayQueueSheetContentState
     // 队列是「活」的：直接 watch provider，删除某首后就地刷新列表，
     // 不需要关闭弹层再重新打开。
     final playbackState = ref.watch(playbackControllerProvider);
+
+    // 弹层开着的时候切歌（自动下一首 / 外部点播）：同样把新的当前歌曲滚进
+    // 可视区，否则看到的一直是打开弹层时那一首。
+    ref.listen<int>(
+      playbackControllerProvider.select((state) => state.currentIndex),
+      (previous, next) {
+        if (previous == next) return;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          _locateCurrentSong();
+        });
+      },
+    );
     final blacklist = ref.watch(blacklistProvider);
     final queue = playbackState.queue;
     final currentIndex = playbackState.currentIndex;
