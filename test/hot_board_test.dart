@@ -21,6 +21,20 @@ class _FakeStore implements HotBoardStore {
   }
 
   @override
+  List<HotBoard> loadSync() => boards;
+
+  @override
+  Set<String> loadSourceIdsSync() => {
+    for (final board in boards)
+      if (board.source.isNotEmpty) board.source,
+  };
+
+  @override
+  Future<void> importJson(String raw) async {
+    boards = HotBoardStore.decode(raw);
+  }
+
+  @override
   Future<void> clear() async {
     boards = const [];
   }
@@ -79,23 +93,35 @@ void main() {
       songs: songs,
     );
 
-    test('序列化往返保留榜单与歌曲', () {
-      final round = HotBoard.fromJson(board.toJson());
+    test('落盘只存配置：音源 / 名称 / 封面，不带歌曲', () {
+      final json = board.toConfigJson();
+      expect(json['id'], 'rank_1');
+      expect(json['name'], '飙升榜');
+      expect(json['source'], 'wy');
+      expect(json['coverUrl'], 'https://example.com/cover.jpg');
+      expect(json.containsKey('songs'), isFalse, reason: '歌曲每次进页面实时拉');
+
+      final round = HotBoard.fromConfigJson(json);
       expect(round.id, 'rank_1');
       expect(round.name, '飙升榜');
       expect(round.source, 'wy');
       expect(round.coverUrl, 'https://example.com/cover.jpg');
-      expect(round.songs.length, 2);
-      expect(round.songs.first.id, 's1');
-      expect(round.songs.first.title, '晴天');
-      expect(round.songs.first.coverUrl, 'https://example.com/1.jpg');
+      expect(round.songs, isEmpty);
     });
 
-    test('持久化时不带歌词与请求头', () {
-      final json = board.toJson();
-      final first = (json['songs'] as List).first as Map<String, dynamic>;
-      expect(first.containsKey('lrc'), isFalse);
-      expect(first.containsKey('sourceHeaders'), isFalse);
+    test('老数据里的歌曲不参与落盘', () {
+      // 老备份 / 老设置键里的榜单带 songs：解析出来只保留配置部分。
+      final legacy = HotBoard.fromJson({
+        'id': 'rank_9',
+        'name': '热歌榜',
+        'source': 'tx',
+        'coverUrl': 'https://example.com/9.jpg',
+        'songs': [
+          {'id': 's9', 'title': '稻香', 'artist': '周杰伦', 'album': '魔杰座'},
+        ],
+      });
+      expect(legacy.songs.length, 1);
+      expect(legacy.toConfigJson().containsKey('songs'), isFalse);
     });
 
     test('歌曲字段异常时跳过而不是整份失败', () {
@@ -113,21 +139,29 @@ void main() {
       expect(round.coverUrl, isNull);
     });
 
-    test('多榜单列表编解码往返，坏条目跳过', () {
-      final raw = HotBoardStore.encode([
+    test('多榜单配置编解码往返，坏条目跳过', () {
+      final raw = HotBoardStore.encodeConfigs([
         board,
         const HotBoard(id: 'rank_2', name: '新歌榜', source: 'tx'),
       ]);
-      final decoded = HotBoardStore.decode(raw);
+      final decoded = HotBoardStore.decodeConfigs(raw);
       expect(decoded.map((item) => item.id), ['rank_1', 'rank_2']);
-      expect(decoded.first.songs.length, 2);
+      expect(decoded.every((item) => item.songs.isEmpty), isTrue);
 
-      final damaged = HotBoardStore.decode(
+      final damaged = HotBoardStore.decodeConfigs(
         '[{"id":"rank_3","name":"热歌榜","source":"wy"}, "bad"]',
       );
       expect(damaged.single.id, 'rank_3');
-      expect(HotBoardStore.decode('not json'), isEmpty);
-      expect(HotBoardStore.decode('{"id":"x"}'), isEmpty);
+      expect(HotBoardStore.decodeConfigs('not json'), isEmpty);
+      expect(HotBoardStore.decodeConfigs('{"id":"x"}'), isEmpty);
+      expect(HotBoardStore.decodeConfigs(null), isEmpty);
+
+      // 老数据（带 songs）仍然能解析，且只取配置。
+      final legacy = HotBoardStore.decode(
+        '[{"id":"rank_4","name":"老榜","source":"wy","songs":[{"id":"s4","title":"t","artist":"a","album":"b"}]}]',
+      );
+      expect(legacy.single.id, 'rank_4');
+      expect(legacy.single.songs.length, 1);
     });
   });
 

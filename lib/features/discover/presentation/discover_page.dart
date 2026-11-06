@@ -361,6 +361,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
         _selectedLeaderboardGroup = null;
         WidgetsBinding.instance.addPostFrameCallback((_) {
           _applyLeaderboardDefault();
+          _refreshHotBoardsIfHot();
         });
       }
     });
@@ -372,6 +373,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
       if (tab == DiscoverTab.leaderboards) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           _applyLeaderboardDefault();
+          _refreshHotBoardsIfHot();
         });
       }
     }
@@ -400,6 +402,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
         _selectedLeaderboardGroup = null;
         WidgetsBinding.instance.addPostFrameCallback((_) {
           _applyLeaderboardDefault();
+          _refreshHotBoardsIfHot();
         });
         WidgetsBinding.instance.addPostFrameCallback((_) {
           unawaited(_reloadAfterSourceChange(next));
@@ -1846,9 +1849,8 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
   /// 按「当前音源有没有热榜」决定榜单分类：有选「热榜」，没有选「所有」。
   ///
   /// * 进入榜单页 / 切换音源后都会调用（切换音源时不记住上一次的选中的分类）；
-  /// * 判断只看 [hotBoardSourceIdsProvider] 标志位——它只存音源 id、可同步读，
-  ///   不用等当前音源的热榜数据（含所有歌曲）解析完，切音源时不会先误判成
-  ///   「所有」再等数据回来纠正；
+  /// * 判断只看 [hotBoardSourceIdsProvider]——它由热榜配置算出来（只有音源 /
+  ///   名称 / 封面，体积很小），切换音源时立刻就有结果，不用等榜单歌曲；
   /// * 用户在**当前音源**下手动点过分类（[_leaderboardCategoryPicked]）就不动，
   ///   这样在没有热榜时点「热榜」去新增数据不会被弹回「所有」。
   void _applyLeaderboardDefault() {
@@ -1865,8 +1867,23 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
 
   void _selectLeaderboardCategory(_LeaderboardCategory category) {
     _leaderboardCategoryPicked = true;
-    if (_leaderboardCategory == category) return;
-    setState(() => _leaderboardCategory = category);
+    final changed = _leaderboardCategory != category;
+    if (changed) setState(() => _leaderboardCategory = category);
+    // 点「热榜」就重新从插件取一遍歌曲（哪怕是再点一次当前分类）。
+    if (category == _LeaderboardCategory.hot) _refreshHotBoards();
+  }
+
+  /// 榜单歌曲只在内存里缓存，所以每次进入「热榜」都重新取一遍。
+  void _refreshHotBoards() {
+    final sourceId = ref.read(discoverSourceIdProvider);
+    unawaited(ref.read(hotBoardsProvider.notifier).refreshSongs(sourceId));
+  }
+
+  /// 当前停在「热榜」分类时才刷新（进榜单页 / 切音源时调用）。
+  void _refreshHotBoardsIfHot() {
+    if (!mounted) return;
+    if (_leaderboardCategory != _LeaderboardCategory.hot) return;
+    _refreshHotBoards();
   }
 
   Widget _buildAddHotBoardButton(ThemeColors colors) {
@@ -1926,14 +1943,10 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
             ),
           ),
           data: (boards) {
-            final visible = [
-              for (final board in boards)
-                if (board.songs.isNotEmpty) board,
-            ];
-            if (visible.isEmpty) {
-              return _buildHotBoardEmpty(colors);
-            }
-            return _buildHotBoardContent(colors, visible);
+            // 没有配置过榜单才算「空」；歌曲是实时的，可能还在取 / 取失败，
+            // 那种情况交给卡片自己显示加载中 / 重试，不能当成「没有热榜」。
+            if (boards.isEmpty) return _buildHotBoardEmpty(colors);
+            return _buildHotBoardContent(colors, boards);
           },
         );
   }
@@ -2100,8 +2113,11 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
               ],
             ),
           ),
-          for (var i = 0; i < board.songs.length && i < 10; i++)
-            _buildHotSongItem(colors, board, i),
+          if (board.songs.isEmpty)
+            _buildHotBoardSongsPlaceholder(colors, board)
+          else
+            for (var i = 0; i < board.songs.length; i++)
+              _buildHotSongItem(colors, board, i),
           _buildHotBoardFooter(colors, board),
         ],
       ),
@@ -2138,6 +2154,52 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
                   ),
                 )
               : Icon(icon, size: 20, color: color ?? colors.textPrimary),
+        ),
+      ),
+    );
+  }
+
+  /// 榜单歌曲还没到时的占位行：加载中转圈，失败 / 空给一个「点击重试」。
+  Widget _buildHotBoardSongsPlaceholder(ThemeColors colors, HotBoard board) {
+    final loading = board.songsLoading;
+    final failed = board.songsError != null;
+    final label = loading
+        ? context.tr('正在获取榜单歌曲…')
+        : failed
+        ? context.tr('榜单歌曲获取失败，点击重试')
+        : context.tr('暂无榜单歌曲，点击重试');
+    return InkWell(
+      onTap: loading
+          ? null
+          : () => unawaited(
+              ref.read(hotBoardsProvider.notifier).refreshBoard(board),
+            ),
+      child: SizedBox(
+        height: 64,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            if (loading)
+              SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: colors.primary,
+                ),
+              )
+            else
+              Icon(Icons.refresh, size: 16, color: colors.textHint),
+            const SizedBox(width: AppSpacing.sm),
+            Flexible(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 12, color: colors.textHint),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -2339,6 +2401,12 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
   }
 
   Future<void> _playHotSong(HotBoard board, int index) async {
+    if (board.songs.isEmpty) {
+      // 歌曲是实时拉的：还没到 / 取失败时先触发一次，别拿空队列去播。
+      unawaited(ref.read(hotBoardsProvider.notifier).refreshBoard(board));
+      _showMessage(context.tr('正在获取榜单歌曲，请稍候'));
+      return;
+    }
     PlaybackContext.instance.set(
       PlaybackSourceType.rank,
       id: board.id,
@@ -2413,37 +2481,24 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
     );
   }
 
-  /// 把选中的榜单前 10 首加入热榜；弹框保持打开，可以继续添加其它榜单。
+  /// 把选中的榜单加入热榜（只记配置；歌曲由 notifier 立刻取一次、只留内存）。
+  /// 弹框保持打开，可以继续添加其它榜单。
   Future<void> _addPickedHotBoard(Leaderboard selected) async {
     try {
-      final page = await ref
-          .read(discoverRepositoryProvider)
-          .getLeaderboardDetail(selected.id, sourceId: selected.source);
-      if (!mounted) return;
-      final songs = (page?.songs ?? const <Song>[])
-          .take(10)
-          .toList(growable: false);
-      if (songs.isEmpty) {
-        _showMessage(context.tr('没有获取到榜单歌曲'));
-        return;
-      }
-      await ref
-          .read(hotBoardsProvider.notifier)
-          .add(
-            HotBoard(
-              id: selected.id,
-              name: selected.name,
-              source: selected.source,
-              coverUrl: selected.coverUrl ?? page?.coverUrl,
-              songs: songs,
-            ),
-          );
+      final board = HotBoard(
+        id: selected.id,
+        name: selected.name,
+        source: selected.source,
+        coverUrl: selected.coverUrl,
+      );
+      final notifier = ref.read(hotBoardsProvider.notifier);
+      await notifier.add(board);
+      // 加完顺手取一次歌曲（只进内存）：不用等下次进「热榜」才看到内容。
+      unawaited(notifier.refreshBoard(board));
     } catch (e) {
       if (mounted) {
         _showMessage(
-          context.tr(
-            '获取榜单歌曲失败：${e.toString().replaceFirst('Exception: ', '')}',
-          ),
+          context.tr('添加榜单失败：${e.toString().replaceFirst('Exception: ', '')}'),
         );
       }
     }

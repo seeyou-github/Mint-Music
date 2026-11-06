@@ -20,7 +20,8 @@ import '../../features/library/data/playlist_store.dart';
 /// - `config/`：应用配置目录（`settings.json`、删除墓碑、导入的字体、
 ///   电台 / 自定义歌单封面等）
 /// - `plugin/`：插件脚本目录
-/// - `hotboards.json`：热榜（存在临时库 `hot_boards` 表里，不在 config 目录内）
+/// - `hotboards.json`：**只有还原老备份时才读**。热榜现在只是 settings.json
+///   里的一小段配置（哪个音源加了哪个榜单），已经随 `config/` 一起打包
 /// - `playlists.json`：收藏（我的收藏 + 歌单，存在重要库的两张表里）
 /// - `playstats.json`：每首歌的已听进度（同样在重要库里；听歌统计 / 排行
 ///   已移除，老备份里的对应字段还原时忽略）
@@ -32,8 +33,8 @@ import '../../features/library/data/playlist_store.dart';
 ///
 /// 还原时：
 /// - 用备份里的 `config` / `plugin` **覆盖**现有目录；
-/// - 有 `hotboards.json` / `playlists.json` / `playstats.json` 时把它们写回
-///   数据库；老备份的收藏还在 `config/playlists.json` 里，也照样能还原；
+/// - 有 `playlists.json` / `playstats.json` 时把它们写回数据库；老备份的收藏
+///   还在 `config/playlists.json` 里、热榜还在 `hotboards.json` 里，也照样能还原；
 /// - **清空 `temp` 目录**（里面的本地歌曲索引等会失效，下次进入「本地」分类
 ///   会按配置里的扫描目录重新扫描一次）。
 class BackupService {
@@ -43,10 +44,11 @@ class BackupService {
   static const String configDirEntry = 'config';
   static const String pluginDirEntry = 'plugin';
 
-  /// 压缩包内的热榜条目名。
+  /// 压缩包内的热榜条目名（**只用于读老备份**）。
   ///
-  /// 热榜放在临时库的 `hot_boards` 表里（不在 config 目录内），所以单独打一个
-  /// JSON 条目，否则换设备还原后用户挑的榜单会全部丢失。
+  /// 新版本的热榜只是 settings.json 里的一段配置，已经随 `config/` 一起打包，
+  /// 不再单独导出；这个常量只为还原「热榜还在临时库 / 老设置文件的年代」做的
+  /// 备份，读到就把配置写回设置（里面的歌曲会被忽略，进页面会重新拉）。
   static const String hotBoardsEntry = 'hotboards.json';
 
   /// 压缩包内的收藏快照条目名。
@@ -101,12 +103,6 @@ class BackupService {
       await AppPaths.pluginDirectory(),
       pluginDirEntry,
     );
-    // 热榜在临时库里，单独序列化成一条 JSON 带进包。
-    final hotBoards = await HotBoardStore().exportJson();
-    if (hotBoards.isNotEmpty && hotBoards != '[]') {
-      final bytes = utf8.encode(hotBoards);
-      archive.addFile(ArchiveFile(hotBoardsEntry, bytes.length, bytes));
-    }
     // 收藏也单独导出（在重要库里，不在 config 目录内）。
     final playlists = await PlaylistRepository().exportAll();
     if (playlists.isNotEmpty) {
@@ -193,8 +189,9 @@ class BackupService {
       debugPrint('[BackupService] 重载设置失败: $e');
     }
 
-    // 4) 热榜 / 收藏 / 听歌数据：都在数据库里，单独从条目还原（老备份的收藏
-    //    还在 `config/playlists.json`，见 [_restorePlaylists]）。
+    // 4) 收藏 / 已听进度在重要库里，单独从条目还原（老备份的收藏还在
+    //    `config/playlists.json`，见 [_restorePlaylists]）；热榜配置现在就在
+    //    刚还原的 settings.json 里，只有老备份的 `hotboards.json` 才需要这一步。
     await _restoreHotBoards(archive);
     await _restorePlaylists(archive);
     await _restorePlayStats(archive);
@@ -261,7 +258,10 @@ class BackupService {
     }
   }
 
-  /// 还原备份包里的热榜条目（没有就保持现有数据）。
+  /// 还原**老备份**里的热榜条目（新备份不再有这个条目）。
+  ///
+  /// 老包里的榜单带着歌曲，这里只把配置写进 settings.json，歌曲进页面再拉；
+  /// 没有这个条目就保持现有配置不动。
   static Future<void> _restoreHotBoards(Archive archive) async {
     ArchiveFile? entry;
     for (final file in archive.files) {
