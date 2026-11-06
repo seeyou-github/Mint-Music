@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/gestures.dart';
@@ -5,9 +6,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../core/constants/app_routes.dart';
 import '../core/l10n/app_locale.dart';
 import '../core/l10n/l10n.dart';
 import '../core/platform/window_chrome.dart';
+import '../core/services/player_notification.dart';
 import '../core/theme/app_theme.dart';
 import '../core/theme/app_typography.dart';
 import '../core/theme/theme_provider.dart';
@@ -16,6 +19,7 @@ import '../core/theme/system_bars.dart';
 import '../core/theme/system_brightness_sync.dart';
 import '../core/utils/responsive_layout.dart';
 import '../features/player/presentation/desktop_lyric_window.dart';
+import '../features/player/application/playback_controller.dart';
 import '../features/plugin/application/plugin_providers.dart';
 import '../features/settings/application/font_providers.dart';
 import '../features/settings/application/plugin_providers.dart';
@@ -55,6 +59,65 @@ class _AppState extends ConsumerState<App> {
     WidgetsBinding.instance.addPostFrameCallback(
       (_) => _syncPlaylistsOnStartup(),
     );
+    // Android 通知栏播放卡片上的「收藏 / 歌词」按钮。
+    _initNotificationActions();
+  }
+
+  /// 通知栏卡片的按钮回调（仅 Android，其余平台直接跳过）。
+  void _initNotificationActions() {
+    if (!PlayerNotification.supported) return;
+    PlayerNotification.attach(onAction: _handleNotificationAction);
+    // 从通知栏「词」冷启动时，动作先存在原生侧，等首帧后再取。
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final action = await PlayerNotification.consumeLaunchAction();
+      if (!mounted || action == null) return;
+      _handleNotificationAction(action);
+    });
+  }
+
+  void _handleNotificationAction(String action) {
+    switch (action) {
+      case PlayerNotification.actionFavorite:
+        unawaited(_toggleCurrentFavorite());
+      case PlayerNotification.actionLyric:
+        // 歌词页是独立路由，直接从通知进入即可。
+        appRouter.go(AppRoutes.lyric);
+    }
+  }
+
+  /// 收藏 / 取消收藏当前播放的歌曲（与播放页、歌词页的红心同一份数据）。
+  Future<void> _toggleCurrentFavorite() async {
+    final song = ref.read(playbackControllerProvider).currentSong;
+    if (song == null) return;
+    final playlists = ref.read(playlistsProvider).valueOrNull;
+    if (playlists == null) return;
+    final favorites = playlists
+        .where((p) => p.id == '__favorites__')
+        .firstOrNull;
+    final isFavorite = favorites?.songs.any((s) => s.id == song.id) ?? false;
+    final notifier = ref.read(playlistsProvider.notifier);
+    if (isFavorite) {
+      await notifier.removeSongFromPlaylist('__favorites__', song.id);
+    } else {
+      await notifier.addSongToPlaylist('__favorites__', song);
+    }
+    _syncNotificationFavorite();
+  }
+
+  /// 把当前歌曲的收藏状态同步给通知栏（红心实心 / 空心）。
+  void _syncNotificationFavorite() {
+    if (!PlayerNotification.supported) return;
+    final song = ref.read(playbackControllerProvider).currentSong;
+    final playlists = ref.read(playlistsProvider).valueOrNull;
+    final isFavorite =
+        song != null &&
+        (playlists
+                ?.where((p) => p.id == '__favorites__')
+                .firstOrNull
+                ?.songs
+                .any((s) => s.id == song.id) ??
+            false);
+    unawaited(PlayerNotification.setFavorite(isFavorite));
   }
 
   /// 启动时从 WebDAV 同步歌单；失败时弹框提示原因并提供「重新同步」。
@@ -140,6 +203,18 @@ class _AppState extends ConsumerState<App> {
       (previous, next) =>
           WindowChrome.setDarkFrame(next.background.computeLuminance() < 0.5),
     );
+
+    // 切歌 / 收藏变化时把红心状态同步给通知栏（仅 Android 有自定义通知卡片）。
+    if (PlayerNotification.supported) {
+      ref.listen(
+        currentSongIdentityProvider,
+        (previous, next) => _syncNotificationFavorite(),
+      );
+      ref.listen(
+        playlistsProvider,
+        (previous, next) => _syncNotificationFavorite(),
+      );
+    }
 
     // Listen for plugin initialization completion to trigger update check
     ref.listen(pluginInitializedProvider, (previous, next) {

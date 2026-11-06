@@ -71,7 +71,7 @@ subprojects {
 }
 
 // ---------------------------------------------------------------------------
-// audio_service：通知渠道配置不再写 shared_prefs
+// audio_service：通知渠道配置不再写 shared_prefs + 通知栏改成自定义卡片
 //
 // 插件每次 configure 都会把通知渠道配置写进
 // `shared_prefs/audio_service_preferences.xml`（AudioServiceConfig.save()）。本项目
@@ -82,7 +82,10 @@ subprojects {
 // 之后再把该模块的 Java 源码目录指过去：
 //   1) save() 直接 return，不再写任何文件；
 //   2) 构造函数读不到配置时，用本项目实际下发的通知配置兜底（取值见
-//      lib/core/services/audio_service_init.dart，两边要一起改）。
+//      lib/core/services/audio_service_init.dart，两边要一起改）；
+//   3) buildNotification() 改成先试自定义卡片（MintNotification，源码在
+//      `android/mintmusic-patch/`，只对 Android 生效），失败退回原 MediaStyle 通知；
+//      并额外暴露 refreshNotification()，供 Dart 侧改收藏状态后立即重绘。
 //
 // 只改 build 目录里的副本，pub 缓存中的插件源码保持原样；任何一步失败（插件升级
 // 后锚点对不上、目录不可写等）都只打印警告并保留原始源码，不会让构建失败。
@@ -133,6 +136,56 @@ subprojects {
             sourceDir.copyRecursively(patchedDir, overwrite = true)
             File(patchedDir, relativePath).writeText(text)
 
+            // --- AudioService：通知栏换成自定义卡片 ---
+            //
+            // 原方法改名为 buildNotificationMedia()（MediaStyle 那套逻辑原样保留），
+            // 新增的 buildNotification() 先问 MintNotification 要自定义通知，拿不到
+            // （资源缺失 / 布局异常）就退回原实现。
+            val servicePath = "com/ryanheise/audioservice/AudioService.java"
+            val serviceFile = File(sourceDir, servicePath)
+            require(serviceFile.isFile) { "找不到 $servicePath" }
+            var serviceText = serviceFile.readText()
+
+            val buildMarker = "    private Notification buildNotification() {"
+            require(serviceText.contains(buildMarker)) { "AudioService.buildNotification() 的结构变了" }
+            serviceText = serviceText.replace(
+                buildMarker,
+                """    private Notification buildNotification() {
+        // patched by MintMusic: 自定义通知卡片，失败时退回下面的 MediaStyle 通知
+        final Notification custom = MintNotification.build(
+                this,
+                getNotificationBuilder(),
+                mediaMetadata == null ? null : mediaMetadata.getDescription(),
+                artBitmap,
+                playing,
+                config.androidNotificationOngoing,
+                config.androidNotificationClickStartsActivity
+                        ? mediaSession.getController().getSessionActivity() : null,
+                config.androidNotificationOngoing
+                        ? buildMediaButtonPendingIntent(PlaybackStateCompat.ACTION_STOP) : null);
+        if (custom != null) return custom;
+        return buildNotificationMedia();
+    }
+
+    /** patched by MintMusic: 收藏等状态变化后立即重绘通知（不改播放状态）。 */
+    public static void refreshNotification() {
+        if (instance != null) instance.updateNotification();
+    }
+
+    private Notification buildNotificationMedia() {""",
+            )
+
+            File(patchedDir, servicePath).writeText(serviceText)
+
+            // 自定义通知的实现类：只需要 Java 代码，布局 / 图标都在 app 模块的 res 里。
+            // 源码放在 android/mintmusic-patch/，所以要从 rootProject 取（这里是子项目上下文）。
+            val extraSource =
+                rootProject.file("mintmusic-patch/com/ryanheise/audioservice/MintNotification.java")
+            require(extraSource.isFile) { "找不到 MintNotification.java" }
+            val extraTarget = File(patchedDir, "com/ryanheise/audioservice/MintNotification.java")
+            extraTarget.parentFile?.mkdirs()
+            extraTarget.writeText(extraSource.readText())
+
             val androidExtension = extensions.findByName("android")
                 ?: error("没有 android 扩展")
             val sourceSets = androidExtension.javaClass
@@ -148,7 +201,7 @@ subprojects {
                 .getMethod("setSrcDirs", Iterable::class.java)
                 .invoke(javaSourceDirs, listOf(patchedDir))
 
-            logger.lifecycle("[audio_service] 已应用「不写 shared_prefs」补丁")
+            logger.lifecycle("[audio_service] 已应用「不写 shared_prefs + 自定义通知栏」补丁")
         }.onFailure { error ->
             logger.warn("[audio_service] 未打补丁，继续使用原始源码：${error.message}")
         }

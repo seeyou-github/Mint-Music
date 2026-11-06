@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 通知卡片的深色圆角底：颜色与截图一致（#272727），不跟随应用主题，
+     否则浅色主题下通知栏会突然变成一块亮色卡片。 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#272727" />
+    <corners android:radius="16dp" />
+</shape>

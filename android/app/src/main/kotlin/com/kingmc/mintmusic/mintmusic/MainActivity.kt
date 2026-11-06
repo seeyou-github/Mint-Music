@@ -16,6 +16,7 @@ import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import com.ryanheise.audioservice.AudioServiceActivity
+import com.ryanheise.audioservice.MintNotification
 import java.io.File
 
 /**
@@ -77,6 +78,26 @@ class MainActivity : AudioServiceActivity() {
         val desktopLyricHandler = DesktopLyricOverlayHandler(this)
         desktopLyricHandler.attachChannel(desktopLyricChannel)
         desktopLyricChannel.setMethodCallHandler(desktopLyricHandler)
+
+        // 通知栏播放卡片上的自定义按钮（收藏 / 歌词）。
+        PlayerNotificationChannel.attach(flutterEngine)
+        // 从通知栏「词」按钮拉起应用：Dart 已经在跑就直接转过去，
+        // 还没起来（冷启动）时它会先存着，等 Dart 主动来取。
+        val launchIntent = intent
+        if (launchIntent != null && launchIntent.action == MintNotification.ACTION_LYRIC) {
+            PlayerNotificationChannel.dispatch(PlayerNotificationChannel.ACTION_LYRIC)
+            // 清掉 action，避免 activity 因配置变化重建时又触发一次。
+            launchIntent.action = Intent.ACTION_MAIN
+        }
+    }
+
+    public override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        // 应用已在后台/前台时点通知栏「词」：activity 走 singleTop 复用，直接转给 Dart。
+        if (intent.action == MintNotification.ACTION_LYRIC) {
+            PlayerNotificationChannel.dispatch(PlayerNotificationChannel.ACTION_LYRIC)
+        }
     }
 
     private inner class AudioEffectsHandler : MethodChannel.MethodCallHandler,

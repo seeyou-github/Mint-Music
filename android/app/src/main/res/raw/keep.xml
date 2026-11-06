@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  release 构建开了 shrinkResources，而通知卡片用到的这几个资源是**用字符串
+  名字**（getIdentifier）取的，资源压缩器看不到引用，会把它们当垃圾删掉：
+    - layout/mintmusic_notification_player：`MintNotification` 按名字加载布局；
+    - drawable/mm_ic_notif_pause、mm_ic_notif_heart_on：只在运行中按状态替换，
+      布局里只写了默认的「播放」「空心」两张，压缩器会认为另外两张没人用。
+  其它图标 / 底色都在布局里静态引用过，不需要在这里重复声明。
+-->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@layout/mintmusic_notification_player,@drawable/mm_ic_notif_pause,@drawable/mm_ic_notif_heart_on" />
