@@ -9,6 +9,7 @@ import '../../../core/constants/app_routes.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
+import '../../../shared/pagination/grid_page_rows.dart';
 import '../../../shared/pagination/page_slicer.dart';
 import '../../../shared/widgets/cover_badge.dart';
 import '../../../shared/widgets/music_cover_image.dart';
@@ -43,8 +44,9 @@ class _RecentlyPlayedPageState extends ConsumerState<RecentlyPlayedPage> {
   /// 卡片底部内边距（封面下方的文字离卡片下沿的距离）。
   static const double _cardBottomPadding = 6;
 
-  /// 歌曲 / 歌单卡片每页 30 行（每行多少列 × 30 就是每页条数）。
-  static const int _rowsPerPage = 30;
+  /// 歌曲 / 歌单卡片分页：每页多少行 × 每行多少列 就是每页条数。
+  /// 行数按平台取（Android 30 行、桌面 10 行，见 [gridPageRows]）。
+  static int get _rowsPerPage => gridPageRows;
   final PageSlicer _songsPager = PageSlicer(pageSize: _rowsPerPage);
   final PageSlicer _playlistsPager = PageSlicer(pageSize: _rowsPerPage);
   final ScrollController _songsScrollController = ScrollController();
@@ -186,7 +188,7 @@ class _RecentlyPlayedPageState extends ConsumerState<RecentlyPlayedPage> {
           );
         }
         final columns = _gridColumns(context);
-        // 每页 30 行：每行 columns 个，所以每页 30 × 列数 个。
+        // 每页 _rowsPerPage 行：每行 columns 个，所以每页 行数 × 列数 个。
         _songsPager.updatePageSize(_rowsPerPage * columns);
         _songsPager.clampTo(items.length, hasMore: false);
         final start = _songsPager.start;

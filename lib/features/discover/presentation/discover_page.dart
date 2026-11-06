@@ -12,6 +12,7 @@ import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../../../shared/widgets/cover_badge.dart';
 import '../../radio/presentation/radio_panel.dart';
+import '../../../shared/pagination/grid_page_rows.dart';
 import '../../../shared/pagination/page_slicer.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../../../shared/widgets/page_bar.dart';
@@ -100,8 +101,9 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
   static String _customCategoryTag(String categoryId) =>
       '$_customCategoryPrefix$categoryId';
 
-  /// 歌单 / 榜单列表分页：每页 30 行（每行多少列 × 30 就是每页条数）。
-  static const int _playlistPageRows = 30;
+  /// 歌单 / 榜单列表分页：每页多少行 × 每行多少列 就是每页条数。
+  /// 行数按平台取（Android 30 行、桌面 10 行，见 [gridPageRows]）。
+  static int get _playlistPageRows => gridPageRows;
   final PageSlicer _playlistPager = PageSlicer(pageSize: _playlistPageRows);
   final PageSlicer _leaderboardPager = PageSlicer(pageSize: _playlistPageRows);
   final ScrollController _leaderboardScrollController = ScrollController();
@@ -1426,7 +1428,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
     final crossAxisCount = ResponsiveLayout.gridCrossAxisCount(context);
     final isTablet = ResponsiveLayout.isTablet(context);
 
-    // 每页 30 行：每行 crossAxisCount 个，所以每页 30 × 列数 个。
+    // 每页 _playlistPageRows 行：每行 crossAxisCount 个，所以每页 行数 × 列数 个。
     _playlistPager.updatePageSize(_playlistPageRows * crossAxisCount);
     _playlistPager.clampTo(
       playlists.length,

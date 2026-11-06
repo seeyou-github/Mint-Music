@@ -11,6 +11,7 @@ import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../../../shared/widgets/cover_badge.dart';
+import '../../../shared/pagination/grid_page_rows.dart';
 import '../../../shared/pagination/page_slicer.dart';
 import '../../../shared/widgets/load_more_footer.dart';
 import '../../../shared/widgets/page_bar.dart';
@@ -58,8 +59,9 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   final PageSlicer _songPager = PageSlicer(pageSize: _songPageRows);
   int? _songPageSize;
 
-  /// 歌单 / 专辑 / 作者搜索结果每页 30 行（每行多少列 × 30 就是每页条数）。
-  static const int _resultPageRows = 30;
+  /// 歌单 / 专辑 / 作者搜索结果分页：每页多少行 × 每行多少列 就是每页条数。
+  /// 行数按平台取（Android 30 行、桌面 10 行，见 [gridPageRows]）。
+  static int get _resultPageRows => gridPageRows;
   final PageSlicer _playlistPager = PageSlicer(pageSize: _resultPageRows);
   final PageSlicer _albumPager = PageSlicer(pageSize: _resultPageRows);
   final PageSlicer _artistPager = PageSlicer(pageSize: _resultPageRows);
@@ -1631,7 +1633,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     final crossAxisCount = ResponsiveLayout.gridCrossAxisCount(context);
     final isTablet = ResponsiveLayout.isTablet(context);
     final pager = _collectionPager(type);
-    // 每页 30 行：每页条数 = 30 × 列数。
+    // 每页 _resultPageRows 行：每页条数 = 行数 × 列数。
     pager.updatePageSize(_resultPageRows * crossAxisCount);
     pager.clampTo(
       state.results.length,
@@ -1793,7 +1795,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     final crossAxisCount = ResponsiveLayout.gridCrossAxisCount(context);
     final isTablet = ResponsiveLayout.isTablet(context);
 
-    // 每页 30 行：每页条数 = 30 × 列数。
+    // 每页 _resultPageRows 行：每页条数 = 行数 × 列数。
     _playlistPager.updatePageSize(_resultPageRows * crossAxisCount);
     _playlistPager.clampTo(
       state.playlists.length,
