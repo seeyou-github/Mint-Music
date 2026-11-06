@@ -5,40 +5,54 @@ import 'package:path_provider/path_provider.dart';
 
 /// 应用自身的数据目录。
 ///
-/// **Windows**：全部落在 `薄荷音乐.exe` 所在目录的 `AppData` 下：
+/// **Windows**：`薄荷音乐.exe` 所在目录下的 `AppData`；
+/// **Android**：应用私有目录 `/data/data/<包名>/AppData`。两者结构一致：
 ///
 /// ```
-/// <exe 所在目录>\AppData\
-///   config\   配置文件（设置、字体、均衡器配置等）
-///   plugin\   插件文件
-///   music\    默认下载目录
-///   temp\     默认临时目录（默认缓存也放在这里）
+/// AppData\
+///   config\            配置（跟着「备份 / 还原」整体打包）
+///     setting\         设置（settings.json、字体、自定义封面等）
+///     db\              重要数据库（我的收藏、收藏歌单、已听进度）
+///     plugin\          插件文件
+///   download_music\    默认下载目录（仅 Windows）
+///   temp\              临时 / 缓存文件（含 temp\db 里的临时数据库）
 /// ```
 ///
-/// 除「设置 - 下载目录 / 缓存目录」用户自定义的路径外，应用在 Windows 上
-/// 生成的其它文件、文件夹都放在这些子目录里，方便整包搬运与清理。
+/// 除「设置 - 下载目录 / 缓存目录」用户自定义的路径外，应用生成的其它文件、
+/// 文件夹都放在这些子目录里，方便整包搬运与清理。
 ///
-/// **其它平台**：保持原有的系统目录（文档 / 缓存 / 临时目录等）不变。
+/// **其它平台**（iOS / macOS / Linux）：沿用系统目录不变。
 class AppPaths {
   const AppPaths._();
 
-  /// Windows 上数据根目录的名字。
+  /// 数据根目录的名字。
   static const String rootFolderName = 'AppData';
 
-  /// 配置文件目录名。
+  /// 配置根目录名（下面再分 setting / db / plugin）。
   static const String configFolderName = 'config';
 
-  /// 插件目录名。
+  /// 设置目录名（`config\setting`）。
+  static const String settingFolderName = 'setting';
+
+  /// 插件目录名（`config\plugin`）。
   static const String pluginFolderName = 'plugin';
 
-  /// 默认下载目录名。
-  static const String musicFolderName = 'music';
+  /// 默认下载目录名（`AppData\download_music`）。
+  static const String musicFolderName = 'download_music';
 
-  /// 默认临时目录名。
+  /// 旧版的默认下载目录名（`AppData\music`）：只用于识别与迁移。
+  static const String legacyMusicFolderName = 'music';
+
+  /// 默认临时目录名（`AppData\temp`）。
   static const String tempFolderName = 'temp';
 
-  /// 重要数据库目录名（我的收藏、收藏歌单）。
+  /// 数据库目录名（`config\db` 与 `temp\db`）。
   static const String databaseFolderName = 'db';
+
+  /// 是否使用「AppData + config/setting、config/db、config/plugin」这套结构。
+  ///
+  /// 只有 Windows 与 Android 使用；其它平台仍然放在系统目录里。
+  static bool get usesAppDataLayout => Platform.isWindows || Platform.isAndroid;
 
   /// `薄荷音乐.exe` 所在目录（仅 Windows 返回）。
   static String? get executableDirectory {
@@ -61,7 +75,11 @@ class AppPaths {
     return p.join(appData, 'com.kingmc.mintmusic', '薄荷音乐');
   }
 
-  /// 应用数据根目录（Windows 为 `<exe 目录>\AppData`）。
+  /// 应用数据根目录。
+  ///
+  /// - Windows：`<exe 目录>\AppData`
+  /// - Android：`/data/data/<包名>/AppData`（应用私有目录，系统支持目录的上一级）
+  /// - 其它平台：应用支持目录（保持原样）
   ///
   /// 单元测试用 [debugRootOverride] 把它指到临时目录，避免测试往
   /// Flutter SDK 目录（`flutter_tester.exe` 所在处）里写 `AppData`。
@@ -76,42 +94,54 @@ class AppPaths {
         return _ensureDirectory(Directory(p.join(base, rootFolderName)));
       }
     }
+    if (Platform.isAndroid) {
+      // getApplicationSupportDirectory() 是 `<私有目录>/files`，上一级就是
+      // `/data/data/<包名>`；`AppData` 直接建在这里（和 files / cache 同级）。
+      final support = await getApplicationSupportDirectory();
+      return _ensureDirectory(
+        Directory(p.join(p.dirname(support.path), rootFolderName)),
+      );
+    }
     return _ensureDirectory(await getApplicationSupportDirectory());
   }
 
   /// 仅测试使用：覆盖数据根目录。正式运行时始终为 null。
   static String? debugRootOverride;
 
-  /// 配置文件目录：设置、字体、均衡器配置等。
+  /// 设置目录：`settings.json`、字体、自定义封面等。
   ///
-  /// 设置文件 `settings.json` 在**所有平台**都放在这里（Android 上就是
-  /// `/data/data/<包名>/files/settings.json`），备份时打包这个目录即可，
-  /// 不需要再单独处理 `shared_prefs`。
-  static Future<Directory> configDirectory() async {
-    if (Platform.isWindows) {
-      return _subDirectory(configFolderName);
+  /// - Windows / Android：`AppData\config\setting`
+  /// - 其它平台：应用支持目录（保持原样）
+  static Future<Directory> settingsDirectory() async {
+    if (usesAppDataLayout) {
+      return _subDirectory(p.join(configFolderName, settingFolderName));
     }
     return _ensureDirectory(await getApplicationSupportDirectory());
   }
 
-  /// 导入的字体文件目录。
+  /// 导入的字体文件目录（`config\setting\fonts`）。
   static Future<Directory> fontDirectory() async {
-    final base = await configDirectory();
+    final base = await settingsDirectory();
     return _ensureDirectory(Directory(p.join(base.path, 'fonts')));
   }
 
   /// 插件文件目录。
+  ///
+  /// - Windows / Android：`AppData\config\plugin`
+  /// - 其它平台：文档目录下的 `plugin`
   static Future<Directory> pluginDirectory() async {
-    if (Platform.isWindows) {
-      return _subDirectory(pluginFolderName);
+    if (usesAppDataLayout) {
+      return _subDirectory(p.join(configFolderName, pluginFolderName));
     }
     final docs = await getApplicationDocumentsDirectory();
     return _ensureDirectory(Directory(p.join(docs.path, pluginFolderName)));
   }
 
-  /// 默认下载目录（Windows 为 `AppData\music`）。
+  /// 默认下载目录。
   ///
-  /// 用户在「设置 - 下载目录」里自定义之后，由设置值优先。
+  /// - Windows：`AppData\download_music`
+  /// - Android：公共音乐目录（见 `download_paths.dart`，这里只作兜底）
+  /// - 其它平台：文档目录下的 `MintMusic`
   static Future<Directory> musicDirectory() async {
     if (Platform.isWindows) {
       return _subDirectory(musicFolderName);
@@ -120,47 +150,242 @@ class AppPaths {
     return _ensureDirectory(Directory(p.join(docs.path, 'MintMusic')));
   }
 
-  /// 默认临时目录（Windows 为 `AppData\temp`）。
+  /// 默认临时目录。
+  ///
+  /// - Windows / Android：`AppData\temp`
+  /// - 其它平台：系统临时目录
   static Future<Directory> tempDirectory() async {
-    if (Platform.isWindows) {
-      return _subDirectory(tempFolderName);
-    }
+    if (usesAppDataLayout) return _subDirectory(tempFolderName);
     return _ensureDirectory(await getTemporaryDirectory());
   }
 
-  /// 默认缓存根目录（Windows 为 `AppData\temp`）。
+  /// 默认缓存根目录（Windows / Android 与临时目录同一个：`AppData\temp`）。
   ///
   /// 用户在「设置 - 缓存目录」里自定义之后，由设置值优先。
   static Future<Directory> cacheRootDirectory() async {
-    if (Platform.isWindows) {
-      return _subDirectory(tempFolderName);
-    }
+    if (usesAppDataLayout) return _subDirectory(tempFolderName);
     return _ensureDirectory(await getApplicationCacheDirectory());
   }
 
-  /// 重要数据库目录（Windows 为 `AppData\db`）。
+  /// 重要数据库目录（`AppData\config\db`）。
   ///
   /// 存放「不能丢」的数据：我的收藏、收藏歌单、每首歌的已听进度。
   /// 变更后立即落盘。
   static Future<Directory> databaseDirectory() async {
-    if (Platform.isWindows) {
-      return _subDirectory(databaseFolderName);
+    if (usesAppDataLayout) {
+      return _subDirectory(p.join(configFolderName, databaseFolderName));
     }
     final base = await getApplicationSupportDirectory();
     return _ensureDirectory(Directory(p.join(base.path, databaseFolderName)));
   }
 
-  /// 临时数据库目录（Windows 为 `AppData\temp\db`）。
+  /// 临时数据库目录（`AppData\temp\db`）。
   ///
   /// 存放「丢了可以重新生成」的高频数据：本地歌曲列表、最近播放、缓存索引。
   /// 写入会合并延迟落盘，减少 SSD 写入次数。
   static Future<Directory> cacheDatabaseDirectory() async {
-    if (Platform.isWindows) {
-      final base = await _subDirectory(tempFolderName);
-      return _ensureDirectory(Directory(p.join(base.path, databaseFolderName)));
+    if (usesAppDataLayout) {
+      return _subDirectory(p.join(tempFolderName, databaseFolderName));
     }
     final base = await getApplicationCacheDirectory();
     return _ensureDirectory(Directory(p.join(base.path, databaseFolderName)));
+  }
+
+  // ---------------------------------------------------------------- 旧结构迁移
+
+  /// 把旧版的目录结构搬到 [结构](#AppPaths) 说明的新结构里。
+  ///
+  /// 迁移映射（一次性、幂等，目标已存在时**不覆盖**）：
+  ///
+  /// | 旧位置 | 新位置 |
+  /// |---|---|
+  /// | Windows `AppData\config\*`（settings.json / 字体 / 封面等） | `AppData\config\setting\*` |
+  /// | Windows `AppData\db` | `AppData\config\db` |
+  /// | Windows `AppData\plugin` | `AppData\config\plugin` |
+  /// | Windows `AppData\music` | `AppData\download_music` |
+  /// | Android `files\*` | `AppData\config\setting\*` |
+  /// | Android `files\db` | `AppData\config\db` |
+  /// | Android `<文档>\plugin` | `AppData\config\plugin` |
+  /// | Android `<缓存>\db` | `AppData\temp\db` |
+  ///
+  /// 任何一步失败都只打日志、不影响启动（下次启动会再试）。缓存目录里的图片
+  /// 等可再生数据不搬（系统会自己回收旧缓存目录）。
+  static Future<void> migrateLegacyLayout() async {
+    if (!usesAppDataLayout) return;
+    try {
+      if (Platform.isWindows) {
+        await _migrateWindowsLayout();
+      } else {
+        await _migrateAndroidLayout();
+      }
+    } catch (e) {
+      print('[AppPaths] 迁移旧目录结构失败: $e');
+    }
+  }
+
+  static Future<void> _migrateWindowsLayout() async {
+    final root = await rootDirectory();
+    // AppData\config 下除 setting / db / plugin 之外的条目，都是旧版直接放在
+    // config 里的配置（settings.json、字体、封面缓存、删除墓碑……）。
+    final setting = await settingsDirectory();
+    await _moveStrayEntries(
+      Directory(p.join(root.path, configFolderName)),
+      setting,
+      keepNames: const {
+        settingFolderName,
+        databaseFolderName,
+        pluginFolderName,
+      },
+    );
+
+    // 旧版：db / plugin / music 都在 AppData 根下。
+    await _mergeDirectory(
+      Directory(p.join(root.path, databaseFolderName)),
+      await databaseDirectory(),
+    );
+    await _mergeDirectory(
+      Directory(p.join(root.path, pluginFolderName)),
+      await pluginDirectory(),
+    );
+    await _mergeDirectory(
+      Directory(p.join(root.path, legacyMusicFolderName)),
+      await musicDirectory(),
+    );
+  }
+
+  static Future<void> _migrateAndroidLayout() async {
+    // 旧版：配置目录就是应用支持目录（/data/data/<包名>/files），
+    // 里面还嵌着重要库所在的 db 子目录。
+    final support = await getApplicationSupportDirectory();
+    final setting = await settingsDirectory();
+    final database = await databaseDirectory();
+    if (await support.exists()) {
+      await for (final entity in support.list(followLinks: false)) {
+        final name = p.basename(entity.path);
+        if (name == databaseFolderName) {
+          await _mergeDirectory(Directory(entity.path), database);
+        } else {
+          await _moveEntity(entity, setting);
+        }
+      }
+    }
+
+    final docs = await getApplicationDocumentsDirectory();
+    await _mergeDirectory(
+      Directory(p.join(docs.path, pluginFolderName)),
+      await pluginDirectory(),
+    );
+
+    // 旧版的临时库在 `<缓存目录>/db`。
+    final cache = await getApplicationCacheDirectory();
+    await _mergeDirectory(
+      Directory(p.join(cache.path, databaseFolderName)),
+      await cacheDatabaseDirectory(),
+    );
+
+    // 封面 / 音频缓存在旧缓存目录的根下：一起搬进 `AppData\temp`，否则这批
+    // 文件会变成没人统计、没人清理的垃圾（缓存索引里存的是相对路径，整棵
+    // 目录搬过去索引依然对得上）。
+    final temp = await tempDirectory();
+    for (final name in const [
+      'artwork_cache',
+      'covers',
+      'image_cache',
+      'image_discovery_cache',
+      'audio_cache',
+    ]) {
+      await _mergeDirectory(
+        Directory(p.join(cache.path, name)),
+        Directory(p.join(temp.path, name)),
+      );
+    }
+  }
+
+  /// 把 [source] 里除 [keepNames] 之外的条目移进 [target]。
+  static Future<void> _moveStrayEntries(
+    Directory source,
+    Directory target, {
+    Set<String> keepNames = const {},
+  }) async {
+    if (!await source.exists()) return;
+    await for (final entity in source.list(followLinks: false)) {
+      if (keepNames.contains(p.basename(entity.path))) continue;
+      await _moveEntity(entity, target);
+    }
+  }
+
+  /// 把 [source] 目录里的内容并进 [target]（目标已有同名条目时跳过）。
+  ///
+  /// 搬空之后删掉 [source] 空目录，避免留下 `AppData\db` 这种空壳。
+  static Future<void> _mergeDirectory(
+    Directory source,
+    Directory target,
+  ) async {
+    if (!await source.exists()) return;
+    await _moveStrayEntries(source, target);
+    try {
+      if (await source.exists() && await source.list().isEmpty) {
+        await source.delete(recursive: false);
+      }
+    } catch (_) {
+      // 删不掉（被占用）就留着，不影响使用。
+    }
+  }
+
+  /// 把单个文件 / 目录移到 [target] 下；目标已有同名条目时保持原样。
+  static Future<void> _moveEntity(
+    FileSystemEntity entity,
+    Directory target,
+  ) async {
+    final name = p.basename(entity.path);
+    final dest = p.join(target.path, name);
+    try {
+      // 目标已有同名条目：不动它（绝不覆盖用户数据）。
+      if (FileSystemEntity.typeSync(dest) != FileSystemEntityType.notFound) {
+        return;
+      }
+      await _ensureDirectory(target);
+      // 同一个应用目录内，rename 等于改目录项，几乎不耗时也不会丢数据。
+      await entity.rename(dest);
+    } catch (e) {
+      // 跨设备 / 被占用：退化成复制 + 删除。
+      try {
+        if (entity is Directory) {
+          await for (final child in entity.list(
+            recursive: true,
+            followLinks: false,
+          )) {
+            if (child is! File) continue;
+            final relative = p.relative(child.path, from: entity.path);
+            final copy = File(p.join(dest, relative));
+            await copy.parent.create(recursive: true);
+            await child.copy(copy.path);
+          }
+          await entity.delete(recursive: true);
+        } else if (entity is File) {
+          await entity.copy(dest);
+          await entity.delete();
+        }
+      } catch (error) {
+        print('[AppPaths] 迁移 $name 失败: $error');
+      }
+    }
+  }
+
+  /// 把「旧版默认目录」的存量设置值改成新路径（用户自己挑的路径不动）。
+  ///
+  /// 典型场景：`download_dir` 里存着旧默认的 `AppData\music`，目录结构改成
+  /// `download_music` 后，不改的话下载会继续往旧目录（已被搬空）里写。
+  static String normalizeLegacyPath(String path) {
+    if (path.isEmpty) return path;
+    final base = executableDirectory;
+    if (base != null && base.isNotEmpty) {
+      final oldMusic = p.join(base, rootFolderName, legacyMusicFolderName);
+      if (p.equals(path, oldMusic)) {
+        return p.join(base, rootFolderName, musicFolderName);
+      }
+    }
+    return path;
   }
 
   /// 数据根目录下的子目录（自动创建）。

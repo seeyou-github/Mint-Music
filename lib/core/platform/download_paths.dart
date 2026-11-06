@@ -24,7 +24,7 @@ String defaultDownloadDirSync() {
     return p.posix.join(_androidMusicDir, AppConstants.downloadDirName);
   }
   if (Platform.isWindows) {
-    // Windows：默认下载目录放在应用自己的 AppData\music 下。
+    // Windows：默认下载目录放在应用自己的 AppData\download_music 下。
     final base = AppPaths.executableDirectory;
     if (base != null && base.isNotEmpty) {
       return p.join(base, AppPaths.rootFolderName, AppPaths.musicFolderName);
@@ -42,7 +42,7 @@ String defaultDownloadDirSync() {
 ///
 /// - Android：`/storage/emulated/0/Music/MintMusic`
 /// - iOS：应用 Documents 下的 `MintMusic`
-/// - Windows：`<exe 所在目录>\AppData\music`
+/// - Windows：`<exe 所在目录>\AppData\download_music`
 /// - macOS/Linux：系统「下载」目录下的 `MintMusic`
 Future<String> defaultDownloadDir() async {
   if (Platform.isAndroid) return defaultDownloadDirSync();

@@ -14,12 +14,12 @@ import 'app_preferences.dart';
 ///
 /// 应用的数据按「重要程度」分成两个库：
 ///
-/// * **重要库**（Windows：`AppData\db\mintmusic.db`）
+/// * **重要库**（Windows：`AppData\config\db\mintmusic.db`）
 ///   存放 *不能丢* 的数据：我的收藏、收藏歌单、每首歌的「已听 N%」进度。
 ///   变更后立即落盘（SQLite 事务 + WAL + `synchronous=FULL`），
 ///   宁可多写几次也不能丢。
 ///
-/// * **临时库**（Windows：`AppData\temp\db\mintmusic_cache.db`）
+/// * **临时库**（Windows / Android：`AppData\temp\db\mintmusic_cache.db`）
 ///   存放 *丢了可以重新生成* 的高频数据：本地歌曲列表、最近播放列表、
 ///   缓存索引。这些数据变动频繁，统一走「合并延迟写」
 ///   （见 [DeferredWriter]），尽量减少 SSD 写入次数。

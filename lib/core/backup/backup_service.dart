@@ -26,7 +26,7 @@ import '../../features/library/data/playlist_store.dart';
 /// - `playstats.json`：每首歌的已听进度（同样在重要库里；听歌统计 / 排行
 ///   已移除，老备份里的对应字段还原时忽略）
 ///
-/// 重要库（`AppData/db/mintmusic.db`）里的数据全部以 JSON 快照的形式单独
+/// 重要库（Windows：`AppData/config/db/mintmusic.db`）里的数据全部以 JSON 快照的形式单独
 /// 打包，而不是直接拷数据库文件：正在使用的 SQLite 文件还有没合并的 WAL，
 /// 直接拷会丢刚写的事务；而且换设备 / 换版本时 schema 可能不同，拷文件很
 /// 容易把库读坏。
@@ -87,14 +87,15 @@ class BackupService {
     await AppDatabase.checkpointAll();
 
     final archive = Archive();
-    // Android 上 config 目录（`/data/data/<包名>/files`）里嵌着重要库的
-    // `db/mintmusic.db`。数据库文件不能直接拷（有未合并的 WAL，并且还原时
-    // 覆盖一个正在打开的库会读坏），它的内容已经在 playlists.json /
-    // playstats.json 里按逻辑数据导出了，所以这里跳过整个 db 目录。
+    // 设置目录（`AppData\config\setting`）整体打成包里的 `config` 条目，
+    // 结构跟老版本一样（`config/settings.json`、`config/fonts/...`），老备份
+    // 也能照样还原。重要库（`AppData\config\db`）不能直接拷：有未合并的
+    // WAL，覆盖一个正在打开的库还会读坏，它的内容已经在 playlists.json /
+    // playstats.json 里按逻辑数据导出了，所以这里跳过 db。
     final databaseDir = await AppPaths.databaseDirectory();
     await _addDirectory(
       archive,
-      await AppPaths.configDirectory(),
+      await AppPaths.settingsDirectory(),
       configDirEntry,
       skipDirectory: databaseDir,
     );
@@ -153,16 +154,18 @@ class BackupService {
 
     final archive = ZipDecoder().decodeBytes(bytes);
 
-    // 1) config / plugin 目录：覆盖还原
+    // 1) 设置 / 插件目录：覆盖还原
     //
-    // Android 上配置目录里嵌着重要库所在的 `db` 目录，**不能**把备份里的
-    // 数据库文件盖到正在使用的库上（SQLite 会直接读坏）。新备份已经不打包
-    // 它了，这里再挡一次老备份包（老版本会把 `files/db` 一起打进去）。
-    final configDir = await AppPaths.configDirectory();
+    // 老备份的 `config/` 里可能带着重要库的 `db` 目录，**不能**把这些数据库
+    // 文件盖到正在用的库上（SQLite 会直接读坏）；新备份已经不打包它了，
+    // 这里再挡一次老备份包。
+    final configDir = await AppPaths.settingsDirectory();
     final dbDir = await AppPaths.databaseDirectory();
+    // 老备份（尤其 Android）把重要库的 `db/` 一起打进了 `config/`：还原时
+    // 一律跳过这个前缀，库内容由 playlists.json / playstats.json 还原。
     final dbRelative = p.relative(dbDir.path, from: configDir.path);
     final skipDbPrefix = dbRelative.startsWith('..') || p.isAbsolute(dbRelative)
-        ? null
+        ? 'db'
         : dbRelative.replaceAll('\\', '/');
     await _restoreDirectory(
       archive,

@@ -10,9 +10,9 @@ import '../platform/app_paths.dart';
 ///
 /// **所有平台**都写在应用自己的「配置目录」下的 `settings.json`：
 ///
-/// * Windows：`AppData\config\settings.json`；
+/// * Windows：`AppData\config\setting\settings.json`；
 /// * Android / iOS：`<应用数据目录>/settings.json`（Android 即
-///   `/data/data/<包名>/files/settings.json`）。
+///   `/data/data/<包名>/AppData/config/setting/settings.json`）。
 ///
 /// 以前 Android 走 shared_preferences（`/data/data/<包名>/shared_prefs/
 /// FlutterSharedPreferences.xml`），问题有两个：
@@ -72,7 +72,7 @@ class AppPreferences {
   final File? _file;
 
   static Future<AppPreferences> _load() async {
-    final dir = await AppPaths.configDirectory();
+    final dir = await AppPaths.settingsDirectory();
     final file = File(p.join(dir.path, _fileName));
     final values = await _readFileValues(file);
 

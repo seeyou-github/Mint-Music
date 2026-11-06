@@ -19,7 +19,7 @@ class ConfigImageStore {
   final String folder;
 
   Future<Directory> _directory() async {
-    final config = await AppPaths.configDirectory();
+    final config = await AppPaths.settingsDirectory();
     final dir = Directory(p.join(config.path, folder));
     if (!await dir.exists()) {
       await dir.create(recursive: true);

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import '../../../core/platform/app_paths.dart';
@@ -225,7 +226,15 @@ class SettingsService {
   // -- download dir --
   Future<String> getDownloadDir() async {
     final persisted = _prefs.getString('download_dir');
-    if (persisted != null && persisted.isNotEmpty) return persisted;
+    if (persisted != null && persisted.isNotEmpty) {
+      // 老版本的默认下载目录是 `AppData\music`，现在是 `AppData\download_music`：
+      // 存着旧默认值时顺手改成新路径（用户自己挑的目录不受影响）。
+      final normalized = AppPaths.normalizeLegacyPath(persisted);
+      if (normalized != persisted) {
+        unawaited(setDownloadDir(normalized));
+      }
+      return normalized;
+    }
     // 默认目录必须按平台区分：桌面端不能使用 Android 的公共音乐目录，
     // 否则在 Windows 上会被解析成 `<当前盘符>:\storage\emulated\...`。
     return defaultDownloadDir();

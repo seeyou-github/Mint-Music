@@ -2641,7 +2641,7 @@ class _PlaybackContent extends ConsumerWidget {
         // 均衡器 + 高级音效的全部键，值就是 settings.json 里的原始形态。
         'settings': svc.exportAudioEffectConfig(),
       });
-      final dir = await AppPaths.configDirectory();
+      final dir = await AppPaths.settingsDirectory();
       await File('${dir.path}/mintmusic_eq_config.json').writeAsString(data);
       if (context.mounted)
         ScaffoldMessenger.of(context).showSnackBar(

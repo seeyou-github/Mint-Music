@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:just_audio_media_kit/just_audio_media_kit.dart';
 import 'app/app.dart';
+import 'core/platform/app_paths.dart';
 import 'core/platform/taskbar_thumbnail_service.dart';
 import 'core/services/audio_service_init.dart';
 import 'core/storage/app_database.dart';
@@ -28,6 +29,11 @@ void main() async {
   PaintingBinding.instance.imageCache.maximumSizeBytes = 48 << 20;
 
   HttpOverrides.global = _NeteaseImageHttpOverrides();
+
+  // 目录结构（`AppData\config\setting`、`config\db`、`config\plugin`、
+  // `download_music`、`temp`）是后改的：先把旧结构里的数据搬过来，再往下走，
+  // 否则设置 / 收藏 / 插件都会「凭空消失」。幂等，失败只打日志。
+  await AppPaths.migrateLegacyLayout();
 
   // Windows 上 just_audio 没有原生实现（需要额外后端），否则所有 AudioPlayer
   // 调用（包括插件测试的试听校验与正常播放）都会抛 MissingPluginException。

@@ -41,10 +41,12 @@ class LegacySharedPrefs {
   static Future<void> cleanup() async {
     if (!Platform.isAndroid) return;
     try {
-      final configDir = await AppPaths.configDirectory();
-      // Android 的配置目录是 `<应用数据>/files`，shared_prefs 与它同级。
+      final configDir = await AppPaths.settingsDirectory();
+      // `shared_prefs` 在应用私有目录下，与 `AppData` 同级
+      // （`/data/data/<包名>/shared_prefs`）。
+      final appDataDir = await AppPaths.rootDirectory();
       final prefsDir = Directory(
-        p.join(p.dirname(configDir.path), 'shared_prefs'),
+        p.join(p.dirname(appDataDir.path), 'shared_prefs'),
       );
       if (!await prefsDir.exists()) return;
 

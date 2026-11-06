@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
 import '../../../core/storage/app_preferences.dart';
+import '../../../core/platform/app_paths.dart';
 import '../../../core/platform/download_paths.dart';
 import '../../../core/platform/media_scanner.dart';
 import '../../../core/platform/permission_helper.dart';
@@ -210,7 +211,10 @@ class DownloadRepository {
     try {
       final prefs = await AppPreferences.getInstance();
       final persisted = prefs.getString('download_dir');
-      if (persisted != null && persisted.isNotEmpty) return persisted;
+      if (persisted != null && persisted.isNotEmpty) {
+        // 旧默认目录（`AppData\music`）跟着目录结构改成 `download_music`。
+        return AppPaths.normalizeLegacyPath(persisted);
+      }
     } catch (e) {
       debugPrint('[DownloadRepository] 读取下载目录失败: $e');
     }

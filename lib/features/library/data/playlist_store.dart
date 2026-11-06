@@ -35,7 +35,7 @@ class PlaylistStore {
 
   /// 旧版收藏文件位置。
   static Future<File> legacyFile() async {
-    final dir = await AppPaths.configDirectory();
+    final dir = await AppPaths.settingsDirectory();
     return File(p.join(dir.path, fileName));
   }
 
@@ -75,7 +75,7 @@ class PlaylistStore {
   // ------------------------------------------------------------ 歌单级墓碑
 
   static Future<File> tombstoneFile() async {
-    final dir = await AppPaths.configDirectory();
+    final dir = await AppPaths.settingsDirectory();
     return File(p.join(dir.path, tombstoneFileName));
   }
 
@@ -98,7 +98,7 @@ class PlaylistStore {
   // ------------------------------------------------------------ 歌曲级墓碑
 
   static Future<File> songTombstoneFile() async {
-    final dir = await AppPaths.configDirectory();
+    final dir = await AppPaths.settingsDirectory();
     return File(p.join(dir.path, songTombstoneFileName));
   }
 
@@ -156,7 +156,10 @@ class PlaylistStore {
   }
 
   /// 歌曲被重新加回来：把它的墓碑清掉，免得下次同步又被判成「已删除」。
-  static Future<void> clearSongTombstone(String playlistId, String songId) async {
+  static Future<void> clearSongTombstone(
+    String playlistId,
+    String songId,
+  ) async {
     final tombstones = await readSongTombstones();
     final songs = tombstones[playlistId];
     if (songs == null || !songs.containsKey(songId)) return;
