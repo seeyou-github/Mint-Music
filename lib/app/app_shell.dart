@@ -208,7 +208,7 @@ class _AppShellState extends ConsumerState<AppShell> {
     // 有自己的内容（列表、分页条），进去时把迷你播放器收起来，页面才能铺到底。
     final showMiniPlayer = ref.watch(miniPlayerVisibleProvider);
     return Scaffold(
-      backgroundColor: colors.background,
+      backgroundColor: Colors.transparent,
       body: Stack(
         children: [
           RepaintBoundary(child: widget.navigationShell),
@@ -269,7 +269,7 @@ class _AppShellState extends ConsumerState<AppShell> {
   /// 路由之外，这里只负责当前分支内容，保证二级页面不会盖住导航栏。
   Widget _buildWideLayout(ThemeColors colors) {
     return Scaffold(
-      backgroundColor: colors.background,
+      backgroundColor: Colors.transparent,
       body: RepaintBoundary(child: widget.navigationShell),
     );
   }

@@ -483,7 +483,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
     }
 
     return Scaffold(
-      backgroundColor: colors.background,
+      backgroundColor: Colors.transparent,
       body: SafeArea(
         bottom: false,
         child: Column(

@@ -408,7 +408,7 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
             if (!didPop) _selection.exit();
           },
           child: Scaffold(
-            backgroundColor: colors.background,
+            backgroundColor: Colors.transparent,
             body: Stack(
               children: [
                 Positioned.fill(

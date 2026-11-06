@@ -341,7 +341,7 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
     final colors = ref.watch(themeColorsProvider);
 
     return Scaffold(
-      backgroundColor: colors.background,
+      backgroundColor: Colors.transparent,
       body: SafeArea(
         child: Column(
           children: [

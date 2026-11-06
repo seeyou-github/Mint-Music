@@ -10,6 +10,13 @@ export 'theme_colors.dart';
 /// 应用主题模式：浅色 / 深色 / 跟随系统。
 final themeModeProvider = StateProvider<ThemeMode>((ref) => ThemeMode.system);
 
+/// 「主界面背景跟随封面」开关（默认开启）。
+///
+/// 放在主题层而不是 settings_providers，是为了让 `theme_provider.dart` 不反向
+/// 依赖设置模块；持久化仍由 SettingsService 负责（key:
+/// `main_background_follow_cover`）。
+final mainBackgroundFollowCoverProvider = StateProvider<bool>((ref) => true);
+
 final themePrimaryColorProvider = StateProvider<String>((ref) => '#1DB954');
 
 /// 深色模式「字体颜色」的默认值（暖调米黄色）。

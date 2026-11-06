@@ -370,7 +370,7 @@ class _ArtistUpdatePageState extends ConsumerState<ArtistUpdatePage> {
     final newCount = _newSongs.length;
 
     return Scaffold(
-      backgroundColor: colors.background,
+      backgroundColor: Colors.transparent,
       body: Stack(
         children: [
           Positioned.fill(

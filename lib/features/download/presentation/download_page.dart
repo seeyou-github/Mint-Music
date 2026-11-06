@@ -31,7 +31,7 @@ class DownloadPage extends ConsumerWidget {
     final tasksAsync = ref.watch(downloadTasksProvider);
 
     return Scaffold(
-      backgroundColor: colors.background,
+      backgroundColor: Colors.transparent,
       body: SafeArea(
         bottom: false,
         child: Column(

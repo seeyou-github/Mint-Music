@@ -651,7 +651,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
             if (!didPop) _selection.exit();
           },
           child: Scaffold(
-            backgroundColor: colors.background,
+            backgroundColor: Colors.transparent,
             body: Stack(
               children: [
                 SafeArea(

@@ -83,7 +83,7 @@ class _WindowsTitleBarState extends ConsumerState<WindowsTitleBar>
 
     return Container(
       height: WindowsTitleBar.height,
-      color: colors.background,
+      color: Colors.transparent,
       child: Row(
         children: [
           Expanded(

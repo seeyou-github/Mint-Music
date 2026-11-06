@@ -268,6 +268,12 @@ class SettingsService {
   Future<void> setHideVipExclusiveSongs(bool v) =>
       _prefs.setBool('hide_vip_exclusive_songs', v);
 
+  // -- 主界面背景跟随当前歌曲封面（默认开启）--
+  bool getMainBackgroundFollowCover() =>
+      _prefs.getBool('main_background_follow_cover') ?? true;
+  Future<void> setMainBackgroundFollowCover(bool v) =>
+      _prefs.setBool('main_background_follow_cover', v);
+
   // -- 备份还原 / WebDAV --
   String getWebDavConfigJson() => _prefs.getString('webdav_config') ?? '';
   Future<void> setWebDavConfigJson(String v) =>

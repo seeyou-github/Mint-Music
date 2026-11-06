@@ -619,6 +619,8 @@ final settingsInitProvider = FutureProvider<void>((ref) async {
   ref.read(musicSourceManagerProvider).hideVipExclusiveSongs = hideVipExclusive;
   ref.read(notificationEnabledProvider.notifier).state = svc
       .getNotificationEnabled();
+  ref.read(mainBackgroundFollowCoverProvider.notifier).state = svc
+      .getMainBackgroundFollowCover();
   ref.read(defaultSourceIdSettingProvider.notifier).state = svc
       .getDefaultSourceId();
   ref.read(sourceQualityProvider.notifier).state = svc.getSourceQuality();

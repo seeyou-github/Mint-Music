@@ -139,7 +139,7 @@ class _RecognizePageState extends ConsumerState<RecognizePage> {
     });
 
     return Scaffold(
-      backgroundColor: colors.background,
+      backgroundColor: Colors.transparent,
       body: SafeArea(
         child: Column(
           children: [

@@ -195,7 +195,7 @@ class _QuickMatchPageState extends ConsumerState<QuickMatchPage> {
     final songs = _filtered(allSongs);
 
     return Scaffold(
-      backgroundColor: colors.background,
+      backgroundColor: Colors.transparent,
       body: SafeArea(
         bottom: false,
         child: Column(

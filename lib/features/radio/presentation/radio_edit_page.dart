@@ -123,7 +123,7 @@ class _RadioEditPageState extends ConsumerState<RadioEditPage> {
     final sources = ref.watch(discoverSupportedSourcesProvider);
 
     return Scaffold(
-      backgroundColor: colors.background,
+      backgroundColor: Colors.transparent,
       body: SafeArea(
         child: Column(
           children: [

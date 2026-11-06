@@ -43,7 +43,7 @@ class _RecentlyPlayedPageState extends ConsumerState<RecentlyPlayedPage> {
   Widget build(BuildContext context) {
     final colors = ref.watch(themeColorsProvider);
     return Scaffold(
-      backgroundColor: colors.background,
+      backgroundColor: Colors.transparent,
       body: SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,

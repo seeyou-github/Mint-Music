@@ -87,7 +87,7 @@ class _CustomSheetEditPageState extends ConsumerState<CustomSheetEditPage> {
     final data = ref.watch(customSheetProvider);
 
     return Scaffold(
-      backgroundColor: colors.background,
+      backgroundColor: Colors.transparent,
       body: SafeArea(
         child: Column(
           children: [

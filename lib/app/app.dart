@@ -12,6 +12,7 @@ import '../core/platform/window_chrome.dart';
 import '../core/services/player_notification.dart';
 import '../core/theme/app_theme.dart';
 import '../core/theme/app_typography.dart';
+import '../core/theme/cover_background.dart';
 import '../core/theme/theme_provider.dart';
 import '../core/router/app_router.dart';
 import '../core/theme/system_bars.dart';
@@ -238,6 +239,9 @@ class _AppState extends ConsumerState<App> {
     final appFontFamily = ref.watch(appFontSelectedProvider);
     // 当前是否为浅色外观：状态栏图标的明暗跟着它走。
     final isLightActive = ref.watch(isLightThemeActiveProvider);
+    // 主界面背景（跟随封面取色）：放在 build 顶层订阅，MaterialApp.builder
+    // 里只取值，避免在嵌套 builder 回调里调用 ref.watch。
+    final coverBg = ref.watch(coverBackgroundProvider);
     // 同步全局语言,供非 widget 场景(如歌词控制器)使用
     currentLocale = appLocale;
 
@@ -354,13 +358,37 @@ class _AppState extends ConsumerState<App> {
                     ],
                   )
                 : content;
+            // 整个主界面的背景层：开启「跟随封面」时，深色主题铺播放详情页
+            // 同款封面暗色渐变，浅色主题只做淡化叠色。各页面 Scaffold 都是
+            // 透明的，这层才能透出来；1 秒渐变让切歌 / 关开关不跳色。
+            final decoratedBody = Stack(
+              fit: StackFit.passthrough,
+              children: [
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: AnimatedContainer(
+                      duration: const Duration(seconds: 1),
+                      curve: Curves.easeInOut,
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [coverBg.top, coverBg.bottom],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                body,
+              ],
+            );
             // 状态栏样式：透明 + 关掉系统给透明状态栏叠的半透明遮罩，
             // 让状态栏与页面背景完全同色（见 SystemBars 的说明）。
             // 用 AnnotatedRegion 而不是只调一次 SystemChrome，是为了跟随
             // 「浅色 / 深色 / 跟随系统」切换，也避免被页面自身的系统栏设置覆盖。
             return AnnotatedRegion<SystemUiOverlayStyle>(
               value: SystemBars.overlayStyle(light: isLightActive),
-              child: body,
+              child: decoratedBody,
             );
           },
         ),

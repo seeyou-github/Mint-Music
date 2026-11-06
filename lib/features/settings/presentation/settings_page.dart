@@ -197,7 +197,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   Widget build(BuildContext context) {
     final colors = ref.watch(themeColorsProvider);
     return Scaffold(
-      backgroundColor: colors.background,
+      backgroundColor: Colors.transparent,
       body: SafeArea(
         bottom: false,
         child: Column(
@@ -857,6 +857,24 @@ class _AppearanceContent extends ConsumerWidget {
               ? s.setCustomBackgroundColorsLight(list)
               : s.setCustomBackgroundColorsDark(list),
           presets: isLight ? _lightBackgroundPresets : _darkBackgroundPresets,
+        ),
+        SettingDivider(colors: colors),
+        SettingRow(
+          icon: Icons.image_outlined,
+          title: '主界面背景跟随封面',
+          subtitle: '深色主题用播放页同款封面渐变，浅色主题淡化叠色',
+          trailing: Switch(
+            value: ref.watch(mainBackgroundFollowCoverProvider),
+            onChanged: (v) => _persistBool(
+              context,
+              mainBackgroundFollowCoverProvider,
+              v,
+              (s) => s.setMainBackgroundFollowCover(v),
+            ),
+            activeTrackColor: colors.primary.withValues(alpha: 0.3),
+            activeThumbColor: colors.primary,
+          ),
+          colors: colors,
         ),
         SettingDivider(colors: colors),
         buildColorRow(

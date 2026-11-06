@@ -443,9 +443,9 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
     }
 
     return Scaffold(
-      backgroundColor: colors.background,
+      backgroundColor: Colors.transparent,
       appBar: AppBar(
-        backgroundColor: colors.background,
+        backgroundColor: Colors.transparent,
         elevation: 0,
         // Android 靠系统返回手势 / 返回键，顶部不放返回箭头；
         // 显式关掉 automaticallyImplyLeading，避免 AppBar 自动补一个。

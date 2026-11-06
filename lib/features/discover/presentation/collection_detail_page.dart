@@ -389,7 +389,7 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
         .any((p) => p.name == favoriteName);
 
     return Scaffold(
-      backgroundColor: colors.background,
+      backgroundColor: Colors.transparent,
       body: SafeArea(
         // 顶部不避让：头部渐变要一直铺到状态栏（和歌单详情页一致），
         // 状态栏高度由 _buildHeader 自己加进内边距。

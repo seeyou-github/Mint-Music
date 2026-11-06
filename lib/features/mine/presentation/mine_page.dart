@@ -27,7 +27,7 @@ class MinePage extends ConsumerWidget {
     final versionAsync = ref.watch(appVersionProvider);
 
     return Scaffold(
-      backgroundColor: colors.background,
+      backgroundColor: Colors.transparent,
       body: SafeArea(
         bottom: false,
         child: ListView(

@@ -31,7 +31,7 @@ class LibraryPage extends ConsumerWidget {
     final playlistsAsync = ref.watch(playlistsProvider);
 
     return Scaffold(
-      backgroundColor: colors.background,
+      backgroundColor: Colors.transparent,
       body: SafeArea(
         bottom: false,
         child: Column(

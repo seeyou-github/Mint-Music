@@ -288,7 +288,7 @@ class _LocalPageState extends ConsumerState<LocalPage>
             if (!didPop) _selection.exit();
           },
           child: Scaffold(
-            backgroundColor: colors.background,
+            backgroundColor: Colors.transparent,
             body: SafeArea(
               bottom: false,
               child: Stack(

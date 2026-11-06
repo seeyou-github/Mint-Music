@@ -94,7 +94,7 @@ class _AppDesktopShellState extends ConsumerState<AppDesktopShell> {
     // 保持树结构稳定（Row + Expanded 始终存在），
     // 这样窗口在阈值附近缩放时 Router/Navigator 不会被重建，页面状态得以保留。
     return Material(
-      color: colors.background,
+      color: Colors.transparent,
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
