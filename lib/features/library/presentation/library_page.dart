@@ -58,21 +58,53 @@ class LibraryPage extends ConsumerWidget {
     );
   }
 
-  /// 顶部：新建歌单靠左，导入 / 同步靠右。
+  /// 顶部操作区。
   ///
-  /// 原来这里有一个「我的收藏」标题占住左侧、把按钮全推到右边；底部导航已经
-  /// 标明当前是「收藏」分类，标题冗余，去掉后按钮从左边开始。现在把创建类
-  /// 操作留在左边，导入 / 同步这类数据操作推到右边，两组分开更易点。
+  /// Android：不显示「我的收藏」标题（底部导航已经标明当前是收藏分类），
+  /// 新建歌单靠左、导入 / 同步靠右。
+  /// 桌面（Windows 等）：保留左侧「我的收藏」标题，操作按钮整组靠右，
+  /// 其中「新建歌单」紧挨在「导入」左边。
   Widget _buildHeader(BuildContext context, ThemeColors colors, WidgetRef ref) {
+    final isTablet = ResponsiveLayout.isTablet(context);
+    final padding = EdgeInsets.symmetric(
+      horizontal: ResponsiveLayout.horizontalPadding(context),
+      vertical: AppSpacing.md,
+    );
+
+    if (Platform.isAndroid) {
+      return Padding(
+        padding: padding,
+        child: Row(
+          children: [
+            _buildCreateButton(context, colors, ref),
+            const Spacer(),
+            _buildImportButton(context, colors, ref),
+            const SizedBox(width: AppSpacing.sm),
+            const PlaylistSyncButton(),
+          ],
+        ),
+      );
+    }
+
     return Padding(
-      padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveLayout.horizontalPadding(context),
-        vertical: AppSpacing.md,
-      ),
+      padding: padding,
       child: Row(
         children: [
+          Expanded(
+            child: Text(
+              context.tr('我的收藏'),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: isTablet ? 26 : 22,
+                fontWeight: FontWeight.bold,
+                color: colors.textPrimary,
+              ),
+            ),
+          ),
+          const SizedBox(width: AppSpacing.md),
           _buildCreateButton(context, colors, ref),
-          const Spacer(),
+          const SizedBox(width: AppSpacing.sm),
           _buildImportButton(context, colors, ref),
           const SizedBox(width: AppSpacing.sm),
           const PlaylistSyncButton(),
