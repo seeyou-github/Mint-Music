@@ -41,6 +41,15 @@ class MusicAudioHandler extends BaseAudioHandler
   /// 清空媒体会话期间屏蔽状态广播，见 [clearMediaSession]。
   bool _suppressBroadcast = false;
 
+  /// 换源计数（[_setPlayerSource] 执行期间 > 0，用计数而非 bool 是为了
+  /// 快速连点切歌时两个换源重叠，先结束的那个不会提前清掉标记）。
+  ///
+  /// Android 上 just_audio 每次 `setAudioSource` 都会先把播放器切回 idle，
+  /// 而 audio_service 收到「非 idle → idle」跳变会直接 `stop()` 撤销通知；
+  /// 切歌时就会看到通知先消失、新歌起播后又重新出现。换源期间用它把 idle
+  /// 伪装成 buffering，通知保持常驻。详见 [_broadcastState]。
+  int _switchingSourceCount = 0;
+
   /// 会话是否已被清空。
   ///
   /// 清空播放列表后，任何**残留的在途请求**（取URL / 音质切换，
@@ -106,6 +115,20 @@ class MusicAudioHandler extends BaseAudioHandler
     });
   }
 
+  /// 统一替换音源，并在整个 await 期间递增 [_switchingSourceCount]。
+  ///
+  /// 只包住 `setAudioSource` 这一段：之后的 duration 校验、媒体项更新等
+  /// 都发生在 loading / ready 状态，不会触发上面那个 idle 跳变。
+  /// 参数是 `AudioSource` 而非 `ConcatenatingAudioSource`，兼容所有调用点。
+  Future<void> _setPlayerSource(AudioSource source, {int? initialIndex}) async {
+    _switchingSourceCount++;
+    try {
+      await _player.setAudioSource(source, initialIndex: initialIndex);
+    } finally {
+      _switchingSourceCount--;
+    }
+  }
+
   void _broadcastState() {
     // 清空会话时不要把「带控件的播放状态」推回去，否则通知栏会被重新点亮。
     if (_suppressBroadcast) return;
@@ -113,10 +136,22 @@ class MusicAudioHandler extends BaseAudioHandler
     // _player 仍会吐出零星的位置/状态事件，若此时照常广播带控件的状态，
     // audio_service 会把通知栏重新点亮（旧曲目 + 可点的播放键）。
     if (mediaItem.value == null || queue.value.isEmpty) {
+      // 换源瞬间新队列 / 媒体项可能还没写进来（setAudioSource 先于 queue.add
+      // 的路径），此时不要广播 idle，保持通知原样即可。
+      if (Platform.isAndroid && _switchingSourceCount > 0) return;
       playbackState.add(_emptyPlaybackState);
       return;
     }
-    final processingState = _mapProcessingState(_player.processingState);
+    // Android：见 [_switchingSourceCount] —— 把换源瞬间的 idle 报成 buffering，
+    // 避免 audio_service 误判为「用户停止播放」而 cancel 通知并 stopSelf。
+    // 真正的停止走 stop() / clearMediaSession()，它们不经过换源路径，
+    // idle 广播仍然照常生效。Windows 不接 audio_service，行为完全不变。
+    var processingState = _mapProcessingState(_player.processingState);
+    if (Platform.isAndroid &&
+        _switchingSourceCount > 0 &&
+        processingState == AudioProcessingState.idle) {
+      processingState = AudioProcessingState.buffering;
+    }
     playbackState.add(
       PlaybackState(
         controls: [
@@ -322,7 +357,7 @@ class MusicAudioHandler extends BaseAudioHandler
 
     try {
       final playlist = ConcatenatingAudioSource(children: children);
-      await _player.setAudioSource(playlist, initialIndex: startIndex);
+      await _setPlayerSource(playlist, initialIndex: startIndex);
 
       if (startIndex >= 0 && startIndex < mediaItems.length) {
         mediaItem.add(mediaItems[startIndex]);
@@ -407,7 +442,7 @@ class MusicAudioHandler extends BaseAudioHandler
         final mediaItem = _songToMediaItem(preparedSong);
         queue.add([mediaItem]);
 
-        await _player.setAudioSource(
+        await _setPlayerSource(
           ConcatenatingAudioSource(
             children: [_songToAudioSource(preparedSong)],
           ),
@@ -483,7 +518,7 @@ class MusicAudioHandler extends BaseAudioHandler
 
         if (cachedFile != null) {
           debugPrint('MusicAudioHandler: 命中音频缓存 -> ${cachedFile.path}');
-          await _player.setAudioSource(
+          await _setPlayerSource(
             ConcatenatingAudioSource(
               children: [
                 AudioSource.uri(Uri.file(cachedFile.path), tag: mediaItem),
@@ -494,7 +529,7 @@ class MusicAudioHandler extends BaseAudioHandler
           final audioSource = requestHeaders.isEmpty
               ? AudioSource.uri(uri, tag: mediaItem)
               : AudioSource.uri(uri, tag: mediaItem, headers: requestHeaders);
-          await _player.setAudioSource(
+          await _setPlayerSource(
             ConcatenatingAudioSource(children: [audioSource]),
           );
           // 后台把音频缓存一份到「缓存目录」，下次播放即可直接走本地文件。
@@ -514,7 +549,7 @@ class MusicAudioHandler extends BaseAudioHandler
         }
         await _validateRemoteSongDuration(preparedSong, url);
       } else {
-        await _player.setAudioSource(
+        await _setPlayerSource(
           ConcatenatingAudioSource(
             children: [AudioSource.uri(uri, tag: mediaItem)],
           ),
@@ -814,7 +849,7 @@ class MusicAudioHandler extends BaseAudioHandler
       await currentPlaylist.insert(index, _songToAudioSource(song));
 
       if (_player.currentIndex == index) {
-        await _player.setAudioSource(currentPlaylist, initialIndex: index);
+        await _setPlayerSource(currentPlaylist, initialIndex: index);
       }
     }
 
