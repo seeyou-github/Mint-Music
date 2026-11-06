@@ -383,11 +383,15 @@ class _LocalPageState extends ConsumerState<LocalPage>
     );
   }
 
-  /// 顶部：搜索框 + 选择目录 / 扫描 / 快速匹配三个图标按钮。
+  /// 顶部：标题 + 搜索框 + 选择目录 / 扫描 / 快速匹配三个图标按钮。
   ///
-  /// 标题「本地音乐」已去掉（底部导航已经标明当前分类），空间留给搜索框。
+  /// 平台区分（提交 8c8ec43 的「隐藏标题、搜索框占满」只保留在 Android）：
+  /// - Android：底部导航已标明「本地」，不显示标题，搜索框靠左铺满整行；
+  /// - Windows / 桌面：还原旧版——保留「本地音乐」标题，搜索框靠右、
+  ///   最大宽度 300（平板 420），不横跨整个窗口。
   Widget _buildHeader(ThemeColors colors, ScanProgress scanProgress) {
     final isTablet = ResponsiveLayout.isTablet(context);
+    final compactHeader = Platform.isAndroid;
     return Padding(
       padding: EdgeInsets.symmetric(
         horizontal: ResponsiveLayout.horizontalPadding(context),
@@ -395,16 +399,39 @@ class _LocalPageState extends ConsumerState<LocalPage>
       ),
       child: Row(
         children: [
-          // 不再显示「本地音乐」标题（页面位于底部导航「本地」分支，标题冗余），
-          // 腾出来的空间全部给搜索框。
+          if (!compactHeader) ...[
+            Container(
+              width: 4,
+              height: 24,
+              decoration: BoxDecoration(
+                color: colors.primary,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(width: AppSpacing.md),
+            Text(
+              context.tr('本地音乐'),
+              style: TextStyle(
+                fontSize: isTablet ? 26 : 22,
+                fontWeight: FontWeight.bold,
+                color: colors.textPrimary,
+              ),
+            ),
+            const SizedBox(width: AppSpacing.md),
+          ],
+          // Android 不显示标题，腾出来的空间全部给搜索框。
           Expanded(
             child: Align(
-              alignment: Alignment.centerLeft,
+              alignment: compactHeader
+                  ? Alignment.centerLeft
+                  : Alignment.centerRight,
               child: ConstrainedBox(
                 constraints: BoxConstraints(
                   minWidth: 140,
-                  // 手机铺满整行；宽屏收一点，避免搜索框横跨整个窗口。
-                  maxWidth: isTablet ? 420 : double.infinity,
+                  // 手机铺满整行；桌面 / 平板收一点，避免搜索框横跨整个窗口。
+                  maxWidth: isTablet
+                      ? 420
+                      : (compactHeader ? double.infinity : 300),
                 ),
                 child: _buildSearchBar(colors),
               ),
