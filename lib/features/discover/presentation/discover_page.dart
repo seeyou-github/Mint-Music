@@ -1869,11 +1869,14 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
     _leaderboardCategoryPicked = true;
     final changed = _leaderboardCategory != category;
     if (changed) setState(() => _leaderboardCategory = category);
-    // 点「热榜」就重新从插件取一遍歌曲（哪怕是再点一次当前分类）。
+    // 点「热榜」时补齐还没取到的歌曲（已有的跳过，不会重复请求）。
     if (category == _LeaderboardCategory.hot) _refreshHotBoards();
   }
 
-  /// 榜单歌曲只在内存里缓存，所以每次进入「热榜」都重新取一遍。
+  /// 进入「热榜」时补齐内存里还没有的歌曲。
+  ///
+  /// 每个音源在一次运行里只取一次网络：内存里已有歌曲的榜单会被跳过
+  /// （见 `HotBoardsNotifier.refreshSongs`），所以来回切分类 / 切页面不会反复请求。
   void _refreshHotBoards() {
     final sourceId = ref.read(discoverSourceIdProvider);
     unawaited(ref.read(hotBoardsProvider.notifier).refreshSongs(sourceId));

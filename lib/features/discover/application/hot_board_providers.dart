@@ -121,20 +121,31 @@ class HotBoardsNotifier extends AsyncNotifier<List<HotBoard>> {
     await _update(kept);
   }
 
-  /// 重新拉取某个音源下**所有**榜单的歌曲（每次进入「热榜」都会调用）。
+  /// 拉取某个音源下**还没有歌曲**的榜单（进入「热榜」时调用）。
   ///
   /// 只改内存里的 state，不写 settings.json、也不进数据库。
+  ///
+  /// 每个音源在一次运行里只取一次网络：内存里已经有歌曲的榜单直接跳过，
+  /// 正在取（[HotBoard.songsLoading]）的也跳过，避免反复点「热榜」时重复请求；
+  /// 取失败（歌曲为空）的榜单下次进来会再试一次。
   Future<void> refreshSongs(String sourceId) async {
     final boards = [...await future];
     final targets = [
       for (final board in boards)
-        if (board.source == sourceId) board,
+        if (board.source == sourceId &&
+            board.songs.isEmpty &&
+            !board.songsLoading)
+          board,
     ];
     if (targets.isEmpty) return;
-    // 先统一标成「加载中」：卡片各自转圈，而不是一片空白。
+    // 先把要取的标成「加载中」：卡片各自转圈，而不是一片空白。
     state = AsyncData([
       for (final board in boards)
-        board.source == sourceId ? board.withLoading() : board,
+        targets.any(
+              (item) => item.id == board.id && item.source == board.source,
+            )
+            ? board.withLoading()
+            : board,
     ]);
     await Future.wait([for (final board in targets) _loadSongs(board)]);
   }
