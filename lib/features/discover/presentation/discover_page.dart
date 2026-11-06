@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -119,46 +120,88 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
     DiscoverTab.radio,
   ];
 
-  /// 本次横向滑动累计的位移（判断是不是一次「明确的」左右滑）。
+  /// 本次横向滑动累计的手指位移（用来判断是否达到翻页门槛）。
   double _tabSwipeDx = 0;
 
-  /// 顶部分类切换时的「侧向滑入」动画。
-  ///
-  /// 和迷你播放器切歌一样，只用一个 `SlideTransition` 做 Transform 平移：
-  /// 一层 GPU transform，不像 AnimatedSwitcher 那样同时构建 / 绘制新旧两份
-  /// 列表子树。三个分类各是长列表，这一点对性能尤其重要。
-  late final AnimationController _tabSlideController = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 220),
-  );
-  Animation<Offset> _tabSlideOffset = const AlwaysStoppedAnimation(Offset.zero);
+  /// 前这么多屏宽的内容位移完全跟手，之后开始加速。
+  static const double _kTabFreeDragRatio = 0.25;
 
-  /// [fromRight] 为 true 表示切到「下一个」分类：内容从右侧进场。
-  void _playTabSlideIn({required bool fromRight}) {
-    // 只有 Android 上才有左右滑动切分类；桌面点标签保持原来的即时切换。
-    if (!Platform.isAndroid) return;
-    _tabSlideOffset =
-        Tween<Offset>(
-          begin: Offset(fromRight ? 0.06 : -0.06, 0),
-          end: Offset.zero,
-        ).animate(
-          CurvedAnimation(
-            parent: _tabSlideController,
-            curve: Curves.easeOutCubic,
-          ),
-        );
-    _tabSlideController.forward(from: 0);
+  /// 超过跟手段后位移的放大倍数（越大越快「消失」）。
+  static const double _kTabOverDragFactor = 2.4;
+
+  /// 手指位移达到这么多屏宽就算一次翻页（剩下的靠甩动速度判断）。
+  static const double _kTabSwitchDragRatio = 0.18;
+
+  /// 分类内容当前的横向位移（像素）。
+  ///
+  /// 拖动时直接跟着手指走，松手后由 [_animateTabOffset] 动画收尾（回弹，
+  /// 或顺着方向滑出去）。用一层 `Transform` 平移整块内容，只是 GPU 变换，
+  /// 不会重建三个分类各自的列表子树。
+  final ValueNotifier<double> _tabOffsetX = ValueNotifier<double>(0);
+
+  /// 分类内容横向位移的动画驱动（时长每次按需设置）。
+  late final AnimationController _tabAnim = AnimationController(vsync: this);
+
+  /// 当前正在跑的位移动画；为 null 表示没有动画在跑。
+  ///
+  /// 只给控制器挂一个监听（[_onTabTick]），每次动画换掉这个 tween：
+  /// 中途被打断时旧 tween 直接置空，不会再有残留的监听往 [_tabOffsetX] 写值。
+  Animation<double>? _tabTween;
+
+  void _onTabTick() {
+    final animation = _tabTween;
+    if (animation != null) _tabOffsetX.value = animation.value;
+  }
+
+  /// 把内容位移动画到 [to]（像素）。
+  Future<void> _animateTabOffset(double to, int milliseconds) {
+    final from = _tabOffsetX.value;
+    _tabAnim.stop();
+    if (from == to) {
+      _tabTween = null;
+      return Future<void>.value();
+    }
+    _tabAnim.duration = Duration(milliseconds: milliseconds);
+    _tabTween = Tween<double>(
+      begin: from,
+      end: to,
+    ).animate(CurvedAnimation(parent: _tabAnim, curve: Curves.easeOutCubic));
+    return _tabAnim.forward(from: 0).then((_) {
+      _tabTween = null;
+      _tabOffsetX.value = to;
+    });
+  }
+
+  /// 手指位移 → 内容位移。
+  ///
+  /// 前 [_kTabFreeDragRatio] 屏宽完全跟手（正常左右滑时手感不变）；
+  /// 拖过这段之后按 [_kTabOverDragFactor] 倍放大——越接近屏幕边缘内容跑得
+  /// 越快，松手前就能「加速消失」，而不是被手指顶在屏幕边上一动不动。
+  /// 最多滑出一整屏，再多也没意义。
+  double _tabContentOffset(double dx) {
+    final width = MediaQuery.sizeOf(context).width;
+    if (width <= 0) return dx;
+    final free = width * _kTabFreeDragRatio;
+    final distance = dx.abs();
+    if (distance <= free) return dx;
+    final eased = math.min(
+      free + (distance - free) * _kTabOverDragFactor,
+      width,
+    );
+    return dx < 0 ? -eased : eased;
   }
 
   @override
   void initState() {
     super.initState();
+    _tabAnim.addListener(_onTabTick);
     _requestNotificationPermission();
   }
 
   @override
   void dispose() {
-    _tabSlideController.dispose();
+    _tabAnim.dispose();
+    _tabOffsetX.dispose();
     _scrollController.dispose();
     _leaderboardScrollController.dispose();
     super.dispose();
@@ -296,7 +339,12 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
       final to = _tabOrder.indexOf(next);
       if (from < 0 || to < 0) return;
       final forward = (to - from + _tabOrder.length) % _tabOrder.length == 1;
-      _playTabSlideIn(fromRight: forward);
+      if (!Platform.isAndroid) return;
+      // 新分类从滑动方向的另一侧进场：拖动时内容往哪边出去，新内容就从
+      // 另一边回来，衔接成一次完整的「翻页」。
+      final width = MediaQuery.sizeOf(context).width;
+      _tabOffsetX.value = forward ? width * 0.28 : -width * 0.28;
+      unawaited(_animateTabOffset(0, 200));
     });
 
     ref.listen<String>(defaultSourceIdProvider, (previous, next) {
@@ -389,13 +437,21 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
                     ? _onTabSwipeUpdate
                     : null,
                 onHorizontalDragEnd: Platform.isAndroid ? _onTabSwipeEnd : null,
-                child: SlideTransition(
-                  position: _tabSlideOffset,
-                  child: switch (tab) {
-                    DiscoverTab.playlists => _buildPlaylistsTab(colors),
-                    DiscoverTab.leaderboards => _buildLeaderboardsTab(colors),
-                    DiscoverTab.radio => const RadioPanel(),
-                  },
+                child: ClipRect(
+                  child: AnimatedBuilder(
+                    animation: _tabOffsetX,
+                    builder: (context, child) => Transform.translate(
+                      offset: Offset(_tabOffsetX.value, 0),
+                      child: child,
+                    ),
+                    // 三个分类各是一整页长列表，这里只做一层 transform，
+                    // 拖动过程不重建子树。
+                    child: switch (tab) {
+                      DiscoverTab.playlists => _buildPlaylistsTab(colors),
+                      DiscoverTab.leaderboards => _buildLeaderboardsTab(colors),
+                      DiscoverTab.radio => const RadioPanel(),
+                    },
+                  ),
                 ),
               ),
             ),
@@ -456,27 +512,43 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
     } catch (_) {}
   }
 
-  void _onTabSwipeStart(DragStartDetails details) => _tabSwipeDx = 0;
+  void _onTabSwipeStart(DragStartDetails details) {
+    _tabAnim.stop();
+    _tabTween = null;
+    _tabSwipeDx = 0;
+    _tabOffsetX.value = 0;
+  }
 
-  void _onTabSwipeUpdate(DragUpdateDetails details) =>
-      _tabSwipeDx += details.delta.dx;
+  void _onTabSwipeUpdate(DragUpdateDetails details) {
+    _tabSwipeDx += details.delta.dx;
+    _tabOffsetX.value = _tabContentOffset(_tabSwipeDx);
+  }
 
   /// 左右滑动切换顶部分类（Android）。
   ///
   /// 方向跟手势走：手指往左滑 = 下一个分类、往右滑 = 上一个，两端循环
-  /// （电台再往左回到歌单）。位移不够就靠甩动速度判断，避免轻轻一碰就切。
+  /// （电台再往左回到歌单）。位移不够就靠甩动速度判断，避免轻轻一碰就切；
+  /// 不够就弹回原位。
   void _onTabSwipeEnd(DragEndDetails details) {
     final velocity = details.primaryVelocity ?? 0;
+    final dx = _tabSwipeDx;
+    _tabSwipeDx = 0;
+    final width = MediaQuery.sizeOf(context).width;
     final bool swipeLeft;
-    if (_tabSwipeDx.abs() >= 64) {
-      swipeLeft = _tabSwipeDx < 0;
-    } else if (velocity.abs() >= 200) {
+    if (dx.abs() >= width * _kTabSwitchDragRatio) {
+      swipeLeft = dx < 0;
+    } else if (velocity.abs() >= 260) {
       swipeLeft = velocity < 0;
     } else {
+      unawaited(_animateTabOffset(0, 180));
       return;
     }
-    _tabSwipeDx = 0;
+    unawaited(_completeTabSwipe(swipeLeft: swipeLeft));
+  }
 
+  /// 当前分类顺着滑动方向加速滑出去，然后切换分类（新分类的进场由
+  /// `discoverTabProvider` 的监听负责）。
+  Future<void> _completeTabSwipe({required bool swipeLeft}) async {
     final current = ref.read(discoverTabProvider);
     final index = _tabOrder.indexOf(current);
     if (index < 0) return;
@@ -484,6 +556,11 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
     final next =
         _tabOrder[(index + step + _tabOrder.length) % _tabOrder.length];
     if (next == current) return;
+
+    final width = MediaQuery.sizeOf(context).width;
+    // 滑出去只用 140ms：越拖到边缘越「加速消失」。
+    await _animateTabOffset(swipeLeft ? -width : width, 140);
+    if (!mounted) return;
     ref.read(discoverTabProvider.notifier).state = next;
   }
 
