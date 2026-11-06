@@ -12,16 +12,13 @@ import '../../features/player/application/mini_player_visibility.dart';
 
 /// 列表底部的胶囊分页条，加载中禁用导航。
 ///
-/// 布局规则（按宽度自适应，整行铺满、间距均分）：
+/// 布局规则（整组居中、间距固定，各平台一致，和 Android 的分页条一样）：
 /// - 所有页码都能放下 → 只显示页码按钮，**不显示「第 N 页」下拉**；
 /// - 放不下时 → 首页 + 当前页前后各一页 + 末页，跨页用省略号，
 ///   右侧紧跟「第 N 页」下拉（下拉紧挨着最后一个页码按钮）；
-/// - 宽屏（>=760）额外在两端加「上一页 / 下一页」。
-/// - 整行横向铺满：第一个元素贴列表左边、最后一个贴右边，和上方的
-///   歌单 / 歌曲列表左右边缘对齐，中间的空隙均分。
-///   但**可见页码不多（默认 6 页以内）时不铺满**：整组居中、间距固定，
-///   第一个 / 最后一个页码不再被拉到屏幕两端（2 页时分页条会被撑成一条
-///   横贯全屏的空白，看起来像坏了）。
+/// - **不铺满整行、不放「上一页 / 下一页」按钮**：页码少（2 页）时铺满会把
+///   两个页码顶到屏幕两端，看起来像坏了一条横贯全屏的空线；翻页直接点页码，
+///   跨页由「第 N 页」下拉直达。
 ///
 /// [docked] 为 true 时表示分页条**常驻在内容区底部**（不是列表项），
 /// 会给自身补一段下内边距避开 Android 的迷你播放器，避免被播放栏盖住。
@@ -73,18 +70,6 @@ class _PageBarState extends ConsumerState<PageBar> {
   static const double _buttonPadding = 6;
   static const double _elementGap = 2;
 
-  /// 可见页码不超过这么多时，分页条不再铺满整行，而是整组居中。
-  ///
-  /// 页码少（尤其是只有 2~6 页）时用 spaceBetween 会把首/尾两个页码顶到
-  /// 屏幕两边，中间空出一大片，看着像「1 ……… 2」。超过这个数量后按钮本身
-  /// 已经占满宽度，铺满才能和上面的歌单 / 歌曲列表左右对齐。
-  static const int compactMaxPages = 6;
-
-  /// 宽屏的「上一页 / 下一页」估算宽度、与页码区的间距。
-  static const double _stepButtonWidth = 78;
-  static const double _stepGap = AppSpacing.sm;
-
-  static const double _wideBreakpoint = 760;
   static const double _menuItemHeight = 44;
 
   /// 页码下拉一次最多显示几行，超出部分滚动。
@@ -163,9 +148,7 @@ class _PageBarState extends ConsumerState<PageBar> {
             ),
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final wide = constraints.maxWidth >= _wideBreakpoint;
-            final stepArea = wide ? (_stepButtonWidth + _stepGap) * 2 : 0.0;
-            final budget = constraints.maxWidth - stepArea;
+            final budget = constraints.maxWidth;
 
             // 1) 先试「所有页码都显示」：放得下就不需要下拉。
             //    末页未知时不把猜出来的那一页写成页码，末尾换成「…」入口。
@@ -185,8 +168,7 @@ class _PageBarState extends ConsumerState<PageBar> {
               //    它后面的省略号表示「20 之后还有，但不知道第几页」。
               showDropdown = true;
               final dropdownWidth = _dropdownWidth(context);
-              final maxRadius = wide ? 5 : 4;
-              var radius = maxRadius;
+              var radius = 5;
               pages = _withMoreEntry(
                 _windowPages(_current, _knownCount, radius),
               );
@@ -220,64 +202,27 @@ class _PageBarState extends ConsumerState<PageBar> {
               ],
             ];
 
-            final children = <Widget>[
-              if (wide) ...[
-                _buildStepButton(
-                  colors,
-                  label: widget.loading ? context.tr('加载中') : context.tr('上一页'),
-                  icon: Icons.chevron_left,
-                  enabled: _current > 1 && !widget.loading,
-                  onTap: () => _go(_current - 1),
-                ),
-                const SizedBox(width: _stepGap),
-              ],
-              ...pageChildren,
-              if (wide) ...[
-                const SizedBox(width: _stepGap),
-                _buildStepButton(
-                  colors,
-                  label: widget.loading ? context.tr('加载中') : context.tr('下一页'),
-                  icon: Icons.chevron_right,
-                  iconAfter: true,
-                  enabled: _current < _count && !widget.loading,
-                  onTap: () => _go(_current + 1),
-                ),
-              ],
-            ];
-
-            // 页码很少时不铺满整行：整组居中、间距固定，首/尾页码不再被拉到
-            // 屏幕两边（铺满时 2 个页码会分居左右两端）。宽屏带「上一页 /
-            // 下一页」的布局保持铺满，那两个按钮本来就要和列表边缘对齐。
-            final compact = !wide && pages.length <= compactMaxPages;
-            final compactGap =
-                compact && children.length > 1
-                ? (children.length - 1) * AppSpacing.sm
-                : 0.0;
+            // 整组居中、间距固定（不铺满整行，也不放「上一页 / 下一页」）：
+            // 页码少的时候（比如只有 2 页）铺满会把两个页码顶到屏幕两端，
+            // 中间空出一条横贯全屏的空白，看着像坏了。
             final contentWidth =
                 _pagesWidth(context, pages) +
                 (showDropdown ? AppSpacing.xs + _dropdownWidth(context) : 0) +
-                (wide ? (_stepButtonWidth + _stepGap) * 2 : 0) +
-                compactGap;
+                (pageChildren.length - 1) * AppSpacing.sm;
             // 极端窄屏（超大字号 / 极小屏）放不下时退化成可横滚，避免溢出条纹。
             if (contentWidth > constraints.maxWidth) {
               return SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
-                child: Row(mainAxisSize: MainAxisSize.min, children: children),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: pageChildren,
+                ),
               );
             }
-
-            if (compact) {
-              return Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                spacing: AppSpacing.sm,
-                children: children,
-              );
-            }
-            // 铺满整行、间距均分：第一个页码贴左边、「第 N 页」下拉贴右边，
-            // 左右边缘和上方的歌单 / 歌曲列表对齐。
             return Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: children,
+              mainAxisAlignment: MainAxisAlignment.center,
+              spacing: AppSpacing.sm,
+              children: pageChildren,
             );
           },
         ),
@@ -302,33 +247,6 @@ class _PageBarState extends ConsumerState<PageBar> {
       textStyle: TextStyle(
         fontSize: 12,
         fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
-      ),
-    );
-  }
-
-  Widget _buildStepButton(
-    ThemeColors colors, {
-    required String label,
-    required IconData icon,
-    required bool enabled,
-    required VoidCallback onTap,
-    bool iconAfter = false,
-  }) {
-    return SizedBox(
-      height: _buttonHeight,
-      child: OutlinedButton(
-        onPressed: enabled ? onTap : null,
-        style: _buttonStyle(colors),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (!iconAfter) Icon(icon, size: 16),
-            Flexible(
-              child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
-            ),
-            if (iconAfter) Icon(icon, size: 16),
-          ],
-        ),
       ),
     );
   }
