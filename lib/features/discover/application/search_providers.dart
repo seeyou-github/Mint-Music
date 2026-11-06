@@ -1,9 +1,5 @@
-import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:sqflite/sqflite.dart' show ConflictAlgorithm;
 
-import '../../../core/storage/app_database.dart';
-import '../../../core/storage/app_preferences.dart';
 import '../../../shared/pagination/page_result.dart';
 import '../../player/domain/models/song.dart';
 import '../../discover/domain/models/playlist.dart';
@@ -434,122 +430,39 @@ final searchSuggestionsProvider = FutureProvider<List<String>>((ref) async {
   return manager.getSearchSuggestions(query, sourceId: sourceId);
 });
 
+/// 搜索历史：**只保存在内存里**。
+///
+/// 用户要求不落库——应用退出后历史就清空。所以这里既不读数据库也不写数据库
+/// （临时库里的 `search_history` 表已在缓存库 v9 升级时删除），进程存活期间
+/// 靠 StateNotifier 的 state 保存；切后台 / 息屏都不会丢，彻底退出应用即恢复为空。
 final searchHistoryProvider =
     StateNotifierProvider<SearchHistoryNotifier, List<String>>((ref) {
       return SearchHistoryNotifier();
     });
 
 class SearchHistoryNotifier extends StateNotifier<List<String>> {
-  SearchHistoryNotifier() : super([]) {
-    AppDatabase.registerWriter(_writer);
-    _loadPersisted();
-  }
+  SearchHistoryNotifier() : super([]);
 
   /// 最多保留的搜索历史条数，超出时自动删除最旧的。
   static const int _maxHistory = 10;
 
-  /// 旧版把搜索历史存在设置文件里的键（首次启动时迁移）。
-  static const String _storageKey = 'search_history';
-
-  /// 搜索历史写得频繁但丢了无所谓，因此放在临时库，
-  /// 并且写入走合并延迟写，避免每搜一次就写一次硬盘。
-  late final DeferredWriter _writer = DeferredWriter(() => _persist());
-
-  /// 启动时从临时库恢复搜索历史。
-  /// 若加载期间用户已新增搜索词，则合并去重，避免覆盖用户操作。
-  Future<void> _loadPersisted() async {
-    try {
-      final db = await AppDatabase.cacheDatabase();
-      final rows = await db.query(
-        'search_history',
-        orderBy: 'searched_at DESC',
-        limit: _maxHistory,
-      );
-      var stored = rows.map((r) => '${r['keyword']}').toList();
-
-      if (stored.isEmpty && !await AppDatabase.isMigrated('search_history')) {
-        stored = await _importLegacy();
-        if (AppDatabase.isPersistent) {
-          await AppDatabase.markMigrated('search_history');
-        }
-      }
-
-      final merged = [...state, ...stored.where((q) => !state.contains(q))];
-      if (!mounted) return;
-      state = merged.take(_maxHistory).toList();
-    } catch (_) {
-      // 读取失败时保持空历史，不影响搜索功能
-    }
-  }
-
-  /// 把历史写入临时库（延迟写）。
-  Future<void> _persist() async {
-    if (!mounted) return;
-    try {
-      final db = await AppDatabase.cacheDatabase();
-      final now = DateTime.now().millisecondsSinceEpoch;
-      final keywords = state;
-      await db.transaction((txn) async {
-        await txn.delete('search_history');
-        final batch = txn.batch();
-        for (var i = 0; i < keywords.length; i++) {
-          // 时间戳按顺序递减：重新读取时 `ORDER BY searched_at DESC`
-          // 才能还原「最近搜的在前」的顺序（以前全用同一个 now，顺序会乱）。
-          batch.insert('search_history', {
-            'keyword': keywords[i],
-            'searched_at': now - i,
-          }, conflictAlgorithm: ConflictAlgorithm.replace);
-        }
-        await batch.commit(noResult: true);
-      });
-    } catch (_) {
-      // 写入失败时仅丢失持久化，不影响内存中的历史
-    }
-  }
-
-  /// 首次启动：把旧设置文件里的搜索历史导入数据库。
-  Future<List<String>> _importLegacy() async {
-    try {
-      final prefs = await AppPreferences.getInstance();
-      final legacy = prefs.getStringList(_storageKey) ?? const <String>[];
-      if (legacy.isEmpty) return const <String>[];
-      final db = await AppDatabase.cacheDatabase();
-      final now = DateTime.now().millisecondsSinceEpoch;
-      await db.transaction((txn) async {
-        final batch = txn.batch();
-        for (var i = 0; i < legacy.length; i++) {
-          batch.insert('search_history', {
-            'keyword': legacy[i],
-            'searched_at': now - i,
-          }, conflictAlgorithm: ConflictAlgorithm.replace);
-        }
-        await batch.commit(noResult: true);
-      });
-      await AppDatabase.removeLegacyKey(_storageKey);
-      return legacy;
-    } catch (_) {
-      return const <String>[];
-    }
-  }
-
+  /// 记一条搜索：最近的排最前，重复的关键词只留一条。
   void addQuery(String query) {
-    if (query.trim().isEmpty) return;
     final trimmed = query.trim();
-    final updated = [trimmed, ...state.where((q) => q != trimmed)];
-    state = updated.take(_maxHistory).toList();
-    // 立即写库：关闭应用时进程会被直接结束，延迟写会丢。
-    unawaited(_writer.writeNow().then((_) => AppDatabase.checkpoint()));
+    if (trimmed.isEmpty) return;
+    state = [
+      trimmed,
+      ...state.where((q) => q != trimmed),
+    ].take(_maxHistory).toList();
   }
 
+  /// 删掉某一条历史。
   void removeQuery(String query) {
     state = state.where((q) => q != query).toList();
-    unawaited(_writer.writeNow());
   }
 
-  void clearHistory() {
-    state = [];
-    unawaited(_writer.writeNow());
-  }
+  /// 清空全部历史（只影响当前这次运行）。
+  void clearHistory() => state = [];
 }
 
 /// 搜索页可选的音源列表（与发现页一致：已启用的插件音源）。

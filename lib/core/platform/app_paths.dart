@@ -152,8 +152,8 @@ class AppPaths {
 
   /// 临时数据库目录（Windows 为 `AppData\temp\db`）。
   ///
-  /// 存放「丢了可以重新生成」的高频数据：本地歌曲列表、最近播放、下载列表、
-  /// 搜索历史、缓存索引。写入会合并延迟落盘，减少 SSD 写入次数。
+  /// 存放「丢了可以重新生成」的高频数据：本地歌曲列表、最近播放、缓存索引。
+  /// 写入会合并延迟落盘，减少 SSD 写入次数。
   static Future<Directory> cacheDatabaseDirectory() async {
     if (Platform.isWindows) {
       final base = await _subDirectory(tempFolderName);

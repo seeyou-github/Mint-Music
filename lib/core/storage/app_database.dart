@@ -21,14 +21,14 @@ import 'app_preferences.dart';
 ///
 /// * **临时库**（Windows：`AppData\temp\db\mintmusic_cache.db`）
 ///   存放 *丢了可以重新生成* 的高频数据：本地歌曲列表、最近播放列表、
-///   搜索历史、缓存索引。这些数据变动频繁，统一走「合并延迟写」
+///   缓存索引。这些数据变动频繁，统一走「合并延迟写」
 ///   （见 [DeferredWriter]），尽量减少 SSD 写入次数。
 ///
 /// 「最近听过的歌」属于可以重算的浏览记录，留在临时库；「听到哪」属于用户
 /// 长期积累的数据，进重要库。
 ///
-/// **听歌统计与排行、下载列表都已不再落库**：前者（累计时长 / 次数 / 排行）
-/// 整块移除；后者（下载任务）只留内存，退出即清空。
+/// **听歌统计与排行、下载列表、搜索历史都已不再落库**：统计与排行整块移除；
+/// 下载任务与搜索历史只留内存，退出即清空。
 ///
 /// **保留策略**（都由各自的 Store 一天最多执行一次）：
 /// - 最近播放的歌：只留最近 1 个月（`pruneOldEntries`）；
@@ -55,7 +55,7 @@ class AppDatabase {
   /// 重要库：我的收藏、收藏歌单、已听进度。
   Database get important => _important;
 
-  /// 临时库：本地歌曲列表、最近播放列表、搜索历史、缓存索引。
+  /// 临时库：本地歌曲列表、最近播放列表、缓存索引。
   Database get cache => _cache;
 
   /// 把 WAL 落盘（checkpoint）。
@@ -64,7 +64,7 @@ class AppDatabase {
   /// 结束进程仍然不会给应用收尾机会，所以关键数据写完后仍要显式 checkpoint
   /// 一次，避免 WAL 里还没落盘的数据丢失（表现为「刚写完就退出，重启后没了」）。
   ///
-  /// 只处理临时库（本地索引 / 搜索历史这类高频数据）；重要库的写入是
+  /// 只处理临时库（本地索引这类高频数据）；重要库的写入是
   /// `synchronous=FULL` 且每次都是小事务，退出时用 [checkpointAll] 兜一次即可。
   static Future<void> checkpoint() async {
     try {
@@ -121,7 +121,6 @@ class AppDatabase {
         'local_songs',
         'local_dirs',
         'recently_played',
-        'search_history',
         'lyrics',
         'song_play_progress',
         'playback_state',
@@ -170,7 +169,7 @@ class AppDatabase {
   static Future<Database> importantDatabase() async =>
       (await instance).important;
 
-  /// 临时库：本地歌曲列表、最近播放、搜索历史、缓存索引。
+  /// 临时库：本地歌曲列表、最近播放、缓存索引。
   static Future<Database> cacheDatabase() async => (await instance).cache;
 
   static Future<AppDatabase> _open() async {
@@ -375,10 +374,11 @@ class AppDatabase {
       // v8：删除最近播放的歌单分类、旧播放明细与下载列表——
       //     recently_played_playlists / play_events / download_tasks 不再建表，
       //     老库升级时直接删掉（下载列表改为只留内存）。
-      version: 8,
+      // v9：搜索历史只留内存，不再建 search_history 表，老库升级时删掉。
+      version: 9,
       onConfigure: (db) async {
         // NORMAL：写 WAL 不用每次 fsync，浏览时缓存索引写入不至于卡顿。
-        // 关键数据（本地歌曲 / 最近播放 / 搜索历史）写完后会显式
+        // 关键数据（本地歌曲 / 最近播放）写完后会显式
         // checkpoint 一次（见 [checkpoint]），进程被强杀时也能兜底。
         await _applyPragmas(db, inMemory: inMemory, synchronous: 'NORMAL');
       },
@@ -394,11 +394,12 @@ class AppDatabase {
         // v5 短暂存在过的「上次播放位置」表已废弃：续播改为复用
         // song_play_progress（最远听到哪就是续播位置），旧表直接删掉。
         await db.execute('DROP TABLE IF EXISTS song_resume_position');
-        // 最近播放的歌单分类、旧播放明细、下载列表都不再落库。
+        // 最近播放的歌单分类、旧播放明细、下载列表、搜索历史都不再落库。
         for (final table in const [
           'recently_played_playlists',
           'play_events',
           'download_tasks',
+          'search_history',
         ]) {
           await db.execute('DROP TABLE IF EXISTS $table');
         }
@@ -442,12 +443,6 @@ class AppDatabase {
       'CREATE INDEX IF NOT EXISTS idx_recently_played_time '
       'ON recently_played (played_at DESC)',
     );
-    await db.execute('''
-          CREATE TABLE IF NOT EXISTS search_history (
-            keyword TEXT PRIMARY KEY,
-            searched_at INTEGER NOT NULL DEFAULT 0
-          )
-        ''');
     await db.execute('''
           CREATE TABLE IF NOT EXISTS lyrics (
             cache_key TEXT PRIMARY KEY,
@@ -599,7 +594,7 @@ class AppDatabase {
 
 /// 延迟写盘调度器。
 ///
-/// 高频数据（本地歌曲列表、最近播放、下载列表、搜索历史）用它把连续多次的
+/// 高频数据（本地歌曲列表、最近播放）用它把连续多次的
 /// 变更合并成一次落盘：先在内存里改，等一段时间（或应用切后台 / 退出）再
 /// 统一写进数据库，避免每次改动都写一次硬盘。
 class DeferredWriter {
