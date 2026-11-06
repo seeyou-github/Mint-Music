@@ -8,7 +8,7 @@ import '../../core/theme/theme_provider.dart';
 
 /// 应用窗口底部的歌单同步提示。
 ///
-/// 自动同步（收藏页增删改触发的推送、开启「歌单实时同步」后触发的同步）
+/// 自动同步（收藏页增删改触发的同步、开启「自动同步」后启动时的同步）
 /// 进行时显示「正在同步歌单…」，结束后短暂显示成功 / 失败原因再自动隐藏。
 /// 不拦截点击，浮在内容之上、迷你播放器之上。
 class PlaylistSyncIndicator extends ConsumerWidget {

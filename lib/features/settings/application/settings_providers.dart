@@ -410,7 +410,7 @@ final lyricFontColorProvider = StateProvider<String>((ref) => '');
 
 // -- 备份还原 / WebDAV --
 
-/// WebDAV 备份配置（地址 / 账号 / 设备名 / 歌单同步开关）。
+/// WebDAV 备份配置（地址 / 账号 / 设备名 / 自动同步开关）。
 final webDavConfigProvider = StateProvider<WebDavConfig>((ref) {
   return const WebDavConfig();
 });

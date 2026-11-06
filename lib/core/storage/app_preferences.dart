@@ -269,8 +269,15 @@ class AppPreferences {
   Future<bool> _flush() {
     final file = _file;
     if (file == null) return Future.value(true);
+    // 任何设置变更都通知一次（节流交给 AutoBackup：它只做防抖，不会立刻读文件）。
+    // 插件、热榜、电台、扫描目录、字体等最终都写 settings.json，挂在这里就能
+    // 一次性覆盖所有触发源。
+    onWrite?.call();
     return _writeFile(file, _values);
   }
+
+  /// 设置写盘时的回调（启动流程注入「自动同步」的备份调度器）。
+  static void Function()? onWrite;
 
   /// 原子写：写 `.tmp` → 旧文件改名 `.bak` → `.tmp` 改名进来。
   ///

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/backup/auto_backup.dart';
 import '../../core/backup/playlist_sync_service.dart';
 import '../../core/backup/sync_timeout.dart';
 import '../../core/backup/webdav_service.dart';
@@ -15,8 +16,13 @@ import '../../features/settings/application/settings_providers.dart';
 enum _SyncPhase { idle, syncing, success }
 
 /// 歌单同步按钮：同步中显示转圈，成功后显示勾选，可再次点击同步。
+///
+/// [alsoBackup] 为 true 时，歌单同步完成后还会把当前配置备份一份到 WebDAV
+/// （「设置 → 备份还原 → 立即同步」用，逻辑 = 歌单同步 + 备份）。
 class PlaylistSyncButton extends ConsumerStatefulWidget {
-  const PlaylistSyncButton({super.key});
+  const PlaylistSyncButton({super.key, this.alsoBackup = false});
+
+  final bool alsoBackup;
 
   @override
   ConsumerState<PlaylistSyncButton> createState() => _PlaylistSyncButtonState();
@@ -86,6 +92,15 @@ class _PlaylistSyncButtonState extends ConsumerState<PlaylistSyncButton> {
         await PlaylistSyncService.pullAndMerge(
           WebDavService(config, cancelToken: op.cancelToken),
         );
+        if (widget.alsoBackup) {
+          // 歌单同步完再备份一份配置（与「备份到 WebDAV」同一套流程）。
+          // 单独包一层：备份失败时用户要知道「歌单已经同步成功」。
+          try {
+            await AutoBackup.runNow();
+          } catch (e) {
+            throw WebDavException('歌单已同步，但备份配置失败：${describeWebDavError(e)}');
+          }
+        }
       }());
       // 旧的一次同步（已被新的点击取代）不再影响界面。
       if (!mounted || !identical(_current, op)) return;
@@ -125,7 +140,10 @@ class _PlaylistSyncButtonState extends ConsumerState<PlaylistSyncButton> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: colors.surface,
-        title: Text(tr('歌单同步失败'), style: TextStyle(color: colors.textPrimary)),
+        title: Text(
+          widget.alsoBackup ? tr('同步失败') : tr('歌单同步失败'),
+          style: TextStyle(color: colors.textPrimary),
+        ),
         content: SingleChildScrollView(
           child: Text(
             tr('同步失败原因：\n$reason'),
@@ -163,6 +181,8 @@ class _PlaylistSyncButtonState extends ConsumerState<PlaylistSyncButton> {
             ? context.tr('点击停止同步')
             : success
             ? context.tr('已同步')
+            : widget.alsoBackup
+            ? context.tr('同步歌单并备份配置')
             : context.tr('同步歌单'),
         waitDuration: const Duration(milliseconds: 600),
         child: AnimatedContainer(

@@ -5,10 +5,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:just_audio_media_kit/just_audio_media_kit.dart';
 import 'app/app.dart';
+import 'core/backup/auto_backup.dart';
 import 'core/platform/app_paths.dart';
 import 'core/platform/taskbar_thumbnail_service.dart';
 import 'core/services/audio_service_init.dart';
 import 'core/storage/app_database.dart';
+import 'core/storage/app_preferences.dart';
 import 'core/storage/legacy_shared_prefs.dart';
 import 'core/theme/app_font_manager.dart';
 import 'core/theme/app_typography.dart';
@@ -102,6 +104,11 @@ void main() async {
 
   // 旧版把歌词缓存成「一首歌一个 JSON 文件」，现在搬进临时库。
   unawaited(LyricCache.migrateLegacyFiles());
+
+  // 自动同步（「设置 - 备份还原」里的开关）：任何设置写盘（插件、热榜、电台、
+  // 扫描目录、字体……最终都写 settings.json）后防抖备份到 WebDAV。
+  AutoBackup.attach(container);
+  AppPreferences.onWrite = AutoBackup.schedule;
 
   // Windows 任务栏缩略图工具栏（悬停任务栏图标时缩略图下方显示播放等按钮）。
   if (Platform.isWindows) {

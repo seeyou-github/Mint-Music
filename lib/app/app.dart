@@ -51,7 +51,7 @@ class _AppState extends ConsumerState<App> {
     // 状态栏 / 系统栏样式：首帧之前就下发一次，避免启动瞬间还是系统默认的
     // 黑色（或带对比度遮罩）状态栏。之后由 build 里的 AnnotatedRegion 跟随。
     SystemBars.apply(light: ref.read(isLightThemeActiveProvider));
-    // 开启「歌单实时同步」时，进入应用先与远端同步一次歌单。
+    // 开启「自动同步」时，进入应用先与远端同步一次歌单。
     WidgetsBinding.instance.addPostFrameCallback(
       (_) => _syncPlaylistsOnStartup(),
     );

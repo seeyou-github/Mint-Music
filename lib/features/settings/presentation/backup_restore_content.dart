@@ -23,7 +23,7 @@ import 'settings_page.dart';
 ///
 /// * 一键备份 / 一键还原：本地压缩包（系统文件对话框选择位置）
 /// * WebDAV 备份 / 还原：上传压缩包 / 拉取备份列表
-/// * 歌单实时同步开关
+/// * 自动同步开关（收藏增删改 → 歌单同步；设置变更 → 备份配置）
 class BackupRestoreContent extends ConsumerStatefulWidget {
   const BackupRestoreContent({super.key});
 
@@ -590,12 +590,12 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
         ),
         const SizedBox(height: AppSpacing.md),
         SettingGroup(
-          title: tr('歌单同步'),
+          title: tr('自动同步'),
           colors: colors,
           children: [
             SettingRow(
               icon: Icons.sync,
-              title: tr('歌单实时同步'),
+              title: tr('自动同步'),
               trailing: Switch(
                 value: config.playlistSyncEnabled,
                 onChanged: (v) {
@@ -612,7 +612,7 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
             SettingRow(
               icon: Icons.sync,
               title: tr('立即同步'),
-              trailing: const PlaylistSyncButton(),
+              trailing: const PlaylistSyncButton(alsoBackup: true),
               colors: colors,
             ),
           ],

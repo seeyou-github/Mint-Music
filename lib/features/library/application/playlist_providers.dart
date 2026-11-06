@@ -130,18 +130,26 @@ class PlaylistsNotifier extends AsyncNotifier<List<Playlist>> {
     _syncToRemote();
   }
 
-  /// 把本地歌单推送到 WebDAV 远端（开启了「歌单实时同步」时）。
+  /// 本地歌单增删改后自动同步（开启了「自动同步」时）。
+  ///
+  /// 与收藏页顶部同步按钮一致：先拉取远端合并，再把结果推回去。
   /// 5 秒防抖：连续增删改只会在最后一次操作后同步一次。
   void _syncToRemote() {
     final config = ref.read(webDavConfigProvider);
     if (!config.playlistSyncEnabled || !config.isConfigured) return;
     final status = ref.read(playlistSyncStatusProvider.notifier);
-    PlaylistSyncService.schedulePush(
-      WebDavService(config),
-      // 真正开始推送时才显示提示（前面的 5 秒是防抖等待，还没发请求）。
+    PlaylistSyncService.scheduleSync(
+      config,
+      // 真正开始同步时才显示提示（前面的 5 秒是防抖等待，还没发请求）。
       onStart: status.start,
       onFinish: (ok, error) {
         if (ok) {
+          // 远端可能有本机没有的歌单 / 歌曲，合并后要刷新界面。
+          try {
+            ref.invalidateSelf();
+          } catch (_) {
+            // notifier 已销毁（页面关了）时忽略。
+          }
           status.succeed();
         } else {
           status.fail(describeWebDavError(error ?? '未知错误'));

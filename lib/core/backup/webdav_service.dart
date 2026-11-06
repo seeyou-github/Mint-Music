@@ -68,7 +68,7 @@ class WebDavConfig {
   /// 设备名称：备份压缩包保存到 `<url>/<设备名>/` 下。
   final String deviceName;
 
-  /// 歌单实时同步开关。
+  /// 「自动同步」总开关（歌单自动同步 + 设置变更自动备份）。
   final bool playlistSyncEnabled;
 
   bool get isConfigured => url.trim().isNotEmpty;

@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import '../../features/library/data/playlist_repository.dart';
 import '../../features/library/data/playlist_store.dart';
 import 'playlist_merge.dart';
+import 'sync_timeout.dart';
 import 'webdav_service.dart';
 
 /// 歌单跨平台同步。
@@ -144,7 +145,10 @@ class PlaylistSyncService {
         await PlaylistStore.writeTombstones(activePlaylistTombstones);
         writtenPlaylistTombstones = activePlaylistTombstones;
       }
-      final activeSongTombstones = _activeSongTombstones(songTombstones, merged);
+      final activeSongTombstones = _activeSongTombstones(
+        songTombstones,
+        merged,
+      );
       if (!_sameSongTombstones(localSongTombstones, activeSongTombstones)) {
         _throwIfCancelled(webdav);
         await PlaylistStore.writeSongTombstones(activeSongTombstones);
@@ -228,11 +232,14 @@ class PlaylistSyncService {
 
   static Timer? _debounceTimer;
 
-  /// 本地歌单增删改后的自动推送：5 秒防抖，连续操作只同步最后一次。
+  /// 本地歌单增删改后的自动同步：5 秒防抖，连续操作只同步最后一次。
+  ///
+  /// 与收藏页顶部的同步按钮走同一条路径（拉取远端 + 合并 + 回推），而不是
+  /// 「只把本地推上去」——只推的话，另一台设备刚加的收藏永远拉不下来。
   ///
   /// [onStart] / [onFinish] 用于把同步状态同步给界面（窗口底部的同步提示）。
-  static void schedulePush(
-    WebDavService webdav, {
+  static void scheduleSync(
+    WebDavConfig config, {
     void Function()? onStart,
     void Function(bool ok, Object? error)? onFinish,
   }) {
@@ -241,8 +248,12 @@ class PlaylistSyncService {
       _debounceTimer = null;
       unawaited(() async {
         onStart?.call();
+        // 与手动同步一致：整次操作套 1 分钟超时，超时会取消底层请求。
+        final op = SyncAttempt(1);
         try {
-          await push(webdav);
+          await op.run(
+            pullAndMerge(WebDavService(config, cancelToken: op.cancelToken)),
+          );
           onFinish?.call(true, null);
         } catch (e) {
           debugPrint('[PlaylistSyncService] 自动同步歌单失败: $e');
@@ -250,20 +261,6 @@ class PlaylistSyncService {
         }
       }());
     });
-  }
-
-  /// 把本地歌单推送到远端（用于本地增删改后的自动同步）。
-  static Future<void> push(WebDavService webdav) async {
-    final playlists = await PlaylistRepository().exportAll();
-    final playlistTombstones = _activePlaylistTombstones(
-      await PlaylistStore.readTombstones(),
-      playlists,
-    );
-    final songTombstones = _activeSongTombstones(
-      await PlaylistStore.readSongTombstones(),
-      playlists,
-    );
-    await _pushSnapshot(webdav, playlists, playlistTombstones, songTombstones);
   }
 
   static Future<void> _pushSnapshot(
