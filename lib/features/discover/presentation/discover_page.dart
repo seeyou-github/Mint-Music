@@ -488,6 +488,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
   }
 
   Widget _buildHeader(BuildContext context, ThemeColors colors) {
+    final isTablet = ResponsiveLayout.isTablet(context);
     final tab = ref.watch(discoverTabProvider);
     final sourceId = ref.watch(discoverSourceIdProvider);
     final sources = ref.watch(discoverSupportedSourcesProvider);
@@ -535,30 +536,46 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
             onTap: () => ref.read(discoverTabProvider.notifier).state =
                 DiscoverTab.radio,
           ),
-          const Spacer(),
-          // 搜索入口：圆形图标按钮，和右侧切换音源按钮完全同款
-          // （同样 40 的圆底 + 同样 38 的居中图标）。
-          GestureDetector(
-            onTap: () => context.push('/search'),
-            child: Container(
-              width: _searchBarHeight,
-              height: _searchBarHeight,
-              decoration: BoxDecoration(
-                color: colors.surface,
-                shape: BoxShape.circle,
-              ),
-              alignment: Alignment.center,
-              child: Icon(
-                Icons.search,
-                size: _circleIconSize,
-                color: colors.textSecondary,
+          // 搜索入口：
+          // - Android：顶部横向空间紧，做成和音源按钮同尺寸的圆形图标；
+          // - Windows / 桌面：空间富余，保留带占位文字的搜索框。
+          if (Platform.isAndroid) ...[
+            const Spacer(),
+            GestureDetector(
+              onTap: () => context.push('/search'),
+              child: Container(
+                width: _searchBarHeight,
+                height: _searchBarHeight,
+                decoration: BoxDecoration(
+                  color: colors.surface,
+                  shape: BoxShape.circle,
+                ),
+                alignment: Alignment.center,
+                // 放大镜比音源圆标小一圈（音源圆标是实心图案，铺满才不显空），
+                // 38 的话放大镜会顶到圆边，显得又大又笨。
+                child: Icon(
+                  Icons.search,
+                  size: _searchIconSize,
+                  color: colors.textSecondary,
+                ),
               ),
             ),
-          ),
+          ] else
+            Expanded(
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    minWidth: 140,
+                    maxWidth: isTablet ? 420 : 300,
+                  ),
+                  child: _buildSearchBar(context, colors),
+                ),
+              ),
+            ),
           const SizedBox(width: AppSpacing.sm),
-          // 切换音源（插件）按钮：与搜索按钮共用同一个圆底和图标尺寸。
-          // 以前这里的音源圆标 size 直接等于按钮直径（铺满整个圆），而搜索
-          // 只有一个 20px 放大镜，实心红圆看起来明显比搜索按钮「大一圈」。
+          // 切换音源（插件）按钮：和搜索按钮同样的 40 圆底，但图标用
+          // [_circleIconSize]（实心圆标要铺满才饱满，搜索的放大镜另算）。
           GestureDetector(
             key: _sourceButtonKey,
             onTap: () => _showSourceMenu(
@@ -597,12 +614,48 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
   /// 顶部两个圆形按钮（搜索 / 切换音源）的直径，保持视觉高度一致。
   static const double _searchBarHeight = 40;
 
-  /// 两个圆底按钮里图标的直径：必须共用同一个值，否则铺满整圆的音源圆标
-  /// 会比放大镜明显「大一圈」（见 _buildTabBar 的说明）。
+  /// 音源圆标的直径（红 / 绿实心图案）。
   ///
   /// 38 是相对 40 圆底留一圈极窄的边：既保留音源圆标原本饱满的观感，
-  /// 又不让它顶到按钮边缘显得比搜索按钮更大。改这里两个按钮一起变。
+  /// 又不让它顶到按钮边缘。搜索按钮里的放大镜不用这个值，见 [_searchIconSize]。
   static const double _circleIconSize = 38;
+
+  /// Android 搜索按钮里放大镜的直径。
+  ///
+  /// 放大镜是细线条，铺满整个圆会显得又大又笨（之前的 38 就是这样），
+  /// 比实心音源圆标小一圈才对得上。
+  static const double _searchIconSize = 20;
+
+  /// 搜索框（Windows / 桌面）：圆角胶囊 + 放大镜 + 占位文字，点击进搜索页。
+  ///
+  /// Android 顶部横向空间不够摆它，那里用圆形图标按钮（见 [_buildHeader]）。
+  Widget _buildSearchBar(BuildContext context, ThemeColors colors) {
+    return GestureDetector(
+      onTap: () => context.push('/search'),
+      child: Container(
+        height: _searchBarHeight,
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+        decoration: BoxDecoration(
+          color: colors.surface,
+          borderRadius: BorderRadius.circular(AppRadius.full),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.search, size: 18, color: colors.textHint),
+            const SizedBox(width: AppSpacing.sm),
+            Expanded(
+              child: Text(
+                context.tr('搜索音乐、歌手...'),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: colors.textHint, fontSize: 14),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   void _showSourceMenu(
     BuildContext context,
