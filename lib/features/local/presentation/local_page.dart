@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -50,7 +52,8 @@ class _LocalFolderScrollBehavior extends MaterialScrollBehavior {
   };
 }
 
-class _LocalPageState extends ConsumerState<LocalPage> {
+class _LocalPageState extends ConsumerState<LocalPage>
+    with SingleTickerProviderStateMixin {
   final _searchController = TextEditingController();
   final _scrollController = ScrollController();
 
@@ -60,9 +63,82 @@ class _LocalPageState extends ConsumerState<LocalPage> {
   /// 批量选择控制器（长按歌曲进入多选模式）。
   final _selection = SongSelectionController();
 
+  // ------------------------------------------------------------ 文件夹左右滑动
+  //
+  // 与发现页切换「歌单 / 榜单 / 电台」同一套：拖动时直接平移整块列表，
+  // 只做一层 Transform（GPU 变换），不重建列表子树；切换后新文件夹从另一侧
+  // 28% 屏宽处滑入。
+
+  /// 前 [_kFolderFreeDragRatio] 屏宽内完全跟手。
+  static const double _kFolderFreeDragRatio = 0.25;
+
+  /// 超过跟手段后按这个倍数放大位移，快到边缘时「加速消失」。
+  static const double _kFolderOverDragFactor = 2.4;
+
+  /// 手指位移达到这么多屏宽就算一次翻页（剩下的靠甩动速度判断）。
+  static const double _kFolderSwitchDragRatio = 0.18;
+
+  /// 文件夹列表当前的横向位移（像素）。
+  final ValueNotifier<double> _folderOffsetX = ValueNotifier<double>(0);
+
+  /// 位移动画驱动（时长每次按需设置）。
+  late final AnimationController _folderAnim = AnimationController(vsync: this);
+
+  /// 当前正在跑的位移动画；为 null 表示没有动画在跑。
+  Animation<double>? _folderTween;
+
+  /// 本次拖动累计的横向位移。
+  double _folderSwipeDx = 0;
+
+  void _onFolderTick() {
+    final animation = _folderTween;
+    if (animation != null) _folderOffsetX.value = animation.value;
+  }
+
+  /// 把列表位移动画到 [to]（像素）。
+  Future<void> _animateFolderOffset(double to, int milliseconds) {
+    final from = _folderOffsetX.value;
+    _folderAnim.stop();
+    if (from == to) {
+      _folderTween = null;
+      return Future<void>.value();
+    }
+    _folderAnim.duration = Duration(milliseconds: milliseconds);
+    _folderTween = Tween<double>(
+      begin: from,
+      end: to,
+    ).animate(CurvedAnimation(parent: _folderAnim, curve: Curves.easeOutCubic));
+    return _folderAnim.forward(from: 0).then((_) {
+      _folderTween = null;
+      _folderOffsetX.value = to;
+    });
+  }
+
+  /// 手指位移 → 列表位移（前段跟手，后段加速）。
+  double _folderContentOffset(double dx) {
+    final width = MediaQuery.sizeOf(context).width;
+    if (width <= 0) return dx;
+    final free = width * _kFolderFreeDragRatio;
+    final distance = dx.abs();
+    if (distance <= free) return dx;
+    final eased = math.min(
+      free + (distance - free) * _kFolderOverDragFactor,
+      width,
+    );
+    return dx < 0 ? -eased : eased;
+  }
+
+  /// 「全部」+ 各扫描目录，滑动切换按这个顺序走。
+  List<String?> get _folderOptions {
+    final dirs =
+        ref.read(scannedDirectoriesProvider).valueOrNull ?? const <String>[];
+    return <String?>[null, ...dirs];
+  }
+
   @override
   void initState() {
     super.initState();
+    _folderAnim.addListener(_onFolderTick);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkPermissionAndScan();
     });
@@ -73,6 +149,8 @@ class _LocalPageState extends ConsumerState<LocalPage> {
     _searchController.dispose();
     _scrollController.dispose();
     _selection.dispose();
+    _folderAnim.dispose();
+    _folderOffsetX.dispose();
     super.dispose();
   }
 
@@ -176,7 +254,9 @@ class _LocalPageState extends ConsumerState<LocalPage> {
     // 选中的文件夹被移除后回到「全部」
     if (_selectedFolder != null && !scannedDirs.contains(_selectedFolder)) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) setState(() => _selectedFolder = null);
+        if (!mounted) return;
+        _folderOffsetX.value = 0;
+        setState(() => _selectedFolder = null);
       });
     }
 
@@ -229,13 +309,45 @@ class _LocalPageState extends ConsumerState<LocalPage> {
                         const SizedBox(height: AppSpacing.sm),
                       ],
                       Expanded(
-                        child: songsAsync.when(
-                          data: (_) =>
-                              _buildSongList(colors, songs, showLocateBtn),
-                          loading: () =>
-                              const Center(child: CircularProgressIndicator()),
-                          error: (e, _) =>
-                              _buildErrorState(colors, e.toString()),
+                        child: GestureDetector(
+                          // Android：左右滑动切换文件夹（「全部」+ 各扫描目录）。
+                          // 与发现页切换「歌单 / 榜单 / 电台」同一套动画。
+                          // 纵向列表、横向的文件夹标签行是更深的手势识别器，
+                          // 会自己赢下手势，不受影响。
+                          behavior: HitTestBehavior.translucent,
+                          onHorizontalDragStart:
+                              Platform.isAndroid && !selecting
+                              ? _onFolderSwipeStart
+                              : null,
+                          onHorizontalDragUpdate:
+                              Platform.isAndroid && !selecting
+                              ? _onFolderSwipeUpdate
+                              : null,
+                          onHorizontalDragEnd: Platform.isAndroid && !selecting
+                              ? _onFolderSwipeEnd
+                              : null,
+                          child: ClipRect(
+                            child: AnimatedBuilder(
+                              animation: _folderOffsetX,
+                              builder: (context, child) => Transform.translate(
+                                offset: Offset(_folderOffsetX.value, 0),
+                                child: child,
+                              ),
+                              // 只做一层 transform，拖动过程不重建列表子树。
+                              child: songsAsync.when(
+                                data: (_) => _buildSongList(
+                                  colors,
+                                  songs,
+                                  showLocateBtn,
+                                ),
+                                loading: () => const Center(
+                                  child: CircularProgressIndicator(),
+                                ),
+                                error: (e, _) =>
+                                    _buildErrorState(colors, e.toString()),
+                              ),
+                            ),
+                          ),
                         ),
                       ),
                     ],
@@ -393,6 +505,7 @@ class _LocalPageState extends ConsumerState<LocalPage> {
                       return _buildFolderChip(
                         colors,
                         context.tr('全部'),
+                        folder: null,
                         isSelected: _selectedFolder == null,
                         onTap: () => _selectFolder(null),
                       );
@@ -401,6 +514,7 @@ class _LocalPageState extends ConsumerState<LocalPage> {
                     return _buildFolderChip(
                       colors,
                       _folderName(dir),
+                      folder: dir,
                       isSelected: _selectedFolder == dir,
                       onTap: () => _selectFolder(dir),
                     );
@@ -446,8 +560,11 @@ class _LocalPageState extends ConsumerState<LocalPage> {
     String name, {
     required bool isSelected,
     required VoidCallback onTap,
+    required String? folder,
   }) {
     return GestureDetector(
+      // 滑动切换后要靠它把标签栏滚到选中项（见 [_revealFolderChip]）。
+      key: GlobalObjectKey(_folderKey(folder)),
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(
@@ -479,9 +596,101 @@ class _LocalPageState extends ConsumerState<LocalPage> {
   }
 
   /// 切换选中的文件夹（null = 全部）。
-  void _selectFolder(String? dir) {
+  ///
+  /// 点击文件夹标签与左右滑动都走这里：新文件夹从切换方向的另一侧 28% 屏宽
+  /// 处滑入，和发现页切换「歌单 / 榜单 / 电台」的进场动画一致。
+  void _selectFolder(String? dir, {bool animate = true}) {
     if (_selectedFolder == dir) return;
+    final folders = _folderOptions;
+    final from = folders.indexOf(_selectedFolder);
+    final to = folders.indexOf(dir);
+    if (animate && Platform.isAndroid && from >= 0 && to >= 0 && from != to) {
+      final width = MediaQuery.sizeOf(context).width;
+      // 向后（索引变大）→ 从右侧进场；向前 → 从左侧。
+      _folderOffsetX.value = to > from ? width * 0.28 : -width * 0.28;
+      unawaited(_animateFolderOffset(0, 200));
+    }
+    // 新文件夹的列表从头开始，不要把上一个文件夹的滚动位置带过去。
+    if (_scrollController.hasClients) _scrollController.jumpTo(0);
     setState(() => _selectedFolder = dir);
+    _revealFolderChip(dir);
+  }
+
+  /// 文件夹标签用的稳定 key。
+  ///
+  /// 「全部」用一个独立对象，避免和真实目录名（理论上可能叫 `__all__`）
+  /// 撞成同一个 key。
+  static final Object _allFolderChipKey = Object();
+
+  Object _folderKey(String? folder) => folder ?? _allFolderChipKey;
+
+  /// 把文件夹标签栏滚到选中项。
+  ///
+  /// 左右滑动切换时，选中的可能是屏幕外的标签，不滚过去用户就看不到
+  /// 「现在在哪个文件夹」。
+  void _revealFolderChip(String? folder) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final chipContext = GlobalObjectKey(_folderKey(folder)).currentContext;
+      if (chipContext == null) return;
+      unawaited(
+        Scrollable.ensureVisible(
+          chipContext,
+          alignment: 0.5,
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOutCubic,
+        ),
+      );
+    });
+  }
+
+  void _onFolderSwipeStart(DragStartDetails details) {
+    _folderAnim.stop();
+    _folderTween = null;
+    _folderSwipeDx = 0;
+    _folderOffsetX.value = 0;
+  }
+
+  void _onFolderSwipeUpdate(DragUpdateDetails details) {
+    _folderSwipeDx += details.delta.dx;
+    _folderOffsetX.value = _folderContentOffset(_folderSwipeDx);
+  }
+
+  /// 左右滑动结束：位移够就翻页，不够看甩动速度；都不够就弹回原位。
+  void _onFolderSwipeEnd(DragEndDetails details) {
+    final velocity = details.primaryVelocity ?? 0;
+    final dx = _folderSwipeDx;
+    _folderSwipeDx = 0;
+    final width = MediaQuery.sizeOf(context).width;
+    final bool swipeLeft;
+    if (dx.abs() >= width * _kFolderSwitchDragRatio) {
+      swipeLeft = dx < 0;
+    } else if (velocity.abs() >= 260) {
+      swipeLeft = velocity < 0;
+    } else {
+      unawaited(_animateFolderOffset(0, 180));
+      return;
+    }
+    unawaited(_completeFolderSwipe(swipeLeft: swipeLeft));
+  }
+
+  /// 当前文件夹顺着滑动方向滑出去，再切换选中项
+  /// （新文件夹的进场动画由 [_selectFolder] 负责）。
+  Future<void> _completeFolderSwipe({required bool swipeLeft}) async {
+    final folders = _folderOptions;
+    final index = folders.indexOf(_selectedFolder);
+    if (index < 0) return;
+    final next = index + (swipeLeft ? 1 : -1);
+    if (next < 0 || next >= folders.length) {
+      // 已经是第一个 / 最后一个文件夹：没有可切换的，弹回原位。
+      await _animateFolderOffset(0, 180);
+      return;
+    }
+    final width = MediaQuery.sizeOf(context).width;
+    // 滑出去只用 140ms：越拖到边缘越「加速消失」。
+    await _animateFolderOffset(swipeLeft ? -width : width, 140);
+    if (!mounted) return;
+    _selectFolder(folders[next]);
   }
 
   /// 文件夹显示名（取最后一级目录名）。
@@ -1302,7 +1511,9 @@ class _LocalPageState extends ConsumerState<LocalPage> {
                                 SnackBar(
                                   content: Text(
                                     context.tr(
-                                      scanned ? '目录已保存并重新扫描' : '还没有扫描目录，未扫描任何音乐',
+                                      scanned
+                                          ? '目录已保存并重新扫描'
+                                          : '还没有扫描目录，未扫描任何音乐',
                                     ),
                                   ),
                                   duration: const Duration(seconds: 2),
