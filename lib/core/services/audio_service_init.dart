@@ -35,6 +35,9 @@ Future<void> initAudioService() async {
 
   _audioHandler = await AudioService.init(
     builder: () => MusicAudioHandler(),
+    // 这些通知配置不再落 `shared_prefs/audio_service_preferences.xml`：构建时给
+    // 插件的 AudioServiceConfig.save() 打了补丁（见 `android/build.gradle.kts`），
+    // 服务读不到配置时会用补丁里硬编码的同一组值兜底。改这里记得同步那边。
     config: AudioServiceConfig(
       androidNotificationChannelId: 'com.mintmusic.channel.audio',
       androidNotificationChannelName: '音乐播放',
