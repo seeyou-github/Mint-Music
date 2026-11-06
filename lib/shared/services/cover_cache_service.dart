@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:on_audio_query/on_audio_query.dart';
+import 'package:path/path.dart' as p;
 
 import '../../features/player/domain/models/song.dart';
 import 'cache_paths.dart';
@@ -232,12 +233,52 @@ class CoverCacheService {
 
   /// 使特定歌曲的缓存失效
   void invalidate(String songId) {
-    _memCache.remove(songId);
+    final cached = _memCache.remove(songId);
+    if (cached != null) _memBytes -= cached.length;
     _diskPath(songId).then((path) {
       File(path).exists().then((exists) {
         if (exists) File(path).delete();
       });
     });
+  }
+
+  /// 删除「已经不属于任何本地歌曲」的封面图片，返回删除数量。
+  ///
+  /// 本地歌曲被移出扫描目录、音频文件被删掉之后，对应的 `<歌曲id>.jpg` 不会
+  /// 再有人读取，留着只会占空间。以当前本地歌曲列表的 id 为准做差集。
+  ///
+  /// 只处理本缓存目录里的 `.jpg`（[putArtwork] / [getArtwork] 写出的唯一格式），
+  /// 半成品临时文件不碰。
+  Future<int> pruneToSongIds(Iterable<String> liveSongIds) async {
+    var removed = 0;
+    try {
+      final live = liveSongIds.toSet();
+      final dir = await _getCacheDir();
+      if (!await dir.exists()) return 0;
+      await for (final entity in dir.list(followLinks: false)) {
+        if (entity is! File) continue;
+        final name = p.basename(entity.path);
+        if (name.endsWith('.part') || name.endsWith('.tmp')) continue;
+        final lower = name.toLowerCase();
+        if (!lower.endsWith('.jpg')) continue;
+        final songId = name.substring(0, name.length - 4);
+        if (live.contains(songId)) continue;
+        try {
+          await entity.delete();
+          final cached = _memCache.remove(songId);
+          if (cached != null) _memBytes -= cached.length;
+          removed++;
+        } catch (_) {
+          // 单个文件删不掉（被占用）就留给下次扫描。
+        }
+      }
+      if (removed > 0) {
+        debugPrint('[CoverCache] 清理无主封面 $removed 张');
+      }
+    } catch (e) {
+      debugPrint('[CoverCache] 清理无主封面失败: $e');
+    }
+    return removed;
   }
 
   /// 清除所有缓存

@@ -128,11 +128,13 @@ class LocalMusicNotifier extends StateNotifier<AsyncValue<List<Song>>> {
           _autoScanAttempted = true;
         }
         if (rescan || shouldAutoScan) {
-          await repo.scanAll(
+          final scanned = await repo.scanAll(
             onProgress: (progress) {
               _ref.read(scanProgressProvider.notifier).state = progress;
             },
           );
+          // 列表已经更新：本地歌曲列表里没有的歌，其封面图片一并删掉。
+          if (scanned) await _pruneCovers(repo.getLocalSongs());
         }
       }
 
@@ -161,6 +163,20 @@ class LocalMusicNotifier extends StateNotifier<AsyncValue<List<Song>>> {
         },
       ),
     );
+  }
+
+  /// 扫描完成后清理封面缓存：当前本地歌曲列表里没有的歌曲，封面图片删掉。
+  ///
+  /// 只在扫描**成功**后调用（列表确实更新了）：没设目录、扫描失败、正在扫描
+  /// 时 `scanAll` 返回 false，这时列表是旧的，不能按它删图片。
+  Future<void> _pruneCovers(List<Song> songs) async {
+    try {
+      await _ref
+          .read(coverCacheServiceProvider)
+          .pruneToSongIds(songs.map((s) => s.id));
+    } catch (e) {
+      debugPrint('[LocalMusic] 清理无主封面失败: $e');
+    }
   }
 
   Future<bool> requestPermissionAndScan() async {
@@ -242,7 +258,9 @@ class LocalMusicNotifier extends StateNotifier<AsyncValue<List<Song>>> {
       state = AsyncValue.data(repo.getLocalSongs());
 
       if (scanned) {
-        // 后台预加载封面缓存
+        // 列表已经更新：本地歌曲列表里没有的歌，其封面图片一并删掉，
+        // 然后再预热新列表的封面。
+        await _pruneCovers(repo.getLocalSongs());
         _preloadCovers(repo.getLocalSongs());
       }
       return scanned;
