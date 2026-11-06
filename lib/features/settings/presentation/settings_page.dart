@@ -3082,9 +3082,16 @@ class _StorageContent extends ConsumerWidget {
                     final result = await FilePicker.platform.getDirectoryPath();
                     if (result != null && context.mounted) {
                       final container = ProviderScope.containerOf(context);
+                      final previousRoot = await CachePaths.currentRootPath();
                       container.read(cacheDirProvider.notifier).state = result;
                       // 让后续的封面 / 图片缓存真正写入新目录。
                       CachePaths.configure(result);
+                      // 旧目录里的本地歌曲封面不再使用：新目录会重新提取，
+                      // 旧文件留着只会占空间。
+                      await CachePaths.deleteLocalSongsImageCacheAt(
+                        previousRoot,
+                        keepRoot: result,
+                      );
                       await AppImageCache.configure();
                       unawaited(CachePaths.enforceLimit());
                       container.invalidate(cacheDirSizeProvider);
@@ -3346,7 +3353,13 @@ class _StorageContent extends ConsumerWidget {
                   defaultDownload;
               container.read(cacheDirProvider.notifier).state =
                   appCacheDir.path;
+              final previousRoot = await CachePaths.currentRootPath();
               CachePaths.configure(appCacheDir.path);
+              // 旧目录里的本地歌曲封面不再使用（新目录重新提取）。
+              await CachePaths.deleteLocalSongsImageCacheAt(
+                previousRoot,
+                keepRoot: appCacheDir.path,
+              );
               await AppImageCache.configure();
               container.invalidate(cacheDirSizeProvider);
               unawaited(

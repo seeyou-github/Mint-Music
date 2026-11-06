@@ -209,6 +209,7 @@ class LocalMusicNotifier extends StateNotifier<AsyncValue<List<Song>>> {
       await repo.addDirectory(dirPath);
       _refreshScannedDirs();
       state = AsyncValue.data(repo.getLocalSongs());
+      await _pruneCovers(repo.getLocalSongs());
     } catch (e, st) {
       state = AsyncValue.error(e, st);
     }
@@ -220,6 +221,8 @@ class LocalMusicNotifier extends StateNotifier<AsyncValue<List<Song>>> {
       await repo.removeDirectory(dirPath);
       _refreshScannedDirs();
       state = AsyncValue.data(repo.getLocalSongs());
+      // 目录里的歌已经从索引移除，对应封面一起删掉。
+      await _pruneCovers(repo.getLocalSongs());
     } catch (e, st) {
       state = AsyncValue.error(e, st);
     }
@@ -231,6 +234,9 @@ class LocalMusicNotifier extends StateNotifier<AsyncValue<List<Song>>> {
       await repo.setDirectories(dirs);
       _refreshScannedDirs();
       state = AsyncValue.data(repo.getLocalSongs());
+      // 清空目录 / 删除单条目录后索引会立即变短（不需要等下一次扫描），
+      // 这里顺手把不再使用的封面删掉。
+      await _pruneCovers(repo.getLocalSongs());
     } catch (e, st) {
       state = AsyncValue.error(e, st);
     }
@@ -275,6 +281,8 @@ class LocalMusicNotifier extends StateNotifier<AsyncValue<List<Song>>> {
       final repo = _ref.read(localMusicRepositoryProvider);
       await repo.clearIndex();
       state = AsyncValue.data(repo.getLocalSongs());
+      // 索引清空后没有任何歌再用这些封面，整批删掉。
+      await _pruneCovers(repo.getLocalSongs());
     } catch (e, st) {
       state = AsyncValue.error(e, st);
     }
@@ -297,6 +305,8 @@ class LocalMusicNotifier extends StateNotifier<AsyncValue<List<Song>>> {
       final ok = await repo.deleteSong(song.id);
       if (ok) {
         state = AsyncValue.data(repo.getLocalSongs());
+        // 歌已经从列表里移除，封面一并删掉（不用等下次扫描）。
+        await _pruneCovers(repo.getLocalSongs());
       }
       return ok;
     } catch (e, st) {
@@ -313,6 +323,7 @@ class LocalMusicNotifier extends StateNotifier<AsyncValue<List<Song>>> {
       final removed = await repo.deleteSongs(songs.map((s) => s.id));
       if (removed > 0) {
         state = AsyncValue.data(repo.getLocalSongs());
+        await _pruneCovers(repo.getLocalSongs());
       }
       return removed;
     } catch (e, st) {
