@@ -613,9 +613,13 @@ public class AudioService extends MediaBrowserServiceCompat {
     private Notification buildNotification() {
         // patched by MintMusic: 先试自定义播放卡片（封面 / 歌名 / 五个按钮），
         // 拿不到就退回下面的 MediaStyle 通知，样式出问题不影响播放。
+        // 应用主色（config.notificationColor）在这里补上：原实现在 buildNotificationMedia()
+        // 里才 setColor，自定义分支不走那条路，少了它状态栏小图标就不着色了。
+        final NotificationCompat.Builder builder = getNotificationBuilder();
+        if (config.notificationColor != -1) builder.setColor(config.notificationColor);
         final Notification custom = MintNotification.build(
                 this,
-                getNotificationBuilder(),
+                builder,
                 mediaMetadata == null ? null : mediaMetadata.getDescription(),
                 artBitmap,
                 playing,
