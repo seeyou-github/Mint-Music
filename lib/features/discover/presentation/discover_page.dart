@@ -4,6 +4,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+// ScrollDirection 定义在 rendering.dart，material.dart 没有把它一起导出。
+import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -66,7 +68,7 @@ class _CategoryScrollBehavior extends MaterialScrollBehavior {
 enum _LeaderboardCategory { hot, all }
 
 class _DiscoverPageState extends ConsumerState<DiscoverPage>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   final ScrollController _scrollController = ScrollController();
   final GlobalKey _sourceButtonKey = GlobalKey();
   bool _hasInitialized = false;
@@ -148,6 +150,60 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
   /// 中途被打断时旧 tween 直接置空，不会再有残留的监听往 [_tabOffsetX] 写值。
   Animation<double>? _tabTween;
 
+  /// Android：分类栏（歌单的标签行 / 榜单的「热榜·所有·分组」行）随列表
+  /// 滚动收起、回来时展开。1 = 显示、0 = 隐藏。
+  ///
+  /// [SizeTransition] 负责把高度收掉让列表顶上来，[SlideTransition] 同时做
+  /// 上下平移，两者共用同一个进度，视觉上就是分类栏「向上滑出去 / 向下滑回来」。
+  late final AnimationController _categoryBarAnim = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 200),
+    value: 1,
+  );
+  late final Animation<double> _categoryBarProgress = CurvedAnimation(
+    parent: _categoryBarAnim,
+    curve: Curves.easeOutCubic,
+    reverseCurve: Curves.easeOutCubic,
+  );
+  late final Animation<Offset> _categoryBarSlide = Tween<Offset>(
+    begin: const Offset(0, -1),
+    end: Offset.zero,
+  ).animate(_categoryBarProgress);
+
+  /// 记录显隐状态，避免每一帧滚动通知都重复调用 forward / reverse。
+  bool _categoryBarVisible = true;
+
+  /// 把分类栏包成「可随垂直滚动收起 / 展开」的一层（仅 Android）。
+  Widget _collapsibleCategoryBar(Widget child) {
+    if (!Platform.isAndroid) return child;
+    return SizeTransition(
+      sizeFactor: _categoryBarProgress,
+      axisAlignment: -1,
+      child: SlideTransition(position: _categoryBarSlide, child: child),
+    );
+  }
+
+  /// 垂直滚动方向决定分类栏显隐：
+  /// - 上滑看更多内容（[ScrollDirection.reverse]）→ 收起；
+  /// - 下滑回看上方（[ScrollDirection.forward]）→ 展开。
+  ///
+  /// 横向标签栏自己的滑动、以及停止滚动时的 [ScrollDirection.idle] 都忽略，
+  /// 否则一停手分类栏就会自己弹回来。电台页没有这一层分类栏，也不处理。
+  void _onCategoryScroll(UserScrollNotification notification) {
+    if (!Platform.isAndroid) return;
+    if (notification.metrics.axis != Axis.vertical) return;
+    if (notification.direction == ScrollDirection.idle) return;
+    if (ref.read(discoverTabProvider) == DiscoverTab.radio) return;
+    final visible = notification.direction == ScrollDirection.forward;
+    if (visible == _categoryBarVisible) return;
+    _categoryBarVisible = visible;
+    if (visible) {
+      _categoryBarAnim.forward();
+    } else {
+      _categoryBarAnim.reverse();
+    }
+  }
+
   void _onTabTick() {
     final animation = _tabTween;
     if (animation != null) _tabOffsetX.value = animation.value;
@@ -201,6 +257,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
   @override
   void dispose() {
     _tabAnim.dispose();
+    _categoryBarAnim.dispose();
     _tabOffsetX.dispose();
     _scrollController.dispose();
     _leaderboardScrollController.dispose();
@@ -335,6 +392,11 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
     // 循环绕回（电台 → 歌单）也算下一个，方向跟手势一致。
     ref.listen<DiscoverTab>(discoverTabProvider, (previous, next) {
       if (previous == null || previous == next) return;
+      // 换分类时分类栏回到展开状态，不要沿用上一页滚动后收起的状态。
+      if (Platform.isAndroid) {
+        _categoryBarVisible = true;
+        _categoryBarAnim.forward();
+      }
       final from = _tabOrder.indexOf(previous);
       final to = _tabOrder.indexOf(next);
       if (from < 0 || to < 0) return;
@@ -427,7 +489,12 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
         child: Column(
           children: [
             _buildHeader(context, colors),
-            const SizedBox(height: AppSpacing.sm),
+            // Android：顶栏与分类栏之间的空白减半（顶栏自身的下内边距在
+            // [_buildHeader] 里同步减半，两处加起来正好是原来的 50%）。
+            // 歌单 / 榜单 / 电台三个分类共用这一层，所以同时生效。
+            SizedBox(
+              height: Platform.isAndroid ? AppSpacing.sm / 2 : AppSpacing.sm,
+            ),
             Expanded(
               child: GestureDetector(
                 // Android：左右滑动切换顶部分类（循环）。横向滚动的内容
@@ -449,11 +516,20 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
                     ),
                     // 三个分类各是一整页长列表，这里只做一层 transform，
                     // 拖动过程不重建子树。
-                    child: switch (tab) {
-                      DiscoverTab.playlists => _buildPlaylistsTab(colors),
-                      DiscoverTab.leaderboards => _buildLeaderboardsTab(colors),
-                      DiscoverTab.radio => const RadioPanel(),
-                    },
+                    child: NotificationListener<UserScrollNotification>(
+                      onNotification: (notification) {
+                        _onCategoryScroll(notification);
+                        // 不消费通知：列表自身、分页条该收到的滚动事件照常。
+                        return false;
+                      },
+                      child: switch (tab) {
+                        DiscoverTab.playlists => _buildPlaylistsTab(colors),
+                        DiscoverTab.leaderboards => _buildLeaderboardsTab(
+                          colors,
+                        ),
+                        DiscoverTab.radio => const RadioPanel(),
+                      },
+                    ),
                   ),
                 ),
               ),
@@ -586,9 +662,13 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
     }
 
     return Padding(
-      padding: EdgeInsets.symmetric(
-        horizontal: ResponsiveLayout.horizontalPadding(context),
-        vertical: AppSpacing.md,
+      padding: EdgeInsets.only(
+        left: ResponsiveLayout.horizontalPadding(context),
+        right: ResponsiveLayout.horizontalPadding(context),
+        top: AppSpacing.md,
+        // Android：顶栏下沿到分类栏的空白减半（顶部状态栏留白不动）；
+        // 和 build 里同样减半的 SizedBox 加起来，整段间距正好是原来的 50%。
+        bottom: Platform.isAndroid ? AppSpacing.md / 2 : AppSpacing.md,
       ),
       child: Row(
         children: [
@@ -873,14 +953,20 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
 
     return Column(
       children: [
-        _buildCategoryBar(
-          colors,
-          tagsAsync,
-          hotTagsAsync,
-          activeTagId,
-          activeCategoryName,
+        // Android：随列表上滑收起、下滑展开（上下平移动画）。分类栏和它
+        // 下方的间距一起收起，隐藏后顶部不会留一条空白。
+        _collapsibleCategoryBar(
+          Padding(
+            padding: const EdgeInsets.only(bottom: AppSpacing.md),
+            child: _buildCategoryBar(
+              colors,
+              tagsAsync,
+              hotTagsAsync,
+              activeTagId,
+              activeCategoryName,
+            ),
+          ),
         ),
-        const SizedBox(height: AppSpacing.md),
         Expanded(
           child: _isCustomTag(activeTagId)
               ? _buildCustomSheetGrid(colors, customSheets, sourceId: sourceId)
@@ -1757,73 +1843,82 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
         : null;
     return Column(
       children: [
-        SizedBox(
-          height: 36,
-          child: Row(
-            children: [
-              // 分类标签：数量增多时支持鼠标拖动 / 触摸左右滑动。
-              Expanded(
-                child: ScrollConfiguration(
-                  behavior: const _CategoryScrollBehavior(),
-                  child: ListView(
-                    scrollDirection: Axis.horizontal,
-                    padding: const EdgeInsets.only(left: AppSpacing.lg),
-                    children: [
-                      _buildTagChip(
-                        label: context.tr('热榜'),
-                        isActive: isHot,
-                        colors: colors,
-                        onTap: () => _selectLeaderboardCategory(
-                          _LeaderboardCategory.hot,
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.only(left: AppSpacing.sm),
-                        child: _buildTagChip(
-                          label: context.tr('所有'),
-                          isActive: !isHot && effectiveGroup == null,
-                          colors: colors,
-                          onTap: () {
-                            _leaderboardCategoryPicked = true;
-                            setState(() {
-                              _leaderboardCategory = _LeaderboardCategory.all;
-                              _selectedLeaderboardGroup = null;
-                            });
-                          },
-                        ),
-                      ),
-                      for (final group in groups)
-                        Padding(
-                          padding: const EdgeInsets.only(left: AppSpacing.sm),
-                          child: _buildTagChip(
-                            label: group,
-                            isActive: !isHot && effectiveGroup == group,
+        // Android：随列表上滑收起、下滑展开（上下平移动画），与歌单页一致。
+        _collapsibleCategoryBar(
+          Padding(
+            padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+            child: SizedBox(
+              height: 36,
+              child: Row(
+                children: [
+                  // 分类标签：数量增多时支持鼠标拖动 / 触摸左右滑动。
+                  Expanded(
+                    child: ScrollConfiguration(
+                      behavior: const _CategoryScrollBehavior(),
+                      child: ListView(
+                        scrollDirection: Axis.horizontal,
+                        padding: const EdgeInsets.only(left: AppSpacing.lg),
+                        children: [
+                          _buildTagChip(
+                            label: context.tr('热榜'),
+                            isActive: isHot,
                             colors: colors,
-                            onTap: () {
-                              _leaderboardCategoryPicked = true;
-                              setState(() {
-                                _leaderboardCategory = _LeaderboardCategory.all;
-                                _selectedLeaderboardGroup = group;
-                              });
-                            },
+                            onTap: () => _selectLeaderboardCategory(
+                              _LeaderboardCategory.hot,
+                            ),
                           ),
-                        ),
-                    ],
+                          Padding(
+                            padding: const EdgeInsets.only(left: AppSpacing.sm),
+                            child: _buildTagChip(
+                              label: context.tr('所有'),
+                              isActive: !isHot && effectiveGroup == null,
+                              colors: colors,
+                              onTap: () {
+                                _leaderboardCategoryPicked = true;
+                                setState(() {
+                                  _leaderboardCategory =
+                                      _LeaderboardCategory.all;
+                                  _selectedLeaderboardGroup = null;
+                                });
+                              },
+                            ),
+                          ),
+                          for (final group in groups)
+                            Padding(
+                              padding: const EdgeInsets.only(
+                                left: AppSpacing.sm,
+                              ),
+                              child: _buildTagChip(
+                                label: group,
+                                isActive: !isHot && effectiveGroup == group,
+                                colors: colors,
+                                onTap: () {
+                                  _leaderboardCategoryPicked = true;
+                                  setState(() {
+                                    _leaderboardCategory =
+                                        _LeaderboardCategory.all;
+                                    _selectedLeaderboardGroup = group;
+                                  });
+                                },
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
                   ),
-                ),
+                  // 「新增热榜数据」固定在最右侧，分类再长也不会被挤出去。
+                  Padding(
+                    padding: const EdgeInsets.only(
+                      left: AppSpacing.sm,
+                      right: AppSpacing.lg,
+                    ),
+                    child: _buildAddHotBoardButton(colors),
+                  ),
+                ],
               ),
-              // 「新增热榜数据」固定在最右侧，分类再长也不会被挤出去。
-              Padding(
-                padding: const EdgeInsets.only(
-                  left: AppSpacing.sm,
-                  right: AppSpacing.lg,
-                ),
-                child: _buildAddHotBoardButton(colors),
-              ),
-            ],
+            ),
           ),
         ),
-        const SizedBox(height: AppSpacing.sm),
         Expanded(
           child: isHot
               ? _buildHotBoardTab(colors)
