@@ -8,7 +8,6 @@ import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
 
 import '../domain/models/song.dart';
-import '../../../shared/services/cache_paths.dart';
 import '../../../shared/services/cover_cache_service.dart';
 import 'audio_cache_service.dart';
 
@@ -350,18 +349,13 @@ class MusicAudioHandler extends BaseAudioHandler
       if (song.coverUrl == null &&
           (song.mediaStoreId != null || song.source == 'local')) {
         try {
-          // 优先从 CoverCacheService 获取（内存/磁盘缓存 + MediaStore 提取）
-          final bytes = await coverCache.getArtwork(
+          // 直接使用本地歌曲封面缓存里的 `<歌曲id>.jpg`（已落盘的那份），
+          // 不再复制到 covers 目录。
+          final coverPath = await coverCache.ensureDiskFile(
             song.id,
             mediaStoreId: song.mediaStoreId,
           );
-          if (bytes != null && bytes.isNotEmpty) {
-            // 写入播放器专用的缓存目录（供 MediaSession 使用）
-            final coverDir = await _getCoverCacheDir();
-            final coverPath = '${coverDir!.path}/${song.id}.jpg';
-            if (!await File(coverPath).exists()) {
-              await File(coverPath).writeAsBytes(bytes);
-            }
+          if (coverPath != null) {
             return song.copyWith(coverUrl: coverPath);
           }
         } catch (e) {
@@ -394,10 +388,6 @@ class MusicAudioHandler extends BaseAudioHandler
     }
 
     return result.cast<Song>();
-  }
-
-  Future<Directory> _getCoverCacheDir() async {
-    return CachePaths.subDirectory('covers');
   }
 
   Future<void> setSource(Song song) async {

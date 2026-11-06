@@ -1,12 +1,10 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:just_audio_background/just_audio_background.dart';
 
 import '../domain/models/song.dart';
-import '../../../shared/services/cache_paths.dart';
 import '../../../shared/services/cover_cache_service.dart';
 
 class AudioPlayerService {
@@ -132,23 +130,18 @@ class AudioPlayerService {
   Future<List<Song>> _prepareLocalCovers(List<Song> songs) async {
     final List<Song> result = [];
     final coverCache = CoverCacheService();
-    Directory? coverDir;
 
     for (final song in songs) {
       if (song.coverUrl == null &&
           (song.mediaStoreId != null || song.isLocal)) {
         try {
-          // 优先从 CoverCacheService 获取（内存/磁盘缓存 + MediaStore 提取）
-          final bytes = await coverCache.getArtwork(
+          // 直接使用本地歌曲封面缓存里的 `<歌曲id>.jpg`（已落盘的那份），
+          // 不再复制到 covers 目录。
+          final coverPath = await coverCache.ensureDiskFile(
             song.id,
             mediaStoreId: song.mediaStoreId,
           );
-          if (bytes != null && bytes.isNotEmpty) {
-            coverDir ??= await _getCoverCacheDir();
-            final coverPath = '${coverDir.path}/${song.id}.jpg';
-            if (!await File(coverPath).exists()) {
-              await File(coverPath).writeAsBytes(bytes);
-            }
+          if (coverPath != null) {
             result.add(song.copyWith(coverUrl: coverPath));
             debugPrint('AudioPlayerService: 提取封面成功 ${song.title}');
             continue;
@@ -160,10 +153,6 @@ class AudioPlayerService {
       result.add(song);
     }
     return result;
-  }
-
-  Future<Directory> _getCoverCacheDir() async {
-    return CachePaths.subDirectory('covers');
   }
 
   Future<void> setSource(Song song) async {

@@ -90,6 +90,9 @@ void main() async {
   try {
     CachePaths.configure(container.read(cacheDirProvider));
     CachePaths.maxBytes = container.read(maxCacheSizeMbProvider) * 1024 * 1024;
+    // 旧缓存子目录改名 / 清理（artwork_cache → local_songs_image_cache，
+    // 删掉不再使用的 covers / image_discovery_cache）。
+    await CachePaths.migrateLegacySubDirectories();
     await AppImageCache.configure();
     unawaited(CachePaths.enforceLimit());
     print('>>> main: 缓存目录 -> ${CachePaths.root ?? "应用默认缓存目录"}');

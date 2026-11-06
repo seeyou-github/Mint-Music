@@ -3050,7 +3050,7 @@ class _StorageContent extends ConsumerWidget {
     );
   }
 
-  /// 缓存目录：路径 + 选择 / 打开目录 + 最大缓存大小 + 清除缓存。
+  /// 缓存目录：路径 + 选择 / 打开目录 + 最大缓存大小（只限音频缓存）+ 清除缓存。
   Widget _buildCacheGroup(
     BuildContext context,
     WidgetRef ref,
@@ -3157,6 +3157,10 @@ class _StorageContent extends ConsumerWidget {
               (s) => s.setMaxCacheSizeMb(mb),
             );
           },
+        ),
+        Text(
+          context.tr('仅限制音频缓存；图片缓存最多保留 2000 张，30 天未使用自动清理。'),
+          style: TextStyle(fontSize: 12, color: colors.textHint),
         ),
         const SizedBox(height: AppSpacing.md),
         SizedBox(

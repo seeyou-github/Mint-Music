@@ -478,7 +478,6 @@ class _ArtistUpdatePageState extends ConsumerState<ArtistUpdatePage> {
     return MusicCoverImage(
       url: url,
       fit: BoxFit.cover,
-      useDiscoveryCache: true,
       errorWidget: _coverFallback(colors),
     );
   }

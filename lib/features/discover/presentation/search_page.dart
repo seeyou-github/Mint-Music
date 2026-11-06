@@ -1905,7 +1905,6 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                     child: MusicCoverImage(
                       url: playlist.coverUrl,
                       fit: BoxFit.cover,
-                      useDiscoveryCache: true,
                       errorWidget: Icon(
                         Icons.music_note,
                         size: 40,

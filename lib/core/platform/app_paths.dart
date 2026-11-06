@@ -287,17 +287,19 @@ class AppPaths {
     // 文件会变成没人统计、没人清理的垃圾（缓存索引里存的是相对路径，整棵
     // 目录搬过去索引依然对得上）。
     final temp = await tempDirectory();
-    for (final name in const [
-      'artwork_cache',
-      'covers',
-      'image_cache',
-      'image_discovery_cache',
-      'audio_cache',
-    ]) {
+    for (final name in const ['artwork_cache', 'image_cache', 'audio_cache']) {
       await _mergeDirectory(
         Directory(p.join(cache.path, name)),
         Directory(p.join(temp.path, name)),
       );
+    }
+    // 新版不再使用这两个目录：`covers` 是封面副本，`image_discovery_cache`
+    // 已经并入 `image_cache`（文件名体系不同，搬过去也没有索引能对上）。
+    for (final name in const ['covers', 'image_discovery_cache']) {
+      try {
+        final dir = Directory(p.join(cache.path, name));
+        if (await dir.exists()) await dir.delete(recursive: true);
+      } catch (_) {}
     }
   }
 

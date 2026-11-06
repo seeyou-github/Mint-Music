@@ -936,7 +936,6 @@ class _LocalPlaylistDetailPageState
       return MusicCoverImage(
         url: playlist.coverImgUrl,
         fit: BoxFit.cover,
-        useDiscoveryCache: true,
         errorWidget: _coverFallback(colors),
       );
     }

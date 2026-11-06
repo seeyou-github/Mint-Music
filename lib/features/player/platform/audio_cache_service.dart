@@ -15,8 +15,8 @@ import '../../../shared/services/cache_paths.dart';
 /// * 未命中缓存时正常走网络播放，同时在后台把音频下载一份到缓存目录，
 ///   供下次播放直接使用。
 ///
-/// 缓存文件同时受「最大缓存大小」限制（见 [CachePaths.enforceLimit]），
-/// 超限时按修改时间从旧到新清理。
+/// 缓存文件同时受「最大缓存大小」限制（见 [CachePaths.enforceLimit]，
+/// 该上限只作用于本目录），超限时按修改时间从旧到新清理。
 class AudioCacheService {
   AudioCacheService._();
 
@@ -25,7 +25,7 @@ class AudioCacheService {
 
   /// 每新缓存多少首歌才检查一次总容量。
   ///
-  /// 一次检查要把 5 个缓存目录整个遍历 + 逐个 stat，缓存文件上万时是几百毫秒
+  /// 一次检查要把音频缓存目录整个遍历 + 逐个 stat，缓存文件上万时是几百毫秒
   /// 的 IO；每首歌都查纯属浪费。100 首 320k 大约 1.2GB，配合「超限清到上限的
   /// 一半」，这个频率下正常听歌基本感觉不到清理动作。
   static const int _limitCheckEverySongs = 100;

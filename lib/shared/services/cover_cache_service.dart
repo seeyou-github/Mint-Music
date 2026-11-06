@@ -36,7 +36,7 @@ class CoverCacheService {
         await cached.exists()) {
       return cached;
     }
-    final dir = await CachePaths.subDirectory('artwork_cache');
+    final dir = await CachePaths.subDirectory(CachePaths.localSongsImageCache);
     _cacheDir = dir;
     _cacheRoot = CachePaths.root;
     return dir;
@@ -123,6 +123,34 @@ class CoverCacheService {
     await _writeToDisk(songId, bytes);
   }
 
+  /// 确保封面已落盘，返回磁盘文件路径；没有封面时返回 null。
+  ///
+  /// 给系统媒体通知（`MediaItem.artUri`）用：它只认文件路径，不接受内存字节。
+  /// 直接复用本地歌曲封面缓存里的 `<歌曲id>.jpg`，不再另外复制一份。
+  ///
+  /// 与 [getArtwork] 的区别是需要一个**已经写完**的文件：内存命中但磁盘还
+  /// 没写（提取时是异步落盘）时，这里补写完再返回。
+  Future<String?> ensureDiskFile(String songId, {int? mediaStoreId}) async {
+    final path = await _diskPath(songId);
+    try {
+      final file = File(path);
+      if (await file.exists() && await file.length() > 0) return path;
+    } catch (_) {}
+
+    final bytes = await getArtwork(songId, mediaStoreId: mediaStoreId);
+    if (bytes == null || bytes.isEmpty) return null;
+    try {
+      final file = File(path);
+      if (!await file.exists() || await file.length() == 0) {
+        await file.writeAsBytes(bytes, flush: true);
+      }
+      return path;
+    } catch (e) {
+      debugPrint('[CoverCache] 封面落盘失败 $songId: $e');
+      return null;
+    }
+  }
+
   /// 从 MediaStore 提取封面并缓存到内存 + 磁盘
   Future<Uint8List?> _extractAndCache(String songId, int mediaStoreId) async {
     try {
@@ -152,21 +180,10 @@ class CoverCacheService {
     try {
       final path = await _diskPath(songId);
       await File(path).writeAsBytes(bytes, flush: false);
-      // 每写入 100 张封面才检查一次缓存上限。
-      //
-      // 封面单张只有几十 KB，翻一页列表就能写十几张；以前每 20 张查一次，
-      // 每次都要把 5 个缓存目录（含上万条音频缓存）整体遍历一遍，纯属浪费。
-      // 真正的大头是 audio_cache，它按「每 100 首」检查（见 AudioCacheService）。
-      _writeCount++;
-      if (_writeCount % 100 == 0 && CachePaths.maxBytes > 0) {
-        await CachePaths.enforceLimit();
-      }
     } catch (e) {
       debugPrint('[CoverCache] 磁盘写入失败 $songId: $e');
     }
   }
-
-  int _writeCount = 0;
 
   /// 批量预加载封面（在后台并发执行，带进度回调）。
   /// 用于本地音乐扫描完成后预热缓存。

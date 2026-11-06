@@ -1686,7 +1686,6 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
                     child: MusicCoverImage(
                       url: playlist.coverUrl,
                       fit: BoxFit.cover,
-                      useDiscoveryCache: true,
                       cacheWidth: 400,
                       cacheHeight: 400,
                       filterQuality: FilterQuality.high,
@@ -2061,7 +2060,6 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
                       child: MusicCoverImage(
                         url: board.coverUrl,
                         fit: BoxFit.cover,
-                        useDiscoveryCache: true,
                         errorWidget: Icon(
                           Icons.show_chart,
                           size: 32,
@@ -2377,7 +2375,6 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
                     url: song.coverUrl,
                     songId: song.id,
                     fit: BoxFit.cover,
-                    useDiscoveryCache: true,
                     errorWidget: Icon(
                       Icons.music_note,
                       size: 18,
@@ -2657,7 +2654,6 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
                     child: MusicCoverImage(
                       url: board.coverUrl,
                       fit: BoxFit.cover,
-                      useDiscoveryCache: true,
                       errorWidget: Icon(
                         Icons.show_chart,
                         size: 40,
@@ -2962,7 +2958,6 @@ class _HotBoardPickerSheetState extends ConsumerState<_HotBoardPickerSheet> {
                 child: MusicCoverImage(
                   url: board.coverUrl,
                   fit: BoxFit.cover,
-                  useDiscoveryCache: true,
                   errorWidget: Icon(
                     Icons.show_chart,
                     size: 20,
@@ -3052,7 +3047,6 @@ class _AddedHotBoardTile extends StatelessWidget {
               child: MusicCoverImage(
                 url: board.coverUrl,
                 fit: BoxFit.cover,
-                useDiscoveryCache: true,
                 errorWidget: Icon(
                   Icons.show_chart,
                   size: 18,
