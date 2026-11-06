@@ -390,6 +390,9 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
     return Scaffold(
       backgroundColor: colors.background,
       body: SafeArea(
+        // 顶部不避让：头部渐变要一直铺到状态栏（和歌单详情页一致），
+        // 状态栏高度由 _buildHeader 自己加进内边距。
+        top: false,
         child: Column(
           children: [
             _buildHeader(colors, item, favorited),
@@ -451,140 +454,130 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
     return _buildSongList(colors, _songs);
   }
 
+  /// 专辑 / 作者页顶部：返回按钮 + 封面 + 名称 / 音源 / 操作按钮。
+  ///
+  /// 布局与歌单详情页保持一致：不再单独占一行放「箭头 + 名称」（那一行会和
+  /// 下面封面旁的名字重复），返回箭头贴在封面左侧，渐变背景也照歌单页来。
+  /// Android 靠系统返回手势 / 返回键，不显示箭头。
   Widget _buildHeader(
     ThemeColors colors,
     SearchCollection item,
     bool favorited,
   ) {
     final songs = _songs;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(
-        AppSpacing.lg,
-        AppSpacing.md,
+    return Container(
+      padding: EdgeInsets.fromLTRB(
+        AppSpacing.sm,
+        // 状态栏沉浸：把状态栏高度算进头部内边距，主题色渐变一直铺到屏幕
+        // 顶端（外层 SafeArea 用的是 top: false，不拦这一段）。
+        AppSpacing.md + MediaQuery.paddingOf(context).top,
         AppSpacing.lg,
         AppSpacing.sm,
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [colors.primary.withValues(alpha: 0.15), colors.background],
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Row(
-            children: [
-              // Android 靠系统返回手势 / 返回键，顶部不放返回箭头。
-              if (!Platform.isAndroid) ...[
-                GestureDetector(
-                  onTap: () => context.pop(),
-                  child: Icon(
-                    Icons.arrow_back,
-                    size: 24,
-                    color: colors.textPrimary,
-                  ),
+          // Android 靠系统返回手势 / 返回键，顶部不放返回箭头。
+          if (!Platform.isAndroid) ...[
+            GestureDetector(
+              onTap: () => context.pop(),
+              child: Padding(
+                padding: const EdgeInsets.all(AppSpacing.xs),
+                child: Icon(
+                  Icons.arrow_back,
+                  size: 24,
+                  color: colors.textPrimary,
                 ),
-                const SizedBox(width: AppSpacing.md),
-              ],
-              Expanded(
-                child: Text(
+              ),
+            ),
+            const SizedBox(width: AppSpacing.sm),
+          ],
+          ClipRRect(
+            borderRadius: BorderRadius.circular(AppRadius.md),
+            child: MusicCoverImage(
+              url: item.coverUrl,
+              width: 120,
+              height: 120,
+              fit: BoxFit.cover,
+              errorWidget: Container(
+                width: 120,
+                height: 120,
+                color: colors.surfaceVariant,
+                child: Icon(
+                  _isArtist ? Icons.person : Icons.album,
+                  size: 36,
+                  color: colors.textHint,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: AppSpacing.md),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
                   item.title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
                     color: colors.textPrimary,
                   ),
                 ),
-              ),
-            ],
-          ),
-          const SizedBox(height: AppSpacing.md),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(AppRadius.md),
-                child: MusicCoverImage(
-                  url: item.coverUrl,
-                  width: 120,
-                  height: 120,
-                  fit: BoxFit.cover,
-                  errorWidget: Container(
-                    width: 120,
-                    height: 120,
-                    color: colors.surfaceVariant,
-                    child: Icon(
-                      _isArtist ? Icons.person : Icons.album,
-                      size: 36,
-                      color: colors.textHint,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: AppSpacing.md),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.center,
+                const SizedBox(height: 4),
+                // 音源标签 + 副标题（歌手 / 发行时间 / 歌曲数）同一行。
+                Row(
                   children: [
-                    Text(
-                      item.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: colors.textPrimary,
+                    _buildSourceNameTag(colors, item),
+                    const SizedBox(width: AppSpacing.sm),
+                    Expanded(
+                      child: Text(
+                        _subtitle(item, songs.length),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 12, color: colors.textHint),
                       ),
-                    ),
-                    const SizedBox(height: 4),
-                    // 音源标签 + 副标题（歌手 / 发行时间 / 歌曲数）同一行。
-                    Row(
-                      children: [
-                        _buildSourceNameTag(colors, item),
-                        const SizedBox(width: AppSpacing.sm),
-                        Expanded(
-                          child: Text(
-                            _subtitle(item, songs.length),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: colors.textHint,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: AppSpacing.sm),
-                    Row(
-                      children: [
-                        _actionChip(
-                          colors,
-                          icon: Icons.play_arrow,
-                          label: context.tr('播放全部'),
-                          primary: true,
-                          onTap: songs.isEmpty ? null : () => _playAll(songs),
-                        ),
-                        const SizedBox(width: AppSpacing.sm),
-                        _actionChip(
-                          colors,
-                          icon: favorited
-                              ? Icons.favorite
-                              : Icons.favorite_border,
-                          label: _favoriting
-                              ? context.tr('收藏中...')
-                              : favorited
-                              ? context.tr('已收藏')
-                              : context.tr('收藏'),
-                          loading: _favoriting,
-                          onTap: () => unawaited(_toggleFavorite()),
-                        ),
-                        // 「更新」按钮只在收藏页打开『作者：xxx』时出现
-                        // （见 local_playlist_detail_page），这里不再提供。
-                      ],
                     ),
                   ],
                 ),
-              ),
-            ],
+                const SizedBox(height: AppSpacing.sm),
+                Row(
+                  children: [
+                    _actionChip(
+                      colors,
+                      icon: Icons.play_arrow,
+                      label: context.tr('播放全部'),
+                      primary: true,
+                      onTap: songs.isEmpty ? null : () => _playAll(songs),
+                    ),
+                    const SizedBox(width: AppSpacing.sm),
+                    _actionChip(
+                      colors,
+                      icon: favorited ? Icons.favorite : Icons.favorite_border,
+                      label: _favoriting
+                          ? context.tr('收藏中...')
+                          : favorited
+                          ? context.tr('已收藏')
+                          : context.tr('收藏'),
+                      loading: _favoriting,
+                      onTap: () => unawaited(_toggleFavorite()),
+                    ),
+                    // 「更新」按钮只在收藏页打开『作者：xxx』时出现
+                    // （见 local_playlist_detail_page），这里不再提供。
+                  ],
+                ),
+              ],
+            ),
           ),
         ],
       ),
