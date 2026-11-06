@@ -8,14 +8,15 @@
       │ └──────┘                                  │
       └───────────────────────────────────────────┘
 
-  卡片底色 / 圆角由系统通知卡提供（这里**不设** background），文字与图标颜色走
-  values(-night)/mm_notif_colors.xml，跟随系统深浅色。
+  底色由 MintNotification 在运行时铺在根布局上（当前封面主色压暗，见
+  `setAccentColor`），所以这里不写 background；底色恒为深色，文字 / 图标固定浅色。
 
   由 `MintNotification.java`（third_party/audio_service 里）填充图片与文字，
   并通过 RemoteViews 的 PendingIntent 绑定按钮，因此这里只写静态骨架：
   尺寸用 dp，字号用 sp。
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/mm_notif_root"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="horizontal"
@@ -52,7 +53,7 @@
                 android:ellipsize="end"
                 android:includeFontPadding="false"
                 android:singleLine="true"
-                android:textColor="@color/mm_notif_text"
+                android:textColor="#EDEDED"
                 android:textSize="15sp"
                 android:textStyle="bold" />
 
@@ -121,7 +122,7 @@
                 android:gravity="center"
                 android:includeFontPadding="false"
                 android:text="词"
-                android:textColor="@color/mm_notif_icon"
+                android:textColor="#E0E0E0"
                 android:textSize="15sp"
                 android:textStyle="bold" />
         </LinearLayout>

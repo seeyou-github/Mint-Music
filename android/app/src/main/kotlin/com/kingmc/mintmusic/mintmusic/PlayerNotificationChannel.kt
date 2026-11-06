@@ -43,6 +43,11 @@ object PlayerNotificationChannel {
                     MintNotification.setFavorite(call.arguments == true)
                     result.success(null)
                 }
+                "setAccentColor" -> {
+                    // Dart 侧用封面主色算好的卡片底色（ARGB）；0 表示没有封面色。
+                    MintNotification.setAccentColor((call.arguments as? Number)?.toInt() ?: 0)
+                    result.success(null)
+                }
                 else -> result.notImplemented()
             }
         }

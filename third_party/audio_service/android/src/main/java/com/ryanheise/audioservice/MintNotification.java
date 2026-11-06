@@ -29,8 +29,9 @@ import androidx.core.app.NotificationCompat;
  * 布局异常）都返回 {@code null}，调用方退回原来的 MediaStyle 通知，绝不会因为
  * 通知样式导致播放异常。
  *
- * <p>卡片背景不动：不设自己的背景，沿用系统通知卡的圆角与底色；文字 / 图标颜色
- * 走 {@code values(-night)/mm_notif_colors.xml}，跟随系统深浅色。
+ * <p>卡片底色按当前封面取色：Dart 侧用 CoverColorExtractor 算出主色、压暗后通过
+ * {@link #setAccentColor(int)} 传进来，这里铺在根布局上（与播放页背景同一套算法）。
+ * 因为底色恒为深色，卡片里的文字 / 图标固定用浅色。
  *
  * <p>本文件是 vendored 的 audio_service 源码的一部分（third_party/audio_service），
  * 包名必须是 {@code com.ryanheise.audioservice} —— 只有同包才能拿到 {@code AudioService}
@@ -53,6 +54,13 @@ public final class MintNotification {
     /** 当前歌曲是否已收藏（由 Dart 侧通过 MethodChannel 同步过来）。 */
     private static boolean favorite = false;
 
+    /**
+     * 卡片底色：当前封面主色压暗后的颜色（Dart 侧算好传过来）。
+     *
+     * 默认是一块中性深色，没取到封面色 / 刚切歌还没算完时先用它，算完再刷新。
+     */
+    private static int accentColor = 0xFF1E1E1E;
+
     /** 封面圆角后的缓存：同一次通知重建里封面位图是同一个对象，不必重复裁剪。 */
     private static Bitmap cachedSource;
     private static Bitmap cachedRounded;
@@ -64,6 +72,18 @@ public final class MintNotification {
         if (favorite == value) return;
         favorite = value;
         // 与 AudioService 同包，可直接调用刷新入口。
+        AudioService.refreshNotification();
+    }
+
+    /**
+     * Dart 侧算出当前封面的底色后调用（ARGB）；传 0 表示「没有封面色」，用默认深色。
+     *
+     * 颜色真的变了才重绘，切歌时不会白刷一次通知。
+     */
+    public static void setAccentColor(int color) {
+        final int next = color == 0 ? 0xFF1E1E1E : color;
+        if (next == accentColor) return;
+        accentColor = next;
         AudioService.refreshNotification();
     }
 
@@ -83,6 +103,7 @@ public final class MintNotification {
         try {
             final Context context = service;
             final int layoutId = res(context, "layout", "mintmusic_notification_player");
+            final int rootId = res(context, "id", "mm_notif_root");
             final int coverId = res(context, "id", "mm_notif_cover");
             final int titleId = res(context, "id", "mm_notif_title");
             final int closeId = res(context, "id", "mm_notif_close");
@@ -94,6 +115,12 @@ public final class MintNotification {
             if (layoutId == 0 || coverId == 0 || titleId == 0 || playId == 0) return null;
 
             final RemoteViews views = new RemoteViews(context.getPackageName(), layoutId);
+
+            // 卡片底色：封面主色压暗后的颜色（与播放页背景、详情页顶栏同一套算法）。
+            // 系统通知卡自己不取色，这里直接铺在我们的根布局上。
+            if (rootId != 0) {
+                views.setInt(rootId, "setBackgroundColor", accentColor);
+            }
 
             // 歌名：单行，超长由布局里的 ellipsize="end" 截断。
             views.setTextViewText(titleId, description.getTitle());

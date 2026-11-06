@@ -59,4 +59,16 @@ class PlayerNotification {
       // 原生侧还没起来（或在别的平台）时静默忽略：红心只是慢一拍。
     }
   }
+
+  /// 把当前封面算出的卡片底色同步给原生（ARGB，null = 没有封面色，用默认深色）。
+  ///
+  /// 颜色没变时原生侧直接忽略，不会重绘通知。
+  static Future<void> setAccentColor(int? argb) async {
+    if (!supported) return;
+    try {
+      await _channel.invokeMethod<void>('setAccentColor', argb ?? 0);
+    } catch (_) {
+      // 取色只是锦上添花，失败保持默认深色即可。
+    }
+  }
 }

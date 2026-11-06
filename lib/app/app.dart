@@ -20,6 +20,7 @@ import '../core/utils/responsive_layout.dart';
 import '../features/player/application/desktop_lyric_controller.dart';
 import '../features/player/application/desktop_lyric_sync.dart';
 import '../features/player/application/playback_controller.dart';
+import '../features/player/domain/services/cover_color_extractor.dart';
 import '../features/player/platform/desktop_lyric_overlay.dart';
 import '../features/player/presentation/desktop_lyric_window.dart';
 import '../features/plugin/application/plugin_providers.dart';
@@ -69,8 +70,12 @@ class _AppState extends ConsumerState<App> {
   void _initNotificationActions() {
     if (!PlayerNotification.supported) return;
     PlayerNotification.attach(onAction: _handleNotificationAction);
-    // 原生侧可能已经存了「Dart 还没就绪时点的按钮」，首帧后取一次。
+    // 原生侧可能已经存了「Dart 还没就绪时点的按钮」，首帧后取一次；
+    // 同时补一次初始状态：通知可能比 Dart 更早存在（后台恢复播放），
+    // 只靠 build 里的 listen 拿不到初始值。
     WidgetsBinding.instance.addPostFrameCallback((_) async {
+      _syncNotificationFavorite();
+      unawaited(_syncNotificationColor());
       final action = await PlayerNotification.consumeLaunchAction();
       if (!mounted || action == null) return;
       _handleNotificationAction(action);
@@ -132,6 +137,32 @@ class _AppState extends ConsumerState<App> {
                 .any((s) => s.id == song.id) ??
             false);
     unawaited(PlayerNotification.setFavorite(isFavorite));
+  }
+
+  /// 让通知卡片的底色跟随当前封面（取色算法与播放页背景一致）。
+  ///
+  /// 直接对「这一刻的当前歌曲」取色，不走 currentCoverColorProvider：切歌瞬间
+  /// provider 可能还没重建完，读 future 会拿到上一首歌的颜色。
+  Future<void> _syncNotificationColor() async {
+    if (!PlayerNotification.supported) return;
+    final song = ref.read(playbackControllerProvider).currentSong;
+    if (song == null) return;
+    try {
+      final result = await CoverColorExtractor.extractFromSong(song);
+      // 取色期间可能已经切歌，旧结果不能覆盖新封面。
+      if (ref.read(playbackControllerProvider).currentSong?.id != song.id) {
+        return;
+      }
+      // 没有封面 / 提取失败时拿到的是默认灰，当作「没有主色」，用原生默认深色。
+      final hasColor =
+          result.dominantColor != CoverColorResult.defaultResult.dominantColor;
+      final color = hasColor
+          ? coverDarkBackgroundColor(result.dominantColor, lightness: 0.22)
+          : null;
+      await PlayerNotification.setAccentColor(color?.toARGB32());
+    } catch (_) {
+      // 取色失败就保持上一次的底色（首次为默认深色）。
+    }
   }
 
   /// 启动时从 WebDAV 同步歌单；失败时弹框提示原因并提供「重新同步」。
@@ -218,12 +249,13 @@ class _AppState extends ConsumerState<App> {
           WindowChrome.setDarkFrame(next.background.computeLuminance() < 0.5),
     );
 
-    // 切歌 / 收藏变化时把红心状态同步给通知栏（仅 Android 有自定义通知卡片）。
+    // 切歌 / 收藏变化时把红心状态同步给通知栏（仅 Android 有自定义通知卡片）；
+    // 切歌同时会让卡片底色按新封面取色。
     if (PlayerNotification.supported) {
-      ref.listen(
-        currentSongIdentityProvider,
-        (previous, next) => _syncNotificationFavorite(),
-      );
+      ref.listen(currentSongIdentityProvider, (previous, next) {
+        _syncNotificationFavorite();
+        unawaited(_syncNotificationColor());
+      });
       ref.listen(
         playlistsProvider,
         (previous, next) => _syncNotificationFavorite(),

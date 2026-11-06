@@ -5,6 +5,6 @@
     android:viewportWidth="24"
     android:viewportHeight="24">
     <path
-        android:fillColor="@color/mm_notif_icon"
+        android:fillColor="#E0E0E0"
         android:pathData="M6,6h2v12H6zM9.5,12l8.5,6V6z" />
 </vector>
