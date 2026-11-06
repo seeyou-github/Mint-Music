@@ -8,6 +8,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
+import '../../../core/theme/app_surface.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../shared/pagination/page_slicer.dart';
 import '../../../shared/widgets/load_more_footer.dart';
@@ -636,11 +637,16 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
           horizontal: AppSpacing.md,
           vertical: 6,
         ),
-        decoration: BoxDecoration(
-          color: primary ? colors.primary : Colors.transparent,
-          borderRadius: BorderRadius.circular(AppRadius.full),
-          border: Border.all(color: primary ? colors.primary : colors.divider),
-        ),
+        decoration: primary
+            ? BoxDecoration(
+                color: colors.primary,
+                borderRadius: BorderRadius.circular(AppRadius.full),
+              )
+            : floatingSurfaceDecoration(
+                colors,
+                radius: AppRadius.full,
+                subtle: true,
+              ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [

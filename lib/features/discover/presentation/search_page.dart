@@ -8,6 +8,7 @@ import 'package:go_router/go_router.dart';
 import '../../../core/constants/app_routes.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
+import '../../../core/theme/app_surface.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../../../shared/widgets/cover_badge.dart';
@@ -1221,9 +1222,10 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                     horizontal: AppSpacing.md,
                     vertical: AppSpacing.xs,
                   ),
-                  decoration: BoxDecoration(
-                    color: colors.surface,
-                    borderRadius: BorderRadius.circular(AppRadius.full),
+                  decoration: floatingSurfaceDecoration(
+                    colors,
+                    radius: AppRadius.full,
+                    subtle: true,
                   ),
                   child: Text(
                     tag,
@@ -1269,9 +1271,10 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                     horizontal: AppSpacing.md,
                     vertical: AppSpacing.xs,
                   ),
-                  decoration: BoxDecoration(
-                    color: colors.surface,
-                    borderRadius: BorderRadius.circular(AppRadius.full),
+                  decoration: floatingSurfaceDecoration(
+                    colors,
+                    radius: AppRadius.full,
+                    subtle: true,
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
@@ -1565,10 +1568,16 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           horizontal: AppSpacing.lg,
           vertical: AppSpacing.xs,
         ),
-        decoration: BoxDecoration(
-          color: isActive ? colors.primary : colors.surface,
-          borderRadius: BorderRadius.circular(AppRadius.full),
-        ),
+        decoration: isActive
+            ? BoxDecoration(
+                color: colors.primary,
+                borderRadius: BorderRadius.circular(AppRadius.full),
+              )
+            : floatingSurfaceDecoration(
+                colors,
+                radius: AppRadius.full,
+                subtle: true,
+              ),
         child: Text(
           label,
           style: TextStyle(
@@ -1671,7 +1680,11 @@ class _SearchPageState extends ConsumerState<SearchPage> {
             childAspectRatio: isTablet ? 0.88 : 0.82,
           ),
           delegate: SliverChildBuilderDelegate(
-            (context, index) => _buildCollectionCard(colors, visible[index]),
+            (context, index) => floatingCard(
+              colors: colors,
+              radius: AppRadius.md,
+              child: _buildCollectionCard(colors, visible[index]),
+            ),
             childCount: visible.length,
           ),
         ),
@@ -1706,9 +1719,10 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         extra: item,
       ),
       child: Container(
-        decoration: BoxDecoration(
-          color: colors.surface,
-          borderRadius: BorderRadius.circular(AppRadius.md),
+        decoration: floatingSurfaceDecoration(
+          colors,
+          radius: AppRadius.md,
+          withShadow: false,
         ),
         clipBehavior: Clip.antiAlias,
         child: Column(
@@ -1836,7 +1850,11 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           ),
           delegate: SliverChildBuilderDelegate((context, index) {
             final playlist = visible[index];
-            return _buildPlaylistSearchCard(colors, playlist, index);
+            return floatingCard(
+              colors: colors,
+              radius: AppRadius.lg,
+              child: _buildPlaylistSearchCard(colors, playlist, index),
+            );
           }, childCount: visible.length),
         ),
       ),
@@ -1879,9 +1897,10 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         context.push('/playlist/${playlist.id}');
       },
       child: Container(
-        decoration: BoxDecoration(
-          color: colors.surface,
-          borderRadius: BorderRadius.circular(AppRadius.lg),
+        decoration: floatingSurfaceDecoration(
+          colors,
+          radius: AppRadius.lg,
+          withShadow: false,
         ),
         clipBehavior: Clip.antiAlias,
         child: Column(

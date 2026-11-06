@@ -86,8 +86,13 @@ class ThemeColors {
   /// 侧边栏、选项、搜索框、歌单/榜单卡片等控件都用 [surface] /
   /// [surfaceVariant] 着色；如果只替换 [background]，这些控件仍会保持
   /// 固定的灰/白，和自定义背景完全不搭。这里按背景色派生一套同色调、
-  /// 略亮的控件颜色：surface 比背景亮一档，surfaceVariant 再亮一档；
+  /// 略亮的控件颜色：surface 比背景只亮一点点，surfaceVariant 再亮一点点；
   /// 分隔线在浅色下压暗、深色下提亮，保证仍然可见。
+  ///
+  /// 提亮幅度刻意压得很低：主界面背景现在会跟随当前歌曲封面取色（见
+  /// `cover_background.dart`），卡片 / 按钮 / 设置块若还按原来的幅度提亮，
+  /// 就会在渐变背景上形成对比强烈的色块。层次感改由 `app_surface.dart`
+  /// 的细边框 + 悬浮阴影提供，颜色本身只负责一点点「浮起来」的亮度差。
   ThemeColors copyWithBackground(Color? background) {
     if (background == null) return this;
     // 按「用户选的那个背景色」判断明暗，而不是主题原本的背景色：
@@ -98,8 +103,8 @@ class ThemeColors {
     // 被夹到 1.0 直接变成纯白（侧边栏 / 搜索框 / 歌单卡片看起来都没跟
     // 背景色走）。改成按比例混向白色，背景的色调始终保留。
     final surface = isLight
-        ? _lighten(background, 0.4)
-        : _shiftLightness(background, 0.08);
+        ? _lighten(background, 0.18)
+        : _shiftLightness(background, 0.035);
     return ThemeColors(
       primary: primary,
       primaryLight: primaryLight,
@@ -109,8 +114,8 @@ class ThemeColors {
       background: background,
       surface: surface,
       surfaceVariant: isLight
-          ? _lighten(background, 0.65)
-          : _shiftLightness(background, 0.13),
+          ? _lighten(background, 0.30)
+          : _shiftLightness(background, 0.06),
       textPrimary: textPrimary,
       textSecondary: textSecondary,
       textHint: textHint,

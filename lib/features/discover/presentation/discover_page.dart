@@ -11,6 +11,7 @@ import 'package:go_router/go_router.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
+import '../../../core/theme/app_surface.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../../../shared/widgets/cover_badge.dart';
@@ -916,10 +917,16 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
           horizontal: AppSpacing.lg,
           vertical: AppSpacing.sm,
         ),
-        decoration: BoxDecoration(
-          color: isActive ? colors.primary : colors.surface,
-          borderRadius: BorderRadius.circular(AppRadius.full),
-        ),
+        decoration: isActive
+            ? BoxDecoration(
+                color: colors.primary,
+                borderRadius: BorderRadius.circular(AppRadius.full),
+              )
+            : floatingSurfaceDecoration(
+                colors,
+                radius: AppRadius.full,
+                subtle: true,
+              ),
         child: Text(
           label,
           style: TextStyle(
@@ -1193,10 +1200,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
       onTap: () => _showCategoryBottomSheet(colors, tagsAsync, activeTagId),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-        decoration: BoxDecoration(
-          color: colors.surface,
-          borderRadius: BorderRadius.circular(6),
-        ),
+        decoration: floatingSurfaceDecoration(colors, radius: 6, subtle: true),
         child: Text(
           context.tr('更多分类'),
           style: TextStyle(
@@ -1219,9 +1223,10 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
           width: 26,
           height: 26,
           alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: colors.surface,
-            borderRadius: BorderRadius.circular(6),
+          decoration: floatingSurfaceDecoration(
+            colors,
+            radius: 6,
+            subtle: true,
           ),
           child: Icon(Icons.add, size: 18, color: colors.textSecondary),
         ),
@@ -1413,7 +1418,11 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
               childAspectRatio: isTablet ? 0.88 : 0.82,
             ),
             delegate: SliverChildBuilderDelegate((context, index) {
-              return _buildCustomSheetCard(colors, sheets[index]);
+              return floatingCard(
+                colors: colors,
+                radius: AppRadius.lg,
+                child: _buildCustomSheetCard(colors, sheets[index]),
+              );
             }, childCount: sheets.length),
           ),
         ),
@@ -1426,9 +1435,10 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
       onTap: () => context.push('/playlist/${sheet.playlistId}'),
       onLongPress: () => _showSheetMenu(sheet),
       child: Container(
-        decoration: BoxDecoration(
-          color: colors.surface,
-          borderRadius: BorderRadius.circular(AppRadius.lg),
+        decoration: floatingSurfaceDecoration(
+          colors,
+          radius: AppRadius.lg,
+          withShadow: false,
         ),
         clipBehavior: Clip.antiAlias,
         child: Column(
@@ -1690,7 +1700,11 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
             delegate: SliverChildBuilderDelegate((context, index) {
               final playlist = visible[index];
               return RepaintBoundary(
-                child: _buildPlaylistCard(colors, playlist, index),
+                child: floatingCard(
+                  colors: colors,
+                  radius: AppRadius.lg,
+                  child: _buildPlaylistCard(colors, playlist, index),
+                ),
               );
             }, childCount: visible.length),
           ),
@@ -1746,9 +1760,10 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
         context.push('/playlist/${playlist.id}');
       },
       child: Container(
-        decoration: BoxDecoration(
-          color: colors.surface,
-          borderRadius: BorderRadius.circular(AppRadius.lg),
+        decoration: floatingSurfaceDecoration(
+          colors,
+          radius: AppRadius.lg,
+          withShadow: false,
         ),
         clipBehavior: Clip.antiAlias,
         child: Column(
@@ -2107,7 +2122,11 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
                     for (final board in boards)
                       SizedBox(
                         width: width,
-                        child: _buildHotBoardCard(colors, board),
+                        child: floatingCard(
+                          colors: colors,
+                          radius: AppRadius.lg,
+                          child: _buildHotBoardCard(colors, board),
+                        ),
                       ),
                   ],
                 );
@@ -2131,10 +2150,10 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
     final favorited = _isHotBoardFavorited(board);
     final favoriting = _favoritingHotBoards.contains(board.id);
     return Container(
-      decoration: BoxDecoration(
-        // 与左侧栏同色：榜单卡片是内容区里的一块面板。
-        color: colors.surface,
-        borderRadius: BorderRadius.circular(AppRadius.lg),
+      decoration: floatingSurfaceDecoration(
+        colors,
+        radius: AppRadius.lg,
+        withShadow: false,
       ),
       clipBehavior: Clip.antiAlias,
       child: Column(
@@ -2236,9 +2255,10 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
           width: 34,
           height: 34,
           alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: colors.surfaceVariant,
-            borderRadius: BorderRadius.circular(AppRadius.sm),
+          decoration: floatingSurfaceDecoration(
+            colors,
+            radius: AppRadius.sm,
+            subtle: true,
           ),
           child: loading
               ? SizedBox(
@@ -2685,8 +2705,11 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
               childAspectRatio: isTablet ? 0.88 : 0.82,
             ),
             delegate: SliverChildBuilderDelegate(
-              (context, index) =>
-                  _buildLeaderboardCard(colors, visible[index], index),
+              (context, index) => floatingCard(
+                colors: colors,
+                radius: AppRadius.lg,
+                child: _buildLeaderboardCard(colors, visible[index], index),
+              ),
               childCount: visible.length,
               addAutomaticKeepAlives: false,
             ),
@@ -2723,9 +2746,10 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
         context.push('/playlist/${board.id}?type=rank');
       },
       child: Container(
-        decoration: BoxDecoration(
-          color: colors.surface,
-          borderRadius: BorderRadius.circular(AppRadius.lg),
+        decoration: floatingSurfaceDecoration(
+          colors,
+          radius: AppRadius.lg,
+          withShadow: false,
         ),
         clipBehavior: Clip.antiAlias,
         child: Column(
