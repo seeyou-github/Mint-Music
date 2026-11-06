@@ -65,7 +65,7 @@ public class AudioServiceConfig {
             androidNotificationChannelName = "音乐播放";
             androidNotificationIcon = "mipmap/logo";
             androidNotificationOngoing = true;
-            androidNotificationShowBadge = false;
+            androidShowNotificationBadge = false;
             notificationColor = 0xFF1DB954;
         }
     }
