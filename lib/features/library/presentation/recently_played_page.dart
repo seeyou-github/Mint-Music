@@ -144,6 +144,11 @@ class _RecentlyPlayedPageState extends ConsumerState<RecentlyPlayedPage> {
                     song: song,
                     index: displayIndex,
                     maxIndex: songs.length,
+                    // 最近播放只用来「重新听一遍」，列表里不需要封面。
+                    // showCover=false 会连封面控件一起不构建，因此也就不会
+                    // 触发 _SongCover 的封面下载 / getPic 兜底 / image_cache
+                    // 写盘（点开「更多」菜单或真正播放这首歌时不受影响）。
+                    showCover: false,
                     isPlaying:
                         currentSongId != null && currentSongId == song.id,
                     showPlayedTag: true,
