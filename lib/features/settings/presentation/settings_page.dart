@@ -79,6 +79,31 @@ void _persistInt(
   unawaited(_doPersist(container, saveFn));
 }
 
+/// 旧版「导出配置」只带均衡器四项（enabled / currentPreset / gains /
+/// customPresets），这里把它们映射成 `settings.json` 里的键名。
+///
+/// 新版导出的文件里直接就是这些键（外加低音 / 环绕 / 平衡 / 音效总开关），
+/// 这条路径只用于兼容旧文件。
+Map<String, dynamic> _legacyEqConfigToSettings(Map<String, dynamic> data) {
+  final settings = <String, dynamic>{};
+  final enabled = data['enabled'];
+  if (enabled is bool) settings['equalizer_enabled'] = enabled;
+  final preset = data['currentPreset'];
+  if (preset is String) settings['eq_preset'] = preset;
+  final gains = data['gains'];
+  if (gains is List) {
+    settings['eq_bands'] = jsonEncode([
+      for (final value in gains)
+        if (value is num) value.toDouble(),
+    ]);
+  }
+  final customPresets = data['customPresets'];
+  if (customPresets is List) {
+    settings['eq_custom_presets'] = jsonEncode(customPresets);
+  }
+  return settings;
+}
+
 Future<void> _doPersist(
   ProviderContainer container,
   Future<void> Function(SettingsService svc) saveFn,
@@ -2602,15 +2627,19 @@ class _PlaybackContent extends ConsumerWidget {
     );
   }
 
+  /// 导出「音频均衡器 + 高级音效处理」的配置。
+  ///
+  /// 数据源就是 `settings.json`（[SettingsService.exportAudioEffectConfig]）：
+  /// 文件里的 `settings` 那一段就是 settings.json 里对应的键，导入时原样写
+  /// 回去。不再像旧版那样只导出均衡器四项、也不另存一份「音效专用」配置。
   Future<void> _exportEqConfig(BuildContext context, ThemeColors colors) async {
     try {
       final container = ProviderScope.containerOf(context);
+      final svc = await container.read(settingsServiceProvider.future);
       final data = jsonEncode({
-        'presets': kBuiltInPresets.map((p) => p.toJson()).toList(),
-        'customPresets': container.read(equalizerCustomPresetsProvider),
-        'currentPreset': container.read(equalizerPresetProvider),
-        'gains': container.read(equalizerBandsProvider),
-        'enabled': container.read(equalizerEnabledProvider),
+        'version': 2,
+        // 均衡器 + 高级音效的全部键，值就是 settings.json 里的原始形态。
+        'settings': svc.exportAudioEffectConfig(),
       });
       final dir = await AppPaths.configDirectory();
       await File('${dir.path}/mintmusic_eq_config.json').writeAsString(data);
@@ -2632,6 +2661,11 @@ class _PlaybackContent extends ConsumerWidget {
     }
   }
 
+  /// 导入「音频均衡器 + 高级音效处理」的配置。
+  ///
+  /// 写回 `settings.json`（[SettingsService.importAudioEffectConfig]），然后
+  /// 按文件内容把界面上的开关 / 滑条刷新一遍，不需要重启应用。
+  /// 两种文件都认：新版（`settings` 段）和旧版（只有均衡器四项）。
   Future<void> _importEqConfig(BuildContext context, ThemeColors colors) async {
     try {
       final result = await FilePicker.platform.pickFiles(
@@ -2639,51 +2673,28 @@ class _PlaybackContent extends ConsumerWidget {
         allowedExtensions: ['json'],
       );
       if (result == null || result.files.isEmpty) return;
-      final data =
-          jsonDecode(await File(result.files.single.path!).readAsString())
-              as Map<String, dynamic>;
+      final decoded = jsonDecode(
+        await File(result.files.single.path!).readAsString(),
+      );
+      if (decoded is! Map) throw const FormatException('配置文件格式不正确');
+      final data = decoded.map((key, value) => MapEntry('$key', value));
       if (!context.mounted) return;
+
       final container = ProviderScope.containerOf(context);
-      if (data['customPresets'] != null) {
-        final custom = (data['customPresets'] as List)
-            .cast<Map<String, dynamic>>();
-        container.read(equalizerCustomPresetsProvider.notifier).state = custom;
-        unawaited(
-          _doPersist(
-            container,
-            (s) => s.setEqualizerCustomPresets(jsonEncode(custom)),
-          ),
+      final svc = await container.read(settingsServiceProvider.future);
+      final settings = data['settings'];
+      if (settings is Map) {
+        await svc.importAudioEffectConfig(
+          settings.map((key, value) => MapEntry('$key', value)),
         );
+      } else {
+        await svc.importAudioEffectConfig(_legacyEqConfigToSettings(data));
       }
-      if (data['enabled'] != null) {
-        container.read(equalizerEnabledProvider.notifier).state =
-            data['enabled'] as bool;
-        unawaited(
-          _doPersist(
-            container,
-            (s) => s.setEqualizerEnabled(data['enabled'] as bool),
-          ),
-        );
-      }
-      if (data['gains'] != null) {
-        final gains = (data['gains'] as List)
-            .map((value) => (value as num).toDouble())
-            .toList();
-        container.read(equalizerBandsProvider.notifier).state = gains;
-        unawaited(
-          _doPersist(container, (s) => s.setEqualizerBands(jsonEncode(gains))),
-        );
-      }
-      if (data['currentPreset'] != null) {
-        container.read(equalizerPresetProvider.notifier).state =
-            data['currentPreset'] as String;
-        unawaited(
-          _doPersist(
-            container,
-            (s) => s.setEqualizerPreset(data['currentPreset'] as String),
-          ),
-        );
-      }
+
+      // 配置已经写进 settings.json：重新按文件内容加载一遍设置，
+      // 让界面上的开关 / 滑条与文件一致（也顺带把音效重新应用到播放器）。
+      container.invalidate(settingsInitProvider);
+      await container.read(settingsInitProvider.future);
       if (context.mounted)
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(

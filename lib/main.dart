@@ -8,6 +8,7 @@ import 'app/app.dart';
 import 'core/platform/taskbar_thumbnail_service.dart';
 import 'core/services/audio_service_init.dart';
 import 'core/storage/app_database.dart';
+import 'core/storage/legacy_shared_prefs.dart';
 import 'core/theme/app_font_manager.dart';
 import 'core/theme/app_typography.dart';
 import 'features/settings/application/font_providers.dart';
@@ -60,6 +61,11 @@ void main() async {
     print('>>> main: 设置初始化失败: $e');
     print('>>> main: 堆栈: $stack');
   }
+
+  // Android：设置已经统一存进 settings.json，`shared_prefs/` 里旧的
+  // FlutterSharedPreferences.xml（内容已迁移）和 audio_service 的通知渠道
+  // 配置都没有保留价值，启动完成后清一次（见 [LegacySharedPrefs]）。
+  unawaited(LegacySharedPrefs.cleanup());
 
   // 加载导入的字体文件，并恢复上次选择的应用字体。
   // 没有选择过就用内置的思源宋体。

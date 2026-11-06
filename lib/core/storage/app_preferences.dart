@@ -22,8 +22,8 @@ import '../platform/app_paths.dart';
 /// * 卸载重装 / 清数据时和插件、收藏的存活范围不一致。
 ///
 /// 改成和 Windows 一样的文件后，备份只要打包配置目录就什么都有了。
-/// 升级后第一次启动会把 shared_preferences 里的键整体搬进 `settings.json`
-/// （旧文件保留不删，出问题还能回退）。
+/// 升级后第一次启动会把 shared_preferences 里的键整体搬进 `settings.json`，
+/// 搬完之后旧文件就没用了，启动流程结束时由 `LegacySharedPrefs` 删掉。
 ///
 /// 对外 API 与 `SharedPreferences` 保持一致，调用方只需要换 import。
 class AppPreferences {

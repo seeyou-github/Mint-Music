@@ -343,6 +343,69 @@ class SettingsService {
   Future<void> setAudioVisualizerEnabled(bool v) =>
       _prefs.setBool('audio_visualizer_enabled', v);
 
+  // -- 均衡器 + 高级音效的整段配置（导出 / 导入配置用） --
+  //
+  // 这些键全部落在 `settings.json`（[AppPreferences]）里：导出配置直接从这里
+  // 读，导入配置写回这里，不再单独维护一份「音效专用」的配置文件。
+  // 键名即 settings.json 里的原始键名，换设备 / 还原备份后照样对得上。
+
+  /// 导出均衡器 + 高级音效的全部配置（值就是 settings.json 里的原始形态）。
+  Map<String, Object> exportAudioEffectConfig() => {
+    'equalizer_enabled': getEqualizerEnabled(),
+    'eq_preset': getEqualizerPreset(),
+    // 频段是 JSON 字符串（[0.0, 0.0, ...]），原样带出去，导入时直接写回。
+    'eq_bands': getEqualizerBands(),
+    'eq_custom_presets': getEqualizerCustomPresets(),
+    'audio_effect_enabled': getAudioEffectEnabled(),
+    'audio_visualizer_enabled': getAudioVisualizerEnabled(),
+    'bass_boost_enabled': getBassBoostEnabled(),
+    'bass_boost_gain': getBassBoostGain(),
+    'bass_boost_preset': getBassBoostPreset(),
+    'surround_enabled': getSurroundEnabled(),
+    'surround_mode': getSurroundMode(),
+    'balance_enabled': getBalanceEnabled(),
+    'balance_value': getBalanceValue(),
+  };
+
+  /// 把 [exportAudioEffectConfig] 导出的那份配置写回 `settings.json`。
+  ///
+  /// 只写配置里出现的键：老版本导出的文件没有低音 / 环绕 / 平衡这些字段，
+  /// 缺的项保持用户当前的值，不会被重置成默认值。
+  Future<void> importAudioEffectConfig(Map<String, dynamic> data) async {
+    final boolKeys = <String, Future<void> Function(bool)>{
+      'equalizer_enabled': setEqualizerEnabled,
+      'audio_effect_enabled': setAudioEffectEnabled,
+      'audio_visualizer_enabled': setAudioVisualizerEnabled,
+      'bass_boost_enabled': setBassBoostEnabled,
+      'surround_enabled': setSurroundEnabled,
+      'balance_enabled': setBalanceEnabled,
+    };
+    final stringKeys = <String, Future<void> Function(String)>{
+      'eq_preset': setEqualizerPreset,
+      'eq_bands': setEqualizerBands,
+      'eq_custom_presets': setEqualizerCustomPresets,
+      'bass_boost_preset': setBassBoostPreset,
+      'surround_mode': setSurroundMode,
+    };
+    final doubleKeys = <String, Future<void> Function(double)>{
+      'bass_boost_gain': setBassBoostGain,
+      'balance_value': setBalanceValue,
+    };
+
+    for (final entry in boolKeys.entries) {
+      final value = data[entry.key];
+      if (value is bool) await entry.value(value);
+    }
+    for (final entry in stringKeys.entries) {
+      final value = data[entry.key];
+      if (value is String) await entry.value(value);
+    }
+    for (final entry in doubleKeys.entries) {
+      final value = data[entry.key];
+      if (value is num) await entry.value(value.toDouble());
+    }
+  }
+
   // -- appearance performance --
   bool getAppearanceBgAnimation() =>
       _prefs.getBool('appearance_bg_animation') ?? false;
