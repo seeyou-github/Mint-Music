@@ -24,6 +24,7 @@ import '../../../shared/widgets/song_list_item.dart';
 import '../../../shared/widgets/song_selection.dart';
 import '../../plugin/application/plugin_providers.dart';
 import '../../player/application/mini_player_visibility.dart';
+import '../../player/domain/services/cover_color_extractor.dart';
 import '../../settings/application/settings_providers.dart';
 import '../application/playlist_providers.dart';
 import '../domain/models/playlist.dart';
@@ -540,6 +541,15 @@ class _LocalPlaylistDetailPageState
   ) {
     // 与歌单封面同高，去掉描述后顶部不会跳动
     final headerHeight = ResponsiveLayout.isTablet(context) ? 96.0 : 72.0;
+    // 顶栏背景跟着封面主色走：优先歌单自己的封面，没有则用第一首歌的
+    // （与 [_buildPlaylistCoverWidget] 的封面取法一致）。
+    final coverUrl = playlist.coverImgUrl.isNotEmpty
+        ? playlist.coverImgUrl
+        : (playlist.songs.isNotEmpty
+              ? (playlist.songs.first.coverUrl ?? '')
+              : '');
+    final light = ref.watch(isLightThemeActiveProvider);
+    final coverTint = ref.watch(coverTintColorProvider(coverUrl)).valueOrNull;
     return Container(
       padding: EdgeInsets.fromLTRB(
         AppSpacing.sm,
@@ -551,7 +561,12 @@ class _LocalPlaylistDetailPageState
       ),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [colors.primary.withValues(alpha: 0.15), colors.background],
+          colors: detailHeaderGradient(
+            coverColor: coverTint,
+            primary: colors.primary,
+            background: colors.background,
+            light: light,
+          ),
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
         ),

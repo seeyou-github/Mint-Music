@@ -21,6 +21,7 @@ import '../../library/domain/models/recently_played.dart';
 import '../../player/application/playback_context.dart';
 import '../../player/application/playback_controller.dart';
 import '../../player/domain/models/song.dart';
+import '../../player/domain/services/cover_color_extractor.dart';
 import '../../plugin/application/plugin_providers.dart';
 import '../domain/models/search_collection.dart';
 
@@ -465,6 +466,11 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
     bool favorited,
   ) {
     final songs = _songs;
+    // 顶栏背景跟着专辑封面 / 作者头像的主色走（与播放页同一套取色）。
+    final light = ref.watch(isLightThemeActiveProvider);
+    final coverTint = ref
+        .watch(coverTintColorProvider(item.coverUrl ?? ''))
+        .valueOrNull;
     return Container(
       padding: EdgeInsets.fromLTRB(
         AppSpacing.sm,
@@ -476,7 +482,12 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
       ),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [colors.primary.withValues(alpha: 0.15), colors.background],
+          colors: detailHeaderGradient(
+            coverColor: coverTint,
+            primary: colors.primary,
+            background: colors.background,
+            light: light,
+          ),
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
         ),

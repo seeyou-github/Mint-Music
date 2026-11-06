@@ -18,6 +18,7 @@ import '../../../shared/widgets/source_name_tag.dart';
 import '../../../shared/widgets/song_action_sheet.dart';
 import '../../../shared/widgets/song_list_item.dart';
 import '../../../shared/widgets/song_selection.dart';
+import '../../player/domain/services/cover_color_extractor.dart';
 import '../../plugin/application/plugin_providers.dart';
 import '../application/discover_providers.dart';
 import '../../../features/player/application/playback_context.dart';
@@ -505,6 +506,11 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
   ) {
     // 与歌单封面同高，去掉描述后顶部不会跳动
     final headerHeight = ResponsiveLayout.isTablet(context) ? 96.0 : 72.0;
+    // 顶栏背景跟着封面主色走（与播放页同一套取色），提取失败才回退主题色。
+    final light = ref.watch(isLightThemeActiveProvider);
+    final coverTint = ref
+        .watch(coverTintColorProvider((playlist.coverUrl as String?) ?? ''))
+        .valueOrNull;
     return Container(
       padding: EdgeInsets.fromLTRB(
         AppSpacing.sm,
@@ -516,7 +522,12 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
       ),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [colors.primary.withValues(alpha: 0.15), colors.background],
+          colors: detailHeaderGradient(
+            coverColor: coverTint,
+            primary: colors.primary,
+            background: colors.background,
+            light: light,
+          ),
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
         ),
