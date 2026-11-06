@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/l10n/l10n.dart';
@@ -511,11 +512,18 @@ class _PageBarState extends ConsumerState<PageBar> {
 /// 分页条的「贴底页脚」：放进 `CustomScrollView` 的最后一个 sliver。
 ///
 /// 列表内容不足一屏时，把分页条压到视口最底部（而不是紧跟在最后一行下面、
-/// 下面留一大片空白）；内容超过一屏时它仍然紧跟在内容之后，正常随列表滚动。
+/// 下面留一大片空白，加载中列表为空时尤其明显）；内容超过一屏时它仍然紧跟在
+/// 内容之后，正常随列表滚动，也不会多出一段空白。
 ///
-/// 之所以用 `SliverFillRemaining(hasScrollBody: false)` + `Align(bottomCenter)`：
-/// 前者保证这一格至少占满「剩下的视口高度」，后者把分页条放在那一格的底部，
-/// 于是短列表时贴底、长列表时跟在内容后面，两种情况下位置都对。
+/// 实现上不能直接用 `SliverFillRemaining(hasScrollBody: false)`：它会向子节点
+/// 要「固有高度」，而分页条里用了 `LayoutBuilder`（要按宽度算页码窗口），
+/// `LayoutBuilder` 不支持固有尺寸查询——debug 构建会直接抛
+/// 「LayoutBuilder does not support returning intrinsic dimensions」，
+/// release 里则退化成 0，导致「剩余空间比页码条还矮」时把页码条压扁。
+///
+/// 所以这里改问 sliver 自己的约束：`viewportMainAxisExtent` −
+/// `precedingScrollExtent` 就是「前面内容铺完后还剩多高」，用它做
+/// `minHeight`，再把分页条对齐到底部即可。
 class PageBarFooterSliver extends StatelessWidget {
   const PageBarFooterSliver({super.key, required this.child});
 
@@ -524,9 +532,22 @@ class PageBarFooterSliver extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SliverFillRemaining(
-      hasScrollBody: false,
-      child: Align(alignment: Alignment.bottomCenter, child: child),
+    return SliverLayoutBuilder(
+      builder: (BuildContext context, SliverConstraints constraints) {
+        // 还剩多少可视高度；列表已经超过一屏时是负数，按 0 处理，
+        // 此时分页条就紧跟在内容后面。
+        final remaining =
+            constraints.viewportMainAxisExtent -
+            constraints.precedingScrollExtent;
+        return SliverToBoxAdapter(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              minHeight: remaining > 0 ? remaining : 0,
+            ),
+            child: Align(alignment: Alignment.bottomCenter, child: child),
+          ),
+        );
+      },
     );
   }
 }
