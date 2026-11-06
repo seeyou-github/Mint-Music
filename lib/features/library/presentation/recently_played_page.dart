@@ -581,8 +581,9 @@ class _CardGrid extends StatelessWidget {
                 ),
               ),
             ),
-            // 分页条跟着网格滚到底部才出现，自身会避开迷你播放器。
-            if (footer != null) SliverToBoxAdapter(child: footer),
+            // 分页条：内容不满一屏时贴到底部，满一屏时跟在网格后面；
+            // 自身会避开迷你播放器。
+            if (footer != null) PageBarFooterSliver(child: footer!),
           ],
         );
       },

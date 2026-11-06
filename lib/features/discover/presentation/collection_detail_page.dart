@@ -670,49 +670,60 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
       hasMore: !_isEnd,
       total: _total,
     );
-    final list = ListView.builder(
-      controller: _scrollController,
+    final list = Padding(
       padding: const EdgeInsets.fromLTRB(
         AppSpacing.sm,
         0,
         AppSpacing.sm,
         AppSpacing.sm,
       ),
-      // 最后一项是分页条（滚到末尾才出现，自身会让开迷你播放器）。
-      itemCount: visible.length + 1,
-      itemBuilder: (context, index) {
-        if (index == visible.length) return _pageFooter(colors, pageCount);
-        final song = visible[index];
-        // 序号按全局位置编号（跳页直达后缓冲区从当前页起，也要接续页码）；
-        // 播放队列用的是缓冲区内的下标。
-        final displayIndex = _pager.absoluteStart + index;
-        final bufferIndex = _pager.start + index;
-        return SongListItem(
-          song: song,
-          index: displayIndex,
-          // 序号列按「全局最大序号」算：跳页直达后缓冲区只剩一页数据，
-          // 只按 songs.length 算会把三位序号裁成两位宽度。
-          maxIndex: math.max(
-            _total ?? 0,
-            _pager.absoluteStart + visible.length,
+      child: CustomScrollView(
+        controller: _scrollController,
+        slivers: [
+          SliverList(
+            delegate: SliverChildBuilderDelegate((context, index) {
+              final song = visible[index];
+              // 序号按全局位置编号（跳页直达后缓冲区从当前页起，也要接续页码）；
+              // 播放队列用的是缓冲区内的下标。
+              final displayIndex = _pager.absoluteStart + index;
+              final bufferIndex = _pager.start + index;
+              return SongListItem(
+                song: song,
+                index: displayIndex,
+                // 序号列按「全局最大序号」算：跳页直达后缓冲区只剩一页数据，
+                // 只按 songs.length 算会把三位序号裁成两位宽度。
+                maxIndex: math.max(
+                  _total ?? 0,
+                  _pager.absoluteStart + visible.length,
+                ),
+                isPlaying: currentSongId == song.id,
+                showPlayedTag: true,
+                onPlayTap: () async {
+                  PlaybackContext.instance.set(
+                    _isArtist
+                        ? PlaybackSourceType.artist
+                        : PlaybackSourceType.album,
+                    id: widget.collection.id,
+                    name: widget.collection.title,
+                    sourceMeta: _artistMeta,
+                  );
+                  await ref
+                      .read(playbackControllerProvider.notifier)
+                      .setQueue(songs, startIndex: bufferIndex);
+                },
+                onMenuTap: () => SongActionSheet.show(
+                  context,
+                  song: song,
+                  playlistSongs: songs,
+                ),
+              );
+            }, childCount: visible.length),
           ),
-          isPlaying: currentSongId == song.id,
-          showPlayedTag: true,
-          onPlayTap: () async {
-            PlaybackContext.instance.set(
-              _isArtist ? PlaybackSourceType.artist : PlaybackSourceType.album,
-              id: widget.collection.id,
-              name: widget.collection.title,
-              sourceMeta: _artistMeta,
-            );
-            await ref
-                .read(playbackControllerProvider.notifier)
-                .setQueue(songs, startIndex: bufferIndex);
-          },
-          onMenuTap: () =>
-              SongActionSheet.show(context, song: song, playlistSongs: songs),
-        );
-      },
+          // 分页条单独做成最后一个 sliver：内容不满一屏时贴到底部，
+          // 满一屏时正常跟在列表后面（见 PageBarFooterSliver）。
+          PageBarFooterSliver(child: _pageFooter(colors, pageCount)),
+        ],
+      ),
     );
     return list;
   }

@@ -1379,78 +1379,87 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       miniPlayerVisible: ref.watch(miniPlayerVisibleProvider),
     );
 
-    final list = ListView.builder(
-      controller: _resultsScrollController,
-      // 分页条是列表最后一项（自己让开迷你播放器）；多选时它收起，
-      // 底部改成批量操作栏，这里补回对应的让位。
+    final list = Padding(
+      // 多选时分页条收起、底部换成批量操作栏，列表要给它让开位置。
       padding: EdgeInsets.only(
         bottom: selecting
             ? bottomInset + SongBatchActionBar.height + batchBarInset
             : AppSpacing.sm,
       ),
-      itemCount: visible.length + (selecting ? 0 : 1),
-      cacheExtent: 360,
-      addAutomaticKeepAlives: false,
-      addRepaintBoundaries: true,
-      itemBuilder: (context, index) {
-        // 最后一项是分页条：滚到列表末尾才出现。
-        if (index == visible.length) return footer;
-        final song = visible[index];
-        // 序号按全局位置编号（跳页直达后缓冲区从当前页起，也要接续页码）
-        final songIndex = _songPager.absoluteStart + index;
-        // 播放队列用的是「缓冲区内的下标」。
-        //
-        // 跳页直达（点第 4 页这种）会把 `songs` 整个替换成目标页那几十首，
-        // 此时 `absoluteStart` 是全局序号（第 4 页 = 90 起），拿它当 startIndex
-        // 必然越界，`setQueue` 一夹就变成了「最后一行」—— 表现为点谁都播最下面
-        // 那首。专辑 / 作者详情页早就是这么区分的（displayIndex / bufferIndex）。
-        final bufferIndex = _songPager.start + index;
-        return SongListItem(
-          song: song,
-          index: songIndex,
-          // 序号列宽度按「全局最大下标」算：跳页直达后缓冲区只剩目标页那几十首
-          // （`songs.length` 很小、总数又可能拿不到），只按条数算宽度会把
-          // 950 这种三位序号裁成两位宽度，看起来像「序号显示不全」。
-          maxIndex: math.max(
-            state.total ?? 0,
-            _songPager.absoluteStart + visible.length,
+      child: CustomScrollView(
+        controller: _resultsScrollController,
+        cacheExtent: 360,
+        slivers: [
+          SliverList(
+            delegate: SliverChildBuilderDelegate(
+              (context, index) {
+                final song = visible[index];
+                // 序号按全局位置编号（跳页直达后缓冲区从当前页起，也要接续页码）
+                final songIndex = _songPager.absoluteStart + index;
+                // 播放队列用的是「缓冲区内的下标」。
+                //
+                // 跳页直达（点第 4 页这种）会把 `songs` 整个替换成目标页那几十首，
+                // 此时 `absoluteStart` 是全局序号（第 4 页 = 90 起），拿它当 startIndex
+                // 必然越界，`setQueue` 一夹就变成了「最后一行」—— 表现为点谁都播最下面
+                // 那首。专辑 / 作者详情页早就是这么区分的（displayIndex / bufferIndex）。
+                final bufferIndex = _songPager.start + index;
+                return SongListItem(
+                  song: song,
+                  index: songIndex,
+                  // 序号列宽度按「全局最大下标」算：跳页直达后缓冲区只剩目标页那几十首
+                  // （`songs.length` 很小、总数又可能拿不到），只按条数算宽度会把
+                  // 950 这种三位序号裁成两位宽度，看起来像「序号显示不全」。
+                  maxIndex: math.max(
+                    state.total ?? 0,
+                    _songPager.absoluteStart + visible.length,
+                  ),
+                  showIndex: true,
+                  showCover: true,
+                  showQuality: true,
+                  // 歌手名左侧显示音源标签。
+                  showSource: true,
+                  showDuration: true,
+                  showMenuButton: true,
+                  showPlayedTag: true,
+                  // 正在播放的歌曲高亮显示。
+                  isPlaying: currentSongId != null && currentSongId == song.id,
+                  // 主操作为「下一首播放」：插到当前播放歌曲之后，
+                  // 不会把播放队列替换成全部搜索结果。
+                  onMenuTap: () => SongActionSheet.show(
+                    context,
+                    song: song,
+                    showPlayNextInsteadOfPlay: true,
+                  ),
+                  selectionMode: selecting,
+                  selected: _selection.isSelected(song.id),
+                  onSelectionToggle: (s) => _selection.toggle(s.id),
+                  // 长按进入批量选择模式
+                  onLongPress: () => _enterSelection(song),
+                  onPlayTap: () async {
+                    final now = DateTime.now();
+                    final lastTap = _globalLastTapTime;
+                    final diff = lastTap != null
+                        ? now.difference(lastTap).inMilliseconds
+                        : null;
+                    if (lastTap != null && diff! < _tapDebounceMs) return;
+                    _globalLastTapTime = now;
+                    final controller = ref.read(
+                      playbackControllerProvider.notifier,
+                    );
+                    PlaybackContext.instance.set(PlaybackSourceType.search);
+                    await controller.setQueue(songs, startIndex: bufferIndex);
+                  },
+                );
+              },
+              childCount: visible.length,
+              addAutomaticKeepAlives: false,
+              addRepaintBoundaries: true,
+            ),
           ),
-          showIndex: true,
-          showCover: true,
-          showQuality: true,
-          // 歌手名左侧显示音源标签。
-          showSource: true,
-          showDuration: true,
-          showMenuButton: true,
-          showPlayedTag: true,
-          // 正在播放的歌曲高亮显示。
-          isPlaying: currentSongId != null && currentSongId == song.id,
-          // 主操作为「下一首播放」：插到当前播放歌曲之后，
-          // 不会把播放队列替换成全部搜索结果。
-          onMenuTap: () => SongActionSheet.show(
-            context,
-            song: song,
-            showPlayNextInsteadOfPlay: true,
-          ),
-          selectionMode: selecting,
-          selected: _selection.isSelected(song.id),
-          onSelectionToggle: (s) => _selection.toggle(s.id),
-          // 长按进入批量选择模式
-          onLongPress: () => _enterSelection(song),
-          onPlayTap: () async {
-            final now = DateTime.now();
-            final lastTap = _globalLastTapTime;
-            final diff = lastTap != null
-                ? now.difference(lastTap).inMilliseconds
-                : null;
-            if (lastTap != null && diff! < _tapDebounceMs) return;
-            _globalLastTapTime = now;
-            final controller = ref.read(playbackControllerProvider.notifier);
-            PlaybackContext.instance.set(PlaybackSourceType.search);
-            await controller.setQueue(songs, startIndex: bufferIndex);
-          },
-        );
-      },
+          // 分页条：内容不满一屏时贴到底部，满一屏时跟在列表后面。
+          if (!selecting) PageBarFooterSliver(child: footer),
+        ],
+      ),
     );
     return list;
   }
@@ -1853,8 +1862,9 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       controller: _gridScrollController,
       slivers: [
         sliver,
-        // 分页条跟着网格滚到底部才出现，自身会避开迷你播放器。
-        SliverToBoxAdapter(child: footer),
+        // 分页条：内容不满一屏时贴到底部，满一屏时跟在网格后面；
+        // 自身会避开迷你播放器。
+        PageBarFooterSliver(child: footer),
       ],
     );
   }

@@ -1529,8 +1529,9 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
             }, childCount: visible.length),
           ),
         ),
-        // 分页条跟着列表滚到底部才出现（不再常驻贴底），自身会避开迷你播放器。
-        SliverToBoxAdapter(
+        // 分页条：内容不满一屏时贴到底部，满一屏时跟在网格后面。
+        // 自身会避开迷你播放器。
+        PageBarFooterSliver(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -2464,8 +2465,8 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
             ),
           ),
         ),
-        // 分页条跟着网格滚到底部才出现，自身会避开迷你播放器。
-        SliverToBoxAdapter(
+        // 分页条：内容不满一屏时贴到底部，满一屏时跟在网格后面。
+        PageBarFooterSliver(
           child: PageBar(
             currentPage: _leaderboardPager.page,
             pageCount: _leaderboardPager.pageCount(

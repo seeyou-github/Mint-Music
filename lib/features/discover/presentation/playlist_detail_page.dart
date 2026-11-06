@@ -796,69 +796,82 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
       hasMore: !_isEnd,
       total: _total,
     );
-    final list = ListView.builder(
-      controller: _scrollController,
-      // 分页条是列表最后一项，自己会让开迷你播放器，这里只在多选（分页条收起、
-      // 底部换成批量操作栏）时保留原来的让位。
+    final list = Padding(
+      // 多选时底部换成批量操作栏，列表要给它让开位置。
       padding: EdgeInsets.only(
         bottom: selecting
             ? bottomInset + SongBatchActionBar.height + batchBarInset
             : AppSpacing.sm,
       ),
-      itemCount: visible.length + (selecting ? 0 : 1),
-      addAutomaticKeepAlives: false,
-      addRepaintBoundaries: true,
-      itemBuilder: (context, index) {
-        // 最后一项是分页条：滚到列表末尾才出现。
-        if (index == visible.length) {
-          return _buildPageFooter(colors, pageCount);
-        }
-        final song = visible[index];
-        // 序号按全局位置编号（第 4 页仍是 151~200）：跳页直达会把缓冲区
-        // 重定位到目标页（rebase 后 `start` 归零），必须用 `absoluteStart`
-        // 才不会把每一页都重新编成 1~50。
-        final displayIndex = _pager.absoluteStart + index;
-        // 播放队列用的是缓冲区内的下标：跳页后 `songs` 只剩目标页那几十首，
-        // 拿全局序号当 startIndex 会越界，表现为「点谁都播最后一首」。
-        final bufferIndex = _pager.start + index;
+      child: CustomScrollView(
+        controller: _scrollController,
+        slivers: [
+          SliverList(
+            delegate: SliverChildBuilderDelegate(
+              (context, index) {
+                final song = visible[index];
+                // 序号按全局位置编号（第 4 页仍是 151~200）：跳页直达会把缓冲区
+                // 重定位到目标页（rebase 后 `start` 归零），必须用 `absoluteStart`
+                // 才不会把每一页都重新编成 1~50。
+                final displayIndex = _pager.absoluteStart + index;
+                // 播放队列用的是缓冲区内的下标：跳页后 `songs` 只剩目标页那几十首，
+                // 拿全局序号当 startIndex 会越界，表现为「点谁都播最后一首」。
+                final bufferIndex = _pager.start + index;
 
-        // 高亮当前正在播放的歌曲，与本地音乐页面保持一致
-        final currentSongId = ref
-            .read(playbackControllerProvider)
-            .currentSong
-            ?.id;
-        final isPlaying = currentSongId != null && currentSongId == song.id;
+                // 高亮当前正在播放的歌曲，与本地音乐页面保持一致
+                final currentSongId = ref
+                    .read(playbackControllerProvider)
+                    .currentSong
+                    ?.id;
+                final isPlaying =
+                    currentSongId != null && currentSongId == song.id;
 
-        return SongListItem(
-          song: song,
-          index: displayIndex,
-          // 序号列宽度按「全局最大序号」算：跳页直达后缓冲区只剩一页数据
-          // （songs.length 很小、总数又可能拿不到），只按条数算会把 151
-          // 这种三位序号裁成两位宽度。
-          maxIndex: math.max(
-            _total ?? 0,
-            _pager.absoluteStart + visible.length,
+                return SongListItem(
+                  song: song,
+                  index: displayIndex,
+                  // 序号列宽度按「全局最大序号」算：跳页直达后缓冲区只剩一页数据
+                  // （songs.length 很小、总数又可能拿不到），只按条数算会把 151
+                  // 这种三位序号裁成两位宽度。
+                  maxIndex: math.max(
+                    _total ?? 0,
+                    _pager.absoluteStart + visible.length,
+                  ),
+                  isPlaying: isPlaying,
+                  showPlayedTag: true,
+                  selectionMode: selecting,
+                  selected: _selection.isSelected(song.id),
+                  onSelectionToggle: (s) => _selection.toggle(s.id),
+                  // 长按进入批量选择模式
+                  onLongPress: () => _enterSelection(song),
+                  onPlayTap: () async {
+                    PlaybackContext.instance.set(
+                      widget.sourceType,
+                      id: widget.playlistId,
+                      name: _playlistTitle,
+                    );
+                    final controller = ref.read(
+                      playbackControllerProvider.notifier,
+                    );
+                    await controller.setQueue(songs, startIndex: bufferIndex);
+                  },
+                  onMenuTap: () => SongActionSheet.show(
+                    context,
+                    song: song,
+                    playlistSongs: songs,
+                  ),
+                );
+              },
+              childCount: visible.length,
+              addAutomaticKeepAlives: false,
+              addRepaintBoundaries: true,
+            ),
           ),
-          isPlaying: isPlaying,
-          showPlayedTag: true,
-          selectionMode: selecting,
-          selected: _selection.isSelected(song.id),
-          onSelectionToggle: (s) => _selection.toggle(s.id),
-          // 长按进入批量选择模式
-          onLongPress: () => _enterSelection(song),
-          onPlayTap: () async {
-            PlaybackContext.instance.set(
-              widget.sourceType,
-              id: widget.playlistId,
-              name: _playlistTitle,
-            );
-            final controller = ref.read(playbackControllerProvider.notifier);
-            await controller.setQueue(songs, startIndex: bufferIndex);
-          },
-          onMenuTap: () =>
-              SongActionSheet.show(context, song: song, playlistSongs: songs),
-        );
-      },
+          // 分页条单独做成最后一个 sliver：内容不满一屏时贴到底部，
+          // 满一屏时正常跟在列表后面（见 PageBarFooterSliver）。
+          if (!selecting)
+            PageBarFooterSliver(child: _buildPageFooter(colors, pageCount)),
+        ],
+      ),
     );
 
     return list;

@@ -508,6 +508,29 @@ class _PageBarState extends ConsumerState<PageBar> {
   }
 }
 
+/// 分页条的「贴底页脚」：放进 `CustomScrollView` 的最后一个 sliver。
+///
+/// 列表内容不足一屏时，把分页条压到视口最底部（而不是紧跟在最后一行下面、
+/// 下面留一大片空白）；内容超过一屏时它仍然紧跟在内容之后，正常随列表滚动。
+///
+/// 之所以用 `SliverFillRemaining(hasScrollBody: false)` + `Align(bottomCenter)`：
+/// 前者保证这一格至少占满「剩下的视口高度」，后者把分页条放在那一格的底部，
+/// 于是短列表时贴底、长列表时跟在内容后面，两种情况下位置都对。
+class PageBarFooterSliver extends StatelessWidget {
+  const PageBarFooterSliver({super.key, required this.child});
+
+  /// 分页条本体（可以带一行加载中 / 加载失败提示）。
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return SliverFillRemaining(
+      hasScrollBody: false,
+      child: Align(alignment: Alignment.bottomCenter, child: child),
+    );
+  }
+}
+
 /// 页码下拉列表允许鼠标 / 触控板按住拖动滚动（Windows 上默认只有滚轮）。
 class _MouseDragScrollBehavior extends MaterialScrollBehavior {
   const _MouseDragScrollBehavior();
