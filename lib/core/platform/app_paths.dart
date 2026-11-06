@@ -140,8 +140,8 @@ class AppPaths {
 
   /// 重要数据库目录（Windows 为 `AppData\db`）。
   ///
-  /// 存放「不能丢」的数据：我的收藏、收藏歌单、每首歌的已听进度、听歌统计
-  /// 与排行。变更后立即落盘。
+  /// 存放「不能丢」的数据：我的收藏、收藏歌单、每首歌的已听进度。
+  /// 变更后立即落盘。
   static Future<Directory> databaseDirectory() async {
     if (Platform.isWindows) {
       return _subDirectory(databaseFolderName);

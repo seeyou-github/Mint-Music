@@ -26,7 +26,6 @@ import '../../plugin/application/plugin_providers.dart';
 import '../../player/application/mini_player_visibility.dart';
 import '../../settings/application/settings_providers.dart';
 import '../application/playlist_providers.dart';
-import '../application/recently_played_providers.dart';
 import '../domain/models/playlist.dart';
 import '../domain/models/recently_played.dart';
 import '../utils/favorite_playlist.dart';
@@ -67,7 +66,6 @@ class _LocalPlaylistDetailPageState
   final SongSelectionController _selection = SongSelectionController();
 
   /// 已经记录过「最近打开」的歌单 id，避免每帧 rebuild 都写一次。
-  String? _recordedOpenedId;
 
   @override
   void dispose() {
@@ -395,26 +393,6 @@ class _LocalPlaylistDetailPageState
                               style: TextStyle(color: colors.textHint),
                             ),
                           );
-                        }
-                        if (_recordedOpenedId != playlist.id) {
-                          _recordedOpenedId = playlist.id;
-                          WidgetsBinding.instance.addPostFrameCallback((_) {
-                            if (!mounted) return;
-                            unawaited(
-                              ref
-                                  .read(
-                                    recentlyPlayedPlaylistsProvider.notifier,
-                                  )
-                                  .recordOpened(
-                                    id: playlist.id,
-                                    name: playlist.name,
-                                    coverUrl: playlist.coverImgUrl,
-                                    songCount: playlist.songCount,
-                                    source: 'local',
-                                    collectionType: playlist.favoriteType,
-                                  ),
-                            );
-                          });
                         }
                         if (_originalSongs.length != playlist.songs.length ||
                             !_listEquals(_originalSongs, playlist.songs)) {

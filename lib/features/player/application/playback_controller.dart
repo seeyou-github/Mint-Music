@@ -21,7 +21,6 @@ import '../../plugin/domain/source_health.dart';
 import '../../blacklist/application/blacklist_providers.dart';
 import '../../settings/application/settings_providers.dart';
 import 'play_progress_providers.dart';
-import 'playback_context.dart';
 import '../../library/application/recently_played_providers.dart';
 import '../../local/application/local_providers.dart';
 
@@ -77,30 +76,12 @@ final playbackControllerProvider =
         unawaited(controller.skipBlockedCurrent());
       });
 
-      // 「最近播放」：开始播放时记一条（带来源），切歌/退出时结算收听时长。
+      // 「最近播放」：开始播放时记一条（只记歌曲与时间）。
       final recentRepo = ref.read(recentlyPlayedRepositoryProvider);
       controller.onPlayStarted = (song) {
-        final ctx = PlaybackContext.instance;
-        unawaited(
-          recentRepo.recordPlay(
-            song,
-            sourceType: ctx.type,
-            sourceId: ctx.id,
-            sourceName: ctx.name,
-            sourceMeta: ctx.sourceMeta,
-          ),
-        );
+        // 最近播放只记「哪首歌、什么时候」：来源（歌单 / 专辑 …）不再保存。
+        unawaited(recentRepo.recordPlay(song));
         ref.invalidate(recentlyPlayedProvider);
-      };
-      controller.onListenEnded = (song, listenedMs) {
-        unawaited(
-          recentRepo
-              .recordListen(songId: song.id, listenedMs: listenedMs)
-              .then((_) {
-                // 退出应用时会结算最后一首歌，此时 provider 已经销毁。
-                if (!disposed) ref.invalidate(playbackStatsProvider);
-              }),
-        );
       };
 
       // 「已听 / 已听 N%」：播放位置按 1% 粒度记进临时库。
@@ -323,9 +304,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   /// 一首歌开始播放时回调（写「最近播放」）。
   void Function(Song song)? onPlayStarted;
 
-  /// 一段收听结束（切歌 / 退出）时回调：实际收听时长 + 歌曲总时长。
-  void Function(Song song, int listenedMs)? onListenEnded;
-
   /// 播放位置变化时回调（写「已听 N%」进度）。位置 / 时长单位均为毫秒。
   void Function(Song song, int positionMs, int durationMs)? onProgress;
 
@@ -430,15 +408,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   /// 当前这首歌是否已经在「自然播完」时结算过，
   /// 避免随后 playSongAt 里的 _finalizeListenSession 再记一次。
   bool _completedListenCounted = false;
-
-  /// 当前这段「正在出声」的起始播放进度；暂停 / 缓冲 / 停止时为 null。
-  ///
-  /// 不用计时器：进入可听状态记下进度，暂停 / 切歌 / 退出等关键时机
-  /// 用「结束进度 - 起始进度」累加，只有播放器真正在走进度时才会计入。
-  Duration? _listenSegmentStart;
-
-  /// 当前这首歌已累计的收听时长（毫秒），跨多次暂停 / 继续累加。
-  int _listenAccumMs = 0;
 
   /// CeruMusic 风格的自动下一首防重入标志。
   /// completed 事件中设为 true，Future.microtask 排空后执行 next()
@@ -956,11 +925,8 @@ class PlaybackController extends StateNotifier<PlaybackState> {
 
   /// 内部直接 seek（换源 / 换音质后恢复进度 / 单曲重播）。
   ///
-  /// 跳过的进度不算收听：先结算当前段，再从目标位置重新起算。
-  /// 同时乐观更新 position 并加 seek 锁，避免旧的进度事件把起点算错。
+  /// 乐观更新 position 并加 seek 锁，避免旧的进度事件把位置算错。
   Future<void> _seekWithoutCounting(Duration target) async {
-    _closeListenSegment();
-    _listenSegmentStart = target;
     _clearSeekTarget();
     _seekTarget = target;
     if (mounted) state = state.copyWith(position: target);
@@ -993,12 +959,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
         _seekTargetTimer?.cancel();
         _seekTargetTimer = null;
       }
-      // 进度回退（换歌 / 单曲循环从 0 重播）时以新进度为起点，
-      // 避免把上一段的进度算到这一段里。
-      final listenStart = _listenSegmentStart;
-      if (listenStart != null && position < listenStart) {
-        _listenSegmentStart = position;
-      }
       final diff = (position - _lastEmittedPosition).abs();
       if (diff >= _positionThrottle) {
         _lastEmittedPosition = position;
@@ -1020,8 +980,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     });
     _playerStateSub = _audioHandler.playerStateStream.listen((playerState) {
       if (!mounted || _needsSourceLoad) return;
-      // 真实收听时长：只有真正出声时采样进度，暂停 / 缓冲 / 加载 / 播完都停。
-      _syncListenSession(playerState);
       // 暂停 / 停止时记录一次播放进度。
       _maybeReportProgressOnStateChange(playerState);
       // 注意：这里不再用 _settingQueue 门控整个监听器。
@@ -1233,72 +1191,30 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     }
   }
 
-  /// 播放器状态 → 收听区间的开关。
+  /// 切歌 / 清空队列 / 退出前的收尾：先记一次播放进度，再复位「已播完」标记。
   ///
-  /// `playing` 在缓冲 / 加载时也可能为 true（playWhenReady），所以必须同时
-  /// 要求 `processingState == ready`，否则把等待缓冲的时间也算进听歌时长。
-  void _syncListenSession(PlayerState playerState) {
-    final audible =
-        playerState.playing &&
-        playerState.processingState == ProcessingState.ready;
-    if (audible) {
-      _listenSegmentStart ??= _audioHandler.currentPosition;
-    } else {
-      _closeListenSegment();
-    }
-  }
-
-  /// 结束当前收听区间，把这段时间的播放进度累加进 [_listenAccumMs]。
-  ///
-  /// 进度回退（换歌 / 单曲循环）时 delta 不为正，直接忽略。
-  void _closeListenSegment([Duration? position]) {
-    final start = _listenSegmentStart;
-    if (start == null) return;
-    _listenSegmentStart = null;
-    // 直接读播放器的真实进度：state.position 有 200ms 节流，
-    // 后台挂起时也可能停在旧值。
-    final delta = (position ?? _audioHandler.currentPosition) - start;
-    if (delta > Duration.zero) _listenAccumMs += delta.inMilliseconds;
-  }
-
-  /// 结算上一首的收听时长。
-  ///
-  /// 用各段播放进度差累计：暂停、缓冲、拖动进度条跳过的部分都不计入；
-  /// 同一首歌重复播放时，每次结算都会单独累加。
+  /// 听歌统计移除后这里不再累计收听时长，只负责让「已听 N%」及时落库。
   void _finalizeListenSession() {
-    // 切上一首 / 下一首、清空队列、退出应用都会走到这里：先记一次播放进度。
     _reportProgressNow();
-    _closeListenSegment();
-    final listened = _listenAccumMs;
-    _listenAccumMs = 0;
-    // 自然播完已经结算过的话，这里累计值已被清零，不会重复上报。
+    // 自然播完已经记录过进度的话，这里复位标记，避免下一首被误判为「已播完」。
     _completedListenCounted = false;
-    final song = state.currentSong;
-    if (song == null || listened < 1000) return;
-    onListenEnded?.call(song, listened);
   }
 
-  /// 应用退出前主动调用：把当前这段真实收听时长结算掉。
+  /// 应用退出前主动调用：把当前播放进度结算一次。
   ///
-  /// 退出时 provider 不一定会被 dispose，最后一小段统计会丢，所以由退出流程
-  /// 调一次；[_finalizeListenSession] 会清零累计值，重复调用没有副作用。
+  /// 退出时 provider 不一定会被 dispose，最后一小段进度会丢，所以由退出流程
+  /// 调一次；[_finalizeListenSession] 重复调用没有副作用。
   void settleListenSession() => _finalizeListenSession();
 
-  /// 自然播完时结算：用进度差累计的真实收听时长，而不是歌曲总时长。
+  /// 自然播完时的收尾：整首播完 = 进度 100%，界面显示「已听」。
   void _recordCompletedListen() {
     if (_completedListenCounted) return;
     _completedListenCounted = true;
-    _closeListenSegment();
-    final listened = _listenAccumMs;
-    _listenAccumMs = 0;
     final song = state.currentSong;
     if (song == null) return;
-    // 整首播完 = 进度 100%，界面显示「已听」。
     if (song.duration > 0) {
       onProgress?.call(song, song.duration * 1000, song.duration * 1000);
     }
-    if (listened < 1000) return;
-    onListenEnded?.call(song, listened);
   }
 
   Future<void> playSongAt(
@@ -1607,7 +1523,11 @@ class PlaybackController extends StateNotifier<PlaybackState> {
                   .setAudioSource(next.url, song: nextSong)
                   .timeout(_audioSetTimeout);
               await _startPlayback();
-              await _applyResumeTarget(song, resumeTarget, requestId: requestId);
+              await _applyResumeTarget(
+                song,
+                resumeTarget,
+                requestId: requestId,
+              );
               currentSongToPlay = nextSong;
               _replaceSongInQueue(index, nextSong);
               playQuality = nextQuality;
@@ -1951,11 +1871,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
 
     var target = position;
     if (target < Duration.zero) target = Duration.zero;
-
-    // 拖动进度条跳过的部分不算收听：先按当前位置结算这一段，
-    // 再从新位置重新起算。
-    _closeListenSegment();
-    if (state.isPlaying) _listenSegmentStart = target;
 
     // 乐观更新，让进度条和歌词在 seek 完成前就响应，而不是等待
     // 200ms 节流的位置流。

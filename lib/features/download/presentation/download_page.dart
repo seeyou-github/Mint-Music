@@ -320,7 +320,7 @@ class DownloadPage extends ConsumerWidget {
 /// 布局与「发现页 → 歌单详情」的歌曲列表一致：序号 + 封面 + 曲名 / 来源 / 歌手，
 /// 右侧固定「删除」按钮。四种状态：
 /// * 下载中：行下方显示进度条与下载信息（不再显示「下载中」徽标）；
-/// * 已暂停（上次退出时还没下完）：右侧显示「继续」按钮；
+/// * 已暂停（用户手动暂停）：右侧显示「继续」按钮；
 /// * 失败 / 文件不存在：右侧显示「重试」按钮，其下方显示文字提示；
 /// * 成功：右侧只显示文件大小（不再显示进度条与下载信息）。
 class _DownloadTaskItem extends ConsumerStatefulWidget {
@@ -394,7 +394,7 @@ class _DownloadTaskItemState extends ConsumerState<_DownloadTaskItem> {
       task.status == DownloadStatus.error ||
       task.status == DownloadStatus.cancelled;
 
-  /// 上次退出时未下载完的任务：恢复后显示「继续」按钮。
+  /// 已暂停的任务：右侧显示「继续」按钮。
   bool get _isPaused => task.status == DownloadStatus.paused;
 
   @override

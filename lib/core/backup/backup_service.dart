@@ -10,7 +10,7 @@ import '../platform/app_paths.dart';
 import '../storage/app_database.dart';
 import '../storage/app_preferences.dart';
 import '../../features/discover/data/hot_board_store.dart';
-import '../../features/library/data/play_stats_store.dart';
+import '../../features/player/data/play_progress_store.dart';
 import '../../features/library/data/playlist_repository.dart';
 import '../../features/library/data/playlist_store.dart';
 
@@ -22,8 +22,8 @@ import '../../features/library/data/playlist_store.dart';
 /// - `plugin/`：插件脚本目录
 /// - `hotboards.json`：热榜（存在临时库 `hot_boards` 表里，不在 config 目录内）
 /// - `playlists.json`：收藏（我的收藏 + 歌单，存在重要库的两张表里）
-/// - `playstats.json`：听歌数据（累计时长 / 次数 / 每天累计 / 听歌排行 /
-///   每首歌的已听进度，同样在重要库里）
+/// - `playstats.json`：每首歌的已听进度（同样在重要库里；听歌统计 / 排行
+///   已移除，老备份里的对应字段还原时忽略）
 ///
 /// 重要库（`AppData/db/mintmusic.db`）里的数据全部以 JSON 快照的形式单独
 /// 打包，而不是直接拷数据库文件：正在使用的 SQLite 文件还有没合并的 WAL，
@@ -58,9 +58,8 @@ class BackupService {
 
   /// 压缩包内的听歌数据条目名。
   ///
-  /// 重要库里除了收藏，还有「听了多久 / 听了几次 / 每天听多久 / 听歌排行 /
-  /// 每首歌听到哪」。这些同样是用户长期积累的数据，换设备时要跟着走，
-  /// 因此单独导出一份快照（见 [PlayStatsStore.exportSnapshot]）。
+  /// 现在只剩「每首歌听到哪」（已听进度）：它是用户长期积累的数据，换设备时
+  /// 要跟着走，因此单独导出一份快照（见 [PlayProgressStore.exportSnapshot]）。
   static const String playStatsEntry = 'playstats.json';
 
   /// 备份文件名前缀。
@@ -80,7 +79,7 @@ class BackupService {
 
   /// 生成一个备份压缩包（config + plugin 两个目录 + 数据库里的快照）。
   static Future<Uint8List> createBackup() async {
-    // 先把攒在内存里的增量落盘（听歌统计 / 已听进度都是攒批写）：
+    // 先把攒在内存里的增量落盘（已听进度是攒批写的）：
     // 不 flush 的话，最近 15 秒内的播放数据不会进备份包。
     await AppDatabase.flushAll();
     await AppDatabase.checkpointAll();
@@ -114,14 +113,11 @@ class BackupService {
       final bytes = utf8.encode(jsonEncode(playlists));
       archive.addFile(ArchiveFile(playlistsEntry, bytes.length, bytes));
     }
-    // 听歌数据（统计 / 排行 / 已听进度）导出成一份逻辑快照。
-    final playStats = await PlayStatsStore.exportSnapshot();
-    final hasStats =
-        (playStats['daily'] as List?)?.isNotEmpty == true ||
-        (playStats['songs'] as List?)?.isNotEmpty == true ||
-        (playStats['progress'] as List?)?.isNotEmpty == true;
-    if (hasStats) {
-      final bytes = utf8.encode(jsonEncode(playStats));
+    // 已听进度导出成一份逻辑快照（统计 / 排行已移除）。
+    final progress = await PlayProgressStore.exportSnapshot();
+    final hasProgress = (progress['progress'] as List?)?.isNotEmpty == true;
+    if (hasProgress) {
+      final bytes = utf8.encode(jsonEncode(progress));
       archive.addFile(ArchiveFile(playStatsEntry, bytes.length, bytes));
     }
     final zipped = ZipEncoder().encode(archive);
@@ -169,8 +165,7 @@ class BackupService {
     final configDir = await AppPaths.configDirectory();
     final dbDir = await AppPaths.databaseDirectory();
     final dbRelative = p.relative(dbDir.path, from: configDir.path);
-    final skipDbPrefix =
-        dbRelative.startsWith('..') || p.isAbsolute(dbRelative)
+    final skipDbPrefix = dbRelative.startsWith('..') || p.isAbsolute(dbRelative)
         ? null
         : dbRelative.replaceAll('\\', '/');
     await _restoreDirectory(
@@ -205,7 +200,7 @@ class BackupService {
     await _restorePlayStats(archive);
   }
 
-  /// 还原备份包里的听歌数据（统计 / 排行 / 已听进度）。
+  /// 还原备份包里的已听进度（老备份里的统计 / 排行字段忽略）。
   static Future<void> _restorePlayStats(Archive archive) async {
     ArchiveFile? entry;
     for (final file in archive.files) {
@@ -214,15 +209,15 @@ class BackupService {
         break;
       }
     }
-    // 老备份没有这一条：保持现有听歌数据不动（和热榜的处理一致），
-    // 免得「还原一个没有统计的旧备份」把用户攒的时长与排行抹掉。
+    // 老备份没有这一条：保持现有已听进度不动（和热榜的处理一致），
+    // 免得「还原一个没有进度的旧备份」把已有进度抹掉。
     if (entry == null) return;
     try {
       final raw = utf8.decode(entry.content as List<int>);
       if (raw.trim().isEmpty) return;
       final decoded = jsonDecode(raw);
       if (decoded is! Map) return;
-      await PlayStatsStore.importSnapshot(
+      await PlayProgressStore.importSnapshot(
         decoded.map((key, value) => MapEntry('$key', value)),
       );
     } catch (e) {

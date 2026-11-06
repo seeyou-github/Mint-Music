@@ -22,7 +22,6 @@ import '../../plugin/application/plugin_providers.dart';
 import '../application/discover_providers.dart';
 import '../../../features/player/application/playback_context.dart';
 import '../../player/application/mini_player_visibility.dart';
-import '../../library/application/recently_played_providers.dart';
 import '../../library/domain/models/recently_played.dart';
 import '../domain/models/playlist_page.dart';
 import '../../library/application/playlist_providers.dart';
@@ -114,28 +113,6 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
     final playlist = page.playlist;
     _playlistTitle = playlist?.title ?? _playlistTitle;
     _playlistCover = playlist?.coverUrl ?? _playlistCover;
-    if (playlist != null && playlist.title.isNotEmpty) {
-      // 放到帧后执行：这里可能正在 build 中，直接改 provider 会报错。
-      final playlistId = widget.playlistId;
-      final title = playlist.title;
-      final cover = playlist.coverUrl ?? '';
-      final songCount = playlist.songCount;
-      final source = playlist.source;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        unawaited(
-          ref
-              .read(recentlyPlayedPlaylistsProvider.notifier)
-              .recordOpened(
-                id: playlistId,
-                name: title,
-                coverUrl: cover,
-                songCount: songCount,
-                source: source,
-              ),
-        );
-      });
-    }
     _baseSongs = page.playlist?.songs ?? const <Song>[];
     _extraSongs.clear();
     _page = 1;

@@ -15,25 +15,25 @@ import 'app_preferences.dart';
 /// 应用的数据按「重要程度」分成两个库：
 ///
 /// * **重要库**（Windows：`AppData\db\mintmusic.db`）
-///   存放 *不能丢* 的数据：我的收藏、收藏歌单、每首歌的「已听 N%」进度、
-///   听歌统计（累计时长 / 次数 / 听过的歌 / 按天累计）与听歌排行。
+///   存放 *不能丢* 的数据：我的收藏、收藏歌单、每首歌的「已听 N%」进度。
 ///   变更后立即落盘（SQLite 事务 + WAL + `synchronous=FULL`），
 ///   宁可多写几次也不能丢。
 ///
 /// * **临时库**（Windows：`AppData\temp\db\mintmusic_cache.db`）
 ///   存放 *丢了可以重新生成* 的高频数据：本地歌曲列表、最近播放列表、
-///   下载列表、搜索历史、缓存索引。这些数据变动频繁，统一走「合并延迟写」
+///   搜索历史、缓存索引。这些数据变动频繁，统一走「合并延迟写」
 ///   （见 [DeferredWriter]），尽量减少 SSD 写入次数。
 ///
-/// 「最近听过的歌 / 打开过的歌单」属于可以重算的浏览记录，留在临时库；
-/// 「听了多久、听了几次、排行、听到哪」属于用户长期积累的数据，进重要库。
+/// 「最近听过的歌」属于可以重算的浏览记录，留在临时库；「听到哪」属于用户
+/// 长期积累的数据，进重要库。
+///
+/// **听歌统计与排行、下载列表都已不再落库**：前者（累计时长 / 次数 / 排行）
+/// 整块移除；后者（下载任务）只留内存，退出即清空。
 ///
 /// **保留策略**（都由各自的 Store 一天最多执行一次）：
-/// - 最近播放的歌 / 歌单：只留最近 1 年（`pruneOldEntries`）；
+/// - 最近播放的歌：只留最近 1 个月（`pruneOldEntries`）；
 /// - 已听进度：只留最近 1 年，但**收藏过的歌（含收藏歌单里的）永久保留**
-///   （`pruneOldProgress`）；
-/// - 听歌统计与累计值：永久保留（只存累计，不随清理变化）；
-/// - 听歌排行：一年以上没再听且只播过 1 次的歌清掉（`pruneOldSongs`）。
+///   （`pruneOldProgress`）。
 ///
 /// 其它平台沿用系统目录：重要库放在应用私有数据目录，临时库放在应用缓存目录。
 class AppDatabase {
@@ -52,10 +52,10 @@ class AppDatabase {
   static bool get isPersistent => _persistent;
   static bool _persistent = true;
 
-  /// 重要库：我的收藏、收藏歌单、已听进度、听歌统计与排行。
+  /// 重要库：我的收藏、收藏歌单、已听进度。
   Database get important => _important;
 
-  /// 临时库：本地歌曲列表、最近播放列表、下载列表、搜索历史、缓存索引。
+  /// 临时库：本地歌曲列表、最近播放列表、搜索历史、缓存索引。
   Database get cache => _cache;
 
   /// 把 WAL 落盘（checkpoint）。
@@ -121,9 +121,6 @@ class AppDatabase {
         'local_songs',
         'local_dirs',
         'recently_played',
-        'recently_played_playlists',
-        'play_events',
-        'download_tasks',
         'search_history',
         'lyrics',
         'song_play_progress',
@@ -173,7 +170,7 @@ class AppDatabase {
   static Future<Database> importantDatabase() async =>
       (await instance).important;
 
-  /// 临时库：本地歌曲列表、最近播放、下载列表、搜索历史、缓存索引。
+  /// 临时库：本地歌曲列表、最近播放、搜索历史、缓存索引。
   static Future<Database> cacheDatabase() async => (await instance).cache;
 
   static Future<AppDatabase> _open() async {
@@ -272,7 +269,9 @@ class AppDatabase {
       //     play_totals（累计总时长 / 播放次数）、
       //     play_daily（每天累计时长 / 次数）。
       // v4：play_totals 加 `song_count`（累计「听过的歌」，清理老歌时不能跟着减）。
-      version: 4,
+      // v5：移除听歌统计与排行，删掉 song_play_stats / play_totals / play_daily，
+      //     只保留 song_play_progress（已听进度）。
+      version: 5,
       onConfigure: (db) async {
         // WAL：写入不阻塞读取；synchronous=FULL：断电也不会丢已提交的事务。
         await _applyPragmas(
@@ -288,36 +287,16 @@ class AppDatabase {
       onUpgrade: (db, oldVersion, newVersion) async {
         // 建表语句都写成 IF NOT EXISTS，重复执行安全。
         await _createImportantSchema(db);
-        // 老库里缺的列在这里补（v3 → v4 的 play_totals.song_count）。
-        await _ensureImportantColumns(db);
+        // 听歌统计与排行已移除：老库里的这几张表直接删掉，不再占用空间。
+        for (final table in const [
+          'song_play_stats',
+          'play_totals',
+          'play_daily',
+        ]) {
+          await db.execute('DROP TABLE IF EXISTS $table');
+        }
       },
     );
-  }
-
-  /// 给已有的重要库补列（`CREATE TABLE IF NOT EXISTS` 不会给旧表加列）。
-  static Future<void> _ensureImportantColumns(Database db) async {
-    try {
-      final columns = await db.rawQuery('PRAGMA table_info(play_totals)');
-      final hasSongCount = columns.any(
-        (row) => '${row['name']}' == 'song_count',
-      );
-      if (hasSongCount) return;
-      await db.execute(
-        'ALTER TABLE play_totals ADD COLUMN song_count INTEGER NOT NULL '
-        'DEFAULT 0',
-      );
-      // 之前没记过这个数：按当前行数补一次（此时还没开始清理老歌，
-      // 行数就等于历史听过的歌数）。
-      final rows = await db.rawQuery(
-        'SELECT COUNT(*) AS n FROM song_play_stats',
-      );
-      final total = (rows.first['n'] as num?)?.toInt() ?? 0;
-      await db.execute('UPDATE play_totals SET song_count = ? WHERE id = 1', [
-        total,
-      ]);
-    } catch (e) {
-      debugPrint('[AppDatabase] 补充重要库字段失败: $e');
-    }
   }
 
   /// 重要库的建表语句（幂等）。
@@ -359,12 +338,9 @@ class AppDatabase {
 
     // ------------------------------------------------------------ 听歌数据
     //
-    // 这几张表以前在临时库（`mintmusic_cache.db`）：换设备、清缓存、还原备份
-    // 都会丢。但它们记录的是用户长期积累的东西（听了多久、听了几次、排行、
-    // 每首歌听到哪），丢了补不回来，所以整体搬到重要库。
-    //
-    // 其中「总时长 / 播放次数 / 听过的歌 / 每天时长」只记累计值，**不按歌
-    // 逐条记录**：统计页只需要最后的汇总数字，没必要为它保存几万条明细。
+    // 只剩「每首歌听到哪」这一项：听歌统计（累计时长 / 次数 / 按天）与排行
+    // 已整块移除，老库里的 song_play_stats / play_totals / play_daily 会在
+    // 升级时删掉。
 
     // 每首歌一条「已播放进度」：ratio 只增不减，1.0 表示完整听过一遍。
     // 用于歌曲列表里的「已听 / 已听 N%」标签，以及「接着上次继续播放」。
@@ -381,54 +357,6 @@ class AppDatabase {
       'CREATE INDEX IF NOT EXISTS idx_song_play_progress_time '
       'ON song_play_progress (updated_at DESC)',
     );
-
-    // 每首歌的播放汇总（「排行」分类的数据源）。
-    // `data` 是 `RecentlyPlayedItem.toPersistJson()`（含歌曲信息与来源），
-    // 排行里点一首歌可以直接排队播放，不用再去查临时库。
-    await db.execute('''
-          CREATE TABLE IF NOT EXISTS song_play_stats (
-            song_id TEXT PRIMARY KEY,
-            play_count INTEGER NOT NULL DEFAULT 0,
-            listened_ms INTEGER NOT NULL DEFAULT 0,
-            last_played_at INTEGER NOT NULL DEFAULT 0,
-            data TEXT NOT NULL DEFAULT '{}'
-          )
-        ''');
-    await db.execute(
-      'CREATE INDEX IF NOT EXISTS idx_song_play_stats_rank '
-      'ON song_play_stats (play_count DESC, listened_ms DESC)',
-    );
-    // 「太久没听的老歌」清理（last_played_at < 一年前 且 只播过 1 次）按这个索引扫。
-    await db.execute(
-      'CREATE INDEX IF NOT EXISTS idx_song_play_stats_last '
-      'ON song_play_stats (last_played_at)',
-    );
-
-    // 累计统计：只有一行（id = 1）。
-    //
-    // `song_count` 是「听过的歌」的**累计**数量：每插入一首新歌的统计行就 +1，
-    // 之后即使那首歌因为太久没听被清理掉（见 `PlayStatsStore.pruneOldSongs`），
-    // 这个数字也不会减——统计说的是「一共听过多少首」。
-    await db.execute('''
-          CREATE TABLE IF NOT EXISTS play_totals (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            total_listened_ms INTEGER NOT NULL DEFAULT 0,
-            total_plays INTEGER NOT NULL DEFAULT 0,
-            song_count INTEGER NOT NULL DEFAULT 0,
-            updated_at INTEGER NOT NULL DEFAULT 0
-          )
-        ''');
-    await db.execute('INSERT OR IGNORE INTO play_totals (id) VALUES (1)');
-
-    // 每天的累计（day 为本地时区的 `yyyy-MM-dd`）。周 / 月 / 年视图由它
-    // 汇总得到，所以一年只有 365 行，比按次记录小两个量级。
-    await db.execute('''
-          CREATE TABLE IF NOT EXISTS play_daily (
-            day TEXT PRIMARY KEY,
-            listened_ms INTEGER NOT NULL DEFAULT 0,
-            plays INTEGER NOT NULL DEFAULT 0
-          )
-        ''');
   }
 
   static Future<Database> _openCache({bool inMemory = false}) async {
@@ -444,7 +372,10 @@ class AppDatabase {
       // v5 曾加过一张独立的 song_resume_position，现改为直接复用
       // song_play_progress（「最远听到哪」就是续播位置），v6 里连同旧表一起清掉。
       // v7：新增 hot_boards（热榜从 settings.json 搬进临时库）。
-      version: 7,
+      // v8：删除最近播放的歌单分类、旧播放明细与下载列表——
+      //     recently_played_playlists / play_events / download_tasks 不再建表，
+      //     老库升级时直接删掉（下载列表改为只留内存）。
+      version: 8,
       onConfigure: (db) async {
         // NORMAL：写 WAL 不用每次 fsync，浏览时缓存索引写入不至于卡顿。
         // 关键数据（本地歌曲 / 最近播放 / 搜索历史）写完后会显式
@@ -463,6 +394,14 @@ class AppDatabase {
         // v5 短暂存在过的「上次播放位置」表已废弃：续播改为复用
         // song_play_progress（最远听到哪就是续播位置），旧表直接删掉。
         await db.execute('DROP TABLE IF EXISTS song_resume_position');
+        // 最近播放的歌单分类、旧播放明细、下载列表都不再落库。
+        for (final table in const [
+          'recently_played_playlists',
+          'play_events',
+          'download_tasks',
+        ]) {
+          await db.execute('DROP TABLE IF EXISTS $table');
+        }
         await _createCacheSchema(db);
       },
     );
@@ -503,50 +442,6 @@ class AppDatabase {
       'CREATE INDEX IF NOT EXISTS idx_recently_played_time '
       'ON recently_played (played_at DESC)',
     );
-    await db.execute('''
-          CREATE TABLE IF NOT EXISTS recently_played_playlists (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL DEFAULT '',
-            cover_url TEXT NOT NULL DEFAULT '',
-            song_count INTEGER NOT NULL DEFAULT 0,
-            source TEXT NOT NULL DEFAULT '',
-            opened_at INTEGER NOT NULL DEFAULT 0,
-            data TEXT NOT NULL DEFAULT '{}'
-          )
-        ''');
-    await db.execute(
-      'CREATE INDEX IF NOT EXISTS idx_rp_playlists_time '
-      'ON recently_played_playlists (opened_at DESC)',
-    );
-    // 每次播放（一段连续收听）一条记录：统计总时长 / 按天周月年聚合都靠它。
-    //
-    // **已废弃**：听歌统计改成「只存累计值」后搬进了重要库（见
-    // `_createImportantSchema` 的 play_totals / play_daily）。这张表只在升级
-    // 后的第一次启动时被读一遍（聚合成累计值），然后清空；保留表结构是为了
-    // 让老版本的明细数据不会在升级时丢得莫名其妙。
-    await db.execute('''
-          CREATE TABLE IF NOT EXISTS play_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            song_id TEXT NOT NULL DEFAULT '',
-            played_at INTEGER NOT NULL DEFAULT 0,
-            listened_ms INTEGER NOT NULL DEFAULT 0,
-            duration_ms INTEGER NOT NULL DEFAULT 0
-          )
-        ''');
-    await db.execute(
-      'CREATE INDEX IF NOT EXISTS idx_play_events_time '
-      'ON play_events (played_at DESC)',
-    );
-    await db.execute('''
-          CREATE TABLE IF NOT EXISTS download_tasks (
-            id TEXT PRIMARY KEY,
-            status TEXT NOT NULL DEFAULT '',
-            file_path TEXT NOT NULL DEFAULT '',
-            created_at INTEGER NOT NULL DEFAULT 0,
-            updated_at INTEGER NOT NULL DEFAULT 0,
-            data TEXT NOT NULL DEFAULT '{}'
-          )
-        ''');
     await db.execute('''
           CREATE TABLE IF NOT EXISTS search_history (
             keyword TEXT PRIMARY KEY,

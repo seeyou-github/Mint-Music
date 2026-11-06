@@ -69,7 +69,7 @@ final appRouter = GoRouter(
               path: AppRoutes.playlistDetail,
               pageBuilder: (context, state) {
                 final playlistId = state.pathParameters['id'] ?? '';
-                // 排行榜打开的记成「榜单」来源（最近播放里显示「榜单」标签）。
+                // 排行榜打开的记成「榜单」来源（播放页显示来源标签）。
                 final sourceType = state.uri.queryParameters['type'] == 'rank'
                     ? PlaybackSourceType.rank
                     : PlaybackSourceType.playlist;
@@ -359,20 +359,16 @@ final appRouter = GoRouter(
       // 200ms 的 FadeTransition 要把它整页合成一层再做透明度动画，低端机上是
       // 明显的一顿；而淡入淡出本身不携带任何信息，去掉后点击封面/迷你播放器
       // 是「立刻」出现，体感反而更快。
-      pageBuilder: (context, state) => NoTransitionPage(
-        key: state.pageKey,
-        child: const FullPlayerPage(),
-      ),
+      pageBuilder: (context, state) =>
+          NoTransitionPage(key: state.pageKey, child: const FullPlayerPage()),
     ),
     GoRoute(
       path: AppRoutes.lyric,
       // 歌词页与播放详情页同属「整页播放界面」，同样用 NoTransitionPage：
       // 它从封面点进来，240ms 的上滑会把这个重页面（整屏歌词 + 逐行动画）
       // 边滑边合成，掉帧最明显。
-      pageBuilder: (context, state) => NoTransitionPage(
-        key: state.pageKey,
-        child: const LyricPage(),
-      ),
+      pageBuilder: (context, state) =>
+          NoTransitionPage(key: state.pageKey, child: const LyricPage()),
     ),
   ],
 );

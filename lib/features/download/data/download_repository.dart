@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' show Color;
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -7,7 +6,6 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
-import '../../../core/storage/app_database.dart';
 import '../../../core/storage/app_preferences.dart';
 import '../../../core/platform/download_paths.dart';
 import '../../../core/platform/media_scanner.dart';
@@ -47,6 +45,7 @@ typedef TagWriteOptionsFetcher = TagWriteOptions Function();
 typedef LyricFetcher = Future<String?> Function(Song song);
 typedef LyricResultFetcher = Future<LyricResult?> Function(Song song);
 typedef CoverUrlFetcher = Future<String?> Function(Song song);
+
 /// 下载音质校验：按**整首歌**判断，而不是只按 `song.source`。
 ///
 /// 数据源歌曲的 `source` 是数据源插件（不提供播放 / 下载），真正出面解析地址
@@ -71,17 +70,9 @@ class TagWriteOptions {
 }
 
 class DownloadRepository {
-  DownloadRepository() {
-    AppDatabase.registerWriter(_writer);
-  }
+  DownloadRepository();
 
-  /// 旧版把下载任务列表存在设置文件里的键（首次启动时迁移）。
-  static const _tasksKey = 'download_tasks';
   static const _maxRetries = 3;
-
-  /// 下载记录存在临时库：丢失只是看不到历史记录，不影响已下载的文件。
-  /// 进度更新频繁，统一走合并延迟写，只在状态变化时立即落盘。
-  late final DeferredWriter _writer = DeferredWriter(() => _persistTasks());
 
   final Dio _dio = Dio(
     BaseOptions(
@@ -177,13 +168,8 @@ class DownloadRepository {
     if (wifiOnly != null) _wifiOnly = wifiOnly;
     if (maxConcurrent != null) _maxConcurrent = maxConcurrent;
 
-    // 任务列表存在临时库里（丢了可以重新下载，不算重要数据）。
-    await _loadTasksFromDb();
-
-    // 修正旧版本写错的路径：先迁移桌面上被写到 Android 默认目录里的
-    // 已完成文件，再让所有未完成任务跟随当前下载目录。
-    await _migrateLegacyCompletedFiles();
-    _retargetUnfinishedTasks();
+    // 下载任务只保存在内存里：软件退出即清空，下次启动从空列表开始
+    // （已下载的文件不受影响，仍在下载目录里）。
 
     // 验证已完成任务的文件是否存在
     for (int i = 0; i < _tasks.length; i++) {
@@ -231,45 +217,6 @@ class DownloadRepository {
     return defaultDownloadDirSync();
   }
 
-  /// 旧版本在桌面端把下载目录解析成了 `/storage/emulated/...`。把仍然存在
-  /// 的文件移动到当前下载目录，并修正对应任务路径。
-  Future<void> _migrateLegacyCompletedFiles() async {
-    if (Platform.isAndroid) return;
-    var changed = false;
-    for (var i = 0; i < _tasks.length; i++) {
-      final task = _tasks[i];
-      if (task.status != DownloadStatus.completed) continue;
-      final normalized = task.filePath.replaceAll('\\', '/');
-      if (!normalized.startsWith(legacyAndroidDownloadDir)) continue;
-      if (_isPathInDownloadDir(task.filePath)) continue;
-
-      final targetPath = DownloadTask.buildFilePathSync(
-        downloadDir: _downloadDir,
-        title: task.song.title,
-        artist: task.song.artist,
-        quality: task.quality,
-        extension: _extensionOf(task.filePath),
-      );
-      try {
-        final source = File(task.filePath);
-        if (!await source.exists()) continue;
-        final target = File(targetPath);
-        // 不覆盖已有文件，避免误删用户数据。
-        if (await target.exists()) continue;
-        await target.parent.create(recursive: true);
-        await source.rename(targetPath);
-        _tasks[i] = task.copyWith(filePath: targetPath);
-        changed = true;
-      } catch (e) {
-        debugPrint('[DownloadRepository] 迁移旧下载文件失败: $e');
-      }
-    }
-    if (changed) {
-      unawaited(_saveTasks());
-      _emitUpdate();
-    }
-  }
-
   /// 未完成任务的路径跟随当前下载目录。
   ///
   /// 旧版本遗留的任务（例如指向 `/storage/emulated/...`）如果继续重试，
@@ -284,7 +231,6 @@ class DownloadRepository {
       }
     }
     if (changed) {
-      unawaited(_saveTasks());
       _emitUpdate();
     }
   }
@@ -432,7 +378,6 @@ class DownloadRepository {
     // 不用等数据库写完（以前是先解析播放地址再入队，网络慢时要等好几秒）。
     _emitUpdate();
     _processQueue();
-    await _flushTasks();
     onTaskStarted?.call(task);
     return task.id;
   }
@@ -475,7 +420,6 @@ class DownloadRepository {
     }
 
     _tasks[index] = task.copyWith(status: DownloadStatus.paused);
-    await _flushTasks();
     _emitUpdate();
     _processQueue();
   }
@@ -499,7 +443,6 @@ class DownloadRepository {
     _tasks[index] = _retargeted(
       task,
     ).copyWith(status: DownloadStatus.queued, retries: 0, error: null);
-    await _flushTasks();
     _emitUpdate();
     _processQueue();
   }
@@ -531,7 +474,6 @@ class DownloadRepository {
       url: retryFromScratch ? '' : null,
       headers: retryFromScratch ? const <String, String>{} : null,
     );
-    await _flushTasks();
     _emitUpdate();
     _processQueue();
   }
@@ -559,7 +501,6 @@ class DownloadRepository {
     }
 
     _tasks[index] = task.copyWith(status: DownloadStatus.cancelled);
-    await _flushTasks();
     _emitUpdate();
     _processQueue();
   }
@@ -594,7 +535,6 @@ class DownloadRepository {
     }
 
     _tasks.removeAt(index);
-    await _flushTasks();
     _emitUpdate();
     _processQueue();
   }
@@ -618,7 +558,6 @@ class DownloadRepository {
         _tasks[i] = task.copyWith(status: DownloadStatus.paused);
       }
     }
-    await _saveTasks();
     _emitUpdate();
     _processQueue();
   }
@@ -779,7 +718,6 @@ class DownloadRepository {
         error: error,
         speed: 0,
       );
-      unawaited(_flushTasks());
       _emitUpdate();
     }
     _processQueue();
@@ -990,7 +928,6 @@ class DownloadRepository {
             // 封面没拿到不影响下载成功，只在列表里提示。
             coverMissing: !coverOk,
           );
-          await _flushTasks();
           _emitUpdate();
           onTaskCompleted?.call(_tasks[idx]);
           // 通知 MediaStore 扫描新文件，使其在本地音乐中可见
@@ -1030,7 +967,6 @@ class DownloadRepository {
             status: DownloadStatus.queued,
             retries: task.retries + 1,
           );
-          await _saveTasks();
           _emitUpdate();
           _fileLocks.remove(task.filePath);
           _activeDownloads--;
@@ -1056,7 +992,6 @@ class DownloadRepository {
             status: DownloadStatus.queued,
             retries: task.retries + 1,
           );
-          await _saveTasks();
           _emitUpdate();
           _fileLocks.remove(task.filePath);
           _activeDownloads--;
@@ -1201,7 +1136,6 @@ class DownloadRepository {
         error: error,
         speed: 0,
       );
-      unawaited(_flushTasks());
       _emitUpdate();
       onTaskError?.call(_tasks[idx], error);
     }
@@ -1239,116 +1173,6 @@ class DownloadRepository {
       if (file.existsSync()) return task.filePath;
     }
     return null;
-  }
-
-  // ==================== 持久化 ====================
-
-  /// 标记任务列表有变化（延迟落盘）。
-  ///
-  /// 下载过程中的进度更新只改内存，不会每次都写数据库。
-  Future<void> _saveTasks() async {
-    _writer.schedule();
-  }
-
-  /// 立刻把任务列表写入数据库。
-  ///
-  /// 在下载完成（封面 / 歌词写入之后）、失败、暂停、删除等时机调用，
-  /// 保证任务状态不会因为进程被杀而丢失。
-  Future<void> _flushTasks() async {
-    await _writer.writeNow();
-  }
-
-  Future<void> _persistTasks() async {
-    try {
-      final db = await AppDatabase.cacheDatabase();
-      final now = DateTime.now().millisecondsSinceEpoch;
-      await db.transaction((txn) async {
-        await txn.delete('download_tasks');
-        final batch = txn.batch();
-        for (final task in _tasks) {
-          batch.insert('download_tasks', {
-            'id': task.id,
-            'status': task.status.name,
-            'file_path': task.filePath,
-            'created_at': task.createdAt,
-            'updated_at': now,
-            'data': jsonEncode(task.toPersistJson()),
-          });
-        }
-        await batch.commit(noResult: true);
-      });
-    } catch (e) {
-      debugPrint('[DownloadRepository] 保存任务失败: $e');
-    }
-  }
-
-  /// 从临时库读取任务列表。
-  Future<void> _loadTasksFromDb() async {
-    try {
-      final db = await AppDatabase.cacheDatabase();
-      final rows = await db.query(
-        'download_tasks',
-        orderBy: 'created_at ASC, rowid ASC',
-      );
-      for (final row in rows) {
-        final data = AppDatabase.decodeMap(row['data']);
-        if (data.isEmpty) continue;
-        try {
-          _tasks.add(_restoredTask(DownloadTask.fromJson(data)));
-        } catch (_) {
-          // 单条数据损坏就跳过
-        }
-      }
-    } catch (e) {
-      debugPrint('[DownloadRepository] 加载任务失败: $e');
-    }
-
-    if (!await AppDatabase.isMigrated('download_tasks')) {
-      if (_tasks.isEmpty) {
-        await _importLegacyTasks();
-      } else {
-        // 数据库里已经有记录，旧设置里的那份可以丢掉了。
-        await AppDatabase.removeLegacyKey(_tasksKey);
-      }
-      if (AppDatabase.isPersistent) {
-        await AppDatabase.markMigrated('download_tasks');
-      }
-    }
-  }
-
-  /// 修正从数据库恢复出来的任务状态。
-  DownloadTask _restoredTask(DownloadTask task) {
-    var restored = task;
-    // 上次退出时还在下载的任务不会自己继续：标成暂停，等用户点「继续」。
-    if (restored.status == DownloadStatus.downloading) {
-      restored = restored.copyWith(status: DownloadStatus.paused, speed: 0);
-    }
-    // 在线地址会过期，未完成的任务恢复时清空，继续 / 重试时重新解析。
-    if (restored.status != DownloadStatus.completed &&
-        restored.url.isNotEmpty) {
-      restored = restored.copyWith(url: '');
-    }
-    return restored;
-  }
-
-  /// 首次启动：把旧设置文件里的下载任务导入数据库。
-  Future<void> _importLegacyTasks() async {
-    try {
-      final prefs = await AppPreferences.getInstance();
-      final raw = prefs.getString(_tasksKey);
-      if (raw == null || raw.isEmpty) return;
-      final list = jsonDecode(raw) as List;
-      for (final item in list) {
-        _tasks.add(_restoredTask(DownloadTask.fromJson(item)));
-      }
-      if (_tasks.isNotEmpty) {
-        await _persistTasks();
-        await AppDatabase.removeLegacyKey(_tasksKey);
-        debugPrint('[DownloadRepository] 已从旧设置迁移 ${_tasks.length} 个下载任务');
-      }
-    } catch (e) {
-      debugPrint('[DownloadRepository] 迁移旧任务失败: $e');
-    }
   }
 
   void _emitUpdate() {

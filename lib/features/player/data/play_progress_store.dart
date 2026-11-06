@@ -104,6 +104,68 @@ class PlayProgressStore {
     }
   }
 
+  // ---------------------------------------------------------------- 备份
+
+  /// 导出「已听进度」快照（备份包里的 `playstats.json`）。
+  ///
+  /// 听歌统计与排行已移除，这份快照只剩每首歌的已听进度；老备份里的
+  /// `totals` / `daily` / `songs` 字段在还原时会被忽略。
+  static Future<Map<String, dynamic>> exportSnapshot() async {
+    final result = <String, dynamic>{
+      'version': 2,
+      'exportedAt': DateTime.now().millisecondsSinceEpoch,
+    };
+    try {
+      final db = await AppDatabase.importantDatabase();
+      result['progress'] = [
+        for (final row in await db.query('song_play_progress'))
+          {
+            'songId': row['song_id'],
+            'ratio': row['ratio'] ?? 0,
+            'positionMs': row['position_ms'] ?? 0,
+            'durationMs': row['duration_ms'] ?? 0,
+            'updatedAt': row['updated_at'] ?? 0,
+          },
+      ];
+    } catch (e) {
+      debugPrint('[PlayProgress] 导出已听进度失败: $e');
+    }
+    return result;
+  }
+
+  /// 用备份里的快照覆盖本机已听进度。
+  ///
+  /// 快照里没有 `progress` 字段（更老的备份）时保持现状，不要清空已有进度。
+  static Future<void> importSnapshot(Map<String, dynamic> snapshot) async {
+    final raw = snapshot['progress'];
+    if (raw is! List) return;
+    final rows = [
+      for (final item in raw)
+        if (item is Map) item.map((key, value) => MapEntry('$key', value)),
+    ];
+    try {
+      final db = await AppDatabase.importantDatabase();
+      await db.transaction((txn) async {
+        await txn.delete('song_play_progress');
+        for (final row in rows) {
+          final songId = '${row['songId'] ?? ''}';
+          if (songId.isEmpty) continue;
+          await txn.insert('song_play_progress', {
+            'song_id': songId,
+            'ratio': (row['ratio'] as num?)?.toDouble() ?? 0,
+            'position_ms': (row['positionMs'] as num?)?.toInt() ?? 0,
+            'duration_ms': (row['durationMs'] as num?)?.toInt() ?? 0,
+            'updated_at': (row['updatedAt'] as num?)?.toInt() ?? 0,
+          }, conflictAlgorithm: ConflictAlgorithm.replace);
+        }
+      });
+      await AppDatabase.checkpointImportant();
+      debugPrint('[PlayProgress] 已还原 ${rows.length} 条已听进度');
+    } catch (e) {
+      debugPrint('[PlayProgress] 还原已听进度失败: $e');
+    }
+  }
+
   // ---------------------------------------------------------------- 清理
 
   Future<void> _pruneIfDue() async {
