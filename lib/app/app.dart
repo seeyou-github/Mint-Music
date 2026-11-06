@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -5,7 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../core/l10n/app_locale.dart';
 import '../core/l10n/l10n.dart';
-import '../core/platform/window_title_bar.dart';
+import '../core/platform/window_chrome.dart';
 import '../core/theme/app_theme.dart';
 import '../core/theme/app_typography.dart';
 import '../core/theme/theme_provider.dart';
@@ -25,6 +27,7 @@ import '../features/library/application/playlist_providers.dart';
 import '../features/settings/data/plugin_repository.dart';
 import '../shared/widgets/playlist_sync_indicator.dart';
 import 'app_desktop_shell.dart';
+import 'windows_title_bar.dart';
 
 class App extends ConsumerStatefulWidget {
   const App({super.key});
@@ -39,8 +42,12 @@ class _AppState extends ConsumerState<App> {
   @override
   void initState() {
     super.initState();
-    // 启动时先把标题栏涂成当前背景色（之后由 build 里的 listen 跟随变化）。
-    WindowTitleBar.apply(ref.read(themeColorsProvider).background);
+    // Windows：去掉系统标题栏，改由 Flutter 自绘一条（Win10 没法给系统标题栏
+    // 上色，只有这么做才能和设置里的「背景颜色」完全一致）。
+    WindowChrome.enableCustomTitleBar();
+    WindowChrome.setDarkFrame(
+      ref.read(themeColorsProvider).background.computeLuminance() < 0.5,
+    );
     // 状态栏 / 系统栏样式：首帧之前就下发一次，避免启动瞬间还是系统默认的
     // 黑色（或带对比度遮罩）状态栏。之后由 build 里的 AnnotatedRegion 跟随。
     SystemBars.apply(light: ref.read(isLightThemeActiveProvider));
@@ -126,11 +133,12 @@ class _AppState extends ConsumerState<App> {
     // 同步全局语言,供非 widget 场景(如歌词控制器)使用
     currentLocale = appLocale;
 
-    // Windows：系统标题栏（最顶上的窗口栏）跟着主题背景色走，
-    // 设置里改「背景颜色」后立刻生效；其它平台该方法内部直接跳过。
+    // Windows：窗口边框跟着主题背景色走（自绘标题栏本身在 builder 里，
+    // 直接读 themeColorsProvider，改「背景颜色」立刻生效）。
     ref.listen(
       themeColorsProvider,
-      (previous, next) => WindowTitleBar.apply(next.background),
+      (previous, next) =>
+          WindowChrome.setDarkFrame(next.background.computeLuminance() < 0.5),
     );
 
     // Listen for plugin initialization completion to trigger update check
@@ -209,13 +217,29 @@ class _AppState extends ConsumerState<App> {
                 ],
               ),
             );
+            // Windows：系统标题栏已经被去掉（见 WindowChrome），这里在路由之外
+            // 顶一条自绘的标题栏，颜色跟着设置里的「背景颜色」走。
+            // 放在 MaterialApp.builder 里，所有页面（含全屏播放页、弹窗之外的
+            // 二级页面）都能拖窗口、点关闭。改样式失败时退回系统标题栏，
+            // 不插这条，避免出现两个标题栏。
+            final body = Platform.isWindows && WindowChrome.hasCustomTitleBar
+                ? Column(
+                    // stretch：标题栏和下面的内容都要铺满窗口宽度
+                    // （Column 默认是 center，会让路由内容按自身宽度居中）。
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const WindowsTitleBar(),
+                      Expanded(child: content),
+                    ],
+                  )
+                : content;
             // 状态栏样式：透明 + 关掉系统给透明状态栏叠的半透明遮罩，
             // 让状态栏与页面背景完全同色（见 SystemBars 的说明）。
             // 用 AnnotatedRegion 而不是只调一次 SystemChrome，是为了跟随
             // 「浅色 / 深色 / 跟随系统」切换，也避免被页面自身的系统栏设置覆盖。
             return AnnotatedRegion<SystemUiOverlayStyle>(
               value: SystemBars.overlayStyle(light: isLightActive),
-              child: content,
+              child: body,
             );
           },
         ),

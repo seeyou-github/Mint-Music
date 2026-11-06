@@ -44,8 +44,8 @@ dependencies:
 
   shared_preferences: ^2.5.3
 
-  # Windows 顶栏着色：直接调 DWM / User32 的几个函数（见
-  # core/platform/window_title_bar.dart），需要 package:ffi 分配原生内存。
+  # Windows 自绘标题栏：直接调 User32 / DWM 的几个函数（见
+  # core/platform/window_chrome.dart），需要 package:ffi 分配原生内存。
   ffi: ^2.1.0
 
   # 本地数据库。
