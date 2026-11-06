@@ -5,13 +5,13 @@ import 'package:flutter/services.dart';
 /// 通知栏播放卡片（仅 Android）与原生之间的桥。
 ///
 /// 原生实现分两块：
-/// - 卡片本身：`android/mintmusic-patch/com/ryanheise/audioservice/MintNotification.java`
-///   （构建时被复制进 audio_service 模块，改掉默认的 MediaStyle 通知）；
+/// - 卡片本身：`third_party/audio_service/.../MintNotification.java`（vendored 的
+///   audio_service 里，改掉默认的 MediaStyle 通知）；
 /// - 通道：`android/app/src/main/kotlin/.../PlayerNotificationChannel.kt`。
 ///
-/// 卡片上的五个按钮：收藏 / 上一首 / 播放暂停 / 下一首 / 歌词。其中上一首、播放暂停、
-/// 下一首是系统媒体键，完全走原生（和耳机线控同一条链路），Dart 不用参与；只有
-/// 「收藏」和「歌词」需要应用层处理，就是这里的两条通道。
+/// 卡片上的五个按钮：收藏 / 上一首 / 播放暂停 / 下一首 / 桌面歌词。其中上一首、
+/// 播放暂停、下一首是系统媒体键，完全走原生（和耳机线控同一条链路），Dart 不用参与；
+/// 只有「收藏」和「桌面歌词」需要应用层处理，就是这里的两条通道。
 class PlayerNotification {
   PlayerNotification._();
 
@@ -36,7 +36,7 @@ class PlayerNotification {
     });
   }
 
-  /// 冷启动时（点通知栏「词」拉起应用）动作先存在原生侧，启动后取一次。
+  /// 原生侧暂存的动作（Dart 还没注册处理器时点了通知按钮），启动后取一次。
   ///
   /// 返回后原生侧即清空，不会重复处理。
   static Future<String?> consumeLaunchAction() async {

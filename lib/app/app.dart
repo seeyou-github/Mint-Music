@@ -6,7 +6,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import '../core/constants/app_routes.dart';
 import '../core/l10n/app_locale.dart';
 import '../core/l10n/l10n.dart';
 import '../core/platform/window_chrome.dart';
@@ -18,8 +17,11 @@ import '../core/router/app_router.dart';
 import '../core/theme/system_bars.dart';
 import '../core/theme/system_brightness_sync.dart';
 import '../core/utils/responsive_layout.dart';
-import '../features/player/presentation/desktop_lyric_window.dart';
+import '../features/player/application/desktop_lyric_controller.dart';
+import '../features/player/application/desktop_lyric_sync.dart';
 import '../features/player/application/playback_controller.dart';
+import '../features/player/platform/desktop_lyric_overlay.dart';
+import '../features/player/presentation/desktop_lyric_window.dart';
 import '../features/plugin/application/plugin_providers.dart';
 import '../features/settings/application/font_providers.dart';
 import '../features/settings/application/plugin_providers.dart';
@@ -67,7 +69,7 @@ class _AppState extends ConsumerState<App> {
   void _initNotificationActions() {
     if (!PlayerNotification.supported) return;
     PlayerNotification.attach(onAction: _handleNotificationAction);
-    // 从通知栏「词」冷启动时，动作先存在原生侧，等首帧后再取。
+    // 原生侧可能已经存了「Dart 还没就绪时点的按钮」，首帧后取一次。
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final action = await PlayerNotification.consumeLaunchAction();
       if (!mounted || action == null) return;
@@ -80,9 +82,21 @@ class _AppState extends ConsumerState<App> {
       case PlayerNotification.actionFavorite:
         unawaited(_toggleCurrentFavorite());
       case PlayerNotification.actionLyric:
-        // 歌词页是独立路由，直接从通知进入即可。
-        appRouter.go(AppRoutes.lyric);
+        unawaited(_toggleDesktopLyric());
     }
+  }
+
+  /// 切换桌面歌词浮窗（通知栏「词」按钮）。
+  Future<void> _toggleDesktopLyric() async {
+    final sync = ref.read(desktopLyricSyncProvider.notifier);
+    if (ref.read(desktopLyricSettingsProvider).enable) {
+      await sync.disableDesktopLyric();
+      return;
+    }
+    // 点通知栏时应用还算「前台」，原生侧会把悬浮窗设为不可见；先按后台处理，
+    // 歌词窗才会立刻出现（回到应用时 lifecycle 回调会再把它隐藏）。
+    await DesktopLyricOverlay.instance.setForeground(false);
+    await sync.enableDesktopLyric();
   }
 
   /// 收藏 / 取消收藏当前播放的歌曲（与播放页、歌词页的红心同一份数据）。

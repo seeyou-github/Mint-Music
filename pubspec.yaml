@@ -17,6 +17,8 @@ dependencies:
 
   just_audio: ^0.9.46
   just_audio_background: 0.0.1-beta.11
+  # 实际用的是 third_party/audio_service（源码依赖，见 dependency_overrides）：
+  # 通知栏卡片要换成自定义布局（MintNotification.java），必须改插件源码。
   audio_service: ^0.18.18
   audio_session: ^0.1.25
 
@@ -102,6 +104,13 @@ dependency_overrides:
   # 详见 third_party/just_audio_media_kit/CHANGELOG.md；上游修复后可移除此 override。
   just_audio_media_kit:
     path: third_party/just_audio_media_kit
+  # 本地补丁版（vendor 在 third_party/，基于 0.18.19）：通知栏要换成自定义播放卡片
+  # （封面在左、歌名 + 收藏/上一首/播放暂停/下一首/桌面歌词 五个按钮），必须改插件
+  # 源码，所以在 AudioService.buildNotification() 里加了 MintNotification 分支。
+  # 另外 AudioServiceConfig.save() 被改成空实现（配置只存 settings.json）。
+  # 上游无法合并这类改动，升级插件时把新版本源码替换进目录后重新应用这三处改动。
+  audio_service:
+    path: third_party/audio_service
 
 flutter:
   uses-material-design: true

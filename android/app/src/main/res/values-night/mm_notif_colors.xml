@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 通知栏播放卡片的前景色（深色系统）：卡片是深底，文字 / 图标改用浅色。 -->
+<resources>
+    <color name="mm_notif_text">#EDEDED</color>
+    <color name="mm_notif_icon">#E0E0E0</color>
+    <color name="mm_notif_icon_dim">#9C9C9C</color>
+</resources>

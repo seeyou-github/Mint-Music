@@ -22,27 +22,29 @@ import androidx.core.app.NotificationCompat;
  * MintMusic：自定义通知栏播放卡片（仅 Android）。
  *
  * <p>audio_service 默认用 {@code NotificationCompat.MediaStyle} 生成通知：封面以大图放在
- * 右侧、按钮只有「上一首 / 播放暂停 / 下一首」，样式无法改成设计稿那种「封面在左、
- * 歌名 + 五个按钮在右」的卡片。这里改成自绘 RemoteViews 布局
+ * 右侧、按钮只有「上一首 / 播放暂停 / 下一首」，样式无法改成「封面在左、歌名 + 五个
+ * 按钮在右」的卡片。这里改成自绘 RemoteViews 布局
  * （{@code res/layout/mintmusic_notification_player.xml}），由
  * {@link AudioService#buildNotification()} 优先调用；任何一步失败（资源缺失、
  * 布局异常）都返回 {@code null}，调用方退回原来的 MediaStyle 通知，绝不会因为
  * 通知样式导致播放异常。
  *
- * <p>本文件位于 `android/mintmusic-patch/`，构建时被复制进 audio_service 的源码目录
- * （见 `android/build.gradle.kts`），因此包名必须是 {@code com.ryanheise.audioservice}
- * —— 只有同包才能拿到 {@code AudioService} 包内可见的
- * {@code buildMediaButtonPendingIntent()}。
+ * <p>卡片背景不动：不设自己的背景，沿用系统通知卡的圆角与底色；文字 / 图标颜色
+ * 走 {@code values(-night)/mm_notif_colors.xml}，跟随系统深浅色。
+ *
+ * <p>本文件是 vendored 的 audio_service 源码的一部分（third_party/audio_service），
+ * 包名必须是 {@code com.ryanheise.audioservice} —— 只有同包才能拿到 {@code AudioService}
+ * 包内可见的 {@code buildMediaButtonPendingIntent()}。
  *
  * <p>布局里的资源全部用 {@code getIdentifier} 按名字取：本模块没有 app 的 R 类。
- * release 开了 shrinkResources，字符串引用的资源靠 `res/raw/keep.xml` 保住。
+ * release 开了 shrinkResources，字符串引用的资源靠 app 的 `res/raw/keep.xml` 保住。
  */
 public final class MintNotification {
 
     /** 收藏按钮的广播（由 app 模块的 NotificationActionReceiver 接住再转给 Dart）。 */
     public static final String ACTION_FAVORITE = "com.mintmusic.notification.FAVORITE";
 
-    /** 歌词按钮：直接启动 MainActivity 并带上这个 action。 */
+    /** 桌面歌词按钮的广播。 */
     public static final String ACTION_LYRIC = "com.mintmusic.notification.LYRIC";
 
     private static final int REQUEST_FAVORITE = 0x4D4D31;
@@ -61,7 +63,7 @@ public final class MintNotification {
     public static void setFavorite(boolean value) {
         if (favorite == value) return;
         favorite = value;
-        // 与 AudioService 同包，可直接调用补丁里新增的刷新入口。
+        // 与 AudioService 同包，可直接调用刷新入口。
         AudioService.refreshNotification();
     }
 
@@ -96,7 +98,7 @@ public final class MintNotification {
             // 歌名：单行，超长由布局里的 ellipsize="end" 截断。
             views.setTextViewText(titleId, description.getTitle());
 
-            // 封面：先按正方形居中裁剪，再把左侧两个角切圆（右侧贴着卡片内部，保持直角）。
+            // 封面：正方形居中裁剪 + 圆角。
             final Bitmap cover = roundCover(context, art);
             if (cover != null) {
                 views.setImageViewBitmap(coverId, cover);
@@ -113,7 +115,7 @@ public final class MintNotification {
                     context, "drawable", favorite ? "mm_ic_notif_heart_on" : "mm_ic_notif_heart_off");
             if (heartId != 0) views.setImageViewResource(favoriteId, heartId);
 
-            // 上一首 / 播放暂停 / 下一首：走系统媒体键，和耳机线控、通知栏旧按钮同一条链路。
+            // 上一首 / 播放暂停 / 下一首：走系统媒体键，和耳机线控同一条链路。
             views.setOnClickPendingIntent(
                     prevId, service.buildMediaButtonPendingIntent(PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS));
             views.setOnClickPendingIntent(
@@ -122,20 +124,13 @@ public final class MintNotification {
                     nextId, service.buildMediaButtonPendingIntent(PlaybackStateCompat.ACTION_SKIP_TO_NEXT));
 
             // 收藏：广播给 app 自己，不打开界面。
-            final Intent favoriteIntent = new Intent(ACTION_FAVORITE);
-            favoriteIntent.setPackage(context.getPackageName());
             views.setOnClickPendingIntent(
-                    favoriteId, PendingIntent.getBroadcast(context, REQUEST_FAVORITE, favoriteIntent, piFlags()));
+                    favoriteId,
+                    broadcast(context, ACTION_FAVORITE, REQUEST_FAVORITE));
 
-            // 歌词：启动应用并停在歌词页。
-            final Intent lyricIntent = context.getPackageManager()
-                    .getLaunchIntentForPackage(context.getPackageName());
-            if (lyricIntent != null) {
-                lyricIntent.setAction(ACTION_LYRIC);
-                lyricIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-                views.setOnClickPendingIntent(
-                        lyricId, PendingIntent.getActivity(context, REQUEST_LYRIC, lyricIntent, piFlags()));
-            }
+            // 桌面歌词：广播给 app 切换悬浮窗，不打开界面。
+            views.setOnClickPendingIntent(
+                    lyricId, broadcast(context, ACTION_LYRIC, REQUEST_LYRIC));
 
             // 右上角关闭：与原 MediaStyle 的取消按钮一样 = 停止播放并移除通知。
             if (stopIntent != null) {
@@ -154,6 +149,13 @@ public final class MintNotification {
             android.util.Log.w("MintNotification", "自定义通知构建失败，退回默认样式", error);
             return null;
         }
+    }
+
+    /** 只发给本应用（不导出）的广播，交给 app 模块的 NotificationActionReceiver。 */
+    private static PendingIntent broadcast(Context context, String action, int requestCode) {
+        final Intent intent = new Intent(action);
+        intent.setPackage(context.getPackageName());
+        return PendingIntent.getBroadcast(context, requestCode, intent, piFlags());
     }
 
     /** 通知卡片的封面尺寸（与布局里的 108dp 对应）。 */
@@ -177,11 +179,8 @@ public final class MintNotification {
             final Canvas canvas = new Canvas(output);
             final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
             final Path path = new Path();
-            // 只切左侧两个角：封面贴在卡片左边缘，右侧要直接接上卡片底色。
-            path.addRoundRect(
-                    new RectF(0f, 0f, size, size),
-                    new float[] {radius, radius, 0f, 0f, 0f, 0f, radius, radius},
-                    Path.Direction.CW);
+            // 卡片背景用的是系统通知卡，封面四周都有留白，四个角统一圆角。
+            path.addRoundRect(new RectF(0f, 0f, size, size), radius, radius, Path.Direction.CW);
             canvas.save();
             canvas.clipPath(path);
             canvas.drawBitmap(

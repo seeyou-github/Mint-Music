@@ -6,12 +6,12 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
 /**
- * 通知栏播放卡片上「收藏 / 歌词」按钮与 Dart 之间的桥。
+ * 通知栏播放卡片上「收藏 / 桌面歌词」按钮与 Dart 之间的桥。
  *
- * 通知卡片由 audio_service 的 `MintNotification` 生成，按钮点击落地方式有两种：
- *  - 收藏：发广播 → [NotificationActionReceiver] → 这里 → Dart（不打开界面）；
- *  - 歌词：直接启动 MainActivity（intent action 为 [MintNotification.ACTION_LYRIC]）
- *    → 这里 → Dart 跳歌词页。
+ * 通知卡片由 audio_service 的 `MintNotification` 生成，两个按钮都是「只发本应用广播」
+ * → [NotificationActionReceiver] → 这里 → Dart，不打开界面：
+ *  - 收藏：切换当前歌曲的收藏状态；
+ *  - 桌面歌词：切换系统悬浮歌词窗（未授权时会跳到系统的「显示在其他应用上层」页）。
  *
  * 反方向（Dart → 原生）只有一个：`setFavorite`，把「当前歌曲是否已收藏」同步过来，
  * 通知里的红心据此显示实心 / 空心。

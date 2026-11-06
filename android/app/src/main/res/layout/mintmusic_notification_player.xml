@@ -8,16 +8,18 @@
       │ └──────┘                                  │
       └───────────────────────────────────────────┘
 
-  由 `MintNotification.java`（见 android/mintmusic-patch）填充图片与文字，
+  卡片底色 / 圆角由系统通知卡提供（这里**不设** background），文字与图标颜色走
+  values(-night)/mm_notif_colors.xml，跟随系统深浅色。
+
+  由 `MintNotification.java`（third_party/audio_service 里）填充图片与文字，
   并通过 RemoteViews 的 PendingIntent 绑定按钮，因此这里只写静态骨架：
-  所有尺寸都用 dp，字号用 sp，颜色写在各自的 drawable / 属性里。
+  尺寸用 dp，字号用 sp。
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:background="@drawable/mm_notif_bg"
     android:orientation="horizontal"
-    android:padding="6dp">
+    android:padding="4dp">
 
     <ImageView
         android:id="@+id/mm_notif_cover"
@@ -50,7 +52,7 @@
                 android:ellipsize="end"
                 android:includeFontPadding="false"
                 android:singleLine="true"
-                android:textColor="#EDEDED"
+                android:textColor="@color/mm_notif_text"
                 android:textSize="15sp"
                 android:textStyle="bold" />
 
@@ -58,14 +60,13 @@
                 android:id="@+id/mm_notif_close"
                 android:layout_width="28dp"
                 android:layout_height="28dp"
-                android:background="@android:color/transparent"
                 android:contentDescription="@null"
                 android:padding="5dp"
                 android:scaleType="centerInside"
                 android:src="@drawable/mm_ic_notif_close" />
         </LinearLayout>
 
-        <!-- 五个按钮等宽平分：收藏 / 上一首 / 播放暂停 / 下一首 / 歌词 -->
+        <!-- 五个按钮等宽平分：收藏 / 上一首 / 播放暂停 / 下一首 / 桌面歌词 -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="42dp"
@@ -77,7 +78,6 @@
                 android:layout_width="0dp"
                 android:layout_height="42dp"
                 android:layout_weight="1"
-                android:background="@android:color/transparent"
                 android:contentDescription="@null"
                 android:padding="9dp"
                 android:scaleType="centerInside"
@@ -88,7 +88,6 @@
                 android:layout_width="0dp"
                 android:layout_height="42dp"
                 android:layout_weight="1"
-                android:background="@android:color/transparent"
                 android:contentDescription="@null"
                 android:padding="9dp"
                 android:scaleType="centerInside"
@@ -99,7 +98,6 @@
                 android:layout_width="0dp"
                 android:layout_height="42dp"
                 android:layout_weight="1"
-                android:background="@android:color/transparent"
                 android:contentDescription="@null"
                 android:padding="9dp"
                 android:scaleType="centerInside"
@@ -110,7 +108,6 @@
                 android:layout_width="0dp"
                 android:layout_height="42dp"
                 android:layout_weight="1"
-                android:background="@android:color/transparent"
                 android:contentDescription="@null"
                 android:padding="9dp"
                 android:scaleType="centerInside"
@@ -121,11 +118,10 @@
                 android:layout_width="0dp"
                 android:layout_height="42dp"
                 android:layout_weight="1"
-                android:background="@android:color/transparent"
                 android:gravity="center"
                 android:includeFontPadding="false"
                 android:text="词"
-                android:textColor="#E0E0E0"
+                android:textColor="@color/mm_notif_icon"
                 android:textSize="15sp"
                 android:textStyle="bold" />
         </LinearLayout>
