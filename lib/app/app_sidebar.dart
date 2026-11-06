@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants/app_routes.dart';
@@ -105,17 +107,21 @@ class AppSidebar extends ConsumerWidget {
       width: isExpanded
           ? ResponsiveLayout.sidebarWidth
           : ResponsiveLayout.sidebarCollapsedWidth,
-      decoration: BoxDecoration(
-        color: isDark
-            ? colors.surface.withValues(alpha: 0.95)
-            : colors.surface.withValues(alpha: 0.98),
-        border: Border(
-          right: BorderSide(
-            color: colors.divider.withValues(alpha: 0.3),
-            width: 0.5,
-          ),
-        ),
-      ),
+      // Windows：侧栏不再铺自己的底色、也不画分隔线，直接透出全局封面渐变，
+      // 与主界面背景完全一体。其它平台仍用跟随封面的 surface 色块。
+      decoration: Platform.isWindows
+          ? null
+          : BoxDecoration(
+              color: isDark
+                  ? colors.surface.withValues(alpha: 0.95)
+                  : colors.surface.withValues(alpha: 0.98),
+              border: Border(
+                right: BorderSide(
+                  color: colors.divider.withValues(alpha: 0.3),
+                  width: 0.5,
+                ),
+              ),
+            ),
       child: SafeArea(
         child: Column(
           children: [

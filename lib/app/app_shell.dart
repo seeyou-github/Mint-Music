@@ -224,14 +224,18 @@ class _AppShellState extends ConsumerState<AppShell> {
       bottomNavigationBar: RepaintBoundary(
         child: Container(
           decoration: BoxDecoration(
-            color: colors.surface,
-            boxShadow: [
-              BoxShadow(
-                color: colors.shadow,
-                blurRadius: 8,
-                offset: const Offset(0, -2),
-              ),
-            ],
+            // Android：底栏不铺自己的色块、也不投影，直接透出主界面的封面
+            // 渐变，看起来与页面是一整块。其它平台保留 surface 色块。
+            color: Platform.isAndroid ? Colors.transparent : colors.surface,
+            boxShadow: Platform.isAndroid
+                ? null
+                : [
+                    BoxShadow(
+                      color: colors.shadow,
+                      blurRadius: 8,
+                      offset: const Offset(0, -2),
+                    ),
+                  ],
           ),
           child: SafeArea(
             child: Padding(

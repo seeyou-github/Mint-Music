@@ -3,6 +3,8 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../features/player/domain/services/cover_color_extractor.dart';
+import 'cover_background.dart';
 import 'theme_colors.dart';
 
 export 'theme_colors.dart';
@@ -134,7 +136,12 @@ final coverBadgeTextColorProvider = Provider<Color>((ref) {
 final _cachedLightColors = <String, ThemeColors>{};
 final _cachedDarkColors = <String, ThemeColors>{};
 
-final themeColorsProvider = Provider<ThemeColors>((ref) {
+/// 用户在「外观设置」里选的颜色派生出的基础主题色。
+///
+/// 只是中间层：实际给界面用的是下面的 [themeColorsProvider]，它会在开启
+/// 「主界面背景跟随封面」时，按封面色重新派生一套控件色。分开是为了避免
+/// `coverBackgroundProvider` 与 `themeColorsProvider` 互相依赖。
+final baseThemeColorsProvider = Provider<ThemeColors>((ref) {
   final isLight = ref.watch(isLightThemeActiveProvider);
   final primaryHex = ref.watch(themePrimaryColorProvider);
   final fontHex = ref.watch(
@@ -164,4 +171,31 @@ final themeColorsProvider = Provider<ThemeColors>((ref) {
         )
         .copyWithBackground(_parseOptionalColor(backgroundHex));
   });
+});
+
+/// 主界面背景（渐变上下两色 + 控件色基准）。
+///
+/// 只看 [baseThemeColorsProvider]，不订阅 [themeColorsProvider]，两者不会成环。
+final coverBackgroundProvider = Provider<CoverBackground>((ref) {
+  final base = ref.watch(baseThemeColorsProvider);
+  return resolveCoverBackground(
+    solid: base.background,
+    cover: ref.watch(currentCoverColorProvider).valueOrNull?.dominantColor,
+    isLight: ref.watch(isLightThemeActiveProvider),
+    enabled: ref.watch(mainBackgroundFollowCoverProvider),
+  );
+});
+
+/// 界面实际使用的主题色。
+///
+/// 开启跟随封面时，用渐变中段色重新走一遍 `copyWithBackground`：
+/// `surface` / `surfaceVariant` / `divider` / `miniPlayerBackground` 会跟着封面
+/// 色相一起变（侧栏、歌单卡片、搜索框、底栏等所有控件），文字颜色保持用户
+/// 设置不变，因此浅色主题仍是黑字、深色主题仍是浅字，对比度不会失控。
+/// 关闭开关时直接返回基础主题，行为与改动前完全一致。
+final themeColorsProvider = Provider<ThemeColors>((ref) {
+  final base = ref.watch(baseThemeColorsProvider);
+  final bg = ref.watch(coverBackgroundProvider);
+  if (!bg.active) return base;
+  return base.copyWithBackground(bg.control);
 });

@@ -12,7 +12,6 @@ import '../core/platform/window_chrome.dart';
 import '../core/services/player_notification.dart';
 import '../core/theme/app_theme.dart';
 import '../core/theme/app_typography.dart';
-import '../core/theme/cover_background.dart';
 import '../core/theme/theme_provider.dart';
 import '../core/router/app_router.dart';
 import '../core/theme/system_bars.dart';
