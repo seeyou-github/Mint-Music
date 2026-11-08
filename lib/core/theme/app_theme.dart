@@ -1,6 +1,4 @@
 import 'package:flutter/material.dart';
-
-import '../../app/app_page_background.dart';
 import 'app_colors.dart';
 import 'app_spacing.dart';
 import 'app_typography.dart';
@@ -10,34 +8,6 @@ class AppTheme {
 
   static ThemeData? _lightCache;
   static ThemeData? _darkCache;
-
-  /// 默认页面转场：各平台原本的实现外面再套一层「主界面背景」。
-  ///
-  /// 页面自身的 Scaffold 是透明的（背景由 MaterialApp.builder 的全局渐变负责），
-  /// 默认转场里不垫这层的话，缩放 / 淡入过程中会看见下面那一页。见
-  /// [OpaquePageTransitionsBuilder]。
-  static const _pageTransitionsTheme = PageTransitionsTheme(
-    builders: <TargetPlatform, PageTransitionsBuilder>{
-      TargetPlatform.android: OpaquePageTransitionsBuilder(
-        delegate: ZoomPageTransitionsBuilder(),
-      ),
-      TargetPlatform.windows: OpaquePageTransitionsBuilder(
-        delegate: ZoomPageTransitionsBuilder(),
-      ),
-      TargetPlatform.linux: OpaquePageTransitionsBuilder(
-        delegate: ZoomPageTransitionsBuilder(),
-      ),
-      TargetPlatform.fuchsia: OpaquePageTransitionsBuilder(
-        delegate: ZoomPageTransitionsBuilder(),
-      ),
-      TargetPlatform.iOS: OpaquePageTransitionsBuilder(
-        delegate: CupertinoPageTransitionsBuilder(),
-      ),
-      TargetPlatform.macOS: OpaquePageTransitionsBuilder(
-        delegate: CupertinoPageTransitionsBuilder(),
-      ),
-    },
-  );
 
   static ThemeData get light => _lightCache ??= ThemeData(
     useMaterial3: true,
@@ -181,7 +151,6 @@ class AppTheme {
         return const Color(0xFFE0E0E0);
       }),
     ),
-    pageTransitionsTheme: _pageTransitionsTheme,
     textTheme: TextTheme(
       displayLarge: AppTypography.displayLarge.copyWith(
         color: const Color(0xFF1A1A1A),
@@ -351,7 +320,6 @@ class AppTheme {
       overlayColor: AppColors.primaryLight.withValues(alpha: 0.15),
       trackHeight: 3,
     ),
-    pageTransitionsTheme: _pageTransitionsTheme,
     textTheme: TextTheme(
       displayLarge: AppTypography.displayLarge.copyWith(
         color: AppColors.darkTextPrimary,

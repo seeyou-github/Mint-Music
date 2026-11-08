@@ -4,6 +4,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../app/app_page_background.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
@@ -122,52 +123,57 @@ class _RadioEditPageState extends ConsumerState<RadioEditPage> {
     ];
     final sources = ref.watch(discoverSupportedSourcesProvider);
 
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      body: SafeArea(
-        child: Column(
-          children: [
-            _buildHeader(colors),
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(
-                  AppSpacing.lg,
-                  0,
-                  AppSpacing.lg,
-                  AppSpacing.xxxl,
-                ),
-                children: [
-                  _buildCoverSection(colors),
-                  const SizedBox(height: AppSpacing.lg),
-                  _buildSection(
-                    colors,
-                    title: context.tr('电台名称'),
-                    child: TextField(
-                      controller: _nameController,
-                      style: TextStyle(fontSize: 14, color: colors.textPrimary),
-                      decoration: _fieldDecoration(
-                        colors,
-                        hint: context.tr('给电台起个名字'),
+    return AppPageBackground(
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        body: SafeArea(
+          child: Column(
+            children: [
+              _buildHeader(colors),
+              Expanded(
+                child: ListView(
+                  padding: const EdgeInsets.fromLTRB(
+                    AppSpacing.lg,
+                    0,
+                    AppSpacing.lg,
+                    AppSpacing.xxxl,
+                  ),
+                  children: [
+                    _buildCoverSection(colors),
+                    const SizedBox(height: AppSpacing.lg),
+                    _buildSection(
+                      colors,
+                      title: context.tr('电台名称'),
+                      child: TextField(
+                        controller: _nameController,
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: colors.textPrimary,
+                        ),
+                        decoration: _fieldDecoration(
+                          colors,
+                          hint: context.tr('给电台起个名字'),
+                        ),
                       ),
                     ),
-                  ),
-                  const SizedBox(height: AppSpacing.lg),
-                  _buildCategorySection(colors, categories),
-                  const SizedBox(height: AppSpacing.lg),
-                  _buildSourceSection(colors, sources),
-                  const SizedBox(height: AppSpacing.lg),
-                  _buildTagSection(colors),
-                  const SizedBox(height: AppSpacing.lg),
-                  _buildKeywordSection(colors),
-                  const SizedBox(height: AppSpacing.lg),
-                  Text(
-                    context.tr('歌单分类和搜索关键词至少填一个；两个都填时随机挑一种取歌。'),
-                    style: TextStyle(fontSize: 12, color: colors.textHint),
-                  ),
-                ],
+                    const SizedBox(height: AppSpacing.lg),
+                    _buildCategorySection(colors, categories),
+                    const SizedBox(height: AppSpacing.lg),
+                    _buildSourceSection(colors, sources),
+                    const SizedBox(height: AppSpacing.lg),
+                    _buildTagSection(colors),
+                    const SizedBox(height: AppSpacing.lg),
+                    _buildKeywordSection(colors),
+                    const SizedBox(height: AppSpacing.lg),
+                    Text(
+                      context.tr('歌单分类和搜索关键词至少填一个；两个都填时随机挑一种取歌。'),
+                      style: TextStyle(fontSize: 12, color: colors.textHint),
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

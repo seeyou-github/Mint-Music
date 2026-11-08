@@ -4,6 +4,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../app/app_page_background.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
@@ -86,62 +87,70 @@ class _CustomSheetEditPageState extends ConsumerState<CustomSheetEditPage> {
     final colors = ref.watch(themeColorsProvider);
     final data = ref.watch(customSheetProvider);
 
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      body: SafeArea(
-        child: Column(
-          children: [
-            _buildHeader(colors),
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(
-                  AppSpacing.lg,
-                  0,
-                  AppSpacing.lg,
-                  AppSpacing.xxxl,
+    return AppPageBackground(
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        body: SafeArea(
+          child: Column(
+            children: [
+              _buildHeader(colors),
+              Expanded(
+                child: ListView(
+                  padding: const EdgeInsets.fromLTRB(
+                    AppSpacing.lg,
+                    0,
+                    AppSpacing.lg,
+                    AppSpacing.xxxl,
+                  ),
+                  children: [
+                    _buildCoverSection(colors),
+                    const SizedBox(height: AppSpacing.lg),
+                    _buildSection(
+                      colors,
+                      title: context.tr('歌单名称'),
+                      child: TextField(
+                        controller: _nameController,
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: colors.textPrimary,
+                        ),
+                        decoration: _fieldDecoration(
+                          colors,
+                          hint: context.tr('给歌单起个名字'),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.lg),
+                    _buildSection(
+                      colors,
+                      title: context.tr('搜索关键字'),
+                      subtitle: context.tr('歌单内容 = 用这个关键字搜索得到的歌曲'),
+                      child: TextField(
+                        controller: _keywordController,
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: colors.textPrimary,
+                        ),
+                        decoration: _fieldDecoration(
+                          colors,
+                          hint: context.tr('例如：周杰伦、钢琴曲、白噪音'),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.lg),
+                    _buildCategorySection(colors, data.categories),
+                    const SizedBox(height: AppSpacing.md),
+                    Text(
+                      context.tr(
+                        '歌单绑定音源：${widget.sourceName.isEmpty ? widget.sourceId : widget.sourceName}',
+                      ),
+                      style: TextStyle(fontSize: 12, color: colors.textHint),
+                    ),
+                  ],
                 ),
-                children: [
-                  _buildCoverSection(colors),
-                  const SizedBox(height: AppSpacing.lg),
-                  _buildSection(
-                    colors,
-                    title: context.tr('歌单名称'),
-                    child: TextField(
-                      controller: _nameController,
-                      style: TextStyle(fontSize: 14, color: colors.textPrimary),
-                      decoration: _fieldDecoration(
-                        colors,
-                        hint: context.tr('给歌单起个名字'),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: AppSpacing.lg),
-                  _buildSection(
-                    colors,
-                    title: context.tr('搜索关键字'),
-                    subtitle: context.tr('歌单内容 = 用这个关键字搜索得到的歌曲'),
-                    child: TextField(
-                      controller: _keywordController,
-                      style: TextStyle(fontSize: 14, color: colors.textPrimary),
-                      decoration: _fieldDecoration(
-                        colors,
-                        hint: context.tr('例如：周杰伦、钢琴曲、白噪音'),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: AppSpacing.lg),
-                  _buildCategorySection(colors, data.categories),
-                  const SizedBox(height: AppSpacing.md),
-                  Text(
-                    context.tr(
-                      '歌单绑定音源：${widget.sourceName.isEmpty ? widget.sourceId : widget.sourceName}',
-                    ),
-                    style: TextStyle(fontSize: 12, color: colors.textHint),
-                  ),
-                ],
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

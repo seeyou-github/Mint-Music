@@ -24,8 +24,13 @@ import 'windows_title_bar.dart';
 ///   页面区域是从它下面开始的，渐变要按「窗口顶部」起算才不会和底部页面错开
 ///   一小段颜色。
 ///
-/// 只在转场里用（`app_router.dart` 的 `_slideTransition`），底部导航里的分类页
-/// 仍然是透明的、直接透出全局那层。
+/// 用在这两处：
+/// - `app_router.dart` 的 `_slideTransition`：所有「从右侧滑入」的二级页面，
+///   背景跟着页面一起平移；
+/// - 走系统默认转场（缩放 / 淡入）的几个页面，直接包在自己的根节点上：
+///   专辑/作者详情（GoRoute 只写了 `builder`）、自定义歌单编辑页、电台编辑页。
+///
+/// 底部导航里的分类页仍然是透明的、直接透出全局那层。
 class AppPageBackground extends ConsumerWidget {
   const AppPageBackground({super.key, required this.child});
 
@@ -54,40 +59,6 @@ class AppPageBackground extends ConsumerWidget {
         ),
       ),
       child: child,
-    );
-  }
-}
-
-/// 给系统默认的页面转场也垫上同一层背景。
-///
-/// 不是所有二级页面都走 `app_router.dart` 的滑动转场：GoRoute 只写 `builder`
-/// 的（专辑 / 作者详情）、以及代码里直接 `Navigator.push(MaterialPageRoute…）`
-/// 打开的编辑页，用的都是主题里的默认转场（缩放 / 淡入）。这些页面同样是透明的，
-/// 不垫背景的话缩放过程里就会看见下面那一页。
-///
-/// 这层背景垫在转场**里面**（和页面内容一起缩放 / 滑入），效果等同于「这个页面
-/// 自己是不透明的」：进场时它连同背景一起盖过来，退场时也一起退走、把下面那一页
-/// 慢慢让出来。垫在外面反而是错的 —— 退场时会先留一块空背景，页面才消失。
-class OpaquePageTransitionsBuilder extends PageTransitionsBuilder {
-  const OpaquePageTransitionsBuilder({required this.delegate});
-
-  /// 真正的转场实现（各平台原有的那个），这里只负责在外面套一层背景。
-  final PageTransitionsBuilder delegate;
-
-  @override
-  Widget buildTransitions<T>(
-    PageRoute<T> route,
-    BuildContext context,
-    Animation<double> animation,
-    Animation<double> secondaryAnimation,
-    Widget child,
-  ) {
-    return delegate.buildTransitions(
-      route,
-      context,
-      animation,
-      secondaryAnimation,
-      AppPageBackground(child: child),
     );
   }
 }

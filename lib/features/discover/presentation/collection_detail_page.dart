@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../app/app_page_background.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/app_surface.dart';
@@ -388,17 +389,19 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
     final favorited = (ref.watch(playlistsProvider).valueOrNull ?? const [])
         .any((p) => p.name == favoriteName);
 
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      body: SafeArea(
-        // 顶部不避让：头部渐变要一直铺到状态栏（和歌单详情页一致），
-        // 状态栏高度由 _buildHeader 自己加进内边距。
-        top: false,
-        child: Column(
-          children: [
-            _buildHeader(colors, item, favorited),
-            Expanded(child: _buildBody(colors)),
-          ],
+    return AppPageBackground(
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        body: SafeArea(
+          // 顶部不避让：头部渐变要一直铺到状态栏（和歌单详情页一致），
+          // 状态栏高度由 _buildHeader 自己加进内边距。
+          top: false,
+          child: Column(
+            children: [
+              _buildHeader(colors, item, favorited),
+              Expanded(child: _buildBody(colors)),
+            ],
+          ),
         ),
       ),
     );
