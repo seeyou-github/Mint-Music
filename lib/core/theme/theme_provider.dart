@@ -183,6 +183,18 @@ final backgroundGradientProvider = Provider<BackgroundGradient>((ref) {
   );
 });
 
+/// 详情页顶栏（悬浮面板）的底色。
+///
+/// 取背景渐变**顶部**的颜色（也就是顶栏身后那一块的实际颜色）走一遍
+/// [ThemeColors.copyWithBackground]，再取它的 `surface`：与卡片用的是同一套
+/// 「只比背景亮一点点」的派生幅度，所以不管深浅主题、不管用户配了什么渐变，
+/// 面板总比身后的背景略亮一档，配合细边框 + 阴影就是「浮在页面上」的效果。
+final detailHeaderSurfaceProvider = Provider<Color>((ref) {
+  final base = ref.watch(baseThemeColorsProvider);
+  final gradient = ref.watch(backgroundGradientProvider);
+  return base.copyWithBackground(gradient.colors.first).surface;
+});
+
 /// 界面实际使用的主题色。
 ///
 /// 用背景渐变的中间色走一遍 `copyWithBackground`：`surface` /

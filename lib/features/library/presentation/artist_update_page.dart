@@ -8,6 +8,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
+import '../../../core/theme/app_surface.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../../../shared/widgets/music_cover_image.dart';
@@ -399,20 +400,26 @@ class _ArtistUpdatePageState extends ConsumerState<ArtistUpdatePage> {
   ) {
     final coverSize = ResponsiveLayout.isTablet(context) ? 80.0 : 64.0;
     return Container(
-      padding: EdgeInsets.fromLTRB(
+      // 与其它详情页一致：顶栏是一块跟随页面背景色轻度提亮的悬浮面板，
+      // 纯色 + 圆角 + 阴影，不再做上下渐变。
+      margin: EdgeInsets.fromLTRB(
+        AppSpacing.md,
+        // 状态栏沉浸：顶栏不再铺到屏幕顶端，把状态栏高度算进外边距，
+        // 卡片正好落在状态栏下方。
+        MediaQuery.paddingOf(context).top + AppSpacing.sm,
+        AppSpacing.md,
         AppSpacing.sm,
-        // 状态栏沉浸：把状态栏高度算进头部内边距，让主题色渐变一直铺到
-        // 屏幕顶端（外层用的是 SafeArea(top: false)，不拦这一段）。
-        AppSpacing.md + MediaQuery.paddingOf(context).top,
+      ),
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.sm,
+        AppSpacing.md,
         AppSpacing.lg,
         AppSpacing.md,
       ),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [colors.primary.withValues(alpha: 0.15), colors.background],
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-        ),
+      decoration: floatingSurfaceDecoration(
+        colors,
+        radius: AppRadius.lg,
+        color: ref.watch(detailHeaderSurfaceProvider),
       ),
       child: Row(
         children: [

@@ -203,38 +203,3 @@ final currentCoverColorProvider = FutureProvider<CoverColorResult?>((
   if (song == null) return null;
   return CoverColorExtractor.extractFromSong(song);
 });
-
-/// 详情页顶栏背景用的封面主色（按封面地址缓存，页面离开即释放）。
-///
-/// 返回 null 表示没有封面 / 提取失败，调用方回退到主题色渐变。
-final coverTintColorProvider = FutureProvider.autoDispose
-    .family<Color?, String>((ref, url) async {
-      if (url.isEmpty) return null;
-      final result = await CoverColorExtractor.extractFromUrl(url);
-      // 提取失败会拿到默认的 0xFF333333，这个值也当作「没有主色」处理。
-      if (result.dominantColor ==
-          CoverColorResult.defaultResult.dominantColor) {
-        return null;
-      }
-      return result.dominantColor;
-    });
-
-/// 详情页顶栏的「封面主色 → 页面背景」渐变。
-///
-/// 取色与播放页一致（[coverDarkBackgroundColor]）：深色主题把封面色压进暗色
-/// 区间，不会出现刺眼的高饱和色块；浅色主题则把主色淡化后使用，避免浅色
-/// 页面顶部突然出现一块深色。没有封面主色时沿用原来的主题色渐变。
-List<Color> detailHeaderGradient({
-  required Color? coverColor,
-  required Color primary,
-  required Color background,
-  required bool light,
-}) {
-  if (coverColor == null) {
-    return [primary.withValues(alpha: 0.15), background];
-  }
-  if (light) {
-    return [Color.lerp(background, coverColor, 0.30)!, background];
-  }
-  return [coverDarkBackgroundColor(coverColor, lightness: 0.22), background];
-}

@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
+import '../../../core/theme/app_surface.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../../../core/utils/scroll_locate.dart';
@@ -18,7 +19,6 @@ import '../../../shared/widgets/source_name_tag.dart';
 import '../../../shared/widgets/song_action_sheet.dart';
 import '../../../shared/widgets/song_list_item.dart';
 import '../../../shared/widgets/song_selection.dart';
-import '../../player/domain/services/cover_color_extractor.dart';
 import '../../plugin/application/plugin_providers.dart';
 import '../application/discover_providers.dart';
 import '../../../features/player/application/playback_context.dart';
@@ -506,31 +506,30 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
   ) {
     // 与歌单封面同高，去掉描述后顶部不会跳动
     final headerHeight = ResponsiveLayout.isTablet(context) ? 96.0 : 72.0;
-    // 顶栏背景跟着封面主色走（与播放页同一套取色），提取失败才回退主题色。
-    final light = ref.watch(isLightThemeActiveProvider);
-    final coverTint = ref
-        .watch(coverTintColorProvider((playlist.coverUrl as String?) ?? ''))
-        .valueOrNull;
     return Container(
-      padding: EdgeInsets.fromLTRB(
+      // 顶栏做成一块悬浮面板：四周留边露出后面的页面背景，纯色 + 圆角 + 阴影
+      // 才有「浮起来」的层次。底色由背景渐变顶部色轻度提亮而来（见
+      // detailHeaderSurfaceProvider），既跟随用户设置的背景，也不再按歌单封面取色、不做上下渐变。
+      margin: EdgeInsets.fromLTRB(
+        AppSpacing.md,
+        // 状态栏沉浸：顶栏不再铺到屏幕顶端，把状态栏高度算进外边距，
+        // 卡片正好落在状态栏下方。
+        MediaQuery.paddingOf(context).top + AppSpacing.sm,
+        AppSpacing.md,
         AppSpacing.sm,
-        // 状态栏沉浸：把状态栏高度算进头部内边距，让主题色渐变一直铺到
-        // 屏幕顶端（外层用的是 SafeArea(top: false)，不拦这一段）。
-        AppSpacing.md + MediaQuery.paddingOf(context).top,
+      ),
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.sm,
+        AppSpacing.md,
         AppSpacing.lg,
         AppSpacing.md,
       ),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: detailHeaderGradient(
-            coverColor: coverTint,
-            primary: colors.primary,
-            background: colors.background,
-            light: light,
-          ),
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-        ),
+      decoration: floatingSurfaceDecoration(
+        colors,
+        radius: AppRadius.lg,
+        // 底色取背景渐变顶部色轻度提亮，而不是控件通用的背景中段色：
+        // 顶栏就在页面最上方，这样它永远比身后的背景亮一档。
+        color: ref.watch(detailHeaderSurfaceProvider),
       ),
       // 只给下限、不写死高度：名称 / 音源标签 / 操作按钮这三行在部分字体
       // （比如内置的思源宋体）或系统大字号下会比 72 高几像素，写死高度就会报

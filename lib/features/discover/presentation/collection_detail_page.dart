@@ -22,7 +22,6 @@ import '../../library/domain/models/recently_played.dart';
 import '../../player/application/playback_context.dart';
 import '../../player/application/playback_controller.dart';
 import '../../player/domain/models/song.dart';
-import '../../player/domain/services/cover_color_extractor.dart';
 import '../../plugin/application/plugin_providers.dart';
 import '../domain/models/search_collection.dart';
 
@@ -459,7 +458,8 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
   /// 专辑 / 作者页顶部：返回按钮 + 封面 + 名称 / 音源 / 操作按钮。
   ///
   /// 布局与歌单详情页保持一致：不再单独占一行放「箭头 + 名称」（那一行会和
-  /// 下面封面旁的名字重复），返回箭头贴在封面左侧，渐变背景也照歌单页来。
+  /// 下面封面旁的名字重复），返回箭头贴在封面左侧；顶部同样是一块跟随页面
+  /// 背景色的悬浮面板。
   /// Android 靠系统返回手势 / 返回键，不显示箭头。
   Widget _buildHeader(
     ThemeColors colors,
@@ -467,31 +467,30 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
     bool favorited,
   ) {
     final songs = _songs;
-    // 顶栏背景跟着专辑封面 / 作者头像的主色走（与播放页同一套取色）。
-    final light = ref.watch(isLightThemeActiveProvider);
-    final coverTint = ref
-        .watch(coverTintColorProvider(item.coverUrl ?? ''))
-        .valueOrNull;
     return Container(
-      padding: EdgeInsets.fromLTRB(
+      // 顶栏做成一块悬浮面板：四周留边露出后面的页面背景，纯色 + 圆角 + 阴影
+      // 才有「浮起来」的层次。底色由背景渐变顶部色轻度提亮而来（见
+      // detailHeaderSurfaceProvider），跟随用户设置的背景，不再按专辑 / 作者封面取色。
+      margin: EdgeInsets.fromLTRB(
+        AppSpacing.md,
+        // 状态栏沉浸：顶栏不再铺到屏幕顶端，把状态栏高度算进外边距，
+        // 卡片正好落在状态栏下方。
+        MediaQuery.paddingOf(context).top + AppSpacing.sm,
+        AppSpacing.md,
         AppSpacing.sm,
-        // 状态栏沉浸：把状态栏高度算进头部内边距，主题色渐变一直铺到屏幕
-        // 顶端（外层 SafeArea 用的是 top: false，不拦这一段）。
-        AppSpacing.md + MediaQuery.paddingOf(context).top,
+      ),
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.sm,
+        AppSpacing.md,
         AppSpacing.lg,
         AppSpacing.sm,
       ),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: detailHeaderGradient(
-            coverColor: coverTint,
-            primary: colors.primary,
-            background: colors.background,
-            light: light,
-          ),
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-        ),
+      decoration: floatingSurfaceDecoration(
+        colors,
+        radius: AppRadius.lg,
+        // 底色取背景渐变顶部色轻度提亮，而不是控件通用的背景中段色：
+        // 顶栏就在页面最上方，这样它永远比身后的背景亮一档。
+        color: ref.watch(detailHeaderSurfaceProvider),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
