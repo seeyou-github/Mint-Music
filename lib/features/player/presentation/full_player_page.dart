@@ -23,6 +23,7 @@ import '../application/root_overlay_tracker.dart';
 import '../application/lyric_controller.dart';
 import '../../radio/application/radio_session.dart';
 import '../domain/models/song.dart';
+import '../../../core/theme/background_derivation.dart';
 import '../domain/services/cover_color_extractor.dart';
 import '../../library/application/playlist_providers.dart';
 import '../../plugin/application/plugin_providers.dart';
@@ -1209,6 +1210,75 @@ class _PlayerActions extends ConsumerWidget {
     });
   }
 
+  /// 把「当前播放背景」存进设置里的「背景渐变」。
+  ///
+  /// 用的是播放页同一套派生算法（[deriveBackgroundGradient]）：播放页本身
+  /// 永远是深色版，所以这里按**当前主题模式**重新派生一遍——浅色主题下加
+  /// 进去的是浅色版，套上去才不会出现「浅色界面配黑背景」。
+  Future<void> _addBackgroundToGradient(
+    BuildContext context,
+    WidgetRef ref,
+    Song song,
+  ) async {
+    final isLight = ref.read(isLightThemeActiveProvider);
+    // 播放页的背景色通常已经算好（进入详情页前就预热了），没有再兜底去取。
+    var dominant = ref
+        .read(currentCoverColorProvider)
+        .valueOrNull
+        ?.dominantColor;
+    dominant ??= (await CoverColorExtractor.extractFromSong(
+      song,
+    )).dominantColor;
+    if (!context.mounted) return;
+
+    final hexes = [
+      for (final color in deriveBackgroundGradient(dominant, isLight: isLight))
+        _hexOf(color),
+    ];
+    final provider = isLight
+        ? customBackgroundGradientsLightProvider
+        : customBackgroundGradientsDarkProvider;
+    final existing = ref.read(provider);
+    final duplicated = existing.any((gradient) {
+      if (gradient.length != hexes.length) return false;
+      for (var i = 0; i < hexes.length; i++) {
+        if (gradient[i].toUpperCase() != hexes[i].toUpperCase()) return false;
+      }
+      return true;
+    });
+
+    final messenger = ScaffoldMessenger.of(context);
+    if (duplicated) {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(context.tr('这条渐变已经在背景渐变里了')),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    final next = [...existing, hexes];
+    ref.read(provider.notifier).state = next;
+    try {
+      final service = await ref.read(settingsServiceProvider.future);
+      if (isLight) {
+        await service.setCustomBackgroundGradientsLight(next);
+      } else {
+        await service.setCustomBackgroundGradientsDark(next);
+      }
+    } catch (_) {
+      // 写盘失败不提示：内存里已经加进去了，下次启动最多回退。
+    }
+    if (!context.mounted) return;
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(context.tr('已添加到「设置 → 背景渐变」')),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     ref.watch(currentSongIdentityProvider);
@@ -1326,6 +1396,8 @@ class _PlayerActions extends ConsumerWidget {
                   ? () =>
                         context.push('${AppRoutes.tagEditor}?songId=${song.id}')
                   : null,
+              onUseAsBackground: () =>
+                  unawaited(_addBackgroundToGradient(context, ref, song)),
             ),
       tooltip: context.tr('更多'),
     );
@@ -1563,23 +1635,23 @@ class _BackgroundLayerState extends State<_BackgroundLayer> {
   Widget _buildLayer(BuildContext context) {
     final mode = widget.mode;
     final dominantColor = _displayedDominantColor;
+    // 与「设置 → 外观设置 → 背景渐变」共用同一条派生算法
+    // （deriveBackgroundGradient）：只取封面色相、饱和度封顶、亮度压到
+    // 暗色区间，这里取默认派生的首（0.17）尾（0.08）两段。
+    final derived = dominantColor == null
+        ? null
+        : deriveBackgroundGradient(dominantColor, isLight: false);
     return Stack(
       children: [
         Container(color: const Color(0xFF09090B)),
-        if (dominantColor != null && mode == FullScreenBackgroundMode.theme)
+        if (derived != null && mode == FullScreenBackgroundMode.theme)
           AnimatedContainer(
             duration: const Duration(milliseconds: 600),
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
-                colors: [
-                  // 只取封面色相，亮度固定压到暗色区间、饱和度封顶：
-                  // 白色 / 浅色封面不会生成发白的背景，鲜艳封面也不会
-                  // 留下亮黄 / 亮蓝 / 亮红 / 亮紫等刺眼色块。
-                  coverDarkBackgroundColor(dominantColor, lightness: 0.17),
-                  coverDarkBackgroundColor(dominantColor, lightness: 0.08),
-                ],
+                colors: [derived.first, derived.last],
               ),
             ),
           ),
@@ -1714,4 +1786,12 @@ class _KeepAlivePageState extends State<_KeepAlivePage>
     super.build(context);
     return widget.child;
   }
+}
+
+/// Color → `#RRGGBB`（存进设置里的格式）。
+String _hexOf(Color color) {
+  final r = (color.r * 255).round().toRadixString(16).padLeft(2, '0');
+  final g = (color.g * 255).round().toRadixString(16).padLeft(2, '0');
+  final b = (color.b * 255).round().toRadixString(16).padLeft(2, '0');
+  return '#${r.toUpperCase()}${g.toUpperCase()}${b.toUpperCase()}';
 }

@@ -25,6 +25,7 @@ import '../../../shared/services/cache_paths.dart';
 import '../../../shared/widgets/hsv_color_picker.dart';
 import '../application/font_providers.dart';
 import '../application/settings_providers.dart';
+import 'background_editor_page.dart';
 import '../data/settings_service.dart';
 import '../../plugin/application/plugin_providers.dart';
 import '../../player/application/desktop_lyric_controller.dart';
@@ -999,63 +1000,6 @@ class _GradientSwatch extends StatelessWidget {
   }
 }
 
-/// 「新增 / 编辑渐变」里的一个色块：上面是颜色，下面是色值。
-///
-/// [hex] 为空表示这个色块还没选颜色（显示「未选择」）。
-class _GradientSlot extends StatelessWidget {
-  const _GradientSlot({
-    required this.colors,
-    required this.hex,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final ThemeColors colors;
-  final String? hex;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final value = hex ?? '';
-    final hasColor = value.isNotEmpty;
-    return GestureDetector(
-      onTap: onTap,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            height: 52,
-            decoration: BoxDecoration(
-              color: hasColor ? _parseHexColor(value) : colors.surfaceVariant,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(
-                color: selected ? colors.primary : colors.divider,
-                width: selected ? 2.5 : 1,
-              ),
-            ),
-            child: hasColor
-                ? null
-                : Center(
-                    child: Icon(Icons.add, size: 18, color: colors.textHint),
-                  ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            hasColor ? value : context.tr('未选择'),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: 11,
-              color: hasColor ? colors.textSecondary : colors.textHint,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 /// 主题模式对应的显示名（选择主题弹窗的选项文案）。
 String _themeModeLabel(ThemeMode mode) => switch (mode) {
   ThemeMode.dark => '深色主题',
@@ -1448,9 +1392,8 @@ class _AppearanceContent extends ConsumerWidget {
                                   sheetContext,
                                   colors,
                                   customs[i],
-                                  onEdit: () => _showGradientEditor(
+                                  onEdit: () => _openBackgroundEditor(
                                     context,
-                                    colors,
                                     isLight: isLight,
                                     editing: customs[i],
                                     editingIndex: i,
@@ -1471,11 +1414,8 @@ class _AppearanceContent extends ConsumerWidget {
                     ],
                     const SizedBox(height: AppSpacing.lg),
                     OutlinedButton.icon(
-                      onPressed: () => _showGradientEditor(
-                        context,
-                        colors,
-                        isLight: isLight,
-                      ),
+                      onPressed: () =>
+                          _openBackgroundEditor(context, isLight: isLight),
                       icon: const Icon(Icons.colorize, size: 18),
                       label: Text(sheetContext.tr('新增颜色')),
                     ),
@@ -1490,174 +1430,28 @@ class _AppearanceContent extends ConsumerWidget {
     );
   }
 
-  /// 新增 / 编辑自定义背景渐变。
+  /// 打开全屏的背景编辑页（新增 / 编辑自定义渐变）。
   ///
-  /// 弹窗里是三个色块（各带色值），下面的取色区（饱和度/明度方块 + 色相
-  /// 滑条）只作用于**当前选中的色块**：点哪个色块就切到哪一块；三个色块都
-  /// 选好颜色后「保存」才能点。
-  void _showGradientEditor(
-    BuildContext context,
-    ThemeColors colors, {
+  /// 全屏而不是弹窗：要放下「实时预览 + 色板 + 两个滑条」。先把这层「背景
+  /// 渐变」面板收掉，保存后回到设置页，列表里已经能看到新渐变。
+  void _openBackgroundEditor(
+    BuildContext context, {
     required bool isLight,
     List<String>? editing,
     int? editingIndex,
   }) {
-    final container = ProviderScope.containerOf(context);
-    final currentProvider = isLight
-        ? lightThemeBackgroundColorsProvider
-        : darkThemeBackgroundColorsProvider;
-    final customProvider = isLight
-        ? customBackgroundGradientsLightProvider
-        : customBackgroundGradientsDarkProvider;
-
-    // 三个色块的颜色（null = 还没选）。放在 builder 外面，
-    // StatefulBuilder 重建时状态才不会丢。
-    final slots = List<String?>.filled(3, null);
-    if (editing != null) {
-      for (var i = 0; i < slots.length && i < editing.length; i++) {
-        slots[i] = editing[i];
-      }
-    }
-    var active = 0;
-
-    showModalBottomSheet<void>(
-      useRootNavigator: true,
-      context: context,
-      isScrollControlled: true,
-      sheetAnimationStyle: _settingsSheetAnimationStyle,
-      backgroundColor: colors.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (sheetContext) => StatefulBuilder(
-        builder: (sheetContext, setSheetState) {
-          final ready = slots.every((slot) => slot != null);
-
-          void save() {
-            final gradient = [for (final slot in slots) slot!];
-            final list = List<List<String>>.from(
-              container.read(customProvider),
-            );
-            if (editingIndex != null &&
-                editingIndex >= 0 &&
-                editingIndex < list.length) {
-              list[editingIndex] = gradient;
-            } else {
-              list.add(gradient);
-            }
-            container.read(customProvider.notifier).state = list;
-            unawaited(
-              _doPersist(
-                container,
-                (s) => isLight
-                    ? s.setCustomBackgroundGradientsLight(list)
-                    : s.setCustomBackgroundGradientsDark(list),
-              ),
-            );
-            // 存完直接应用，新增 / 编辑后马上能看到效果。
-            container.read(currentProvider.notifier).state = gradient;
-            unawaited(
-              _doPersist(
-                container,
-                (s) => isLight
-                    ? s.setThemeBackgroundColorsLight(gradient)
-                    : s.setThemeBackgroundColorsDark(gradient),
-              ),
-            );
-            Navigator.pop(sheetContext);
-          }
-
-          return SafeArea(
-            child: SingleChildScrollView(
-              child: Padding(
-                padding: const EdgeInsets.all(AppSpacing.lg),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      sheetContext.tr(editing == null ? '新增颜色' : '编辑颜色'),
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: colors.textPrimary,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      sheetContext.tr('点击色块切换调色板，三个色块都选好后才能保存'),
-                      style: TextStyle(fontSize: 12, color: colors.textHint),
-                    ),
-                    const SizedBox(height: AppSpacing.md),
-                    Row(
-                      children: [
-                        for (var i = 0; i < slots.length; i++) ...[
-                          if (i > 0) const SizedBox(width: AppSpacing.sm),
-                          Expanded(
-                            child: _GradientSlot(
-                              colors: colors,
-                              hex: slots[i],
-                              selected: active == i,
-                              onTap: () => setSheetState(() => active = i),
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                    const SizedBox(height: AppSpacing.lg),
-                    Text(
-                      sheetContext.tr('调色板'),
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: colors.textSecondary,
-                      ),
-                    ),
-                    const SizedBox(height: AppSpacing.sm),
-                    // 饱和度 / 明度方块 + 色相滑条，只作用于当前选中的色块。
-                    // 没选过颜色的色块先用主题色占位（拖一下 / 点一下就成为
-                    // 这个色块的实际颜色）。
-                    Center(
-                      child: HsvColorArea(
-                        color: slots[active] == null
-                            ? colors.primary
-                            : _parseHexColor(slots[active]!),
-                        maxSize: 280,
-                        onChanged: (color) {
-                          setSheetState(() {
-                            slots[active] = _toHexString(color);
-                          });
-                        },
-                      ),
-                    ),
-                    if (slots[active] == null) ...[
-                      const SizedBox(height: 6),
-                      Text(
-                        sheetContext.tr('在色板上点一下，即为当前色块取色'),
-                        style: TextStyle(fontSize: 12, color: colors.textHint),
-                      ),
-                    ],
-                    const SizedBox(height: AppSpacing.lg),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(sheetContext),
-                          child: Text(sheetContext.tr('取消')),
-                        ),
-                        const SizedBox(width: AppSpacing.sm),
-                        FilledButton(
-                          // 三个色块都设好颜色后才能保存。
-                          onPressed: ready ? save : null,
-                          child: Text(sheetContext.tr('保存')),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          );
-        },
+    final navigator = Navigator.of(context, rootNavigator: true);
+    navigator.pop();
+    unawaited(
+      navigator.push<bool>(
+        MaterialPageRoute(
+          fullscreenDialog: true,
+          builder: (_) => BackgroundEditorPage(
+            isLight: isLight,
+            editing: editing,
+            editingIndex: editingIndex,
+          ),
+        ),
       ),
     );
   }

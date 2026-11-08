@@ -20,6 +20,7 @@ import '../core/utils/responsive_layout.dart';
 import '../features/player/application/desktop_lyric_controller.dart';
 import '../features/player/application/desktop_lyric_sync.dart';
 import '../features/player/application/playback_controller.dart';
+import '../core/theme/background_derivation.dart';
 import '../features/player/domain/services/cover_color_extractor.dart';
 import '../features/player/platform/desktop_lyric_overlay.dart';
 import '../features/player/presentation/desktop_lyric_window.dart';

@@ -1,0 +1,550 @@
+import 'dart:async';
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../../app/app_page_background.dart';
+import '../../../core/l10n/l10n.dart';
+import '../../../core/theme/app_spacing.dart';
+import '../../../core/theme/background_derivation.dart';
+import '../../../core/theme/theme_provider.dart';
+import '../../../core/utils/responsive_layout.dart';
+import '../../../shared/widgets/hsv_color_picker.dart';
+import '../../player/domain/services/cover_color_extractor.dart';
+import '../application/settings_providers.dart';
+
+/// 「设置 → 外观设置 → 背景渐变 → 新增颜色」的全屏编辑页。
+///
+/// 只让用户选**一个基色**（手动滑色板，或从图片取主色），三段背景由
+/// [deriveBackgroundGradient] 自动派生，与播放详情页 / 歌词页背景是同一套
+/// 算法。两个滑条分别调整体亮度和上下落差，改完在页面里直接看到「整块界面」
+/// 的效果（背景 + 卡片 + 底栏），点保存才真正写入设置。
+class BackgroundEditorPage extends ConsumerStatefulWidget {
+  const BackgroundEditorPage({
+    super.key,
+    required this.isLight,
+    this.editing,
+    this.editingIndex,
+  });
+
+  /// 编辑浅色模式那一套（false = 深色模式）。
+  final bool isLight;
+
+  /// 编辑已有的自定义渐变时传入（旧的三色渐变也走这里）。
+  final List<String>? editing;
+
+  /// 在自定义列表里的下标；为 null 表示新增。
+  final int? editingIndex;
+
+  @override
+  ConsumerState<BackgroundEditorPage> createState() =>
+      _BackgroundEditorPageState();
+}
+
+class _BackgroundEditorPageState extends ConsumerState<BackgroundEditorPage> {
+  /// 基色（唯一需要用户决定的颜色）。
+  late Color _base;
+
+  /// 整体亮度偏移：-1 ~ 1。
+  double _brightness = 0;
+
+  /// 上下落差倍率：0（纯色）~ 2（翻倍）。
+  double _spread = 1;
+
+  /// 正在从图片取色。
+  bool _extracting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _base = _initialBaseColor();
+  }
+
+  Color _initialBaseColor() {
+    final editing = widget.editing;
+    if (editing != null && editing.isNotEmpty) {
+      // 旧的三色渐变没法反推基色，取中间那段（观感最接近）。
+      return _parseHex(editing[editing.length ~/ 2]);
+    }
+    // 新增：以当前生效背景的最上面一段为起点，改起来有参照。
+    final current = ref.read(
+      widget.isLight
+          ? lightThemeBackgroundColorsProvider
+          : darkThemeBackgroundColorsProvider,
+    );
+    if (current.isNotEmpty) return _parseHex(current.first);
+    return _parseHex(
+      widget.isLight ? defaultLightBackgroundColor : defaultDarkBackgroundColor,
+    );
+  }
+
+  List<Color> get _derived => deriveBackgroundGradient(
+    _base,
+    isLight: widget.isLight,
+    brightness: _brightness,
+    spread: _spread,
+  );
+
+  Future<void> _pickFromImage() async {
+    final picked = await FilePicker.platform.pickFiles(type: FileType.image);
+    final path = picked?.files.single.path;
+    if (path == null) return;
+    if (!mounted) return;
+    setState(() => _extracting = true);
+    try {
+      // 先缩到 512 再取色：直接解 4K 图在手机上会把内存顶上去。
+      final result = await CoverColorExtractor.extract(
+        ResizeImage(FileImage(File(path)), width: 512, allowUpscaling: false),
+      );
+      if (!mounted) return;
+      setState(() {
+        _base = result.dominantColor;
+        // 图片主色常常偏灰偏亮，滑条回默认让用户自己再微调。
+        _brightness = 0;
+        _spread = 1;
+      });
+    } finally {
+      if (mounted) setState(() => _extracting = false);
+    }
+  }
+
+  Future<void> _save() async {
+    final hexes = [for (final color in _derived) _toHex(color)];
+    final customProvider = widget.isLight
+        ? customBackgroundGradientsLightProvider
+        : customBackgroundGradientsDarkProvider;
+    final currentProvider = widget.isLight
+        ? lightThemeBackgroundColorsProvider
+        : darkThemeBackgroundColorsProvider;
+
+    final list = List<List<String>>.from(ref.read(customProvider));
+    final index = widget.editingIndex;
+    if (index != null && index >= 0 && index < list.length) {
+      list[index] = hexes;
+    } else {
+      list.add(hexes);
+    }
+    ref.read(customProvider.notifier).state = list;
+    ref.read(currentProvider.notifier).state = hexes;
+
+    final service = await ref.read(settingsServiceProvider.future);
+    try {
+      if (widget.isLight) {
+        await service.setCustomBackgroundGradientsLight(list);
+        await service.setThemeBackgroundColorsLight(hexes);
+      } else {
+        await service.setCustomBackgroundGradientsDark(list);
+        await service.setThemeBackgroundColorsDark(hexes);
+      }
+    } catch (_) {
+      // 写盘失败也不拦着用户：内存里的设置已经生效，下次启动最多回到旧值。
+    }
+    if (!mounted) return;
+    Navigator.pop(context, true);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = ref.watch(themeColorsProvider);
+    final baseColors = ref.watch(baseThemeColorsProvider);
+    final derived = _derived;
+    // 预览卡片 / 底栏的底色用「真实派生出来的那套」算，所见即所得。
+    final preview = baseColors.copyWithBackground(derived[1]);
+    final horizontal = ResponsiveLayout.horizontalPadding(context);
+
+    return AppPageBackground(
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        body: SafeArea(
+          bottom: false,
+          child: Column(
+            children: [
+              _buildHeader(colors),
+              Expanded(
+                child: ListView(
+                  padding: EdgeInsets.fromLTRB(
+                    horizontal,
+                    AppSpacing.sm,
+                    horizontal,
+                    AppSpacing.xl,
+                  ),
+                  children: [
+                    _buildPreview(colors, preview, derived),
+                    const SizedBox(height: AppSpacing.lg),
+                    _sectionTitle(colors, '基色'),
+                    const SizedBox(height: AppSpacing.sm),
+                    Container(
+                      padding: const EdgeInsets.all(AppSpacing.md),
+                      decoration: BoxDecoration(
+                        color: colors.surface,
+                        borderRadius: BorderRadius.circular(AppRadius.lg),
+                        border: Border.all(color: colors.divider, width: 0.5),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Center(
+                            child: HsvColorArea(
+                              color: _base,
+                              maxSize: 220,
+                              onChanged: (color) =>
+                                  setState(() => _base = color),
+                            ),
+                          ),
+                          const SizedBox(height: AppSpacing.sm),
+                          Row(
+                            children: [
+                              Icon(
+                                Icons.colorize,
+                                size: 16,
+                                color: colors.textHint,
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                _toHex(_base),
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: colors.textSecondary,
+                                ),
+                              ),
+                              const Spacer(),
+                              TextButton.icon(
+                                onPressed: _extracting ? null : _pickFromImage,
+                                icon: _extracting
+                                    ? const SizedBox(
+                                        width: 14,
+                                        height: 14,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : const Icon(Icons.image, size: 18),
+                                label: Text(context.tr('从图片取色')),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.lg),
+                    _sectionTitle(colors, '微调'),
+                    const SizedBox(height: AppSpacing.sm),
+                    Container(
+                      padding: const EdgeInsets.fromLTRB(
+                        AppSpacing.md,
+                        AppSpacing.sm,
+                        AppSpacing.md,
+                        AppSpacing.xs,
+                      ),
+                      decoration: BoxDecoration(
+                        color: colors.surface,
+                        borderRadius: BorderRadius.circular(AppRadius.lg),
+                        border: Border.all(color: colors.divider, width: 0.5),
+                      ),
+                      child: Column(
+                        children: [
+                          _buildSlider(
+                            colors,
+                            label: '亮度',
+                            value: _brightness,
+                            min: -1,
+                            max: 1,
+                            display: '${(_brightness * 100).round()}%',
+                            onChanged: (value) =>
+                                setState(() => _brightness = value),
+                          ),
+                          _buildSlider(
+                            colors,
+                            label: '上下落差',
+                            value: _spread,
+                            min: 0,
+                            max: 2,
+                            display: '${(_spread * 100).round()}%',
+                            onChanged: (value) =>
+                                setState(() => _spread = value),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.md),
+                    Text(
+                      context.tr('背景色会同时决定卡片、分隔线等控件的底色'),
+                      style: TextStyle(fontSize: 12, color: colors.textHint),
+                    ),
+                  ],
+                ),
+              ),
+              _buildSaveBar(colors),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeader(ThemeColors colors) {
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        ResponsiveLayout.horizontalPadding(context),
+        AppSpacing.sm,
+        ResponsiveLayout.horizontalPadding(context),
+        AppSpacing.sm,
+      ),
+      child: Row(
+        children: [
+          IconButton(
+            onPressed: () => Navigator.pop(context),
+            icon: Icon(Icons.close, color: colors.textPrimary),
+            tooltip: context.tr('取消'),
+            visualDensity: VisualDensity.compact,
+          ),
+          const SizedBox(width: AppSpacing.xs),
+          Text(
+            context.tr(widget.editing == null ? '新增颜色' : '编辑颜色'),
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: colors.textPrimary,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 迷你可视化：一整块渐变 + 两张卡片 + 底部一条播放栏。
+  ///
+  /// 只预览一条渐变色是不够的 —— 背景还会派生 surface / divider，卡片是不是
+  /// 还看得清、边界在不在，只有把控件画上去才看得出来。
+  Widget _buildPreview(
+    ThemeColors colors,
+    ThemeColors preview,
+    List<Color> derived,
+  ) {
+    return Container(
+      height: 216,
+      padding: const EdgeInsets.all(AppSpacing.md),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+        border: Border.all(color: colors.divider, width: 0.5),
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: derived,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 顶部标题占位条
+          Container(
+            width: 96,
+            height: 14,
+            decoration: BoxDecoration(
+              color: preview.textPrimary.withValues(alpha: 0.75),
+              borderRadius: BorderRadius.circular(4),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          _previewCard(preview, height: 46),
+          const SizedBox(height: AppSpacing.sm),
+          _previewCard(preview, height: 46),
+          const Spacer(),
+          // 迷你播放栏
+          Container(
+            height: 40,
+            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
+            decoration: BoxDecoration(
+              color: preview.surface,
+              borderRadius: BorderRadius.circular(AppRadius.md),
+              border: Border.all(
+                color: preview.divider.withValues(alpha: 0.6),
+                width: 0.5,
+              ),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 24,
+                  height: 24,
+                  decoration: BoxDecoration(
+                    color: preview.surfaceVariant,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Container(
+                  width: 72,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color: preview.textPrimary.withValues(alpha: 0.5),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+                const Spacer(),
+                Icon(Icons.play_arrow, size: 18, color: preview.textSecondary),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _previewCard(ThemeColors preview, {required double height}) {
+    return Container(
+      height: height,
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
+      decoration: BoxDecoration(
+        color: preview.surface,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        border: Border.all(
+          color: preview.divider.withValues(alpha: 0.6),
+          width: 0.5,
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 28,
+            height: 28,
+            decoration: BoxDecoration(
+              color: preview.surfaceVariant,
+              borderRadius: BorderRadius.circular(6),
+            ),
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 84,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: preview.textPrimary.withValues(alpha: 0.7),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+              const SizedBox(height: 6),
+              Container(
+                width: 56,
+                height: 6,
+                decoration: BoxDecoration(
+                  color: preview.textSecondary.withValues(alpha: 0.5),
+                  borderRadius: BorderRadius.circular(3),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _sectionTitle(ThemeColors colors, String title) {
+    return Row(
+      children: [
+        Container(
+          width: 3,
+          height: 14,
+          decoration: BoxDecoration(
+            color: colors.primary,
+            borderRadius: BorderRadius.circular(2),
+          ),
+        ),
+        const SizedBox(width: AppSpacing.sm),
+        Text(
+          context.tr(title),
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            color: colors.textSecondary,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSlider(
+    ThemeColors colors, {
+    required String label,
+    required double value,
+    required double min,
+    required double max,
+    required String display,
+    required ValueChanged<double> onChanged,
+  }) {
+    return Row(
+      children: [
+        SizedBox(
+          width: 64,
+          child: Text(
+            context.tr(label),
+            style: TextStyle(fontSize: 13, color: colors.textSecondary),
+          ),
+        ),
+        Expanded(
+          child: Slider(value: value, min: min, max: max, onChanged: onChanged),
+        ),
+        SizedBox(
+          width: 48,
+          child: Text(
+            display,
+            textAlign: TextAlign.end,
+            style: TextStyle(fontSize: 12, color: colors.textHint),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSaveBar(ThemeColors colors) {
+    return SafeArea(
+      top: false,
+      minimum: EdgeInsets.fromLTRB(
+        ResponsiveLayout.horizontalPadding(context),
+        AppSpacing.sm,
+        ResponsiveLayout.horizontalPadding(context),
+        AppSpacing.md,
+      ),
+      child: SizedBox(
+        width: double.infinity,
+        height: 46,
+        child: FilledButton(
+          onPressed: _save,
+          style: FilledButton.styleFrom(
+            backgroundColor: colors.primary,
+            foregroundColor: colors.textOnPrimary,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(AppRadius.full),
+            ),
+          ),
+          child: Text(
+            context.tr('保存'),
+            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// `#RRGGBB` → Color。
+Color _parseHex(String hex) {
+  final value = hex.replaceAll('#', '');
+  if (value.length != 6) return Colors.transparent;
+  final parsed = int.tryParse(value, radix: 16);
+  if (parsed == null) return Colors.transparent;
+  return Color(0xFF000000 | parsed);
+}
+
+/// Color → `#RRGGBB`。
+String _toHex(Color color) {
+  final r = (color.r * 255).round().toRadixString(16).padLeft(2, '0');
+  final g = (color.g * 255).round().toRadixString(16).padLeft(2, '0');
+  final b = (color.b * 255).round().toRadixString(16).padLeft(2, '0');
+  return '#${r.toUpperCase()}${g.toUpperCase()}${b.toUpperCase()}';
+}

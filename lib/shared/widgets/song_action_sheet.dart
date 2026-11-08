@@ -147,6 +147,11 @@ class SongActionSheet extends ConsumerStatefulWidget {
   /// 这里交给调用方（播放页），因为弹层关闭后由页面 context 跳转更稳。
   final VoidCallback? onEditTag;
 
+  /// 播放页更多菜单里「将当前背景添加到渐变背景」的入口。
+  ///
+  /// 只有播放页会传；弹层关掉后由页面自己做取色 / 持久化。
+  final VoidCallback? onUseAsBackground;
+
   /// 首个主操作是否用「下一首播放」取代「播放」。
   ///
   /// - `false`（默认）：显示「播放」，行为由 [playlistSongs] 决定
@@ -170,6 +175,7 @@ class SongActionSheet extends ConsumerStatefulWidget {
     this.compactMode = false,
     this.showPlayNextInsteadOfPlay = false,
     this.onEditTag,
+    this.onUseAsBackground,
   });
 
   static Future<void> show(
@@ -212,6 +218,7 @@ class SongActionSheet extends ConsumerStatefulWidget {
     BuildContext context, {
     required Song song,
     VoidCallback? onEditTag,
+    VoidCallback? onUseAsBackground,
   }) {
     return showModalBottomSheet(
       context: context,
@@ -224,6 +231,7 @@ class SongActionSheet extends ConsumerStatefulWidget {
         showDownload: true,
         compactMode: true,
         onEditTag: onEditTag,
+        onUseAsBackground: onUseAsBackground,
       ),
     );
   }
@@ -243,9 +251,7 @@ class SongActionSheet extends ConsumerStatefulWidget {
     // 数据源歌曲的 source 是数据源插件（不提供播放），下载音质要看真正
     // 出面解析地址的那个播放源。
     final sourceId =
-        manager.effectivePlaybackSourceForSong(song) ??
-        song.source ??
-        'wy';
+        manager.effectivePlaybackSourceForSong(song) ?? song.source ?? 'wy';
     // 下载音质与播放音质是两套声明：插件可能「能播 320k、只能下 128k」。
     final qualities = manager.getDownloadQualitiesForSourceId(sourceId);
     final gated = manager.getLoginGatedQualities(
@@ -409,18 +415,14 @@ class SongActionSheet extends ConsumerStatefulWidget {
           messenger,
           SnackBar(
             content: Text(
-              uiContext.tr(
-                '「${getQualityDisplayName(q)}」不受当前音源支持，请选择其他音质',
-              ),
+              uiContext.tr('「${getQualityDisplayName(q)}」不受当前音源支持，请选择其他音质'),
             ),
             backgroundColor: Colors.orange,
             action: SnackBarAction(
               label: uiContext.tr('重新选择'),
               textColor: Colors.white,
-              onPressed: () => SongActionSheet.showDownloadQualityPicker(
-                uiContext,
-                song,
-              ),
+              onPressed: () =>
+                  SongActionSheet.showDownloadQualityPicker(uiContext, song),
             ),
           ),
         );
@@ -544,6 +546,13 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                     onTap: () => _showAddToPlaylist(colors, playlistsAsync),
                     skipPop: true,
                   ),
+                  if (widget.onUseAsBackground != null)
+                    _buildActionItem(
+                      colors: colors,
+                      icon: Icons.gradient,
+                      label: context.tr('将当前背景添加到渐变背景'),
+                      onTap: widget.onUseAsBackground!,
+                    ),
                   // 「下载」「启用桌面歌词」「定时」已经挪到播放页的图标按钮上了。
                   // 桌面端的桌面歌词按钮在播放页底部；Android 那个位置让给了倍速，
                   // 开关改放到这里（见 _buildDesktopLyricItem）。
