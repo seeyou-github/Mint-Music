@@ -13,8 +13,7 @@ import io.flutter.plugin.common.MethodChannel
  *  - 收藏：切换当前歌曲的收藏状态；
  *  - 桌面歌词：切换系统悬浮歌词窗（未授权时会跳到系统的「显示在其他应用上层」页）。
  *
- * 反方向（Dart → 原生）只有一个：`setFavorite`，把「当前歌曲是否已收藏」同步过来，
- * 通知里的红心据此显示实心 / 空心。
+ * Dart 同步收藏、卡片底色及桌面歌词开关与主题色。
  */
 object PlayerNotificationChannel {
     private const val TAG = "MintNotification"
@@ -47,6 +46,16 @@ object PlayerNotificationChannel {
                     // Dart 侧用封面主色算好的卡片底色（ARGB）；0 表示没有封面色。
                     MintNotification.setAccentColor((call.arguments as? Number)?.toInt() ?: 0)
                     result.success(null)
+                }
+                "setLyricState" -> {
+                    val enabled = call.argument<Boolean>("enabled")
+                    val primaryColor = call.argument<Number>("primaryColor")
+                    if (enabled == null || primaryColor == null) {
+                        result.error("invalid_arguments", "Missing lyric state or theme color", null)
+                    } else {
+                        MintNotification.setLyricState(enabled, primaryColor.toInt())
+                        result.success(null)
+                    }
                 }
                 else -> result.notImplemented()
             }

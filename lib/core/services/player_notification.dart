@@ -60,6 +60,19 @@ class PlayerNotification {
     }
   }
 
+  static Future<void> setLyricState({
+    required bool enabled,
+    required int primaryColor,
+  }) async {
+    if (!supported) return;
+    try {
+      await _channel.invokeMethod<void>('setLyricState', {
+        'enabled': enabled,
+        'primaryColor': primaryColor,
+      });
+    } catch (_) {}
+  }
+
   /// 把当前封面算出的卡片底色同步给原生（ARGB，null = 没有封面色，用默认深色）。
   ///
   /// 颜色没变时原生侧直接忽略，不会重绘通知。

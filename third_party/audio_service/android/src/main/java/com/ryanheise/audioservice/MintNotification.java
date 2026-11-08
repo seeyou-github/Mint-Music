@@ -31,7 +31,7 @@ import androidx.core.app.NotificationCompat;
  *
  * <p>卡片底色按当前封面取色：Dart 侧用 CoverColorExtractor 算出主色、压暗后通过
  * {@link #setAccentColor(int)} 传进来，这里铺在根布局上（与播放页背景同一套算法）。
- * 因为底色恒为深色，卡片里的文字 / 图标固定用浅色。
+ * 底色恒为深色，普通文字 / 图标用浅色；桌面歌词开启时「词」用用户主题色。
  *
  * <p>本文件是 vendored 的 audio_service 源码的一部分（third_party/audio_service），
  * 包名必须是 {@code com.ryanheise.audioservice} —— 只有同包才能拿到 {@code AudioService}
@@ -60,6 +60,9 @@ public final class MintNotification {
      * 默认是一块中性深色，没取到封面色 / 刚切歌还没算完时先用它，算完再刷新。
      */
     private static int accentColor = 0xFF1E1E1E;
+    private static final int NORMAL_LYRIC_COLOR = 0xFFE0E0E0;
+    private static boolean lyricEnabled = false;
+    private static int lyricPrimaryColor = NORMAL_LYRIC_COLOR;
 
     /** 封面圆角后的缓存：同一次通知重建里封面位图是同一个对象，不必重复裁剪。 */
     private static Bitmap cachedSource;
@@ -84,6 +87,13 @@ public final class MintNotification {
         final int next = color == 0 ? 0xFF1E1E1E : color;
         if (next == accentColor) return;
         accentColor = next;
+        AudioService.refreshNotification();
+    }
+
+    public static void setLyricState(boolean enabled, int primaryColor) {
+        if (lyricEnabled == enabled && lyricPrimaryColor == primaryColor) return;
+        lyricEnabled = enabled;
+        lyricPrimaryColor = primaryColor;
         AudioService.refreshNotification();
     }
 
@@ -155,6 +165,7 @@ public final class MintNotification {
                     favoriteId,
                     broadcast(context, ACTION_FAVORITE, REQUEST_FAVORITE));
 
+            views.setTextColor(lyricId, lyricEnabled ? lyricPrimaryColor : NORMAL_LYRIC_COLOR);
             // 桌面歌词：广播给 app 切换悬浮窗，不打开界面。
             views.setOnClickPendingIntent(
                     lyricId, broadcast(context, ACTION_LYRIC, REQUEST_LYRIC));

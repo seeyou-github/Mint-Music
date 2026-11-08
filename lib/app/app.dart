@@ -75,6 +75,7 @@ class _AppState extends ConsumerState<App> {
     // 只靠 build 里的 listen 拿不到初始值。
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       _syncNotificationFavorite();
+      _syncNotificationLyricState();
       unawaited(_syncNotificationColor());
       final action = await PlayerNotification.consumeLaunchAction();
       if (!mounted || action == null) return;
@@ -137,6 +138,16 @@ class _AppState extends ConsumerState<App> {
                 .any((s) => s.id == song.id) ??
             false);
     unawaited(PlayerNotification.setFavorite(isFavorite));
+  }
+
+  void _syncNotificationLyricState() {
+    if (!PlayerNotification.supported) return;
+    unawaited(
+      PlayerNotification.setLyricState(
+        enabled: ref.read(desktopLyricSettingsProvider).enable,
+        primaryColor: ref.read(baseThemeColorsProvider).primary.toARGB32(),
+      ),
+    );
   }
 
   /// 让通知卡片的底色跟随当前封面（取色算法与播放页背景一致）。
@@ -262,6 +273,14 @@ class _AppState extends ConsumerState<App> {
       ref.listen(
         playlistsProvider,
         (previous, next) => _syncNotificationFavorite(),
+      );
+      ref.listen(
+        desktopLyricSettingsProvider.select((settings) => settings.enable),
+        (previous, next) => _syncNotificationLyricState(),
+      );
+      ref.listen(
+        baseThemeColorsProvider.select((colors) => colors.primary),
+        (previous, next) => _syncNotificationLyricState(),
       );
     }
 

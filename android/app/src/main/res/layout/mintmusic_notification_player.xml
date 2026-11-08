@@ -9,7 +9,7 @@
       └───────────────────────────────────────────┘
 
   底色由 MintNotification 在运行时铺在根布局上（当前封面主色压暗，见
-  `setAccentColor`），所以这里不写 background；底色恒为深色，文字 / 图标固定浅色。
+  `setAccentColor`），所以这里不写 background；普通文字 / 图标用浅色，「词」开启时用主题色。
 
   由 `MintNotification.java`（third_party/audio_service 里）填充图片与文字，
   并通过 RemoteViews 的 PendingIntent 绑定按钮，因此这里只写静态骨架：
@@ -53,6 +53,7 @@
                 android:ellipsize="end"
                 android:includeFontPadding="false"
                 android:singleLine="true"
+                android:paddingStart="11dp"
                 android:textColor="#EDEDED"
                 android:textSize="15sp"
                 android:textStyle="bold" />
@@ -67,7 +68,7 @@
                 android:src="@drawable/mm_ic_notif_close" />
         </LinearLayout>
 
-        <!-- 五个按钮等宽平分：收藏 / 上一首 / 播放暂停 / 下一首 / 桌面歌词 -->
+        <!-- 收藏固定 42dp，心形左缘为 9dp 内边距 + 2dp 图形留白，与歌名对齐。 -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="42dp"
@@ -76,9 +77,8 @@
 
             <ImageView
                 android:id="@+id/mm_notif_favorite"
-                android:layout_width="0dp"
+                android:layout_width="42dp"
                 android:layout_height="42dp"
-                android:layout_weight="1"
                 android:contentDescription="@null"
                 android:padding="9dp"
                 android:scaleType="centerInside"

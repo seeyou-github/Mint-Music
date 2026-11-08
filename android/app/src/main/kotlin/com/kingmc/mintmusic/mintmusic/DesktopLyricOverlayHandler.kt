@@ -16,7 +16,9 @@ import android.os.SystemClock
 import android.provider.Settings
 import android.text.SpannableStringBuilder
 import android.text.Spanned
+import android.text.TextPaint
 import android.text.TextUtils
+import android.text.style.CharacterStyle
 import android.text.style.RelativeSizeSpan
 import android.util.Log
 import android.util.TypedValue
@@ -596,10 +598,6 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
             tv.setTextColor(unplayColor)
             tv.setShadowLayer(SHADOW_RADIUS, SHADOW_DX, SHADOW_DY, shadowColor)
             tv.playedColor = playedColor
-            tv.shadowRadiusPx = SHADOW_RADIUS
-            tv.shadowOffsetX = SHADOW_DX
-            tv.shadowOffsetY = SHADOW_DY
-            tv.shadowTint = shadowColor
 
             val hasSub = !slot.translation.isNullOrBlank() || !slot.roman.isNullOrBlank()
             if (slot.text.isBlank() && !hasSub) {
@@ -610,10 +608,9 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
             }
             row.frame.visibility = View.VISIBLE
 
-            // 两层各建一份文本：填充层绘制时会临时改写 TextPaint 的颜色，
-            // 共用同一个 Spannable 容易把描边层也带上歌词色。
+            // 填充层含绘制阶段的颜色 span，不能与描边层共用文本。
             stroke.setText(buildSlotText(slot), TextView.BufferType.SPANNABLE)
-            tv.setText(buildSlotText(slot), TextView.BufferType.SPANNABLE)
+            tv.setLyricText(buildSlotText(slot), slot.text.length)
 
             if (slot.active) {
                 activeFillView = tv
@@ -1099,14 +1096,22 @@ private class ProgressFillTextView(context: Context) : TextView(context) {
     /** 当前行的已播放色（由外层按设置同步）。 */
     var playedColor: Int = Color.WHITE
 
-    // 阴影参数自己存一份：重画已播放部分时要临时去掉阴影，画完再按原参数恢复。
-    // 名字不能叫 shadowDx / shadowDy：TextView 自己就有 getShadowDx() /
-    // getShadowDy()，Kotlin 属性生成的 getter 会和父类方法撞 JVM 签名，
-    // 编译期直接报 "Accidental override"。
-    var shadowRadiusPx: Float = 0f
-    var shadowOffsetX: Float = 0f
-    var shadowOffsetY: Float = 0f
-    var shadowTint: Int = Color.TRANSPARENT
+    private var drawingPlayedText = false
+    private val progressColorSpan = object : CharacterStyle() {
+        override fun updateDrawState(tp: TextPaint) {
+            if (!drawingPlayedText) return
+            // TextView.onDraw 会重置 paint.color，span 在它之后应用且不触发布局或重绘。
+            tp.color = playedColor
+            tp.clearShadowLayer()
+        }
+    }
+
+    fun setLyricText(content: SpannableStringBuilder, mainTextLength: Int) {
+        if (mainTextLength > 0) {
+            content.setSpan(progressColorSpan, 0, mainTextLength, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+        setText(content, BufferType.SPANNABLE)
+    }
 
     /** 是否为当前播放行：只有它需要分段着色。 */
     private var shading = false
@@ -1140,8 +1145,6 @@ private class ProgressFillTextView(context: Context) : TextView(context) {
         val fraction = sungFraction.coerceIn(0f, 1f)
         if (fraction <= 0f) return
 
-        val textPaint = paint
-        val oldColor = textPaint.color
         val contentWidth =
             (width - compoundPaddingLeft - compoundPaddingRight).toFloat()
         val lineWidth = layout.getLineWidth(0)
@@ -1166,17 +1169,15 @@ private class ProgressFillTextView(context: Context) : TextView(context) {
         val bandBottom =
             (compoundPaddingTop + voffset + layout.getLineBottom(0) + 2).toFloat()
 
-        canvas.save()
+        val saveCount = canvas.save()
         canvas.clipRect(0f, bandTop, clipRight, bandBottom)
-        textPaint.color = playedColor
-        // 已播放部分不再画阴影：和上面那一遍的阴影叠在一起会明显发黑。
-        textPaint.setShadowLayer(0f, 0f, 0f, 0)
-        super.onDraw(canvas)
-        if (shadowRadiusPx > 0f) {
-            textPaint.setShadowLayer(shadowRadiusPx, shadowOffsetX, shadowOffsetY, shadowTint)
+        drawingPlayedText = true
+        try {
+            super.onDraw(canvas)
+        } finally {
+            drawingPlayedText = false
+            canvas.restoreToCount(saveCount)
         }
-        textPaint.color = oldColor
-        canvas.restore()
     }
 }
 

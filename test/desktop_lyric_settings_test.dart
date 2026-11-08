@@ -1,9 +1,12 @@
 import 'dart:io';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mintmusic/features/player/domain/models/desktop_lyric_settings.dart';
+import 'package:mintmusic/features/player/platform/desktop_lyric_overlay.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   group('DesktopLyricSettings', () {
     test('默认值', () {
       final s = DesktopLyricSettings.defaults;
@@ -39,6 +42,48 @@ void main() {
       );
       expect(DesktopLyricSettings.decode(s.encode()), s);
     });
+
+    test('原生通道保留全部歌词颜色并使用最新设置', () async {
+      const channel = MethodChannel('com.mintmusic/desktop_lyric');
+      final calls = <MethodCall>[];
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        calls.add(call);
+        return null;
+      });
+      addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+
+      final settings = [
+        DesktopLyricSettings.defaults.copyWith(
+          playedColor: 0xFFEC4899,
+          unplayColor: 0xFF123456,
+          shadowColor: 0x66010203,
+          strokeColor: 0xFF1E3A8A,
+        ),
+        DesktopLyricSettings.defaults.copyWith(
+          playedColor: 0x80ABCDEF,
+          unplayColor: 0xFF654321,
+          shadowColor: 0x00000000,
+          strokeColor: 0x40070809,
+        ),
+      ];
+      for (final value in settings) {
+        await DesktopLyricOverlay.instance.updateConfig(
+          DesktopLyricSettings.decode(value.encode()),
+          fontSizeRate: 1.25,
+        );
+      }
+      expect(calls, hasLength(settings.length));
+      for (var i = 0; i < settings.length; i++) {
+        expect(calls[i].method, 'updateConfig');
+        final args = calls[i].arguments as Map;
+        expect(args['playedColor'], settings[i].playedColor);
+        expect(args['unplayColor'], settings[i].unplayColor);
+        expect(args['shadowColor'], settings[i].shadowColor);
+        expect(args['strokeColor'], settings[i].strokeColor);
+      }
+    }, skip: !Platform.isAndroid && !Platform.isWindows);
 
     test('旧配置没有描边字段时回落到不描边，宽度越界被夹紧', () {
       final legacy = DesktopLyricSettings.fromJson({
