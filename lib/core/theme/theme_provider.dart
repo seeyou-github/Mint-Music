@@ -179,7 +179,7 @@ final baseThemeColorsProvider = Provider<ThemeColors>((ref) {
 ///
 /// 打开后主界面背景由「当前歌曲封面主色」派生，算法与播放详情页背景
 /// 完全相同（见 [deriveBackgroundGradient]）；浅色主题下忽略这个开关。
-final coverBackgroundEnabledProvider = StateProvider<bool>((ref) => false);
+final coverBackgroundEnabledProvider = StateProvider<bool>((ref) => true);
 
 /// 当前封面主色。
 ///

@@ -11,89 +11,110 @@ library;
 
 import 'package:flutter/material.dart';
 
-/// 深色主题下的默认亮度：上 / 中 / 下。
-const double _kDarkTopLightness = 0.17;
-const double _kDarkMidLightness = 0.125;
-const double _kDarkBottomLightness = 0.08;
-
-/// 浅色主题下的默认亮度：上 / 中 / 下。
-const double _kLightTopLightness = 0.94;
-const double _kLightMidLightness = 0.90;
-const double _kLightBottomLightness = 0.86;
-
 /// 亮度可调的幅度（滑条推到两端时的偏移量）。
 const double _kDarkBrightnessRange = 0.10;
 const double _kLightBrightnessRange = 0.06;
 
-/// 亮度硬夹紧区间，任何滑条组合都不会越界。
-const double _kDarkMinLightness = 0.03;
-const double _kDarkMaxLightness = 0.30;
-const double _kLightMinLightness = 0.78;
-const double _kLightMaxLightness = 0.98;
+/// 派生后亮度的允许区间（「保护 = 0」时才夹紧，保护拉满会直接用原色）。
+const double _kDarkMinLightness = 0.02;
+const double _kDarkMaxLightness = 0.40;
+const double _kLightMinLightness = 0.55;
+const double _kLightMaxLightness = 0.99;
 
-/// 饱和度区间：深色背景容得下更多色彩，浅色背景必须压得更狠才不会脏。
-const double _kDarkMinSaturation = 0.12;
-const double _kDarkMaxSaturation = 0.32;
-const double _kLightMinSaturation = 0.06;
-const double _kLightMaxSaturation = 0.18;
+/// 深色主题：亮度往这个区间压 —— `0.03 + 原亮度 * 0.13`。
+///
+/// 颜色越亮，被压掉的绝对亮度越多（0.9 → 约 0.15），越暗压得越少（0.2 → 约
+/// 0.06）；纯黑封面也不会被抬亮。
+const double _kDarkLightnessFloor = 0.03;
+const double _kDarkLightnessScale = 0.13;
+
+/// 浅色主题：往白提亮的比例（越暗提得越多，越亮动得越少）。
+const double _kLightLightnessLift = 0.5;
+
+/// 饱和度衰减系数：饱和度降幅 = 原饱和度² × 这个系数 —— 越鲜艳降得越多。
+const double _kSaturationDrop = 0.85;
+
+/// 派生后饱和度的上限：深色背景容得下更多色彩，浅色背景压得更狠。
+const double _kDarkMaxSaturation = 0.30;
+const double _kLightMaxSaturation = 0.22;
+
+/// 上下落差的基准幅度（spread = 1 时的半差）。
+const double _kDarkSpread = 0.045;
+const double _kLightSpread = 0.04;
 
 /// 饱和度低于这个值就当作无彩色（灰），避免灰白封面色出现偏红 / 偏绿。
 const double _kGraySaturationThreshold = 0.08;
 
-/// 把 [color] 处理成「可用作背景」的颜色：保留色相，饱和度夹紧，
+/// 把 [color] 处理成「可用作背景」的深色：保留色相，饱和度夹紧，
 /// 亮度固定为 [lightness]。
 ///
-/// 播放页 / 歌词页的封面暗色、通知卡片底色、封面投影都用它。
+/// 播放页通知卡片底色、封面投影用它（这些地方要的是固定的暗色，不跟随
+/// 封面自身的明暗）。
 Color coverDarkBackgroundColor(Color color, {required double lightness}) {
   final hsl = HSLColor.fromColor(color);
   final saturation = hsl.saturation < _kGraySaturationThreshold
       ? 0.0
-      : hsl.saturation.clamp(_kDarkMinSaturation, _kDarkMaxSaturation);
+      : hsl.saturation.clamp(0.12, _kDarkMaxSaturation);
   return hsl.withSaturation(saturation).withLightness(lightness).toColor();
 }
 
 /// 由「基色」派生背景渐变的 3 段颜色（从顶到底）。
 ///
+/// 与封面取色、设置里的「背景渐变」共用：
 /// - [isLight]：浅色主题走「提亮」版本，深色主题走「压暗」版本；
 /// - [brightness]：整体亮度偏移，-1 ~ 1（0 = 默认）；
-/// - [spread]：上下落差倍率，0 = 纯色，1 = 默认，2 = 落差翻倍。
+/// - [spread]：上下落差倍率，0 = 纯色，1 = 默认，2 = 落差翻倍；
+/// - [protect]：**保护原色**，0 = 完全按背景规则调整，1 = 用原色本身
+///   （只在原色上下加一点落差）。用户在调色板里手选的颜色用 1，
+///   从图片 / 封面取到的颜色用 0。
 ///
-/// 播放详情页取首尾两段（即默认的 0.17 / 0.08），与改动前的硬编码完全一致。
+/// 压暗 / 降饱和的幅度都和颜色自身挂钩：越亮压得越多、越鲜艳降得越多，
+/// 所以浅色封面不会留下发白的背景，鲜艳封面也不会留下刺眼色块。
 List<Color> deriveBackgroundGradient(
   Color base, {
   required bool isLight,
   double brightness = 0,
   double spread = 1,
+  double protect = 0,
 }) {
   final hsl = HSLColor.fromColor(base);
-  final baseSaturation = hsl.saturation < _kGraySaturationThreshold
-      ? 0.0
-      : hsl.saturation.clamp(
-          isLight ? _kLightMinSaturation : _kDarkMinSaturation,
-          isLight ? _kLightMaxSaturation : _kDarkMaxSaturation,
-        );
+  final baseLightness = hsl.lightness;
+  final baseSaturation = hsl.saturation;
 
-  final topDefault = isLight ? _kLightTopLightness : _kDarkTopLightness;
-  final midDefault = isLight ? _kLightMidLightness : _kDarkMidLightness;
-  final bottomDefault = isLight
-      ? _kLightBottomLightness
-      : _kDarkBottomLightness;
+  // 亮度：深色主题往暗处压、浅色主题往白处提，幅度都与原亮度相关。
+  final dampedLightness = isLight
+      ? baseLightness + (1 - baseLightness) * _kLightLightnessLift
+      : _kDarkLightnessFloor + baseLightness * _kDarkLightnessScale;
+  // 饱和度：降幅 = 原饱和度² × 系数，越鲜艳降得越多。
+  final dampedSaturation =
+      (baseSaturation - baseSaturation * baseSaturation * _kSaturationDrop)
+          .clamp(0.0, isLight ? _kLightMaxSaturation : _kDarkMaxSaturation);
 
+  // 保护原色：0 用处理过的值，1 用原色。
+  final protectRatio = protect.clamp(0.0, 1.0);
+  final dampedClamped = dampedLightness.clamp(
+    isLight ? _kLightMinLightness : _kDarkMinLightness,
+    isLight ? _kLightMaxLightness : _kDarkMaxLightness,
+  );
+  final lightness =
+      dampedClamped + (baseLightness - dampedClamped) * protectRatio;
+  final saturation =
+      dampedSaturation + (baseSaturation - dampedSaturation) * protectRatio;
+
+  final delta =
+      (isLight ? _kLightSpread : _kDarkSpread) * spread.clamp(0.0, 2.0);
   final offset =
       brightness.clamp(-1.0, 1.0) *
       (isLight ? _kLightBrightnessRange : _kDarkBrightnessRange);
-  // spread 作用在「默认落差」上：0 收成纯色，1 保持原样，2 翻倍。
-  final ratio = spread.clamp(0.0, 2.0);
-  final top = midDefault + (topDefault - midDefault) * ratio;
-  final bottom = midDefault - (midDefault - bottomDefault) * ratio;
 
-  final minL = isLight ? _kLightMinLightness : _kDarkMinLightness;
-  final maxL = isLight ? _kLightMaxLightness : _kDarkMaxLightness;
-
-  Color at(double lightness) => hsl
-      .withSaturation(baseSaturation)
-      .withLightness(lightness.clamp(minL, maxL))
+  Color at(double value) => hsl
+      .withSaturation(saturation)
+      .withLightness(value.clamp(0.0, 1.0))
       .toColor();
 
-  return [at(top + offset), at(midDefault + offset), at(bottom + offset)];
+  return [
+    at(lightness + delta + offset),
+    at(lightness + offset),
+    at(lightness - delta + offset),
+  ];
 }

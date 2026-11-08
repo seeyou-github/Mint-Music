@@ -191,8 +191,8 @@ class SettingsService {
   // -- 主界面跟随封面变色（仅深色主题） --
   static const _coverBackgroundKey = 'cover_background_dark';
 
-  /// 主界面背景是否跟随当前歌曲封面变色（默认关闭）。
-  bool getCoverBackground() => _prefs.getBool(_coverBackgroundKey) ?? false;
+  /// 主界面背景是否跟随当前歌曲封面变色（默认开启，仅深色主题生效）。
+  bool getCoverBackground() => _prefs.getBool(_coverBackgroundKey) ?? true;
   Future<void> setCoverBackground(bool v) =>
       _prefs.setBool(_coverBackgroundKey, v);
 

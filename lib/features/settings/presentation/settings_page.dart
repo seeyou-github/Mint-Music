@@ -824,24 +824,30 @@ const List<(String, String)> _presetColors = [
   ('#06B6D4', '蓝绿'),
 ];
 
-/// 浅色模式「背景渐变」的内置组合（起始色、结束色、名称）。
-const List<(String, String, String)> _lightGradientPresets = [
-  ('#DCD7C9', '#F3F1EC', '暖米'),
-  ('#E7EDF5', '#F8FAFD', '雾蓝'),
-  ('#E3EFE7', '#F7FBF8', '薄荷'),
-  ('#F0E9F6', '#FBF8FD', '淡紫'),
-  ('#F7EDE8', '#FDF8F5', '浅粉'),
-  ('#ECECEC', '#FAFAFA', '浅灰'),
+/// 浅色模式「背景渐变」的内置组合（颜色列表 + 名称）。
+///
+/// 第一项就是默认选中的那一套（见 [defaultLightBackgroundGradient]），
+/// 必须保持一致；其余是常用的浅色三段组合。
+const List<(List<String>, String)> _lightGradientPresets = [
+  (['#DCD7C9', '#F3F1EC'], '暖米'),
+  (['#D3E1D3', '#CFDECF', '#CBDBCB'], '浅绿'),
+  (['#D8DBE4', '#CFD2DE', '#C6C9D7'], '雾蓝'),
+  (['#E2D6DC', '#DECFD7', '#D9C8D1'], '藕粉'),
+  (['#DBDBDB', '#D6D6D6', '#D1D1D1'], '浅灰'),
+  (['#E0D8E4', '#DACFDE', '#D3C6D7'], '淡紫'),
 ];
 
-/// 深色模式「背景渐变」的内置组合（起始色、结束色、名称）。
-const List<(String, String, String)> _darkGradientPresets = [
-  ('#212128', '#121216', '深空灰'),
-  ('#151E2E', '#0B1120', '午夜蓝'),
-  ('#12211A', '#091610', '墨绿'),
-  ('#221B2C', '#14101E', '深紫'),
-  ('#231B18', '#15100E', '深褐'),
-  ('#000000', '#1A1A1A', '纯黑'),
+/// 深色模式「背景渐变」的内置组合（颜色列表 + 名称）。
+///
+/// 同样第一项是默认值（[defaultDarkBackgroundGradient]）。
+const List<(List<String>, String)> _darkGradientPresets = [
+  (['#212128', '#121216'], '深空灰'),
+  (['#2B2B2B', '#202020', '#141414'], '中性灰'),
+  (['#25322F', '#1B2522', '#111716'], '墨绿'),
+  (['#262F31', '#1C2324', '#121617'], '青灰'),
+  (['#2F2F2F', '#242424', '#181818'], '深灰'),
+  (['#242B32', '#1B2025', '#111418'], '藏蓝'),
+  (['#262626', '#1B1B1B', '#0F0F0F'], '炭黑'),
 ];
 
 /// 合并内置颜色与用户自定义颜色（按色值去重，内置颜色优先）。
@@ -1200,13 +1206,16 @@ class _AppearanceContent extends ConsumerWidget {
           icon: Icons.auto_awesome,
           title: '主界面跟随封面变色',
           trailing: Switch(
-            value: coverBackground,
-            onChanged: (v) => _persistBool(
-              context,
-              coverBackgroundEnabledProvider,
-              v,
-              (s) => s.setCoverBackground(v),
-            ),
+            // 浅色主题下这个开关不生效：直接禁用（自动灰掉），也不显示为开启。
+            value: isLight ? false : coverBackground,
+            onChanged: isLight
+                ? null
+                : (v) => _persistBool(
+                    context,
+                    coverBackgroundEnabledProvider,
+                    v,
+                    (s) => s.setCoverBackground(v),
+                  ),
             activeTrackColor: colors.primary.withValues(alpha: 0.3),
             activeThumbColor: colors.primary,
           ),
@@ -1395,10 +1404,10 @@ class _AppearanceContent extends ConsumerWidget {
                               _GradientSwatch(
                                 colors: colors,
                                 width: width,
-                                hexes: [preset.$1, preset.$2],
-                                label: sheetContext.tr(preset.$3),
-                                selected: isPicked([preset.$1, preset.$2]),
-                                onTap: () => apply([preset.$1, preset.$2]),
+                                hexes: preset.$1,
+                                label: sheetContext.tr(preset.$2),
+                                selected: isPicked(preset.$1),
+                                onTap: () => apply(preset.$1),
                               ),
                             // 自定义渐变排在内置渐变之后。
                             for (var i = 0; i < customs.length; i++)
