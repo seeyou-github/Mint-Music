@@ -130,8 +130,206 @@ class SettingsPage extends ConsumerStatefulWidget {
   ConsumerState<SettingsPage> createState() => _SettingsPageState();
 }
 
-class _SettingsPageState extends ConsumerState<SettingsPage> {
+class _SettingsPageState extends ConsumerState<SettingsPage>
+    with SingleTickerProviderStateMixin {
   SettingsCategory _activeCategory = SettingsCategory.appearance;
+
+  // ------------------------------------------------------------ 左右滑动切换分类
+  //
+  // Android 上跟主页（发现页）/ 本地页同一套「双页跟手」：拖动时把整块内容
+  // 连同「下一屏」一起平移，只做一层 Transform（GPU 变换），不重建滚动视图
+  // 之外的东西；松手后要么滑到位切换分类，要么回弹。
+
+  /// 手指位移达到这么多屏宽就算一次切换（不够再看甩动速度）。
+  static const double _kCategorySwitchDragRatio = 0.18;
+
+  /// 内容当前的横向位移（像素）。
+  final ValueNotifier<double> _categoryOffsetX = ValueNotifier<double>(0);
+
+  /// 拖动过程中显示在「下一屏」的分类。
+  ///
+  /// [_dragTargetCategoryActive] 为 false 表示没在拖动，或者已经滑到第一个 /
+  /// 最后一个分类（越界只能回弹）。
+  bool _dragTargetCategoryActive = false;
+  SettingsCategory? _dragTargetCategory;
+  int _dragDir = 0;
+
+  /// 位移动画驱动（时长每次按需设置）。
+  late final AnimationController _categoryAnim = AnimationController(
+    vsync: this,
+  );
+
+  /// 当前正在跑的位移动画；为 null 表示没有动画在跑。
+  Animation<double>? _categoryTween;
+
+  /// 本次拖动累计的横向位移。
+  double _categorySwipeDx = 0;
+
+  void _onCategoryTick() {
+    final animation = _categoryTween;
+    if (animation != null) _categoryOffsetX.value = animation.value;
+  }
+
+  /// 把内容位移动画到 [to]（像素）。
+  Future<void> _animateCategoryOffset(double to, int milliseconds) {
+    final from = _categoryOffsetX.value;
+    _categoryAnim.stop();
+    if (from == to) {
+      _categoryTween = null;
+      return Future<void>.value();
+    }
+    _categoryAnim.duration = Duration(milliseconds: milliseconds);
+    _categoryTween = Tween<double>(begin: from, end: to).animate(
+      CurvedAnimation(parent: _categoryAnim, curve: Curves.easeOutCubic),
+    );
+    return _categoryAnim.forward(from: 0).then((_) {
+      _categoryTween = null;
+      _categoryOffsetX.value = to;
+    });
+  }
+
+  /// 手指位移 → 内容位移（1:1 跟手，最多一屏）。
+  ///
+  /// 必须与手指严格同步：下一屏是按「当前位移 ± 整屏宽」算位置的，一旦做加速
+  /// 两页之间就会露出缝。分类是有限序列（不循环），第一个还往右拖、最后一个
+  /// 还往左拖时直接不动，避免拖出一片空白。
+  double _categoryContentOffset(double dx) {
+    final width = MediaQuery.sizeOf(context).width;
+    if (width <= 0) return dx;
+    final clamped = dx.clamp(-width, width).toDouble();
+    final dir = clamped < 0 ? 1 : (clamped > 0 ? -1 : 0);
+    if (dir != 0) {
+      final values = SettingsCategory.values;
+      final index = values.indexOf(_activeCategory);
+      final target = index < 0 ? -1 : index + dir;
+      if (target < 0 || target >= values.length) return 0;
+    }
+    return clamped;
+  }
+
+  void _onCategorySwipeStart(DragStartDetails details) {
+    _categoryAnim.stop();
+    _categoryTween = null;
+    _categorySwipeDx = 0;
+    _categoryOffsetX.value = 0;
+    if (_dragTargetCategoryActive || _dragDir != 0) {
+      setState(() {
+        _dragTargetCategoryActive = false;
+        _dragTargetCategory = null;
+        _dragDir = 0;
+      });
+    }
+  }
+
+  void _onCategorySwipeUpdate(DragUpdateDetails details) {
+    _categorySwipeDx += details.delta.dx;
+    final offset = _categoryContentOffset(_categorySwipeDx);
+    _categoryOffsetX.value = offset;
+    _syncCategoryDragTarget(offset);
+  }
+
+  /// 根据当前位移确定「下一屏」是哪个分类（到头 / 到第一个就没有下一屏）。
+  ///
+  /// 只在方向或目标变化时 `setState` 一次，拖动过程中不反复重建内容。
+  void _syncCategoryDragTarget(double offset) {
+    final dir = offset < 0 ? 1 : (offset > 0 ? -1 : 0);
+    final values = SettingsCategory.values;
+    final index = values.indexOf(_activeCategory);
+    var active = false;
+    SettingsCategory? target;
+    if (dir != 0 && index >= 0) {
+      final next = index + dir;
+      if (next >= 0 && next < values.length) {
+        active = true;
+        target = values[next];
+      }
+    }
+    if (active == _dragTargetCategoryActive &&
+        target == _dragTargetCategory &&
+        dir == _dragDir) {
+      return;
+    }
+    setState(() {
+      _dragTargetCategoryActive = active;
+      _dragTargetCategory = target;
+      _dragDir = dir;
+    });
+  }
+
+  /// 左右滑动结束：位移够就翻页，不够看甩动速度；都不够就弹回原位。
+  void _onCategorySwipeEnd(DragEndDetails details) {
+    final velocity = details.primaryVelocity ?? 0;
+    final dx = _categorySwipeDx;
+    _categorySwipeDx = 0;
+    final width = MediaQuery.sizeOf(context).width;
+    final bool swipeLeft;
+    if (dx.abs() >= width * _kCategorySwitchDragRatio) {
+      swipeLeft = dx < 0;
+    } else if (velocity.abs() >= 260) {
+      swipeLeft = velocity < 0;
+    } else {
+      unawaited(_settleCategoryDrag(-1, 0));
+      return;
+    }
+    final values = SettingsCategory.values;
+    final index = values.indexOf(_activeCategory);
+    final next = index < 0 ? -1 : index + (swipeLeft ? 1 : -1);
+    if (next < 0 || next >= values.length) {
+      // 已经是第一个 / 最后一个分类：没有可切换的，弹回原位。
+      unawaited(_settleCategoryDrag(-1, 0));
+      return;
+    }
+    unawaited(_settleCategoryDrag(next, swipeLeft ? 1 : -1));
+  }
+
+  /// 收尾：两页一起滑到位后切换分类，或者回弹。
+  ///
+  /// [target] 是目标分类的下标，-1 表示没有可切换的目标。切换时传
+  /// `animate: false`——位移已经自己走完，再插一次「从侧边 28% 进场」会闪。
+  Future<void> _settleCategoryDrag(int target, int dir) async {
+    final width = MediaQuery.sizeOf(context).width;
+    final values = SettingsCategory.values;
+    if (target >= 0 && target < values.length) {
+      await _animateCategoryOffset(dir > 0 ? -width : width, 220);
+      if (!mounted) return;
+      _selectCategory(values[target], animate: false);
+      _categoryOffsetX.value = 0;
+      return;
+    }
+    await _animateCategoryOffset(0, 200);
+    if (!mounted) return;
+    if (_dragTargetCategoryActive || _dragDir != 0) {
+      setState(() {
+        _dragTargetCategoryActive = false;
+        _dragTargetCategory = null;
+        _dragDir = 0;
+      });
+    }
+  }
+
+  /// 切换分类（点顶部标签，或左右滑动收尾）。
+  ///
+  /// [animate] 为 true 时新分类从切换方向的另一侧 28% 屏宽处滑入；
+  /// 左右滑动切换传 false —— 两页已经跟着手指一起平移到位了。
+  void _selectCategory(SettingsCategory cat, {bool animate = true}) {
+    if (_activeCategory == cat) return;
+    final values = SettingsCategory.values;
+    final from = values.indexOf(_activeCategory);
+    final to = values.indexOf(cat);
+    if (animate && Platform.isAndroid && from >= 0 && to >= 0 && from != to) {
+      final width = MediaQuery.sizeOf(context).width;
+      _categoryOffsetX.value = to > from ? width * 0.28 : -width * 0.28;
+      unawaited(_animateCategoryOffset(0, 200));
+    }
+    setState(() {
+      _activeCategory = cat;
+      // 切换完成后收掉「下一屏」的预览。
+      _dragTargetCategoryActive = false;
+      _dragTargetCategory = null;
+      _dragDir = 0;
+    });
+    _scrollToActiveTab();
+  }
 
   /// 水平滚动控制器：用于点击标签时将选中项自动居中
   final ScrollController _tabScrollController = ScrollController();
@@ -154,8 +352,16 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   };
 
   @override
+  void initState() {
+    super.initState();
+    _categoryAnim.addListener(_onCategoryTick);
+  }
+
+  @override
   void dispose() {
     _tabScrollController.dispose();
+    _categoryAnim.dispose();
+    _categoryOffsetX.dispose();
     super.dispose();
   }
 
@@ -205,7 +411,64 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           children: [
             _buildHeader(colors),
             _buildCategoryTabs(colors),
-            Expanded(child: _buildContent(colors)),
+            Expanded(
+              child: GestureDetector(
+                // Android：左右滑动切换分类。纵向滚动、横向的分类标签行都是
+                // 更深的手势识别器，会自己赢下手势，不受影响。
+                behavior: HitTestBehavior.translucent,
+                onHorizontalDragStart: Platform.isAndroid
+                    ? _onCategorySwipeStart
+                    : null,
+                onHorizontalDragUpdate: Platform.isAndroid
+                    ? _onCategorySwipeUpdate
+                    : null,
+                onHorizontalDragEnd: Platform.isAndroid
+                    ? _onCategorySwipeEnd
+                    : null,
+                child: ClipRect(
+                  // 两页一起平移：当前页从 0 滑到 ±整屏时，另一个分类从另一侧
+                  // 同步滑进来，拖动过程中就能看到对面的内容（同 PageView）。
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      if (_dragTargetCategoryActive &&
+                          _dragDir != 0 &&
+                          _dragTargetCategory != null)
+                        AnimatedBuilder(
+                          animation: _categoryOffsetX,
+                          builder: (context, child) => Transform.translate(
+                            offset: Offset(
+                              _categoryOffsetX.value +
+                                  _dragDir * MediaQuery.sizeOf(context).width,
+                              0,
+                            ),
+                            child: child,
+                          ),
+                          // 下一屏只是预览：用独立的滚动位置，
+                          // 两个滚动视图不能同时挂到 PrimaryScrollController。
+                          child: _buildContentPage(
+                            colors,
+                            _dragTargetCategory!,
+                            primary: false,
+                          ),
+                        ),
+                      AnimatedBuilder(
+                        animation: _categoryOffsetX,
+                        builder: (context, child) => Transform.translate(
+                          offset: Offset(_categoryOffsetX.value, 0),
+                          child: child,
+                        ),
+                        child: _buildContentPage(
+                          colors,
+                          _activeCategory,
+                          primary: true,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           ],
         ),
       ),
@@ -267,12 +530,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                   borderRadius: BorderRadius.circular(20),
                   child: InkWell(
                     borderRadius: BorderRadius.circular(20),
-                    onTap: () {
-                      setState(() {
-                        _activeCategory = cat;
-                      });
-                      _scrollToActiveTab();
-                    },
+                    onTap: () => _selectCategory(cat),
                     child: Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 16,
@@ -320,18 +578,27 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     );
   }
 
-  Widget _buildContent(ThemeColors colors) {
-    // Only build the active category to avoid constructing all categories
-    // (and their heavy providers like plugins, directory scanning, etc.) on
-    // first render, which causes a noticeable delay when navigating here.
+  /// 构建某个分类的整页内容。
+  ///
+  /// 只构建当前分类（外加拖动时露出的下一屏），不会把五个分类的重型
+  /// provider（插件、目录扫描等）全都在首帧拉起来。
+  ///
+  /// [primary] 为当前分类：它可以走 `PrimaryScrollController`；拖动中露出的
+  /// 下一屏传 false，两页才不会抢同一个 controller 报错。
+  Widget _buildContentPage(
+    ThemeColors colors,
+    SettingsCategory cat, {
+    required bool primary,
+  }) {
     return SingleChildScrollView(
+      primary: primary ? null : false,
       padding: EdgeInsets.fromLTRB(
         ResponsiveLayout.horizontalPadding(context),
         AppSpacing.md,
         ResponsiveLayout.horizontalPadding(context),
         AppSpacing.xxxl,
       ),
-      child: _buildContentForCategory(_activeCategory),
+      child: _buildContentForCategory(cat),
     );
   }
 
