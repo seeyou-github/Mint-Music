@@ -154,6 +154,24 @@ class _AppState extends ConsumerState<App> {
     );
   }
 
+  /// 把当前封面主色同步给 core 层的 [coverAccentColorProvider]。
+  ///
+  /// 「主界面跟随封面变色」只在这份颜色非空时生效；颜色没算好 / 没有封面时
+  /// 什么都不做，背景会退回用户选的渐变。
+  void _syncCoverAccent() {
+    final color = ref
+        .read(currentCoverColorProvider)
+        .valueOrNull
+        ?.dominantColor;
+    if (color == null) return;
+    if (ref.read(coverAccentColorProvider) == color) return;
+    // build 期间不能直接改 provider，推到下一帧。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      ref.read(coverAccentColorProvider.notifier).state = color;
+    });
+  }
+
   /// 让通知卡片的底色跟随当前封面（取色算法与播放页背景一致）。
   ///
   /// 直接对「这一刻的当前歌曲」取色，不走 currentCoverColorProvider：切歌瞬间
@@ -256,6 +274,14 @@ class _AppState extends ConsumerState<App> {
     // 主界面背景渐变（外观设置里选的颜色）：放在 build 顶层订阅，
     // MaterialApp.builder 里只取值，避免在嵌套 builder 回调里 ref.watch。
     final backgroundGradient = ref.watch(backgroundGradientProvider);
+    // 「主界面跟随封面变色」要用的主色：core 层只负责存颜色，取色在
+    // features 层（currentCoverColorProvider），所以在这里同步过去。
+    // 监听负责切歌，[_syncCoverAccent] 负责首帧（监听不回溯已有结果）。
+    ref.listen(currentCoverColorProvider, (previous, next) {
+      _syncCoverAccent();
+    });
+    _syncCoverAccent();
+
     // 同步全局语言,供非 widget 场景(如歌词控制器)使用
     currentLocale = appLocale;
 

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'background_gradient.dart';
+import 'background_derivation.dart';
 import 'theme_colors.dart';
 
 export 'theme_colors.dart';
@@ -174,11 +175,32 @@ final baseThemeColorsProvider = Provider<ThemeColors>((ref) {
   });
 });
 
+/// 「主界面跟随封面变色」开关（仅深色主题生效）。
+///
+/// 打开后主界面背景由「当前歌曲封面主色」派生，算法与播放详情页背景
+/// 完全相同（见 [deriveBackgroundGradient]）；浅色主题下忽略这个开关。
+final coverBackgroundEnabledProvider = StateProvider<bool>((ref) => false);
+
+/// 当前封面主色。
+///
+/// core 层不该直接依赖播放器的取色器（那是 features 层），所以由 app 层在
+/// `currentCoverColorProvider` 出结果时把颜色写进来，这里只负责存。
+final coverAccentColorProvider = StateProvider<Color?>((ref) => null);
+
 /// 主界面背景渐变（用户在外观设置里选的颜色 → 固定 3 段）。
 ///
 /// 只看设置里的颜色，不订阅 [themeColorsProvider]，不会成环。
 final backgroundGradientProvider = Provider<BackgroundGradient>((ref) {
   final isLight = ref.watch(isLightThemeActiveProvider);
+  // 「跟随封面变色」只在深色主题生效：拿到封面主色就直接走派生算法，
+  // 和播放详情页 / 歌词页背景是同一个函数，两处观感一致。
+  if (!isLight && ref.watch(coverBackgroundEnabledProvider)) {
+    final accent = ref.watch(coverAccentColorProvider);
+    if (accent != null) {
+      final colors = deriveBackgroundGradient(accent, isLight: false);
+      return BackgroundGradient(colors: colors, mid: colors[1]);
+    }
+  }
   final hexes = ref.watch(
     isLight
         ? lightThemeBackgroundColorsProvider

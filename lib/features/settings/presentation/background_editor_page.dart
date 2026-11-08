@@ -149,6 +149,10 @@ class _BackgroundEditorPageState extends ConsumerState<BackgroundEditorPage> {
   Widget build(BuildContext context) {
     final colors = ref.watch(themeColorsProvider);
     final baseColors = ref.watch(baseThemeColorsProvider);
+    // 深色主题 + 已开启「跟随封面变色」时，主界面背景由封面决定，这里的
+    // 保存结果要等开关关掉才看得到，先说清楚免得用户以为没生效。
+    final coverFollow =
+        !widget.isLight && ref.watch(coverBackgroundEnabledProvider);
     final derived = _derived;
     // 预览卡片 / 底栏的底色用「真实派生出来的那套」算，所见即所得。
     final preview = baseColors.copyWithBackground(derived[1]);
@@ -172,6 +176,13 @@ class _BackgroundEditorPageState extends ConsumerState<BackgroundEditorPage> {
                   ),
                   children: [
                     _buildPreview(colors, preview, derived),
+                    if (coverFollow) ...[
+                      const SizedBox(height: AppSpacing.sm),
+                      Text(
+                        context.tr('已开启「主界面跟随封面变色」，这条渐变要关掉开关后才会显示'),
+                        style: TextStyle(fontSize: 12, color: colors.textHint),
+                      ),
+                    ],
                     const SizedBox(height: AppSpacing.lg),
                     _sectionTitle(colors, '基色'),
                     const SizedBox(height: AppSpacing.sm),

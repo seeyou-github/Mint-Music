@@ -594,6 +594,8 @@ final settingsInitProvider = FutureProvider<void>((ref) async {
       .getCustomBackgroundColorsLight();
   ref.read(customBackgroundColorsDarkProvider.notifier).state = svc
       .getCustomBackgroundColorsDark();
+  ref.read(coverBackgroundEnabledProvider.notifier).state = svc
+      .getCoverBackground();
   ref.read(customBackgroundGradientsLightProvider.notifier).state = svc
       .getCustomBackgroundGradientsLight();
   ref.read(customBackgroundGradientsDarkProvider.notifier).state = svc

@@ -188,6 +188,14 @@ class SettingsService {
   Future<void> setCustomBackgroundColorsDark(List<String> values) =>
       _prefs.setStringList(_backgroundCustomColorsDarkKey, values);
 
+  // -- 主界面跟随封面变色（仅深色主题） --
+  static const _coverBackgroundKey = 'cover_background_dark';
+
+  /// 主界面背景是否跟随当前歌曲封面变色（默认关闭）。
+  bool getCoverBackground() => _prefs.getBool(_coverBackgroundKey) ?? false;
+  Future<void> setCoverBackground(bool v) =>
+      _prefs.setBool(_coverBackgroundKey, v);
+
   // -- 自定义背景渐变（「背景渐变 → 新增颜色」保存的三色渐变） --
   static const _backgroundGradientsLightKey = 'background_gradients_light';
   static const _backgroundGradientsDarkKey = 'background_gradients_dark';

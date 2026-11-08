@@ -1088,6 +1088,9 @@ class _AppearanceContent extends ConsumerWidget {
       );
     }
 
+    // 「主界面跟随封面变色」开关（仅深色主题）。
+    final coverBackground = ref.watch(coverBackgroundEnabledProvider);
+
     /// 背景渐变行：右侧是当前渐变的预览条，点开可以配置 1~3 个颜色。
     Widget buildBackgroundGradientRow() {
       final hexes = ref.watch(
@@ -1191,6 +1194,25 @@ class _AppearanceContent extends ConsumerWidget {
         ),
         SettingDivider(colors: colors),
         buildBackgroundGradientRow(),
+        SettingDivider(colors: colors),
+        // 仅深色主题生效：浅色主题下背景必须够亮，跟封面色会看不清文字。
+        SettingRow(
+          icon: Icons.auto_awesome,
+          title: '主界面跟随封面变色',
+          subtitle: isLight ? '仅深色主题生效，当前是浅色主题' : '背景由当前歌曲封面主色派生，与播放详情页同一套算法',
+          trailing: Switch(
+            value: coverBackground,
+            onChanged: (v) => _persistBool(
+              context,
+              coverBackgroundEnabledProvider,
+              v,
+              (s) => s.setCoverBackground(v),
+            ),
+            activeTrackColor: colors.primary.withValues(alpha: 0.3),
+            activeThumbColor: colors.primary,
+          ),
+          colors: colors,
+        ),
         SettingDivider(colors: colors),
         buildColorRow(
           icon: Icons.text_fields,
