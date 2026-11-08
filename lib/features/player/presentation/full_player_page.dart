@@ -158,7 +158,6 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
       playbackControllerProvider.select((s) => s.isPlaying),
     );
     final bgMode = ref.watch(fullScreenBackgroundModeProvider);
-    final bgAnimation = ref.watch(appearanceBgAnimationProvider);
     final audioVisualizer = ref.watch(audioVisualizerEnabledProvider);
     final coverColorAsync = ref.watch(currentCoverColorProvider);
 
@@ -180,7 +179,6 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
                 dominantColor: dominantColor,
                 coverUrl: song?.coverUrl,
                 mode: bgMode,
-                animate: bgAnimation,
               ),
             ),
             // 手机横屏左栏是紧凑的「封面 + 控件」，没有留给频谱条的空间，
@@ -852,8 +850,11 @@ class _PlayerCoverPage extends ConsumerWidget {
                         lightness: 0.22,
                       ).withValues(alpha: 0.45)
                     : Colors.black.withValues(alpha: 0.5),
-                blurRadius: math.min(50, coverSize * 0.16),
-                offset: Offset(0, math.min(25, coverSize * 0.08)),
+                // 阴影要紧贴封面：原来的 50px 模糊 + 25px 下移是按更大的
+                // 封面给的，封面缩小后会扩散到歌名 / 歌手那一块，看起来像
+                // 另一个更大的框，和封面对不齐。
+                blurRadius: math.min(24, coverSize * 0.075),
+                offset: Offset(0, math.min(8, coverSize * 0.025)),
               ),
             ],
           ),
@@ -1525,29 +1526,24 @@ class _BackgroundLayer extends StatefulWidget {
   final Color? dominantColor;
   final String? coverUrl;
   final FullScreenBackgroundMode mode;
-  final bool animate;
 
   const _BackgroundLayer({
     required this.dominantColor,
     required this.coverUrl,
     required this.mode,
-    required this.animate,
   });
 
   @override
   State<_BackgroundLayer> createState() => _BackgroundLayerState();
 }
 
-class _BackgroundLayerState extends State<_BackgroundLayer>
-    with SingleTickerProviderStateMixin {
-  AnimationController? _controller;
+class _BackgroundLayerState extends State<_BackgroundLayer> {
   Color? _displayedDominantColor;
 
   @override
   void initState() {
     super.initState();
     _displayedDominantColor = widget.dominantColor;
-    _syncAnimation();
   }
 
   @override
@@ -1559,47 +1555,12 @@ class _BackgroundLayerState extends State<_BackgroundLayer>
     if (widget.dominantColor != null) {
       _displayedDominantColor = widget.dominantColor;
     }
-    if (oldWidget.animate != widget.animate ||
-        oldWidget.mode != widget.mode ||
-        oldWidget.coverUrl != widget.coverUrl) {
-      _syncAnimation();
-    }
-  }
-
-  void _syncAnimation() {
-    final shouldAnimate =
-        widget.animate &&
-        widget.mode == FullScreenBackgroundMode.cover &&
-        widget.coverUrl != null &&
-        widget.coverUrl!.isNotEmpty;
-    if (shouldAnimate) {
-      _controller ??= AnimationController(
-        vsync: this,
-        duration: const Duration(seconds: 16),
-      )..repeat(reverse: true);
-    } else {
-      _controller?.dispose();
-      _controller = null;
-    }
   }
 
   @override
-  void dispose() {
-    _controller?.dispose();
-    super.dispose();
-  }
+  Widget build(BuildContext context) => _buildLayer(context);
 
-  @override
-  Widget build(BuildContext context) {
-    final controller = _controller;
-    if (controller == null) return _buildLayer(context, 0);
-    return AnimatedBuilder(
-      animation: controller,
-      builder: (context, _) => _buildLayer(context, controller.value),
-    );
-  }
-
-  Widget _buildLayer(BuildContext context, double animationValue) {
+  Widget _buildLayer(BuildContext context) {
     final mode = widget.mode;
     final dominantColor = _displayedDominantColor;
     return Stack(
@@ -1607,9 +1568,7 @@ class _BackgroundLayerState extends State<_BackgroundLayer>
         Container(color: const Color(0xFF09090B)),
         if (dominantColor != null && mode == FullScreenBackgroundMode.theme)
           AnimatedContainer(
-            duration: widget.animate
-                ? const Duration(seconds: 1)
-                : Duration.zero,
+            duration: const Duration(milliseconds: 600),
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topCenter,
@@ -1630,28 +1589,15 @@ class _BackgroundLayerState extends State<_BackgroundLayer>
           Stack(
             children: [
               Positioned.fill(
-                child: widget.animate
-                    ? Transform.scale(
-                        scale: 1.0 + animationValue * 0.018,
-                        child: MusicCoverImage(
-                          url: widget.coverUrl,
-                          fit: BoxFit.cover,
-                          width: double.infinity,
-                          height: double.infinity,
-                          cacheWidth: 512,
-                          cacheHeight: 512,
-                          filterQuality: FilterQuality.low,
-                        ),
-                      )
-                    : MusicCoverImage(
-                        url: widget.coverUrl,
-                        fit: BoxFit.cover,
-                        width: double.infinity,
-                        height: double.infinity,
-                        cacheWidth: 512,
-                        cacheHeight: 512,
-                        filterQuality: FilterQuality.low,
-                      ),
+                child: MusicCoverImage(
+                  url: widget.coverUrl,
+                  fit: BoxFit.cover,
+                  width: double.infinity,
+                  height: double.infinity,
+                  cacheWidth: 512,
+                  cacheHeight: 512,
+                  filterQuality: FilterQuality.low,
+                ),
               ),
               Positioned.fill(
                 child: Container(
