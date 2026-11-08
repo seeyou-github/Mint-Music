@@ -158,13 +158,20 @@ class CategoryPlaylistsNotifier
         for (final playlist in [...current, ...result.items])
           playlist.id: playlist,
       }.values.toList();
-      _total = result.total ?? _total;
-      _noMore =
-          result.isEnd == true ||
-          merged.length == current.length ||
-          (_total != null && merged.length >= _total!);
+      // 超时 / 失败时插件可能返回 total: 0，不能让它覆盖之前学到的总条数。
+      if (result.total != null && result.total! > 0) {
+        _total = result.total;
+      }
+      // 接口给了总条数时只认「已加载 >= 总数」这一个收尾条件。单次请求返回
+      // 空 / 全是重复项（网络抖动常见）就置 noMore，分页条会按当前缓冲把
+      // 49 页收窄成 10 页。没给总条数才沿用原来的启发式判断。
+      final hasApiTotal = _total != null && _total! > 0;
+      _noMore = hasApiTotal
+          ? merged.length >= _total!
+          : result.isEnd == true || merged.length == current.length;
       if (_noMore) {
-        _total = merged.length;
+        // 有总数时保留它，不要用已加载条数覆盖（否则总页数会被改写）。
+        _total ??= merged.length;
       } else {
         _page++;
       }
@@ -213,8 +220,18 @@ class CategoryPlaylistsNotifier
         requestId: requestId,
       );
       if (!mounted || requestId != _requestId) return null;
-      // 上游总数偏大时目标页可能取不到数据：往回找最近的有数据页，
-      // 避免停在空白页上。最多退 3 页，不让这次跳转变成逐页扫描。
+      // 接口给了总条数（分类歌单会返回 total）时，目标页取不到数据基本都是
+      // 这次请求超时 / 失败，不能据此判定「数据到此为止」。以前会往回退到
+      // 上一页并按实际停留页收窄 total，49 页就这样被缩成了 10 页，后面的
+      // 页码也没法再点。这里直接当失败返回：缓冲、总条数、分页条原样保留，
+      // 用户重新点一次页码即可重试。
+      final initialTotal = window?.total ?? _total;
+      final hasApiTotal = initialTotal != null && initialTotal > 0;
+      if (hasApiTotal && (window == null || window.items.isEmpty)) {
+        return null;
+      }
+      // 只有拿不到总条数的音源才沿用「上游总数偏大」的兜底：往回找最近的
+      // 有数据页，避免停在空白页上。最多退 3 页，不让跳转变成逐页扫描。
       for (
         var attempt = 0;
         window != null && window.items.isEmpty && target > 1 && attempt < 3;
@@ -234,14 +251,22 @@ class CategoryPlaylistsNotifier
       if (window == null || window.items.isEmpty) return null;
 
       _page = window.nextApiPage;
-      // 往回退过说明目标页之后已经没有数据了（上游总数偏大）：按实际停留的
-      // 页收尾，避免分页条仍显示一个点进去是空白的末页。
       final recovered = target != page;
       final fullPage = window.items.length >= pageSize;
-      _noMore = recovered || window.ended || !fullPage;
-      _total = recovered || !fullPage
-          ? (target - 1) * pageSize + window.items.length
-          : window.total;
+      // 接口给了总条数就以它为准：一次只拿到不满页的数据（网络抖动）或往回
+      // 退过，都不能拿窗口条数覆盖总条数，否则分页条会从 49 页缩到当前这一页。
+      // 只有拿不到总条数时才按「实际停留页」兜底收尾。
+      if (hasApiTotal) {
+        _total = window.total ?? _total;
+        // 总条数对应的数据没取完就一直保留 hasMore，页码始终按总条数算；
+        // 收尾交给 fetchPlaylists 的「已加载 >= total」。
+        _noMore = false;
+      } else {
+        _noMore = recovered || window.ended || !fullPage;
+        _total = recovered || !fullPage
+            ? (target - 1) * pageSize + window.items.length
+            : null;
+      }
       state = AsyncValue.data(window.items);
       return target;
     } catch (_) {
@@ -292,7 +317,10 @@ class CategoryPlaylistsNotifier
       if (result.items.length > (_apiPageSize ?? 0)) {
         _apiPageSize = result.items.length;
       }
-      total = result.total ?? total;
+      // 失败时插件可能给 total: 0，保留之前学到的总数（同上）。
+      if (result.total != null && result.total! > 0) {
+        total = result.total;
+      }
       var index = skip < result.items.length ? skip : result.items.length;
       skip = 0;
       for (; index < result.items.length && items.length < pageSize; index++) {
