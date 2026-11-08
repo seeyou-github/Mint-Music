@@ -44,21 +44,42 @@ class AppPageBackground extends ConsumerWidget {
         ? WindowsTitleBar.height
         : 0.0;
     final windowHeight = MediaQuery.sizeOf(context).height;
-    // 把「窗口 0→1 的渐变」压缩进页面区域：渐变起点落在窗口的
-    // topInset/windowHeight 处（Alignment 的 y = 2f - 1）。
-    final beginY = windowHeight > 0 ? (2 * topInset / windowHeight) - 1 : -1.0;
-    return AnimatedContainer(
-      // 与全局那层同一条曲线：改「背景渐变」时两边一起过渡，不会一快一慢。
-      duration: const Duration(seconds: 1),
-      curve: Curves.easeInOut,
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment(0, beginY),
-          end: Alignment.bottomCenter,
-          colors: gradient.colors,
+    // 渐变的盒子按「整个窗口」的高度铺，再上移 topInset：页面里看到的就是
+    // 全局渐变从 topInset 到窗口底部那一段，相位天然对齐。
+    //
+    // 之前是拿 MediaQuery 高度反推 `Alignment(0, 2*topInset/H - 1)`，把渐变
+    // 压缩进页面区域。问题在于窗口从最小化恢复 / 刚创建时，MediaQuery 会先
+    // 报一个很小的尺寸（几十 px），算出来的相位接近 +1，整个窗口背景被压成
+    // 底部一条、看起来「整体变浅」；尺寸恢复后 1 秒的 AnimatedContainer 又把
+    // 它补间回来，视觉上就是「窗口一出现，背景由浅变深」。
+    //
+    // 现在相位是常量，窗口尺寸只影响这个盒子的高度（被 Stack 裁掉），
+    // 尺寸抖动不会再改变 decoration，也就不会触发那段补间。
+    final boxHeight = windowHeight < 200 ? 200.0 : windowHeight;
+    return Stack(
+      // 超出页面的部分（顶栏那一条）直接裁掉。
+      clipBehavior: Clip.hardEdge,
+      children: [
+        Positioned(
+          left: 0,
+          right: 0,
+          top: -topInset,
+          height: boxHeight,
+          child: AnimatedContainer(
+            // 与全局那层同一条曲线：改「背景渐变」时两边一起过渡，不会一快一慢。
+            duration: const Duration(seconds: 1),
+            curve: Curves.easeInOut,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: gradient.colors,
+              ),
+            ),
+          ),
         ),
-      ),
-      child: child,
+        Positioned.fill(child: child),
+      ],
     );
   }
 }
