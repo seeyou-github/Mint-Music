@@ -823,32 +823,6 @@ const List<(String, String)> _presetColors = [
   ('#06B6D4', '蓝绿'),
 ];
 
-/// 浅色模式「背景颜色」的内置颜色：整体偏浅，避免选中后看不清文字。
-const List<(String, String)> _lightBackgroundPresets = [
-  (defaultLightBackgroundColor, '默认暖米'),
-  ('#FFFFFF', '纯白'),
-  ('#F5F5F5', '浅灰'),
-  ('#F0F4F8', '雾蓝'),
-  ('#F5F0E8', '米白'),
-  ('#EDF3EE', '薄荷'),
-  ('#F6EFF6', '淡紫'),
-  ('#FBF0EC', '浅粉'),
-  ('#FFF9E6', '奶油'),
-];
-
-/// 深色模式「背景颜色」的内置颜色：整体偏深，保持深色外观。
-const List<(String, String)> _darkBackgroundPresets = [
-  (defaultDarkBackgroundColor, '默认深空灰'),
-  ('#000000', '纯黑'),
-  ('#121212', '深灰'),
-  ('#1A1A1A', '炭黑'),
-  ('#14181C', '深蓝灰'),
-  ('#1A1620', '深紫灰'),
-  ('#101A16', '墨绿'),
-  ('#1A1414', '深褐'),
-  ('#0F172A', '午夜蓝'),
-];
-
 /// 浅色模式「背景渐变」的内置组合（起始色、结束色、名称）。
 const List<(String, String, String)> _lightGradientPresets = [
   ('#DCD7C9', '#F3F1EC', '暖米'),
@@ -1518,8 +1492,9 @@ class _AppearanceContent extends ConsumerWidget {
 
   /// 新增 / 编辑自定义背景渐变。
   ///
-  /// 弹窗里是三个色块（各带色值），下面的调色板只作用于**当前选中的色块**：
-  /// 点哪个色块就切到哪一块；三个色块都选好颜色后「保存」才能点。
+  /// 弹窗里是三个色块（各带色值），下面的取色区（饱和度/明度方块 + 色相
+  /// 滑条）只作用于**当前选中的色块**：点哪个色块就切到哪一块；三个色块都
+  /// 选好颜色后「保存」才能点。
   void _showGradientEditor(
     BuildContext context,
     ThemeColors colors, {
@@ -1534,14 +1509,6 @@ class _AppearanceContent extends ConsumerWidget {
     final customProvider = isLight
         ? customBackgroundGradientsLightProvider
         : customBackgroundGradientsDarkProvider;
-    final palette = _mergeColors(
-      isLight ? _lightBackgroundPresets : _darkBackgroundPresets,
-      container.read(
-        isLight
-            ? customBackgroundColorsLightProvider
-            : customBackgroundColorsDarkProvider,
-      ),
-    );
 
     // 三个色块的颜色（null = 还没选）。放在 builder 外面，
     // StatefulBuilder 重建时状态才不会丢。
@@ -1646,38 +1613,29 @@ class _AppearanceContent extends ConsumerWidget {
                       ),
                     ),
                     const SizedBox(height: AppSpacing.sm),
-                    Wrap(
-                      spacing: 12,
-                      runSpacing: 12,
-                      children: [
-                        for (final item in palette)
-                          _ColorDot(
-                            hex: item.$1,
-                            selected:
-                                (slots[active] ?? '').toUpperCase() ==
-                                item.$1.toUpperCase(),
-                            colors: colors,
-                            onTap: () {
-                              setSheetState(() {
-                                slots[active] = item.$1;
-                                // 选完自动跳到下一个还没选的色块，
-                                // 连着点三次就能保存。
-                                for (
-                                  var step = 1;
-                                  step < slots.length;
-                                  step++
-                                ) {
-                                  final next = (active + step) % slots.length;
-                                  if (slots[next] == null) {
-                                    active = next;
-                                    break;
-                                  }
-                                }
-                              });
-                            },
-                          ),
-                      ],
+                    // 饱和度 / 明度方块 + 色相滑条，只作用于当前选中的色块。
+                    // 没选过颜色的色块先用主题色占位（拖一下 / 点一下就成为
+                    // 这个色块的实际颜色）。
+                    Center(
+                      child: HsvColorArea(
+                        color: slots[active] == null
+                            ? colors.primary
+                            : _parseHexColor(slots[active]!),
+                        maxSize: 280,
+                        onChanged: (color) {
+                          setSheetState(() {
+                            slots[active] = _toHexString(color);
+                          });
+                        },
+                      ),
                     ),
+                    if (slots[active] == null) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        sheetContext.tr('在色板上点一下，即为当前色块取色'),
+                        style: TextStyle(fontSize: 12, color: colors.textHint),
+                      ),
+                    ],
                     const SizedBox(height: AppSpacing.lg),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.end,
