@@ -47,16 +47,6 @@ void main() async {
     print('>>> main: 已启用 media_kit Windows 音频后端');
   }
 
-  print('>>> main: 开始初始化音频服务...');
-
-  try {
-    await initAudioService().timeout(const Duration(seconds: 10));
-    print('>>> main: 音频服务初始化成功');
-  } catch (e, stack) {
-    print('>>> main: 音频服务初始化失败: $e');
-    print('>>> main: 堆栈: $stack');
-  }
-
   print('>>> main: 设置初始化...');
 
   final container = ProviderContainer();
@@ -100,6 +90,20 @@ void main() async {
     print('>>> main: 缓存目录 -> ${CachePaths.root ?? "应用默认缓存目录"}');
   } catch (e) {
     print('>>> main: 缓存目录初始化失败: $e');
+  }
+
+  // 音频服务必须排在缓存目录配置之后：`AudioService.init()` 的 `cacheManager`
+  // 不传就会创建 `DefaultCacheManager`（key 写死 `libCachedImageData`），它的
+  // 索引库会建到 files 目录、封面文件写到系统 cache 目录，且构造时就 open 建库
+  // —— 表现就是每次启动都凭空多出 `libCachedImageData.db` 和对应文件夹，
+  // 绕过「设置 - 缓存目录」。所以这里在 `AppImageCache.configure()` 之后才初始化。
+  print('>>> main: 开始初始化音频服务...');
+  try {
+    await initAudioService().timeout(const Duration(seconds: 10));
+    print('>>> main: 音频服务初始化成功');
+  } catch (e, stack) {
+    print('>>> main: 音频服务初始化失败: $e');
+    print('>>> main: 堆栈: $stack');
   }
 
   // 旧版把歌词缓存成「一首歌一个 JSON 文件」，现在搬进临时库。

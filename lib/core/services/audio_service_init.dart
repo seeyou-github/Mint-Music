@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../features/player/platform/audio_handler.dart';
+import '../../shared/services/app_image_cache.dart';
 
 MusicAudioHandler? _audioHandler;
 
@@ -47,6 +48,10 @@ Future<void> initAudioService() async {
       androidShowNotificationBadge: false,
       notificationColor: const Color(0xFF1DB954),
     ),
+    // 通知栏 / 锁屏封面也走 `image_cache`。不传的话 audio_service 会创建
+    // `DefaultCacheManager`（key 写死为 `libCachedImageData`），把封面缓存到
+    // 系统 cache 目录、索引库建到 files 目录，完全绕过「设置 - 缓存目录」。
+    cacheManager: AppImageCache.manager,
   );
 
   debugPrint('[AudioService] 初始化完成');

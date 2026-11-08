@@ -43,40 +43,57 @@ class AppImageCache {
   /// 在设置初始化完成 / 修改缓存目录后调用。
   static Future<void> configure() async {
     try {
-      final dir = await CachePaths.subDirectory(CachePaths.imageCache);
-      final previousDir = _currentDir;
-      _currentDir = dir;
-      final key = '${_key}_${dir.path.hashCode.toRadixString(16)}';
-      if (key == _currentKey && _manager != null) return;
-      _currentKey = key;
-      _manager = CacheManager(
-        Config(
-          key,
-          // 30 天是「最后使用时间」的窗口，不是下载时间：
-          // flutter_cache_manager 清理时按索引里的 `touched` 判断
-          // （见 SqliteCacheInfoRepository.getOldObjects），而每次读到缓存都会
-          // 把 `touched` 刷成当前时间，所以常用的图片不会被删。
-          // `validTill` 只用来决定「要不要在后台重新下载一份」，两者互不影响。
-          stalePeriod: stalePeriod,
-          maxNrOfCacheObjects: maxCachedImages,
-          // 缓存索引（索引 + 元数据）放进临时库：以前是一个 JSON 文件，
-          // 每新增 / 淘汰一张图片都要整个重写一遍。
-          repo: SqliteCacheInfoRepository(
-            legacyJsonPath: p.join(dir.path, '$key.json'),
-          ),
-          fileSystem: _CacheDirFileSystem(dir.path),
-        ),
+      await _configureWith(
+        await CachePaths.subDirectory(CachePaths.imageCache),
       );
-      // 缓存目录变了：旧目录里的图片已经没人引用（新管理器会重新下载），
-      // 直接删掉，否则会一直占着旧目录的空间。
-      if (previousDir != null && previousDir.path != dir.path) {
-        unawaited(_deleteDirectoryQuietly(previousDir));
-      }
-      unawaited(_cleanupLegacyIndex());
     } catch (e) {
-      // 初始化失败时退回默认缓存管理器，不影响页面功能。
       debugPrint('[AppImageCache] 配置缓存目录失败: $e');
+      // 兜底也**不能**退回 [DefaultCacheManager]：它的 key 写死为
+      // `libCachedImageData`，会把图片写到系统 cache 目录、索引库建到
+      // files 目录（见 `manager` 的说明），等于绕过「设置 - 缓存目录」。
+      try {
+        final fallback = io.Directory(
+          p.join((await AppPaths.tempDirectory()).path, CachePaths.imageCache),
+        );
+        await fallback.create(recursive: true);
+        await _configureWith(fallback);
+      } catch (e2) {
+        debugPrint('[AppImageCache] 兜底缓存目录也不可用: $e2');
+      }
     }
+  }
+
+  /// 用指定目录创建 / 替换缓存管理器。
+  static Future<void> _configureWith(io.Directory dir) async {
+    final previousDir = _currentDir;
+    _currentDir = dir;
+    final key = '${_key}_${dir.path.hashCode.toRadixString(16)}';
+    if (key == _currentKey && _manager != null) return;
+    _currentKey = key;
+    _manager = CacheManager(
+      Config(
+        key,
+        // 30 天是「最后使用时间」的窗口，不是下载时间：
+        // flutter_cache_manager 清理时按索引里的 `touched` 判断
+        // （见 SqliteCacheInfoRepository.getOldObjects），而每次读到缓存都会
+        // 把 `touched` 刷成当前时间，所以常用的图片不会被删。
+        // `validTill` 只用来决定「要不要在后台重新下载一份」，两者互不影响。
+        stalePeriod: stalePeriod,
+        maxNrOfCacheObjects: maxCachedImages,
+        // 缓存索引（索引 + 元数据）放进临时库：以前是一个 JSON 文件，
+        // 每新增 / 淘汰一张图片都要整个重写一遍。
+        repo: SqliteCacheInfoRepository(
+          legacyJsonPath: p.join(dir.path, '$key.json'),
+        ),
+        fileSystem: _CacheDirFileSystem(dir.path),
+      ),
+    );
+    // 缓存目录变了：旧目录里的图片已经没人引用（新管理器会重新下载），
+    // 直接删掉，否则会一直占着旧目录的空间。
+    if (previousDir != null && previousDir.path != dir.path) {
+      unawaited(_deleteDirectoryQuietly(previousDir));
+    }
+    unawaited(_cleanupLegacyIndex());
   }
 
   /// 删除目录（失败静默：文件被占用时留给「清除缓存」处理）。
@@ -89,7 +106,22 @@ class AppImageCache {
   }
 
   /// 主题 / 列表 / 歌词页共用的缓存管理器。
-  static BaseCacheManager get manager => _manager ?? DefaultCacheManager();
+  ///
+  /// 正常情况下 `main()` 里已经 `await configure()` 过，这里直接返回。
+  /// 万一 configure() 还没生效（或失败），[DefaultCacheManager] 只是最后的
+  /// 兜底：它的缓存目录 / 索引库都在系统目录下（key = `libCachedImageData`），
+  /// 会绕过「设置 - 缓存目录」，所以只打一次日志，方便排查。
+  static BaseCacheManager get manager {
+    final existing = _manager;
+    if (existing != null) return existing;
+    if (!_fallbackWarned) {
+      _fallbackWarned = true;
+      debugPrint('[AppImageCache] 警告：configure() 尚未生效，本次改用系统默认缓存目录');
+    }
+    return DefaultCacheManager();
+  }
+
+  static bool _fallbackWarned = false;
 
   /// 读取缓存的图片字节；没有缓存、文件损坏时返回 null。
   ///
