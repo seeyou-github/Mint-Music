@@ -350,6 +350,29 @@ Win32Window::MessageHandler(HWND hwnd,
       break;
     }
 
+    case WM_NCACTIVATE: {
+      // 自绘标题栏模式下必须拦下来：窗口的激活状态一变（失焦 / 重新获得焦点，
+      // 或点了自绘标题栏触发 WM_NCLBUTTONDOWN），DefWindowProc 就会按系统默认
+      // 样式把非客户区整块重画回来 —— 表现为窗口四周突然冒出一圈老式 Windows
+      // 边框，连系统标题栏一起。
+      //
+      // 只拦 WM_NCPAINT 不够（实测它走的是另一条重绘路径），必须在这里直接
+      // 返回，不让 DefWindowProc 有机会去画。
+      if (HasCustomTitleBar(hwnd)) {
+        return TRUE;
+      }
+      break;
+    }
+
+    case WM_NCPAINT: {
+      // 自绘标题栏模式下没有非客户区，画什么都没有意义；交回 DefWindowProc
+      // 反而会按默认样式把边框画出来。
+      if (HasCustomTitleBar(hwnd)) {
+        return 0;
+      }
+      break;
+    }
+
     case WM_DESTROY:
       window_handle_ = nullptr;
       Destroy();
