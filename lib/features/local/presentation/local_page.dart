@@ -773,27 +773,34 @@ class _LocalPageState extends ConsumerState<LocalPage>
     } else if (velocity.abs() >= 260) {
       swipeLeft = velocity < 0;
     } else {
-      unawaited(_settleFolderDrag(null, 0));
+      unawaited(_settleFolderDrag(-1, 0));
       return;
     }
     final folders = _folderOptions;
     final index = folders.indexOf(_selectedFolder);
-    final next = index < 0 ? null : index + (swipeLeft ? 1 : -1);
-    if (next == null || next < 0 || next >= folders.length) {
+    final next = index < 0 ? -1 : index + (swipeLeft ? 1 : -1);
+    if (next < 0 || next >= folders.length) {
       // 已经是第一个 / 最后一个文件夹：没有可切换的，弹回原位。
-      unawaited(_settleFolderDrag(null, 0));
+      unawaited(_settleFolderDrag(-1, 0));
       return;
     }
-    unawaited(_settleFolderDrag(folders[next], swipeLeft ? 1 : -1));
+    unawaited(_settleFolderDrag(next, swipeLeft ? 1 : -1));
   }
 
   /// 收尾：两页一起滑到位后切换文件夹，或者回弹。
   ///
+  /// [target] 是目标文件夹在 [_folderOptions] 里的下标，传 -1 表示没有可切换的
+  /// 目标（已经在第一个 / 最后一个）。不能用 null 表示「没有目标」——「全部」
+  /// 这个文件夹本身就是 null，否则从最后一个文件夹滑回「全部」会被当成回弹，
+  /// 永远切不过去。
+  ///
   /// 切换用 `animate: false` —— 位移已经自己走完，再让 [_selectFolder] 做一次
   /// 「从侧边 28% 进场」会闪。
-  Future<void> _settleFolderDrag(String? next, int dir) async {
+  Future<void> _settleFolderDrag(int target, int dir) async {
     final width = MediaQuery.sizeOf(context).width;
-    if (next != null) {
+    final folders = _folderOptions;
+    if (target >= 0 && target < folders.length) {
+      final next = folders[target];
       await _animateFolderOffset(dir > 0 ? -width : width, 220);
       if (!mounted) return;
       _selectFolder(next, animate: false);
