@@ -1663,27 +1663,45 @@ class _LocalPageState extends ConsumerState<LocalPage>
                         ),
                         child: GestureDetector(
                           onTap: () async {
-                            await ref
-                                .read(localMusicNotifierProvider.notifier)
-                                .setDirectories(dirs);
-                            final scanned = await ref
-                                .read(localMusicNotifierProvider.notifier)
-                                .scanAll();
-                            if (context.mounted) {
-                              Navigator.pop(context);
-                              ScaffoldMessenger.of(context).showSnackBar(
+                            final messenger = ScaffoldMessenger.of(context);
+                            final notifier = ref.read(
+                              localMusicNotifierProvider.notifier,
+                            );
+                            // 一个目录都没有时不会开始扫描（见 scanAll 的注释），
+                            // 弹窗留着让用户继续添加，只提示一下。
+                            if (dirs.isEmpty) {
+                              messenger.showSnackBar(
                                 SnackBar(
-                                  content: Text(
-                                    context.tr(
-                                      scanned
-                                          ? '目录已保存并重新扫描'
-                                          : '还没有扫描目录，未扫描任何音乐',
-                                    ),
-                                  ),
+                                  content: Text(context.tr('未设置扫描目录时不会扫描任何音乐')),
                                   duration: const Duration(seconds: 2),
                                 ),
                               );
+                              return;
                             }
+                            // 目录已确定、扫描马上就开始：先把弹窗收掉再扫。
+                            // 几千首歌的扫描可能要跑很久，弹窗一直盖在上面既挡住
+                            // 顶部「已扫描 x/y」的进度，也让人分不清到底扫没扫。
+                            final wasScanning = ref
+                                .read(scanProgressProvider)
+                                .running;
+                            Navigator.pop(context);
+                            await notifier.setDirectories(dirs);
+                            final scanned = await notifier.scanAll();
+                            if (!mounted) return;
+                            messenger.showSnackBar(
+                              SnackBar(
+                                // 弹窗已经 pop 掉，这里不再持有可用的 BuildContext，
+                                // 用全局 tr（读当前语言镜像）拼提示文字。
+                                content: Text(
+                                  tr(
+                                    wasScanning
+                                        ? '目录已保存，当前正在扫描'
+                                        : (scanned ? '目录已保存并重新扫描' : '目录已保存'),
+                                  ),
+                                ),
+                                duration: const Duration(seconds: 2),
+                              ),
+                            );
                           },
                           child: Container(
                             width: double.infinity,
