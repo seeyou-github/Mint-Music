@@ -406,35 +406,6 @@ class _PlayQueueSheetContentState
                     ),
                 ],
               ),
-              // 定位当前播放歌曲的悬浮按钮（列表右侧悬浮）
-              if (currentIndex >= 0 && currentIndex < queue.length)
-                Positioned(
-                  right: 60,
-                  bottom: 40,
-                  child: GestureDetector(
-                    onTap: _locateCurrentSong,
-                    child: Container(
-                      width: 40,
-                      height: 40,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.15),
-                            blurRadius: 8,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: const Icon(
-                        Icons.my_location,
-                        size: 20,
-                        color: AppColors.primary,
-                      ),
-                    ),
-                  ),
-                ),
             ],
           ),
         ),
