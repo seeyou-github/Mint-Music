@@ -1668,12 +1668,36 @@ class PlaybackController extends StateNotifier<PlaybackState> {
 
   // ==================== 下一首 / 上一首（照搬 CeruMusic 逻辑） ====================
 
+  /// 预选切歌目标，提交时复用索引，避免随机播放再次抽签。
+  int? skipTargetIndex({required bool next}) {
+    final queue = state.queue;
+    if (queue.isEmpty) return null;
+    final currentIndex = _currentIndex;
+    if (next &&
+        (queue.length == 1 ||
+            (state.playMode == PlayMode.singleLoop &&
+                state.currentSong != null))) {
+      return currentIndex < 0 ? 0 : currentIndex;
+    }
+    final step = next ? 1 : -1;
+    final index = state.playMode == PlayMode.shuffle
+        ? Random().nextInt(queue.length)
+        : next
+        ? (currentIndex + 1) % queue.length
+        : currentIndex <= 0
+        ? queue.length - 1
+        : currentIndex - 1;
+    return _blocked(queue[index])
+        ? _nextPlayableIndex(index, step: step)
+        : index;
+  }
+
   /// 下一首（照搬 CeruMusic playNext）
   /// - singleLoop: 重置到 0，重新播放当前歌曲
   /// - 队列仅一首且非单曲循环 → 暂停
   /// - listLoop: (currentIndex + 1) % length
   /// - shuffle: 随机索引
-  Future<void> next({bool auto = false}) async {
+  Future<void> next({bool auto = false, int? targetIndex}) async {
     _cancelPendingAutoNext();
     if (state.queue.isEmpty) return;
 
@@ -1722,16 +1746,7 @@ class PlaybackController extends StateNotifier<PlaybackState> {
         return;
       }
 
-      final currentIndex = _currentIndex;
-      int nextIndex;
-
-      if (state.playMode == PlayMode.shuffle) {
-        // shuffle 模式：随机索引（可能与当前相同）
-        nextIndex = Random().nextInt(state.queue.length);
-      } else {
-        // listLoop 模式：顺序播放，到末尾后循环
-        nextIndex = (currentIndex + 1) % state.queue.length;
-      }
+      final nextIndex = targetIndex ?? skipTargetIndex(next: true) ?? 0;
 
       if (nextIndex >= 0 && nextIndex < state.queue.length) {
         // 自动连播（上一首自然播完）不从上次位置继续，避免连着听歌单时
@@ -1747,23 +1762,12 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   /// 上一首（照搬 CeruMusic playPrevious）
   /// - shuffle: 随机索引
   /// - listLoop/singleLoop: currentIndex - 1（到开头后循环到末尾）
-  Future<void> previous() async {
+  Future<void> previous({int? targetIndex}) async {
     _cancelPendingAutoNext();
     if (state.queue.isEmpty) return;
 
     try {
-      final currentIndex = _currentIndex;
-      int prevIndex;
-
-      if (state.playMode == PlayMode.shuffle) {
-        // shuffle 模式：随机索引
-        prevIndex = Random().nextInt(state.queue.length);
-      } else {
-        // 顺序模式：上一首，到开头后循环到末尾
-        prevIndex = currentIndex <= 0
-            ? state.queue.length - 1
-            : currentIndex - 1;
-      }
+      final prevIndex = targetIndex ?? skipTargetIndex(next: false) ?? 0;
 
       if (prevIndex >= 0 && prevIndex < state.queue.length) {
         await playSongAt(prevIndex, skipStep: -1);

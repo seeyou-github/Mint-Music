@@ -320,6 +320,207 @@ void main() {
     expect(retryRequests.map((request) => request.song.id), everyElement('b'));
   }
 
+  group('切歌预选', () {
+    for (final index in [0, 1, 2]) {
+      test('顺序循环索引 $index 双向预选及首尾回绕不触发播放', () async {
+        await controller.setPlayMode(PlayMode.listLoop);
+        expect(
+          controller.restoreSession(queue: [a, b, c], index: index),
+          isTrue,
+        );
+        final before = controller.playbackState;
+
+        expect(controller.skipTargetIndex(next: true), (index + 1) % 3);
+        expect(controller.skipTargetIndex(next: false), (index + 2) % 3);
+        await pumpEventQueue();
+
+        expect(controller.playbackState, same(before));
+        expect(audio.loads, isEmpty);
+        expect(audio.playedSongs, isEmpty);
+        expect(sources.requests, isEmpty);
+        expect(messages, isEmpty);
+      });
+    }
+
+    for (final next in [true, false]) {
+      test('${next ? '下一首' : '上一首'}预选与无参切歌均按方向跳过黑名单', () async {
+        await controller.setPlayMode(PlayMode.listLoop);
+        expect(
+          controller.restoreSession(queue: [a, b, c], index: next ? 0 : 2),
+          isTrue,
+        );
+        controller.isSongBlocked = (song) => song.id == 'b';
+        final target = next ? 2 : 0;
+
+        expect(controller.skipTargetIndex(next: next), target);
+        expect(sources.requests, isEmpty);
+        expect(audio.loads, isEmpty);
+        expect(audio.playedSongs, isEmpty);
+
+        if (next) {
+          await controller.next();
+        } else {
+          await controller.previous();
+        }
+        await pumpEventQueue();
+
+        final expectedId = next ? 'c' : 'a';
+        expect(controller.playbackState.currentIndex, target);
+        expect(playedIds(), [expectedId]);
+        expect(audio.loads.single.song?.id, expectedId);
+        expect(sources.requests.single.song.id, expectedId);
+      });
+    }
+
+    test('空队列双向预选返回 null，切歌无请求及提示', () async {
+      final before = controller.playbackState;
+      expect(controller.skipTargetIndex(next: true), isNull);
+      expect(controller.skipTargetIndex(next: false), isNull);
+
+      await controller.next();
+      await controller.previous();
+      await pumpEventQueue();
+
+      expect(controller.playbackState, same(before));
+      expect(audio.loads, isEmpty);
+      expect(audio.playedSongs, isEmpty);
+      expect(sources.requests, isEmpty);
+      expect(messages, isEmpty);
+    });
+
+    for (final mode in [PlayMode.listLoop, PlayMode.shuffle]) {
+      test('${mode.name} 全部拉黑时预选返回 null，无参切歌保留原有提示', () async {
+        await controller.setPlayMode(mode);
+        expect(
+          controller.restoreSession(queue: [a, b, c], index: 1),
+          isTrue,
+        );
+        controller.isSongBlocked = (_) => true;
+        final before = controller.playbackState;
+
+        expect(controller.skipTargetIndex(next: true), isNull);
+        expect(controller.skipTargetIndex(next: false), isNull);
+        expect(controller.playbackState, same(before));
+        expect(messages, isEmpty);
+
+        await controller.next();
+        expect(messages, ['队列里的歌曲都在黑名单里']);
+        await controller.previous();
+        await pumpEventQueue();
+
+        expect(messages, ['队列里的歌曲都在黑名单里', '队列里的歌曲都在黑名单里']);
+        expectSelectedB(playing: false);
+        expect(audio.loads, isEmpty);
+        expect(audio.playedSongs, isEmpty);
+        expect(sources.requests, isEmpty);
+      });
+    }
+
+    for (final next in [true, false]) {
+      test('随机${next ? '下一首' : '上一首'}提交实际预选索引，不重新抽签', () async {
+        await controller.setPlayMode(PlayMode.shuffle);
+        expect(
+          controller.restoreSession(queue: [a, b, c], index: 1),
+          isTrue,
+        );
+        final before = controller.playbackState;
+        final target = controller.skipTargetIndex(next: next);
+        expect(target, isNotNull);
+        final expectedId = before.queue[target!].id;
+        await pumpEventQueue();
+
+        expect(controller.playbackState, same(before));
+        expect(audio.loads, isEmpty);
+        expect(audio.playedSongs, isEmpty);
+        expect(sources.requests, isEmpty);
+
+        if (next) {
+          await controller.next(targetIndex: target);
+        } else {
+          await controller.previous(targetIndex: target);
+        }
+        await pumpEventQueue();
+
+        expect(controller.playbackState.currentIndex, target);
+        expect(controller.playbackState.currentSong?.id, expectedId);
+        expect(controller.playbackState.isPlaying, isTrue);
+        expect(audio.playing, isTrue);
+        expect(playedIds(), [expectedId]);
+        expect(audio.loads.single.song?.id, expectedId);
+        expect(sources.requests.single.song.id, expectedId);
+      });
+    }
+
+    test('单曲循环下一首预选并重播当前，上一首仍预选并播放前一首', () async {
+      await controller.setPlayMode(PlayMode.singleLoop);
+      await controller.setQueue([a, b, c], startIndex: 1);
+      await pumpEventQueue();
+      await controller.seek(const Duration(seconds: 42));
+      final before = controller.playbackState;
+      final resolutions = sources.requests.length;
+      final loads = audio.loads.length;
+      final target = controller.skipTargetIndex(next: true);
+
+      expect(target, 1);
+      expect(controller.playbackState, same(before));
+      expect(playedIds(), ['b']);
+      expect(audio.currentPosition, const Duration(seconds: 42));
+      expect(sources.requests, hasLength(resolutions));
+      expect(audio.loads, hasLength(loads));
+
+      await controller.next(targetIndex: target);
+      await pumpEventQueue();
+
+      expectSelectedB(playing: true);
+      expect(playedIds(), ['b', 'b']);
+      expect(audio.currentPosition, Duration.zero);
+      expect(sources.requests, hasLength(resolutions));
+      expect(audio.loads, hasLength(loads));
+
+      final previousTarget = controller.skipTargetIndex(next: false);
+      expect(previousTarget, 0);
+      await controller.previous(targetIndex: previousTarget);
+      await pumpEventQueue();
+
+      expect(controller.playbackState.currentIndex, 0);
+      expect(controller.playbackState.currentSong?.id, 'a');
+      expect(controller.playbackState.isPlaying, isTrue);
+      expect(playedIds(), ['b', 'b', 'a']);
+    });
+
+    for (final mode in [PlayMode.listLoop, PlayMode.shuffle]) {
+      test('${mode.name} 单首队列提交预选下一首仍归零暂停，不重播', () async {
+        await controller.setPlayMode(mode);
+        await startA();
+        await controller.seek(const Duration(seconds: 42));
+        final before = controller.playbackState;
+        final resolutions = sources.requests.length;
+        final loads = audio.loads.length;
+        final target = controller.skipTargetIndex(next: true);
+
+        expect(target, 0);
+        expect(controller.playbackState, same(before));
+        expect(audio.playing, isTrue);
+        expect(audio.currentPosition, const Duration(seconds: 42));
+        expect(playedIds(), ['a']);
+        expect(sources.requests, hasLength(resolutions));
+        expect(audio.loads, hasLength(loads));
+
+        await controller.next(targetIndex: target);
+        await pumpEventQueue();
+
+        expect(controller.playbackState.currentIndex, 0);
+        expect(controller.playbackState.currentSong?.id, 'a');
+        expect(controller.playbackState.isPlaying, isFalse);
+        expect(audio.playing, isFalse);
+        expect(audio.currentPosition, Duration.zero);
+        expect(playedIds(), ['a']);
+        expect(sources.requests, hasLength(resolutions));
+        expect(audio.loads, hasLength(loads));
+      });
+    }
+  });
+
   test('缓冲时 isAudible 为 false，恢复 ready 后重新为 true', () async {
     await startA();
 
