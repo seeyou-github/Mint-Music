@@ -582,6 +582,26 @@ const List<(String, String)> _darkBackgroundPresets = [
   ('#0F172A', '午夜蓝'),
 ];
 
+/// 浅色模式「背景渐变」的内置组合（起始色、结束色、名称）。
+const List<(String, String, String)> _lightGradientPresets = [
+  ('#DCD7C9', '#F3F1EC', '暖米'),
+  ('#E7EDF5', '#F8FAFD', '雾蓝'),
+  ('#E3EFE7', '#F7FBF8', '薄荷'),
+  ('#F0E9F6', '#FBF8FD', '淡紫'),
+  ('#F7EDE8', '#FDF8F5', '浅粉'),
+  ('#ECECEC', '#FAFAFA', '浅灰'),
+];
+
+/// 深色模式「背景渐变」的内置组合（起始色、结束色、名称）。
+const List<(String, String, String)> _darkGradientPresets = [
+  ('#212128', '#121216', '深空灰'),
+  ('#151E2E', '#0B1120', '午夜蓝'),
+  ('#12211A', '#091610', '墨绿'),
+  ('#221B2C', '#14101E', '深紫'),
+  ('#231B18', '#15100E', '深褐'),
+  ('#000000', '#1A1A1A', '纯黑'),
+];
+
 /// 合并内置颜色与用户自定义颜色（按色值去重，内置颜色优先）。
 List<(String, String)> _mergeColors(
   List<(String, String)> presets,
@@ -759,6 +779,42 @@ class _AppearanceContent extends ConsumerWidget {
       );
     }
 
+    /// 背景渐变行：右侧是当前渐变的预览条，点开可以配置 1~3 个颜色。
+    Widget buildBackgroundGradientRow() {
+      final hexes = ref.watch(
+        isLight
+            ? lightThemeBackgroundColorsProvider
+            : darkThemeBackgroundColorsProvider,
+      );
+      final preview = hexes.isEmpty
+          ? <Color>[
+              isLight
+                  ? ThemeColors.light.background
+                  : ThemeColors.dark.background,
+            ]
+          : hexes.map(_parseHexColor).toList();
+      return SettingRow(
+        icon: Icons.gradient,
+        title: '背景渐变（$modeLabel）',
+        trailing: Container(
+          width: 44,
+          height: 26,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: colors.divider, width: 1),
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: preview.length == 1 ? [preview[0], preview[0]] : preview,
+            ),
+          ),
+        ),
+        colors: colors,
+        onTap: () =>
+            _showBackgroundGradientPicker(context, colors, isLight: isLight),
+      );
+    }
+
     // 选中的应用字体（右侧显示名称）
     final selectedFont = ref.watch(appFontSelectedProvider);
     final fontName = _appFontDisplayName(selectedFont);
@@ -825,47 +881,7 @@ class _AppearanceContent extends ConsumerWidget {
           ),
         ),
         SettingDivider(colors: colors),
-        buildColorRow(
-          icon: Icons.wallpaper,
-          title: '背景颜色（$modeLabel）',
-          emptyColor: isLight
-              ? ThemeColors.light.background
-              : ThemeColors.dark.background,
-          resetValue: isLight
-              ? defaultLightBackgroundColor
-              : defaultDarkBackgroundColor,
-          currentProvider: isLight
-              ? lightThemeBackgroundColorProvider
-              : darkThemeBackgroundColorProvider,
-          customProvider: isLight
-              ? customBackgroundColorsLightProvider
-              : customBackgroundColorsDarkProvider,
-          persistCurrent: (s, hex) => isLight
-              ? s.setThemeBackgroundColorLight(hex)
-              : s.setThemeBackgroundColorDark(hex),
-          persistCustom: (s, list) => isLight
-              ? s.setCustomBackgroundColorsLight(list)
-              : s.setCustomBackgroundColorsDark(list),
-          presets: isLight ? _lightBackgroundPresets : _darkBackgroundPresets,
-        ),
-        SettingDivider(colors: colors),
-        SettingRow(
-          icon: Icons.image_outlined,
-          title: '主界面背景跟随封面',
-          subtitle: '深色主题用播放页同款封面渐变，浅色主题淡化叠色',
-          trailing: Switch(
-            value: ref.watch(mainBackgroundFollowCoverProvider),
-            onChanged: (v) => _persistBool(
-              context,
-              mainBackgroundFollowCoverProvider,
-              v,
-              (s) => s.setMainBackgroundFollowCover(v),
-            ),
-            activeTrackColor: colors.primary.withValues(alpha: 0.3),
-            activeThumbColor: colors.primary,
-          ),
-          colors: colors,
-        ),
+        buildBackgroundGradientRow(),
         SettingDivider(colors: colors),
         buildColorRow(
           icon: Icons.text_fields,
@@ -927,6 +943,234 @@ class _AppearanceContent extends ConsumerWidget {
           onTap: () => _showAppFontSheet(context, colors),
         ),
       ],
+    );
+  }
+
+  /// 背景渐变设置面板：最多 3 个颜色，从上到下排列。
+  ///
+  /// 只选 1 个颜色就是纯色背景；点色板里的颜色会追加到末尾，已经有 3 个时
+  /// 替换最后一个（不弹提示，操作更直接）。
+  void _showBackgroundGradientPicker(
+    BuildContext context,
+    ThemeColors colors, {
+    required bool isLight,
+  }) {
+    final container = ProviderScope.containerOf(context);
+    final provider = isLight
+        ? lightThemeBackgroundColorsProvider
+        : darkThemeBackgroundColorsProvider;
+    final presets = isLight ? _lightGradientPresets : _darkGradientPresets;
+    final fallbackHex = isLight
+        ? defaultLightBackgroundColor
+        : defaultDarkBackgroundColor;
+    final swatches = _mergeColors(
+      isLight ? _lightBackgroundPresets : _darkBackgroundPresets,
+      container.read(
+        isLight
+            ? customBackgroundColorsLightProvider
+            : customBackgroundColorsDarkProvider,
+      ),
+    );
+
+    showModalBottomSheet<void>(
+      useRootNavigator: true,
+      context: context,
+      sheetAnimationStyle: _settingsSheetAnimationStyle,
+      backgroundColor: colors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheetContext) => Consumer(
+        builder: (_, ref, __) {
+          final picked = ref.watch(provider);
+          final preview = picked.isEmpty
+              ? <Color>[_parseHexColor(fallbackHex)]
+              : picked.map(_parseHexColor).toList();
+
+          void apply(List<String> next) {
+            ref.read(provider.notifier).state = next;
+            unawaited(
+              _doPersist(
+                container,
+                (s) => isLight
+                    ? s.setThemeBackgroundColorsLight(next)
+                    : s.setThemeBackgroundColorsDark(next),
+              ),
+            );
+          }
+
+          void addColor(String hex) {
+            if (picked.length >= 3) {
+              apply([...picked.sublist(0, 2), hex]);
+            } else {
+              apply([...picked, hex]);
+            }
+          }
+
+          final selectedUpper = picked.map((e) => e.toUpperCase()).toSet();
+
+          return SafeArea(
+            child: SingleChildScrollView(
+              child: Padding(
+                padding: const EdgeInsets.all(AppSpacing.lg),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: colors.divider,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.md),
+                    Text(
+                      sheetContext.tr('背景渐变'),
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: colors.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      sheetContext.tr('从上到下最多 3 个颜色；只选 1 个就是纯色背景'),
+                      style: TextStyle(fontSize: 12, color: colors.textHint),
+                    ),
+                    const SizedBox(height: AppSpacing.md),
+                    Container(
+                      height: 72,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: colors.divider, width: 0.5),
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: preview.length == 1
+                              ? [preview.first, preview.first]
+                              : preview,
+                        ),
+                      ),
+                    ),
+                    if (picked.isNotEmpty) ...[
+                      const SizedBox(height: AppSpacing.md),
+                      Wrap(
+                        spacing: 10,
+                        runSpacing: 10,
+                        children: [
+                          for (var i = 0; i < picked.length; i++)
+                            GestureDetector(
+                              onTap: () => apply([...picked]..removeAt(i)),
+                              child: Tooltip(
+                                message: sheetContext.tr('点击移除'),
+                                child: Container(
+                                  width: 40,
+                                  height: 40,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: _parseHexColor(picked[i]),
+                                    border: Border.all(
+                                      color: colors.divider,
+                                      width: 1.5,
+                                    ),
+                                  ),
+                                  child: Icon(
+                                    Icons.close,
+                                    size: 16,
+                                    color: Colors.white.withValues(alpha: 0.9),
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ],
+                    const SizedBox(height: AppSpacing.lg),
+                    Text(
+                      sheetContext.tr('内置渐变'),
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: colors.textSecondary,
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 10,
+                      children: [
+                        for (final preset in presets)
+                          GestureDetector(
+                            onTap: () => apply([preset.$1, preset.$2]),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Container(
+                                  width: 56,
+                                  height: 36,
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(
+                                      color: colors.divider,
+                                      width: 0.5,
+                                    ),
+                                    gradient: LinearGradient(
+                                      begin: Alignment.topCenter,
+                                      end: Alignment.bottomCenter,
+                                      colors: [
+                                        _parseHexColor(preset.$1),
+                                        _parseHexColor(preset.$2),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  sheetContext.tr(preset.$3),
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: colors.textHint,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: AppSpacing.lg),
+                    Text(
+                      sheetContext.tr('添加颜色'),
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: colors.textSecondary,
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    Wrap(
+                      spacing: 12,
+                      runSpacing: 12,
+                      children: [
+                        for (final item in swatches)
+                          _ColorDot(
+                            hex: item.$1,
+                            selected: selectedUpper.contains(
+                              item.$1.toUpperCase(),
+                            ),
+                            colors: colors,
+                            onTap: () => addColor(item.$1),
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
     );
   }
 

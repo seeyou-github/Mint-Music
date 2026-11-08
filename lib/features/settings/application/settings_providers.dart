@@ -567,10 +567,10 @@ final settingsInitProvider = FutureProvider<void>((ref) async {
       .getThemeSecondaryFontColorLight();
   ref.read(darkThemeSecondaryFontColorProvider.notifier).state = svc
       .getThemeSecondaryFontColorDark();
-  ref.read(lightThemeBackgroundColorProvider.notifier).state = svc
-      .getThemeBackgroundColorLight();
-  ref.read(darkThemeBackgroundColorProvider.notifier).state = svc
-      .getThemeBackgroundColorDark();
+  ref.read(lightThemeBackgroundColorsProvider.notifier).state = svc
+      .getThemeBackgroundColorsLight();
+  ref.read(darkThemeBackgroundColorsProvider.notifier).state = svc
+      .getThemeBackgroundColorsDark();
   ref.read(customThemeColorsProvider.notifier).state = svc
       .getCustomThemeColors();
   ref.read(customFontColorsLightProvider.notifier).state = svc
@@ -619,8 +619,6 @@ final settingsInitProvider = FutureProvider<void>((ref) async {
   ref.read(musicSourceManagerProvider).hideVipExclusiveSongs = hideVipExclusive;
   ref.read(notificationEnabledProvider.notifier).state = svc
       .getNotificationEnabled();
-  ref.read(mainBackgroundFollowCoverProvider.notifier).state = svc
-      .getMainBackgroundFollowCover();
   ref.read(defaultSourceIdSettingProvider.notifier).state = svc
       .getDefaultSourceId();
   ref.read(sourceQualityProvider.notifier).state = svc.getSourceQuality();

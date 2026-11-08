@@ -249,9 +249,9 @@ class _AppState extends ConsumerState<App> {
     final appFontFamily = ref.watch(appFontSelectedProvider);
     // 当前是否为浅色外观：状态栏图标的明暗跟着它走。
     final isLightActive = ref.watch(isLightThemeActiveProvider);
-    // 主界面背景（跟随封面取色）：放在 build 顶层订阅，MaterialApp.builder
-    // 里只取值，避免在嵌套 builder 回调里调用 ref.watch。
-    final coverBg = ref.watch(coverBackgroundProvider);
+    // 主界面背景渐变（外观设置里选的颜色）：放在 build 顶层订阅，
+    // MaterialApp.builder 里只取值，避免在嵌套 builder 回调里 ref.watch。
+    final backgroundGradient = ref.watch(backgroundGradientProvider);
     // 同步全局语言,供非 widget 场景(如歌词控制器)使用
     currentLocale = appLocale;
 
@@ -264,7 +264,7 @@ class _AppState extends ConsumerState<App> {
     );
 
     // 切歌 / 收藏变化时把红心状态同步给通知栏（仅 Android 有自定义通知卡片）；
-    // 切歌同时会让卡片底色按新封面取色。
+    // 切歌同时会让通知卡片底色按新封面取色（与主界面背景无关）。
     if (PlayerNotification.supported) {
       ref.listen(currentSongIdentityProvider, (previous, next) {
         _syncNotificationFavorite();
@@ -376,9 +376,9 @@ class _AppState extends ConsumerState<App> {
                     ],
                   )
                 : content;
-            // 整个主界面的背景层：开启「跟随封面」时，深色主题铺播放详情页
-            // 同款封面暗色渐变，浅色主题只做淡化叠色。各页面 Scaffold 都是
-            // 透明的，这层才能透出来；1 秒渐变让切歌 / 关开关不跳色。
+            // 整个主界面的背景层：用户在「外观设置 → 背景渐变」里选的颜色
+            // （1~3 个，这里固定展开成 3 段）。各页面 Scaffold 都是透明的，
+            // 这层才能透出来；1 秒渐变让切换颜色 / 主题时不跳色。
             final decoratedBody = Stack(
               fit: StackFit.passthrough,
               children: [
@@ -391,7 +391,7 @@ class _AppState extends ConsumerState<App> {
                         gradient: LinearGradient(
                           begin: Alignment.topCenter,
                           end: Alignment.bottomCenter,
-                          colors: [coverBg.top, coverBg.bottom],
+                          colors: backgroundGradient.colors,
                         ),
                       ),
                     ),

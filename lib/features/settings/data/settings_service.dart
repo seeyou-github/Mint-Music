@@ -79,20 +79,40 @@ class SettingsService {
   // -- theme background colors（浅色 / 深色各一套） --
   static const _backgroundColorLightKey = 'theme_background_color_light';
   static const _backgroundColorDarkKey = 'theme_background_color_dark';
+  static const _backgroundColorListLightKey = 'theme_background_colors_light';
+  static const _backgroundColorListDarkKey = 'theme_background_colors_dark';
 
-  /// 浅色模式「背景颜色」：默认使用 [defaultLightBackgroundColor]。
-  String getThemeBackgroundColorLight() =>
-      _prefs.getString(_backgroundColorLightKey) ?? defaultLightBackgroundColor;
+  // 旧的单色键（theme_background_color_light/dark）只用于迁移：
+  // 新用户直接写 theme_background_colors_*，见下面两个方法。
 
-  Future<void> setThemeBackgroundColorLight(String v) =>
-      _prefs.setString(_backgroundColorLightKey, v);
+  /// 浅色模式「背景渐变」：从顶到底 1~3 个颜色。
+  ///
+  /// 旧版本只存了一个 `theme_background_color_light`，没写过新键时按单色列表
+  /// 兼容，升级后背景不会跳回默认。
+  List<String> getThemeBackgroundColorsLight() {
+    final list = _getColorList(_backgroundColorListLightKey);
+    if (list.isNotEmpty) return list;
+    final legacy = _prefs.getString(_backgroundColorLightKey);
+    return (legacy == null || legacy.trim().isEmpty)
+        ? const [defaultLightBackgroundColor]
+        : [legacy];
+  }
 
-  /// 深色模式「背景颜色」：默认使用 [defaultDarkBackgroundColor]。
-  String getThemeBackgroundColorDark() =>
-      _prefs.getString(_backgroundColorDarkKey) ?? defaultDarkBackgroundColor;
+  Future<void> setThemeBackgroundColorsLight(List<String> values) =>
+      _prefs.setStringList(_backgroundColorListLightKey, values);
 
-  Future<void> setThemeBackgroundColorDark(String v) =>
-      _prefs.setString(_backgroundColorDarkKey, v);
+  /// 深色模式「背景渐变」：从顶到底 1~3 个颜色。
+  List<String> getThemeBackgroundColorsDark() {
+    final list = _getColorList(_backgroundColorListDarkKey);
+    if (list.isNotEmpty) return list;
+    final legacy = _prefs.getString(_backgroundColorDarkKey);
+    return (legacy == null || legacy.trim().isEmpty)
+        ? const [defaultDarkBackgroundColor]
+        : [legacy];
+  }
+
+  Future<void> setThemeBackgroundColorsDark(List<String> values) =>
+      _prefs.setStringList(_backgroundColorListDarkKey, values);
 
   // -- 自定义颜色列表（外观设置里「新增颜色」保存的颜色） --
   static const _themeCustomColorsKey = 'theme_custom_colors';
@@ -267,12 +287,6 @@ class SettingsService {
       _prefs.getBool('hide_vip_exclusive_songs') ?? true;
   Future<void> setHideVipExclusiveSongs(bool v) =>
       _prefs.setBool('hide_vip_exclusive_songs', v);
-
-  // -- 主界面背景跟随当前歌曲封面（默认开启）--
-  bool getMainBackgroundFollowCover() =>
-      _prefs.getBool('main_background_follow_cover') ?? true;
-  Future<void> setMainBackgroundFollowCover(bool v) =>
-      _prefs.setBool('main_background_follow_cover', v);
 
   // -- 备份还原 / WebDAV --
   String getWebDavConfigJson() => _prefs.getString('webdav_config') ?? '';

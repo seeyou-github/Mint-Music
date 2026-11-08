@@ -89,8 +89,8 @@ class ThemeColors {
   /// 略亮的控件颜色：surface 比背景只亮一点点，surfaceVariant 再亮一点点；
   /// 分隔线在浅色下压暗、深色下提亮，保证仍然可见。
   ///
-  /// 提亮幅度刻意压得很低：主界面背景现在会跟随当前歌曲封面取色（见
-  /// `cover_background.dart`），卡片 / 按钮 / 设置块若还按原来的幅度提亮，
+  /// 提亮幅度刻意压得很低：主界面背景是用户自己配的多色渐变（见
+  /// `background_gradient.dart`），卡片 / 按钮 / 设置块若还按原来的幅度提亮，
   /// 就会在渐变背景上形成对比强烈的色块。层次感改由 `app_surface.dart`
   /// 的细边框 + 悬浮阴影提供，颜色本身只负责一点点「浮起来」的亮度差。
   ThemeColors copyWithBackground(Color? background) {

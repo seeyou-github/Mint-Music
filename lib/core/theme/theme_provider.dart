@@ -3,21 +3,13 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../features/player/domain/services/cover_color_extractor.dart';
-import 'cover_background.dart';
+import 'background_gradient.dart';
 import 'theme_colors.dart';
 
 export 'theme_colors.dart';
 
 /// 应用主题模式：浅色 / 深色 / 跟随系统。
 final themeModeProvider = StateProvider<ThemeMode>((ref) => ThemeMode.system);
-
-/// 「主界面背景跟随封面」开关（默认开启）。
-///
-/// 放在主题层而不是 settings_providers，是为了让 `theme_provider.dart` 不反向
-/// 依赖设置模块；持久化仍由 SettingsService 负责（key:
-/// `main_background_follow_cover`）。
-final mainBackgroundFollowCoverProvider = StateProvider<bool>((ref) => true);
 
 final themePrimaryColorProvider = StateProvider<String>((ref) => '#1DB954');
 
@@ -50,14 +42,16 @@ final lightThemeSecondaryFontColorProvider = StateProvider<String>(
   (ref) => defaultLightSecondaryFontColor,
 );
 
-/// 深色模式「背景颜色」：十六进制，为空表示使用主题默认背景。
-final darkThemeBackgroundColorProvider = StateProvider<String>(
-  (ref) => defaultDarkBackgroundColor,
+/// 深色模式「背景渐变」：从顶到底最多 3 个十六进制颜色。
+///
+/// 1 个 = 纯色背景；2 个 = 起 → 止两段；3 个 = 三段。为空表示用主题默认背景。
+final darkThemeBackgroundColorsProvider = StateProvider<List<String>>(
+  (ref) => const [defaultDarkBackgroundColor],
 );
 
-/// 浅色模式「背景颜色」：十六进制，为空表示使用主题默认背景。
-final lightThemeBackgroundColorProvider = StateProvider<String>(
-  (ref) => defaultLightBackgroundColor,
+/// 浅色模式「背景渐变」：从顶到底最多 3 个十六进制颜色。
+final lightThemeBackgroundColorsProvider = StateProvider<List<String>>(
+  (ref) => const [defaultLightBackgroundColor],
 );
 
 /// 系统当前的亮/暗偏好。
@@ -138,9 +132,9 @@ final _cachedDarkColors = <String, ThemeColors>{};
 
 /// 用户在「外观设置」里选的颜色派生出的基础主题色。
 ///
-/// 只是中间层：实际给界面用的是下面的 [themeColorsProvider]，它会在开启
-/// 「主界面背景跟随封面」时，按封面色重新派生一套控件色。分开是为了避免
-/// `coverBackgroundProvider` 与 `themeColorsProvider` 互相依赖。
+/// 只是中间层，不含背景：背景由 [backgroundGradientProvider] 单独提供。
+/// 实际给界面用的是下面的 [themeColorsProvider]，它会用背景渐变的中间色
+/// 再派生一套控件色。分开是为了避免两者互相依赖。
 final baseThemeColorsProvider = Provider<ThemeColors>((ref) {
   final isLight = ref.watch(isLightThemeActiveProvider);
   final primaryHex = ref.watch(themePrimaryColorProvider);
@@ -152,50 +146,50 @@ final baseThemeColorsProvider = Provider<ThemeColors>((ref) {
         ? lightThemeSecondaryFontColorProvider
         : darkThemeSecondaryFontColorProvider,
   );
-  final backgroundHex = ref.watch(
-    isLight
-        ? lightThemeBackgroundColorProvider
-        : darkThemeBackgroundColorProvider,
-  );
   final cache = isLight ? _cachedLightColors : _cachedDarkColors;
-  final key = '$primaryHex|$fontHex|$secondaryHex|$backgroundHex';
+  final key = '$primaryHex|$fontHex|$secondaryHex';
   return cache.putIfAbsent(key, () {
     final primaryColor = _parseThemeColor(primaryHex);
     final base = isLight
         ? ThemeColors.lightWithPrimary(primaryColor)
         : ThemeColors.darkWithPrimary(primaryColor);
-    return base
-        .copyWithTextColors(
-          textPrimary: _parseOptionalColor(fontHex),
-          textSecondary: _parseOptionalColor(secondaryHex),
-        )
-        .copyWithBackground(_parseOptionalColor(backgroundHex));
+    return base.copyWithTextColors(
+      textPrimary: _parseOptionalColor(fontHex),
+      textSecondary: _parseOptionalColor(secondaryHex),
+    );
   });
 });
 
-/// 主界面背景（渐变上下两色 + 控件色基准）。
+/// 主界面背景渐变（用户在外观设置里选的颜色 → 固定 3 段）。
 ///
-/// 只看 [baseThemeColorsProvider]，不订阅 [themeColorsProvider]，两者不会成环。
-final coverBackgroundProvider = Provider<CoverBackground>((ref) {
-  final base = ref.watch(baseThemeColorsProvider);
-  return resolveCoverBackground(
-    solid: base.background,
-    cover: ref.watch(currentCoverColorProvider).valueOrNull?.dominantColor,
-    isLight: ref.watch(isLightThemeActiveProvider),
-    enabled: ref.watch(mainBackgroundFollowCoverProvider),
+/// 只看设置里的颜色，不订阅 [themeColorsProvider]，不会成环。
+final backgroundGradientProvider = Provider<BackgroundGradient>((ref) {
+  final isLight = ref.watch(isLightThemeActiveProvider);
+  final hexes = ref.watch(
+    isLight
+        ? lightThemeBackgroundColorsProvider
+        : darkThemeBackgroundColorsProvider,
+  );
+  final picked = <Color>[];
+  for (final hex in hexes) {
+    final parsed = _parseOptionalColor(hex);
+    if (parsed != null) picked.add(parsed);
+  }
+  return resolveBackgroundGradient(
+    picked: picked,
+    fallback: isLight
+        ? ThemeColors.light.background
+        : ThemeColors.dark.background,
   );
 });
 
 /// 界面实际使用的主题色。
 ///
-/// 开启跟随封面时，用渐变中段色重新走一遍 `copyWithBackground`：
-/// `surface` / `surfaceVariant` / `divider` / `miniPlayerBackground` 会跟着封面
-/// 色相一起变（侧栏、歌单卡片、搜索框、底栏等所有控件），文字颜色保持用户
-/// 设置不变，因此浅色主题仍是黑字、深色主题仍是浅字，对比度不会失控。
-/// 关闭开关时直接返回基础主题，行为与改动前完全一致。
+/// 用背景渐变的中间色走一遍 `copyWithBackground`：`surface` /
+/// `surfaceVariant` / `divider` / `miniPlayerBackground` 跟着背景同一色调
+/// 派生（侧栏、卡片、搜索框、底栏等所有控件），文字颜色保持用户设置不变，
+/// 因此浅色主题仍是黑字、深色主题仍是浅字，对比度不会失控。
 final themeColorsProvider = Provider<ThemeColors>((ref) {
   final base = ref.watch(baseThemeColorsProvider);
-  final bg = ref.watch(coverBackgroundProvider);
-  if (!bg.active) return base;
-  return base.copyWithBackground(bg.control);
+  return base.copyWithBackground(ref.watch(backgroundGradientProvider).mid);
 });
