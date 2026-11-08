@@ -38,6 +38,71 @@ int Scale(int source, double scale_factor) {
   return static_cast<int>(source * scale_factor);
 }
 
+// 窗口是否处于「自绘标题栏」模式（Dart 侧的 WindowChrome 会把 WS_CAPTION
+// 去掉，把最顶上那条窗口栏交给 Flutter 画）。
+//
+// 下面几处（WM_NCCALCSIZE / WM_NCHITTEST / Flutter 视图的边缘让位）只在去掉
+// WS_CAPTION 之后才改变默认行为，所以直接用样式位判断，不需要 Dart 再单独
+// 通知原生一次；Dart 侧一旦把标题栏改回系统样式，这里也立刻退回默认处理。
+bool HasCustomTitleBar(HWND window) {
+  return (::GetWindowLongPtr(window, GWL_STYLE) & WS_CAPTION) == 0;
+}
+
+/// 自绘标题栏模式下窗口边缘的可缩放区域（逻辑像素）。
+///
+/// 客户区铺满整个窗口之后，系统原本那圈「缩放边框」没有了，只能由
+/// [Win32Window::MessageHandler] 的 WM_NCHITTEST 自己给回来；顶部窄一点，
+/// 免得吃掉自绘标题栏上那几个窗口按钮的点击。
+constexpr int kResizeBorderDip = 6;
+constexpr int kResizeBorderTopDip = 4;
+
+/// Flutter 视图子窗口被改动前的消息过程，子类化之后要转发给它。
+WNDPROC g_child_content_proc = nullptr;
+
+/// 已经挂上钩子的子窗口（Flutter 若换了新的视图窗口就重新挂）。
+HWND g_hooked_child = nullptr;
+
+/// 判断某个屏幕坐标是否落在窗口边缘那一圈里。
+bool IsOnResizeBorder(HWND parent, int x, int y) {
+  RECT window_rect{};
+  if (!::GetWindowRect(parent, &window_rect)) {
+    return false;
+  }
+  const double scale = WindowState::GetScaleFactor(parent);
+  const int border = Scale(kResizeBorderDip, scale);
+  const int top = Scale(kResizeBorderTopDip, scale);
+  return x < window_rect.left + border || x >= window_rect.right - border ||
+         y < window_rect.top + top || y >= window_rect.bottom - border;
+}
+
+/// Flutter 视图子窗口的消息过程（替代原来的，其它消息原样转发）。
+///
+/// 自绘标题栏模式下客户区铺满了整个窗口，鼠标落在窗口任何位置都会被这个
+/// 子窗口接住，父窗口的 WM_NCHITTEST 永远轮不到，缩放边框也就没了。这里在
+/// 靠近窗口边缘时返回 HTTRANSPARENT —— 系统会带着同一个点去问下面的父窗口，
+/// 由父窗口回一个 HTLEFT / HTTOP 之类的缩放命中，缩放因此仍然是系统原生行为
+/// （跟手、有系统提示、不阻塞 Dart）。
+LRESULT CALLBACK ChildContentProc(HWND hwnd,
+                                  UINT const message,
+                                  WPARAM const wparam,
+                                  LPARAM const lparam) {
+  if (message == WM_NCHITTEST) {
+    const HWND parent = ::GetParent(hwnd);
+    if (parent != nullptr && HasCustomTitleBar(parent) &&
+        !::IsZoomed(parent) && !::IsIconic(parent)) {
+      const int x = static_cast<short>(LOWORD(lparam));
+      const int y = static_cast<short>(HIWORD(lparam));
+      if (IsOnResizeBorder(parent, x, y)) {
+        return HTTRANSPARENT;
+      }
+    }
+  }
+  if (g_child_content_proc == nullptr) {
+    return ::DefWindowProc(hwnd, message, wparam, lparam);
+  }
+  return ::CallWindowProc(g_child_content_proc, hwnd, message, wparam, lparam);
+}
+
 // Dynamically loads the |EnableNonClientDpiScaling| from the User32 module.
 // This API is only needed for PerMonitor V1 awareness mode.
 void EnableFullDpiSupportIfAvailable(HWND hwnd) {
@@ -210,6 +275,81 @@ Win32Window::MessageHandler(HWND hwnd,
                             WPARAM const wparam,
                             LPARAM const lparam) noexcept {
   switch (message) {
+    case WM_NCCALCSIZE: {
+      // 自绘标题栏模式下不要任何非客户区：留着的话 WS_THICKFRAME 的缩放边框
+      // 会占掉窗口顶部几个像素，而那一条既没有人绘制（窗口类没设背景画刷，
+      // Flutter 的视图只覆盖客户区），看起来就是标题栏上方的一条黑线。
+      // 返回 0 表示「客户区 = 整个窗口」。
+      if (wparam != TRUE || !HasCustomTitleBar(hwnd)) {
+        break;
+      }
+      auto params = reinterpret_cast<NCCALCSIZE_PARAMS*>(lparam);
+      if (::IsZoomed(hwnd)) {
+        // 最大化时系统给的矩形比工作区大出一圈边框。客户区既然要铺满整个
+        // 窗口，这里直接对齐显示器工作区，否则内容会被屏幕边缘裁掉。
+        MONITORINFO monitor_info{};
+        monitor_info.cbSize = sizeof(monitor_info);
+        if (::GetMonitorInfo(::MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST),
+                             &monitor_info)) {
+          params->rgrc[0] = monitor_info.rcWork;
+        }
+      }
+      return 0;
+    }
+
+    case WM_NCHITTEST: {
+      // 非客户区收掉之后，边角缩放就落在客户区里了，这里再把缩放区域还给
+      // 系统，否则窗口不能靠拖边框改变大小（拖动标题栏、Aero Snap 不受影响，
+      // 那是 Dart 侧发 WM_NCLBUTTONDOWN + HTCAPTION 走的系统流程）。
+      // 这个分支能被调用，是因为 Flutter 视图子窗口在边缘返回了
+      // HTTRANSPARENT（见 ChildContentProc），系统才来问父窗口。
+      if (!HasCustomTitleBar(hwnd) || ::IsZoomed(hwnd) || ::IsIconic(hwnd)) {
+        break;
+      }
+      RECT window_rect{};
+      if (!::GetWindowRect(hwnd, &window_rect)) {
+        break;
+      }
+      const int x = static_cast<short>(LOWORD(lparam));
+      const int y = static_cast<short>(HIWORD(lparam));
+      const double scale = WindowState::GetScaleFactor(hwnd);
+      // 与 ChildContentProc 用的是同一组宽度，两边必须一致：子窗口只在
+      // 这一圈里让位，父窗口也只在这一圈里给缩放命中。
+      const int side = Scale(kResizeBorderDip, scale);
+      const int top = Scale(kResizeBorderTopDip, scale);
+
+      const bool on_left = x < window_rect.left + side;
+      const bool on_right = x >= window_rect.right - side;
+      const bool on_top = y < window_rect.top + top;
+      const bool on_bottom = y >= window_rect.bottom - side;
+
+      if (on_top && on_left) {
+        return HTTOPLEFT;
+      }
+      if (on_top && on_right) {
+        return HTTOPRIGHT;
+      }
+      if (on_bottom && on_left) {
+        return HTBOTTOMLEFT;
+      }
+      if (on_bottom && on_right) {
+        return HTBOTTOMRIGHT;
+      }
+      if (on_left) {
+        return HTLEFT;
+      }
+      if (on_right) {
+        return HTRIGHT;
+      }
+      if (on_top) {
+        return HTTOP;
+      }
+      if (on_bottom) {
+        return HTBOTTOM;
+      }
+      break;
+    }
+
     case WM_DESTROY:
       window_handle_ = nullptr;
       Destroy();
@@ -299,6 +439,20 @@ void Win32Window::SetChildContent(HWND content) {
 
   MoveWindow(content, frame.left, frame.top, frame.right - frame.left,
              frame.bottom - frame.top, true);
+
+  // 给 Flutter 的视图挂一层消息钩子：靠近窗口边缘时让它「透明」，把缩放
+  // 命中让给父窗口（见 ChildContentProc 的说明）。原来的过程留在
+  // g_child_content_proc 里照常转发；同一个窗口只挂一次，万一 Flutter 之后
+  // 换了新的视图窗口，下次进来会重新挂。
+  if (g_hooked_child != content) {
+    const WNDPROC previous = reinterpret_cast<WNDPROC>(::SetWindowLongPtr(
+        content, GWLP_WNDPROC,
+        reinterpret_cast<LONG_PTR>(ChildContentProc)));
+    if (previous != nullptr) {
+      g_child_content_proc = previous;
+      g_hooked_child = content;
+    }
+  }
 
   SetFocus(child_content_);
 }

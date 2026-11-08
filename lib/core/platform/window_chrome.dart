@@ -45,6 +45,9 @@ typedef _DwmSetWindowAttributeDart = int Function(int, int, Pointer<Void>, int);
 /// - [enableCustomTitleBar]：去掉 `WS_CAPTION`，但**保留** `WS_THICKFRAME`
 ///   （边框可拖动缩放）、`WS_SYSMENU` / `WS_MINIMIZEBOX` / `WS_MAXIMIZEBOX`
 ///   （Alt+F4、任务栏右键菜单、Aero Snap 都照常），客户端区域顶到窗口最上边；
+///   配合原生侧 `windows/runner/win32_window.cpp` 里的 `WM_NCCALCSIZE`（客户区
+///   铺满整个窗口，否则 `WS_THICKFRAME` 的缩放边框会在标题栏上方留一条没人
+///   绘制的黑边）和 `WM_NCHITTEST`（把边角缩放区域还给系统）；
 /// - [startDrag] / [minimize] / [toggleMaximize] / [close]：给自绘按钮和
 ///   拖动区域用；
 /// - [setDarkFrame]：深色背景时把窗口边框压暗，别在深色界面外面留一圈亮边。
