@@ -444,6 +444,15 @@ final customBackgroundColorsDarkProvider = StateProvider<List<String>>(
   (ref) => const [],
 );
 
+/// 「背景渐变 → 新增颜色」保存的自定义渐变（固定 3 个颜色，深浅色各一套）。
+///
+/// 面板里排在内置渐变之后，长按可以编辑或删除。
+final customBackgroundGradientsLightProvider =
+    StateProvider<List<List<String>>>((ref) => const []);
+final customBackgroundGradientsDarkProvider = StateProvider<List<List<String>>>(
+  (ref) => const [],
+);
+
 /// 桌面歌词(悬浮歌词窗)的完整配置。
 ///
 /// 整体作为一个对象持久化(见 [SettingsService.setDesktopLyricSettings]),
@@ -585,6 +594,10 @@ final settingsInitProvider = FutureProvider<void>((ref) async {
       .getCustomBackgroundColorsLight();
   ref.read(customBackgroundColorsDarkProvider.notifier).state = svc
       .getCustomBackgroundColorsDark();
+  ref.read(customBackgroundGradientsLightProvider.notifier).state = svc
+      .getCustomBackgroundGradientsLight();
+  ref.read(customBackgroundGradientsDarkProvider.notifier).state = svc
+      .getCustomBackgroundGradientsDark();
 
   ref.read(audioQualityProvider.notifier).state = svc.getAudioQuality();
   ref.read(equalizerEnabledProvider.notifier).state = svc.getEqualizerEnabled();

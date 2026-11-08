@@ -88,13 +88,14 @@ class SettingsService {
   /// 浅色模式「背景渐变」：从顶到底 1~3 个颜色。
   ///
   /// 旧版本只存了一个 `theme_background_color_light`，没写过新键时按单色列表
-  /// 兼容，升级后背景不会跳回默认。
+  /// 兼容，升级后背景不会跳回默认；两个键都没有时用内置渐变的第一个
+  /// （见 [defaultLightBackgroundGradient]）。
   List<String> getThemeBackgroundColorsLight() {
     final list = _getColorList(_backgroundColorListLightKey);
     if (list.isNotEmpty) return list;
     final legacy = _prefs.getString(_backgroundColorLightKey);
     return (legacy == null || legacy.trim().isEmpty)
-        ? const [defaultLightBackgroundColor]
+        ? defaultLightBackgroundGradient
         : [legacy];
   }
 
@@ -107,7 +108,7 @@ class SettingsService {
     if (list.isNotEmpty) return list;
     final legacy = _prefs.getString(_backgroundColorDarkKey);
     return (legacy == null || legacy.trim().isEmpty)
-        ? const [defaultDarkBackgroundColor]
+        ? defaultDarkBackgroundGradient
         : [legacy];
   }
 
@@ -186,6 +187,46 @@ class SettingsService {
       _getColorList(_backgroundCustomColorsDarkKey);
   Future<void> setCustomBackgroundColorsDark(List<String> values) =>
       _prefs.setStringList(_backgroundCustomColorsDarkKey, values);
+
+  // -- 自定义背景渐变（「背景渐变 → 新增颜色」保存的三色渐变） --
+  static const _backgroundGradientsLightKey = 'background_gradients_light';
+  static const _backgroundGradientsDarkKey = 'background_gradients_dark';
+
+  /// 浅色模式的自定义渐变列表：每项是 3 个颜色（内部按 `#A,#B,#C` 存一行，
+  /// 省掉 JSON 解析；长度不是 3 的脏数据直接丢弃）。
+  List<List<String>> getCustomBackgroundGradientsLight() =>
+      _getGradientList(_backgroundGradientsLightKey);
+  Future<void> setCustomBackgroundGradientsLight(List<List<String>> values) =>
+      _prefs.setStringList(
+        _backgroundGradientsLightKey,
+        values.map(_joinGradient).toList(growable: false),
+      );
+
+  /// 深色模式的自定义渐变列表。
+  List<List<String>> getCustomBackgroundGradientsDark() =>
+      _getGradientList(_backgroundGradientsDarkKey);
+  Future<void> setCustomBackgroundGradientsDark(List<List<String>> values) =>
+      _prefs.setStringList(
+        _backgroundGradientsDarkKey,
+        values.map(_joinGradient).toList(growable: false),
+      );
+
+  static String _joinGradient(List<String> colors) => colors.join(',');
+
+  List<List<String>> _getGradientList(String key) {
+    final raw = _prefs.getStringList(key);
+    if (raw == null) return const [];
+    final result = <List<String>>[];
+    for (final item in raw) {
+      final colors = item
+          .split(',')
+          .map((value) => value.trim())
+          .where((value) => value.isNotEmpty)
+          .toList(growable: false);
+      if (colors.length == 3) result.add(colors);
+    }
+    return result;
+  }
 
   // -- audio quality --
   String getAudioQuality() => _prefs.getString('audio_quality') ?? '128k';

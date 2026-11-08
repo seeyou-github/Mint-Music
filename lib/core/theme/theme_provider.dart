@@ -24,6 +24,19 @@ const String defaultLightSecondaryFontColor = '#111111';
 const String defaultLightBackgroundColor = '#DCD7C9';
 const String defaultDarkBackgroundColor = '#212128';
 
+/// 默认「背景渐变」：就是外观设置里内置渐变的**第一个**
+/// （深色「深空灰」#212128 → #121216，浅色「暖米」#DCD7C9 → #F3F1EC）。
+///
+/// 新装软件默认选中它；设置面板里第一个内置渐变的色值必须与这里保持一致。
+const List<String> defaultLightBackgroundGradient = [
+  defaultLightBackgroundColor,
+  '#F3F1EC',
+];
+const List<String> defaultDarkBackgroundGradient = [
+  defaultDarkBackgroundColor,
+  '#121216',
+];
+
 /// 深色模式「字体颜色」：主文字颜色（十六进制），为空表示使用主题默认色。
 final darkThemeFontColorProvider = StateProvider<String>(
   (ref) => defaultThemeFontColor,
@@ -45,13 +58,14 @@ final lightThemeSecondaryFontColorProvider = StateProvider<String>(
 /// 深色模式「背景渐变」：从顶到底最多 3 个十六进制颜色。
 ///
 /// 1 个 = 纯色背景；2 个 = 起 → 止两段；3 个 = 三段。为空表示用主题默认背景。
+/// 初始值就是内置渐变的第一个，见 [defaultDarkBackgroundGradient]。
 final darkThemeBackgroundColorsProvider = StateProvider<List<String>>(
-  (ref) => const [defaultDarkBackgroundColor],
+  (ref) => defaultDarkBackgroundGradient,
 );
 
 /// 浅色模式「背景渐变」：从顶到底最多 3 个十六进制颜色。
 final lightThemeBackgroundColorsProvider = StateProvider<List<String>>(
-  (ref) => const [defaultLightBackgroundColor],
+  (ref) => defaultLightBackgroundGradient,
 );
 
 /// 系统当前的亮/暗偏好。

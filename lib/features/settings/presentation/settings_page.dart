@@ -691,6 +691,130 @@ class _ColorDot extends StatelessWidget {
   }
 }
 
+/// 一个个渐变色卡：圆形/圆角预览 + 名称，选中时描边用主题色。
+///
+/// 内置渐变用 2 个颜色，用户自定义的渐变用 3 个颜色，都直接画成纵向渐变。
+class _GradientSwatch extends StatelessWidget {
+  const _GradientSwatch({
+    required this.colors,
+    required this.width,
+    required this.hexes,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+    this.onLongPress,
+  });
+
+  final ThemeColors colors;
+
+  /// 色卡宽度：由调用方按「一行 6 个」算出来，窄屏 / 平板都不换行。
+  final double width;
+  final List<String> hexes;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  final VoidCallback? onLongPress;
+
+  @override
+  Widget build(BuildContext context) {
+    final preview = hexes.map(_parseHexColor).toList(growable: false);
+    return GestureDetector(
+      onTap: onTap,
+      onLongPress: onLongPress,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: width,
+            height: 36,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: selected ? colors.primary : colors.divider,
+                width: selected ? 2 : 0.5,
+              ),
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: preview.length == 1
+                    ? [preview.first, preview.first]
+                    : preview,
+              ),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 11,
+              color: selected ? colors.primary : colors.textHint,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 「新增 / 编辑渐变」里的一个色块：上面是颜色，下面是色值。
+///
+/// [hex] 为空表示这个色块还没选颜色（显示「未选择」）。
+class _GradientSlot extends StatelessWidget {
+  const _GradientSlot({
+    required this.colors,
+    required this.hex,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final ThemeColors colors;
+  final String? hex;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final value = hex ?? '';
+    final hasColor = value.isNotEmpty;
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            height: 52,
+            decoration: BoxDecoration(
+              color: hasColor ? _parseHexColor(value) : colors.surfaceVariant,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: selected ? colors.primary : colors.divider,
+                width: selected ? 2.5 : 1,
+              ),
+            ),
+            child: hasColor
+                ? null
+                : Center(
+                    child: Icon(Icons.add, size: 18, color: colors.textHint),
+                  ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            hasColor ? value : context.tr('未选择'),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 11,
+              color: hasColor ? colors.textSecondary : colors.textHint,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// 主题模式对应的显示名（选择主题弹窗的选项文案）。
 String _themeModeLabel(ThemeMode mode) => switch (mode) {
   ThemeMode.dark => '深色主题',
@@ -946,10 +1070,10 @@ class _AppearanceContent extends ConsumerWidget {
     );
   }
 
-  /// 背景渐变设置面板：最多 3 个颜色，从上到下排列。
+  /// 背景渐变设置面板。
   ///
-  /// 只选 1 个颜色就是纯色背景；点色板里的颜色会追加到末尾，已经有 3 个时
-  /// 替换最后一个（不弹提示，操作更直接）。
+  /// 内置渐变排在最前——第一个就是软件默认背景；用户「新增颜色」保存的自定义
+  /// 渐变紧跟在所有内置之后，长按可以编辑或删除。点任意一个渐变立即生效。
   void _showBackgroundGradientPicker(
     BuildContext context,
     ThemeColors colors, {
@@ -959,18 +1083,10 @@ class _AppearanceContent extends ConsumerWidget {
     final provider = isLight
         ? lightThemeBackgroundColorsProvider
         : darkThemeBackgroundColorsProvider;
+    final customProvider = isLight
+        ? customBackgroundGradientsLightProvider
+        : customBackgroundGradientsDarkProvider;
     final presets = isLight ? _lightGradientPresets : _darkGradientPresets;
-    final fallbackHex = isLight
-        ? defaultLightBackgroundColor
-        : defaultDarkBackgroundColor;
-    final swatches = _mergeColors(
-      isLight ? _lightBackgroundPresets : _darkBackgroundPresets,
-      container.read(
-        isLight
-            ? customBackgroundColorsLightProvider
-            : customBackgroundColorsDarkProvider,
-      ),
-    );
 
     showModalBottomSheet<void>(
       useRootNavigator: true,
@@ -983,31 +1099,44 @@ class _AppearanceContent extends ConsumerWidget {
       builder: (sheetContext) => Consumer(
         builder: (_, ref, __) {
           final picked = ref.watch(provider);
-          final preview = picked.isEmpty
-              ? <Color>[_parseHexColor(fallbackHex)]
-              : picked.map(_parseHexColor).toList();
+          final customs = ref.watch(customProvider);
 
-          void apply(List<String> next) {
-            ref.read(provider.notifier).state = next;
+          /// 当前生效的渐变是否就是 [gradient]。
+          bool isPicked(List<String> gradient) {
+            if (picked.length != gradient.length) return false;
+            for (var i = 0; i < gradient.length; i++) {
+              if (picked[i].toUpperCase() != gradient[i].toUpperCase()) {
+                return false;
+              }
+            }
+            return true;
+          }
+
+          void apply(List<String> gradient) {
+            ref.read(provider.notifier).state = gradient;
             unawaited(
               _doPersist(
                 container,
                 (s) => isLight
-                    ? s.setThemeBackgroundColorsLight(next)
-                    : s.setThemeBackgroundColorsDark(next),
+                    ? s.setThemeBackgroundColorsLight(gradient)
+                    : s.setThemeBackgroundColorsDark(gradient),
+              ),
+            );
+            Navigator.pop(sheetContext);
+          }
+
+          void removeCustom(int index, List<List<String>> from) {
+            final next = List<List<String>>.from(from)..removeAt(index);
+            ref.read(customProvider.notifier).state = next;
+            unawaited(
+              _doPersist(
+                container,
+                (s) => isLight
+                    ? s.setCustomBackgroundGradientsLight(next)
+                    : s.setCustomBackgroundGradientsDark(next),
               ),
             );
           }
-
-          void addColor(String hex) {
-            if (picked.length >= 3) {
-              apply([...picked.sublist(0, 2), hex]);
-            } else {
-              apply([...picked, hex]);
-            }
-          }
-
-          final selectedUpper = picked.map((e) => e.toUpperCase()).toSet();
 
           return SafeArea(
             child: SingleChildScrollView(
@@ -1036,59 +1165,6 @@ class _AppearanceContent extends ConsumerWidget {
                         color: colors.textPrimary,
                       ),
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      sheetContext.tr('从上到下最多 3 个颜色；只选 1 个就是纯色背景'),
-                      style: TextStyle(fontSize: 12, color: colors.textHint),
-                    ),
-                    const SizedBox(height: AppSpacing.md),
-                    Container(
-                      height: 72,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: colors.divider, width: 0.5),
-                        gradient: LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: preview.length == 1
-                              ? [preview.first, preview.first]
-                              : preview,
-                        ),
-                      ),
-                    ),
-                    if (picked.isNotEmpty) ...[
-                      const SizedBox(height: AppSpacing.md),
-                      Wrap(
-                        spacing: 10,
-                        runSpacing: 10,
-                        children: [
-                          for (var i = 0; i < picked.length; i++)
-                            GestureDetector(
-                              onTap: () => apply([...picked]..removeAt(i)),
-                              child: Tooltip(
-                                message: sheetContext.tr('点击移除'),
-                                child: Container(
-                                  width: 40,
-                                  height: 40,
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    color: _parseHexColor(picked[i]),
-                                    border: Border.all(
-                                      color: colors.divider,
-                                      width: 1.5,
-                                    ),
-                                  ),
-                                  child: Icon(
-                                    Icons.close,
-                                    size: 16,
-                                    color: Colors.white.withValues(alpha: 0.9),
-                                  ),
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ],
                     const SizedBox(height: AppSpacing.lg),
                     Text(
                       sheetContext.tr('内置渐变'),
@@ -1098,51 +1174,205 @@ class _AppearanceContent extends ConsumerWidget {
                       ),
                     ),
                     const SizedBox(height: AppSpacing.sm),
-                    Wrap(
-                      spacing: 10,
-                      runSpacing: 10,
+                    // 一行放 6 个（内置渐变正好 6 个），宽度按可用宽度算，
+                    // 窄屏也不会挤成两行。
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        const gap = 8.0;
+                        final width = ((constraints.maxWidth - gap * 5) / 6)
+                            .clamp(46.0, 72.0);
+                        return Wrap(
+                          spacing: gap,
+                          runSpacing: 12,
+                          children: [
+                            for (final preset in presets)
+                              _GradientSwatch(
+                                colors: colors,
+                                width: width,
+                                hexes: [preset.$1, preset.$2],
+                                label: sheetContext.tr(preset.$3),
+                                selected: isPicked([preset.$1, preset.$2]),
+                                onTap: () => apply([preset.$1, preset.$2]),
+                              ),
+                            // 自定义渐变排在内置渐变之后。
+                            for (var i = 0; i < customs.length; i++)
+                              _GradientSwatch(
+                                colors: colors,
+                                width: width,
+                                hexes: customs[i],
+                                label: sheetContext.tr('自定义'),
+                                selected: isPicked(customs[i]),
+                                onTap: () => apply(customs[i]),
+                                onLongPress: () => _showCustomGradientActions(
+                                  sheetContext,
+                                  colors,
+                                  customs[i],
+                                  onEdit: () => _showGradientEditor(
+                                    context,
+                                    colors,
+                                    isLight: isLight,
+                                    editing: customs[i],
+                                    editingIndex: i,
+                                  ),
+                                  onDelete: () => removeCustom(i, customs),
+                                ),
+                              ),
+                          ],
+                        );
+                      },
+                    ),
+                    if (customs.isNotEmpty) ...[
+                      const SizedBox(height: AppSpacing.md),
+                      Text(
+                        sheetContext.tr('长按自定义颜色可编辑或删除'),
+                        style: TextStyle(fontSize: 12, color: colors.textHint),
+                      ),
+                    ],
+                    const SizedBox(height: AppSpacing.lg),
+                    OutlinedButton.icon(
+                      onPressed: () => _showGradientEditor(
+                        context,
+                        colors,
+                        isLight: isLight,
+                      ),
+                      icon: const Icon(Icons.colorize, size: 18),
+                      label: Text(sheetContext.tr('新增颜色')),
+                    ),
+                    const SizedBox(height: AppSpacing.lg),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  /// 新增 / 编辑自定义背景渐变。
+  ///
+  /// 弹窗里是三个色块（各带色值），下面的调色板只作用于**当前选中的色块**：
+  /// 点哪个色块就切到哪一块；三个色块都选好颜色后「保存」才能点。
+  void _showGradientEditor(
+    BuildContext context,
+    ThemeColors colors, {
+    required bool isLight,
+    List<String>? editing,
+    int? editingIndex,
+  }) {
+    final container = ProviderScope.containerOf(context);
+    final currentProvider = isLight
+        ? lightThemeBackgroundColorsProvider
+        : darkThemeBackgroundColorsProvider;
+    final customProvider = isLight
+        ? customBackgroundGradientsLightProvider
+        : customBackgroundGradientsDarkProvider;
+    final palette = _mergeColors(
+      isLight ? _lightBackgroundPresets : _darkBackgroundPresets,
+      container.read(
+        isLight
+            ? customBackgroundColorsLightProvider
+            : customBackgroundColorsDarkProvider,
+      ),
+    );
+
+    // 三个色块的颜色（null = 还没选）。放在 builder 外面，
+    // StatefulBuilder 重建时状态才不会丢。
+    final slots = List<String?>.filled(3, null);
+    if (editing != null) {
+      for (var i = 0; i < slots.length && i < editing.length; i++) {
+        slots[i] = editing[i];
+      }
+    }
+    var active = 0;
+
+    showModalBottomSheet<void>(
+      useRootNavigator: true,
+      context: context,
+      isScrollControlled: true,
+      sheetAnimationStyle: _settingsSheetAnimationStyle,
+      backgroundColor: colors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (sheetContext, setSheetState) {
+          final ready = slots.every((slot) => slot != null);
+
+          void save() {
+            final gradient = [for (final slot in slots) slot!];
+            final list = List<List<String>>.from(
+              container.read(customProvider),
+            );
+            if (editingIndex != null &&
+                editingIndex >= 0 &&
+                editingIndex < list.length) {
+              list[editingIndex] = gradient;
+            } else {
+              list.add(gradient);
+            }
+            container.read(customProvider.notifier).state = list;
+            unawaited(
+              _doPersist(
+                container,
+                (s) => isLight
+                    ? s.setCustomBackgroundGradientsLight(list)
+                    : s.setCustomBackgroundGradientsDark(list),
+              ),
+            );
+            // 存完直接应用，新增 / 编辑后马上能看到效果。
+            container.read(currentProvider.notifier).state = gradient;
+            unawaited(
+              _doPersist(
+                container,
+                (s) => isLight
+                    ? s.setThemeBackgroundColorsLight(gradient)
+                    : s.setThemeBackgroundColorsDark(gradient),
+              ),
+            );
+            Navigator.pop(sheetContext);
+          }
+
+          return SafeArea(
+            child: SingleChildScrollView(
+              child: Padding(
+                padding: const EdgeInsets.all(AppSpacing.lg),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      sheetContext.tr(editing == null ? '新增颜色' : '编辑颜色'),
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: colors.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      sheetContext.tr('点击色块切换调色板，三个色块都选好后才能保存'),
+                      style: TextStyle(fontSize: 12, color: colors.textHint),
+                    ),
+                    const SizedBox(height: AppSpacing.md),
+                    Row(
                       children: [
-                        for (final preset in presets)
-                          GestureDetector(
-                            onTap: () => apply([preset.$1, preset.$2]),
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Container(
-                                  width: 56,
-                                  height: 36,
-                                  decoration: BoxDecoration(
-                                    borderRadius: BorderRadius.circular(8),
-                                    border: Border.all(
-                                      color: colors.divider,
-                                      width: 0.5,
-                                    ),
-                                    gradient: LinearGradient(
-                                      begin: Alignment.topCenter,
-                                      end: Alignment.bottomCenter,
-                                      colors: [
-                                        _parseHexColor(preset.$1),
-                                        _parseHexColor(preset.$2),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  sheetContext.tr(preset.$3),
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    color: colors.textHint,
-                                  ),
-                                ),
-                              ],
+                        for (var i = 0; i < slots.length; i++) ...[
+                          if (i > 0) const SizedBox(width: AppSpacing.sm),
+                          Expanded(
+                            child: _GradientSlot(
+                              colors: colors,
+                              hex: slots[i],
+                              selected: active == i,
+                              onTap: () => setSheetState(() => active = i),
                             ),
                           ),
+                        ],
                       ],
                     ),
                     const SizedBox(height: AppSpacing.lg),
                     Text(
-                      sheetContext.tr('添加颜色'),
+                      sheetContext.tr('调色板'),
                       style: TextStyle(
                         fontSize: 13,
                         color: colors.textSecondary,
@@ -1153,15 +1383,48 @@ class _AppearanceContent extends ConsumerWidget {
                       spacing: 12,
                       runSpacing: 12,
                       children: [
-                        for (final item in swatches)
+                        for (final item in palette)
                           _ColorDot(
                             hex: item.$1,
-                            selected: selectedUpper.contains(
-                              item.$1.toUpperCase(),
-                            ),
+                            selected:
+                                (slots[active] ?? '').toUpperCase() ==
+                                item.$1.toUpperCase(),
                             colors: colors,
-                            onTap: () => addColor(item.$1),
+                            onTap: () {
+                              setSheetState(() {
+                                slots[active] = item.$1;
+                                // 选完自动跳到下一个还没选的色块，
+                                // 连着点三次就能保存。
+                                for (
+                                  var step = 1;
+                                  step < slots.length;
+                                  step++
+                                ) {
+                                  final next = (active + step) % slots.length;
+                                  if (slots[next] == null) {
+                                    active = next;
+                                    break;
+                                  }
+                                }
+                              });
+                            },
                           ),
+                      ],
+                    ),
+                    const SizedBox(height: AppSpacing.lg),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(sheetContext),
+                          child: Text(sheetContext.tr('取消')),
+                        ),
+                        const SizedBox(width: AppSpacing.sm),
+                        FilledButton(
+                          // 三个色块都设好颜色后才能保存。
+                          onPressed: ready ? save : null,
+                          child: Text(sheetContext.tr('保存')),
+                        ),
                       ],
                     ),
                   ],
@@ -1170,6 +1433,88 @@ class _AppearanceContent extends ConsumerWidget {
             ),
           );
         },
+      ),
+    );
+  }
+
+  /// 长按自定义渐变：编辑 / 删除。
+  void _showCustomGradientActions(
+    BuildContext context,
+    ThemeColors colors,
+    List<String> gradient, {
+    required VoidCallback onEdit,
+    required VoidCallback onDelete,
+  }) {
+    showModalBottomSheet<void>(
+      useRootNavigator: true,
+      context: context,
+      sheetAnimationStyle: _settingsSheetAnimationStyle,
+      backgroundColor: colors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (actionContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.lg,
+                vertical: AppSpacing.md,
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 44,
+                    height: 26,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: colors.divider, width: 1),
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: gradient.map(_parseHexColor).toList(),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Text(
+                    actionContext.tr('自定义渐变'),
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: colors.textPrimary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            SettingDivider(colors: colors),
+            ListTile(
+              leading: Icon(Icons.edit_outlined, color: colors.textSecondary),
+              title: Text(
+                actionContext.tr('编辑渐变'),
+                style: TextStyle(color: colors.textPrimary),
+              ),
+              onTap: () {
+                Navigator.pop(actionContext);
+                onEdit();
+              },
+            ),
+            ListTile(
+              leading: Icon(Icons.delete_outline, color: colors.textSecondary),
+              title: Text(
+                actionContext.tr('删除渐变'),
+                style: TextStyle(color: colors.textPrimary),
+              ),
+              onTap: () {
+                Navigator.pop(actionContext);
+                onDelete();
+              },
+            ),
+            const SizedBox(height: AppSpacing.md),
+          ],
+        ),
       ),
     );
   }
