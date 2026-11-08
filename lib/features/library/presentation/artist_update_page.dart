@@ -8,7 +8,6 @@ import 'package:go_router/go_router.dart';
 
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
-import '../../../core/theme/app_surface.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../../../shared/widgets/music_cover_image.dart';
@@ -400,27 +399,17 @@ class _ArtistUpdatePageState extends ConsumerState<ArtistUpdatePage> {
   ) {
     final coverSize = ResponsiveLayout.isTablet(context) ? 80.0 : 64.0;
     return Container(
-      // 与其它详情页一致：顶栏是一块跟随页面背景色轻度提亮的悬浮面板，
-      // 纯色 + 圆角 + 阴影，不再做上下渐变。
-      margin: EdgeInsets.fromLTRB(
-        AppSpacing.md,
-        // 状态栏沉浸：顶栏不再铺到屏幕顶端，把状态栏高度算进外边距，
-        // 卡片正好落在状态栏下方。
-        MediaQuery.paddingOf(context).top + AppSpacing.sm,
-        AppSpacing.md,
-        AppSpacing.sm,
+      // 与其它详情页一致：顶栏是贴着页面顶部的一条纯色栏，不要圆角、不要阴影，
+      // 颜色也就是背景渐变顶部色轻度提亮的结果，不再做上下渐变。
+      padding: EdgeInsets.fromLTRB(
+        AppSpacing.md + AppSpacing.sm,
+        // 状态栏沉浸：色块铺到屏幕顶端，状态栏高度算进内边距，
+        // 内容位置与原来「外边距 + 内边距」时保持一致。
+        MediaQuery.paddingOf(context).top + AppSpacing.md + AppSpacing.sm,
+        AppSpacing.md + AppSpacing.lg,
+        AppSpacing.md + AppSpacing.sm,
       ),
-      padding: const EdgeInsets.fromLTRB(
-        AppSpacing.sm,
-        AppSpacing.md,
-        AppSpacing.lg,
-        AppSpacing.md,
-      ),
-      decoration: floatingSurfaceDecoration(
-        colors,
-        radius: AppRadius.lg,
-        color: ref.watch(detailHeaderSurfaceProvider),
-      ),
+      color: ref.watch(detailHeaderSurfaceProvider),
       child: Row(
         children: [
           // Android 靠系统返回手势 / 返回键，顶部不放返回箭头。

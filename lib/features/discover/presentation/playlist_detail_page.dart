@@ -7,7 +7,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
-import '../../../core/theme/app_surface.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../../../core/utils/scroll_locate.dart';
@@ -507,30 +506,19 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
     // 与歌单封面同高，去掉描述后顶部不会跳动
     final headerHeight = ResponsiveLayout.isTablet(context) ? 96.0 : 72.0;
     return Container(
-      // 顶栏做成一块悬浮面板：四周留边露出后面的页面背景，纯色 + 圆角 + 阴影
-      // 才有「浮起来」的层次。底色由背景渐变顶部色轻度提亮而来（见
-      // detailHeaderSurfaceProvider），既跟随用户设置的背景，也不再按歌单封面取色、不做上下渐变。
-      margin: EdgeInsets.fromLTRB(
-        AppSpacing.md,
-        // 状态栏沉浸：顶栏不再铺到屏幕顶端，把状态栏高度算进外边距，
-        // 卡片正好落在状态栏下方。
-        MediaQuery.paddingOf(context).top + AppSpacing.sm,
-        AppSpacing.md,
-        AppSpacing.sm,
+      // 顶栏是贴着页面顶部的一条纯色栏：不要圆角、不要阴影，也不留外边距，
+      // 宽度铺满、颜色一直铺到状态栏，跟下面的列表只靠色差分界。
+      // 底色仍取背景渐变顶部色轻度提亮（见 detailHeaderSurfaceProvider），
+      // 既跟随用户设置的背景，也不再按歌单封面取色、不做上下渐变。
+      padding: EdgeInsets.fromLTRB(
+        AppSpacing.md + AppSpacing.sm,
+        // 状态栏沉浸：色块铺到屏幕顶端，状态栏高度算进内边距，
+        // 内容位置与原来「外边距 + 内边距」时保持一致。
+        MediaQuery.paddingOf(context).top + AppSpacing.md + AppSpacing.sm,
+        AppSpacing.md + AppSpacing.lg,
+        AppSpacing.md + AppSpacing.sm,
       ),
-      padding: const EdgeInsets.fromLTRB(
-        AppSpacing.sm,
-        AppSpacing.md,
-        AppSpacing.lg,
-        AppSpacing.md,
-      ),
-      decoration: floatingSurfaceDecoration(
-        colors,
-        radius: AppRadius.lg,
-        // 底色取背景渐变顶部色轻度提亮，而不是控件通用的背景中段色：
-        // 顶栏就在页面最上方，这样它永远比身后的背景亮一档。
-        color: ref.watch(detailHeaderSurfaceProvider),
-      ),
+      color: ref.watch(detailHeaderSurfaceProvider),
       // 只给下限、不写死高度：名称 / 音源标签 / 操作按钮这三行在部分字体
       // （比如内置的思源宋体）或系统大字号下会比 72 高几像素，写死高度就会报
       // 「BOTTOM OVERFLOWED BY 5.0 PIXELS」。让它按内容自己撑开，

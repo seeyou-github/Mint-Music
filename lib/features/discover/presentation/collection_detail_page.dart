@@ -471,30 +471,19 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
   ) {
     final songs = _songs;
     return Container(
-      // 顶栏做成一块悬浮面板：四周留边露出后面的页面背景，纯色 + 圆角 + 阴影
-      // 才有「浮起来」的层次。底色由背景渐变顶部色轻度提亮而来（见
-      // detailHeaderSurfaceProvider），跟随用户设置的背景，不再按专辑 / 作者封面取色。
-      margin: EdgeInsets.fromLTRB(
-        AppSpacing.md,
-        // 状态栏沉浸：顶栏不再铺到屏幕顶端，把状态栏高度算进外边距，
-        // 卡片正好落在状态栏下方。
-        MediaQuery.paddingOf(context).top + AppSpacing.sm,
-        AppSpacing.md,
-        AppSpacing.sm,
+      // 顶栏是贴着页面顶部的一条纯色栏：不要圆角、不要阴影，也不留外边距，
+      // 宽度铺满、颜色一直铺到状态栏，跟下面的列表只靠色差分界。
+      // 底色仍取背景渐变顶部色轻度提亮（见 detailHeaderSurfaceProvider），
+      // 跟随用户设置的背景，不再按专辑 / 作者封面取色。
+      padding: EdgeInsets.fromLTRB(
+        AppSpacing.md + AppSpacing.sm,
+        // 状态栏沉浸：色块铺到屏幕顶端，状态栏高度算进内边距，
+        // 内容位置与原来「外边距 + 内边距」时保持一致。
+        MediaQuery.paddingOf(context).top + AppSpacing.md + AppSpacing.sm,
+        AppSpacing.md + AppSpacing.lg,
+        AppSpacing.sm + AppSpacing.sm,
       ),
-      padding: const EdgeInsets.fromLTRB(
-        AppSpacing.sm,
-        AppSpacing.md,
-        AppSpacing.lg,
-        AppSpacing.sm,
-      ),
-      decoration: floatingSurfaceDecoration(
-        colors,
-        radius: AppRadius.lg,
-        // 底色取背景渐变顶部色轻度提亮，而不是控件通用的背景中段色：
-        // 顶栏就在页面最上方，这样它永远比身后的背景亮一档。
-        color: ref.watch(detailHeaderSurfaceProvider),
-      ),
+      color: ref.watch(detailHeaderSurfaceProvider),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
