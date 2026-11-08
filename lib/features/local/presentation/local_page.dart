@@ -10,6 +10,7 @@ import 'package:file_picker/file_picker.dart';
 import '../../../core/constants/app_routes.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
+import '../../../core/theme/app_surface.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../../../core/utils/scroll_locate.dart';
@@ -839,9 +840,11 @@ class _LocalPageState extends ConsumerState<LocalPage>
     return Container(
       height: 40,
       padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-      decoration: BoxDecoration(
-        color: colors.surface,
-        borderRadius: BorderRadius.circular(AppRadius.full),
+      // 与发现页搜索框 / 分类胶囊一致：细边框 + 轻阴影，深色下才看得出边界。
+      decoration: floatingSurfaceDecoration(
+        colors,
+        radius: AppRadius.full,
+        subtle: true,
       ),
       child: Row(
         children: [

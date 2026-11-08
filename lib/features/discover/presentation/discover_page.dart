@@ -876,9 +876,12 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
       child: Container(
         height: _searchBarHeight,
         padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-        decoration: BoxDecoration(
-          color: colors.surface,
-          borderRadius: BorderRadius.circular(AppRadius.full),
+        // 和分类胶囊（歌单 / 排行榜 / 电台）同一套「细边框 + 轻阴影」：
+        // 背景色和页面背景只差一点点，纯色块在深色下几乎看不出来。
+        decoration: floatingSurfaceDecoration(
+          colors,
+          radius: AppRadius.full,
+          subtle: true,
         ),
         child: Row(
           children: [
