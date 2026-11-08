@@ -5,7 +5,7 @@ import 'package:path_provider/path_provider.dart';
 
 /// 应用自身的数据目录。
 ///
-/// **Windows**：`薄荷音乐.exe` 所在目录下的 `AppData`；
+/// **Windows**：`Music.exe` 所在目录下的 `AppData`；
 /// **Android**：应用私有目录 `/data/data/<包名>/AppData`。两者结构一致：
 ///
 /// ```
@@ -54,7 +54,7 @@ class AppPaths {
   /// 只有 Windows 与 Android 使用；其它平台仍然放在系统目录里。
   static bool get usesAppDataLayout => Platform.isWindows || Platform.isAndroid;
 
-  /// `薄荷音乐.exe` 所在目录（仅 Windows 返回）。
+  /// `Music.exe` 所在目录（仅 Windows 返回）。
   static String? get executableDirectory {
     if (!Platform.isWindows) return null;
     final exe = Platform.resolvedExecutable;

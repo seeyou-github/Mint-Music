@@ -63,7 +63,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   // 并在工作区中居中显示。
   const Win32Window::Size size = WindowState::GetSavedSize();
   const Win32Window::Point origin = WindowState::GetCenteredOrigin(size);
-  if (!window.Create(L"\u8584\u8377\u97f3\u4e50", origin, size)) {
+  if (!window.Create(L"Music", origin, size)) {
     return EXIT_FAILURE;
   }
   window.SetQuitOnClose(true);

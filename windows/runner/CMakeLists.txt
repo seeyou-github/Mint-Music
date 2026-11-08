@@ -22,8 +22,8 @@ add_executable(${RUNNER_TARGET_NAME} WIN32
   "runner.exe.manifest"
 )
 
-# 产物文件名：任务管理器里的进程名 / 资源管理器里的文件名都显示「薄荷音乐」。
-set_target_properties(${RUNNER_TARGET_NAME} PROPERTIES OUTPUT_NAME "薄荷音乐")
+# 产物文件名：任务管理器里的进程名 / 资源管理器里的文件名都显示「Music」。
+set_target_properties(${RUNNER_TARGET_NAME} PROPERTIES OUTPUT_NAME "Music")
 
 # Apply the standard set of build settings. This can be removed for applications
 # that need different build settings.
@@ -58,3 +58,16 @@ target_include_directories(${RUNNER_TARGET_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 
 # Run the Flutter tool portions of the build. This must not be removed.
 add_dependencies(${RUNNER_TARGET_NAME} flutter_assemble)
+
+# 每成功编译一次，把 pubspec.yaml 里 version 的 build number（`+N`）加一，
+# 下一 次编译即生效（版本号 2.0.0+N 递增）。构建失败不会走到这一步。
+find_program(DART_EXECUTABLE NAMES dart
+  HINTS "$ENV{FLUTTER_ROOT}/bin" "$ENV{LOCALAPPDATA}/flutter/bin")
+if(DART_EXECUTABLE)
+  add_custom_command(TARGET ${RUNNER_TARGET_NAME} POST_BUILD
+    COMMAND ${DART_EXECUTABLE} run
+      "${CMAKE_CURRENT_SOURCE_DIR}/../../tool/bump_build_number.dart"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../.."
+    COMMENT "Bumping build number"
+    VERBATIM)
+endif()

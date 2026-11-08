@@ -5,14 +5,14 @@ project(mintmusic LANGUAGES CXX)
 # The name of the executable created for the application. Change this to change
 # the on-disk name of your application.
 #
-# 这里写的是最终产物的可执行文件名「薄荷音乐.exe」：任务管理器里的进程名、
+# 这里写的是最终产物的可执行文件名「Music.exe」：任务管理器里的进程名、
 # 资源管理器里的文件名都显示它。
 #
 # 注意：CMake 的目标名必须是 ASCII（策略 CMP0037 限制，否则
 # `add_executable` 直接报错），所以真正的 CMake 目标用下面的
-# RUNNER_TARGET_NAME，再通过 OUTPUT_NAME 把产物命名为「薄荷音乐.exe」。
+# RUNNER_TARGET_NAME，再通过 OUTPUT_NAME 把产物命名为「Music.exe」。
 # flutter 工具会按这一行的内容查找生成的 exe，因此这一行必须是字面量。
-set(BINARY_NAME "薄荷音乐")
+set(BINARY_NAME "Music")
 
 # CMake 目标名（必须是 ASCII）。
 set(RUNNER_TARGET_NAME "mintmusic")

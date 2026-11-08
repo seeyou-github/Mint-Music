@@ -237,7 +237,8 @@ class AppImageCache {
   /// 清理旧版遗留在系统目录里的缓存索引文件。
   ///
   /// 旧版本只指定了 databaseName，索引文件会被写到系统默认目录
-  /// （Windows 上是 `%APPDATA%\com.kingmc.mintmusic\薄荷音乐\`）。
+  /// （Windows 上是 `%APPDATA%\com.kingmc.mintmusic\薄荷音乐\`，
+  /// 这个目录名沿用旧版，改名会让老用户的缓存 / 数据库“丢失”）。
   static Future<void> _cleanupLegacyIndex() async {
     try {
       // 直接拼旧目录的路径，不调用 path_provider：否则只是清理旧文件就会在

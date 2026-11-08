@@ -64,9 +64,11 @@ Color coverDarkBackgroundColor(Color color, {required double lightness}) {
 /// - [isLight]：浅色主题走「提亮」版本，深色主题走「压暗」版本；
 /// - [brightness]：整体亮度偏移，-1 ~ 1（0 = 默认）；
 /// - [spread]：上下落差倍率，0 = 纯色，1 = 默认，2 = 落差翻倍；
-/// - [protect]：**保护原色**，0 = 完全按背景规则调整，1 = 用原色本身
-///   （只在原色上下加一点落差）。用户在调色板里手选的颜色用 1，
-///   从图片 / 封面取到的颜色用 0。
+/// - [protect]：0 = 完全按背景规则压暗 / 降饱和，1 = 用原色本身。
+///   设置里的编辑器（手选颜色、图片取色）都用 1，即不做任何处理；
+///   只有「跟随封面」这类自动取色用 0。
+/// - [saturationScale]：饱和度倍率（编辑器里的「饱和度」滑条），
+///   1 = 保持原样，0 = 灰，2 = 加倍。
 ///
 /// 压暗 / 降饱和的幅度都和颜色自身挂钩：越亮压得越多、越鲜艳降得越多，
 /// 所以浅色封面不会留下发白的背景，鲜艳封面也不会留下刺眼色块。
@@ -76,6 +78,7 @@ List<Color> deriveBackgroundGradient(
   double brightness = 0,
   double spread = 1,
   double protect = 0,
+  double saturationScale = 1,
 }) {
   final hsl = HSLColor.fromColor(base);
   final baseLightness = hsl.lightness;
@@ -99,7 +102,8 @@ List<Color> deriveBackgroundGradient(
   final lightness =
       dampedClamped + (baseLightness - dampedClamped) * protectRatio;
   final saturation =
-      dampedSaturation + (baseSaturation - dampedSaturation) * protectRatio;
+      (dampedSaturation + (baseSaturation - dampedSaturation) * protectRatio) *
+      saturationScale.clamp(0.0, 2.0);
 
   final delta =
       (isLight ? _kLightSpread : _kDarkSpread) * spread.clamp(0.0, 2.0);
@@ -108,7 +112,7 @@ List<Color> deriveBackgroundGradient(
       (isLight ? _kLightBrightnessRange : _kDarkBrightnessRange);
 
   Color at(double value) => hsl
-      .withSaturation(saturation)
+      .withSaturation(saturation.clamp(0.0, 1.0))
       .withLightness(value.clamp(0.0, 1.0))
       .toColor();
 

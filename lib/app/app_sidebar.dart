@@ -142,7 +142,7 @@ class AppSidebar extends ConsumerWidget {
                     ),
                     const SizedBox(width: 10),
                     Text(
-                      context.tr('薄荷音乐'),
+                      context.tr('Music'),
                       style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.bold,

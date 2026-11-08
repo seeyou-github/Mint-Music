@@ -338,7 +338,7 @@ class _AppState extends ConsumerState<App> {
       child: L10n(
         locale: appLocale,
         child: MaterialApp.router(
-          title: tr('薄荷音乐'),
+          title: tr('Music'),
           debugShowCheckedModeBanner: false,
           theme: _applyAppFont(AppTheme.light, appFontFamily),
           darkTheme: _applyAppFont(AppTheme.dark, appFontFamily),

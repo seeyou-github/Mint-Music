@@ -91,12 +91,12 @@ BEGIN
         BLOCK "040904e4"
         BEGIN
             VALUE "CompanyName", "com.kingmc.mintmusic" "\0"
-            VALUE "FileDescription", "薄荷音乐" "\0"
+            VALUE "FileDescription", "Music" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "薄荷音乐" "\0"
+            VALUE "InternalName", "Music" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2026 com.kingmc.mintmusic. All rights reserved." "\0"
-            VALUE "OriginalFilename", "薄荷音乐.exe" "\0"
-            VALUE "ProductName", "薄荷音乐" "\0"
+            VALUE "OriginalFilename", "Music.exe" "\0"
+            VALUE "ProductName", "Music" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

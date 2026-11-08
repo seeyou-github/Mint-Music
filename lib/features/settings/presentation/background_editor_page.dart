@@ -50,14 +50,11 @@ class _BackgroundEditorPageState extends ConsumerState<BackgroundEditorPage> {
   /// 整体亮度偏移：-1 ~ 1。
   double _brightness = 0;
 
-  /// 上下落差倍率：0（纯色）~ 2（翻倍）。
+  /// 渐变幅度：0（纯色）~ 2（落差翻倍）。
   double _spread = 1;
 
-  /// 保护原色：0 = 完全按背景规则压暗 / 降饱和，1 = 原样使用所选颜色。
-  ///
-  /// 调色板手选的颜色默认拉满（选白就是白、选红就是红）；从图片取色时
-  /// 归零，让图片颜色先按封面那套规则收敛一次。
-  double _protect = 1;
+  /// 饱和度倍率：1 = 保持原色，0 = 灰，2 = 加倍。
+  double _saturation = 1;
 
   /// 正在从图片取色。
   bool _extracting = false;
@@ -86,12 +83,15 @@ class _BackgroundEditorPageState extends ConsumerState<BackgroundEditorPage> {
     );
   }
 
+  /// 编辑器里手选 / 图片取到的颜色一律不做任何限制（protect = 1），
+  /// 只按「亮度 / 渐变幅度 / 饱和度」三个滑条微调。
   List<Color> get _derived => deriveBackgroundGradient(
     _base,
     isLight: widget.isLight,
     brightness: _brightness,
     spread: _spread,
-    protect: _protect,
+    protect: 1,
+    saturationScale: _saturation,
   );
 
   Future<void> _pickFromImage() async {
@@ -107,12 +107,11 @@ class _BackgroundEditorPageState extends ConsumerState<BackgroundEditorPage> {
       );
       if (!mounted) return;
       setState(() {
+        // 图片取到的颜色同样不做任何限制，滑条回默认值让用户自己微调。
         _base = result.dominantColor;
-        // 图片 / 封面的颜色要按背景规则收敛（压暗 + 降饱和），所以保护归零；
-        // 用户随后仍可在调色板里换色、或用滑条把颜色调回来。
         _brightness = 0;
         _spread = 1;
-        _protect = 0;
+        _saturation = 1;
       });
     } finally {
       if (mounted) setState(() => _extracting = false);
@@ -277,7 +276,7 @@ class _BackgroundEditorPageState extends ConsumerState<BackgroundEditorPage> {
                           ),
                           _buildSlider(
                             colors,
-                            label: '上下落差',
+                            label: '渐变幅度',
                             value: _spread,
                             min: 0,
                             max: 2,
@@ -287,13 +286,13 @@ class _BackgroundEditorPageState extends ConsumerState<BackgroundEditorPage> {
                           ),
                           _buildSlider(
                             colors,
-                            label: '保护',
-                            value: _protect,
+                            label: '饱和度',
+                            value: _saturation,
                             min: 0,
-                            max: 1,
-                            display: '${(_protect * 100).round()}%',
+                            max: 2,
+                            display: '${(_saturation * 100).round()}%',
                             onChanged: (value) =>
-                                setState(() => _protect = value),
+                                setState(() => _saturation = value),
                           ),
                         ],
                       ),

@@ -107,8 +107,8 @@ class _SharePreviewDialogState extends State<SharePreviewDialog> {
 
   void _copyText() {
     final text = widget.song != null
-        ? '【薄荷音乐】${widget.song!.title} - ${widget.song!.artist}${_playUrl(widget.song!)}'
-        : '【薄荷音乐】${context.tr('分享歌单')}：${widget.playlist!.name}';
+        ? '【Music】${widget.song!.title} - ${widget.song!.artist}${_playUrl(widget.song!)}'
+        : '【Music】${context.tr('分享歌单')}：${widget.playlist!.name}';
     Clipboard.setData(ClipboardData(text: text));
     Navigator.pop(context);
     ScaffoldMessenger.of(context).showSnackBar(

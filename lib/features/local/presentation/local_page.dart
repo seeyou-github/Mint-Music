@@ -193,7 +193,7 @@ class _LocalPageState extends ConsumerState<LocalPage>
           style: TextStyle(color: colors.textPrimary),
         ),
         content: Text(
-          context.tr('为了扫描本地音乐，薄荷音乐需要访问您设备上的音频文件。请授予权限后继续。'),
+          context.tr('为了扫描本地音乐，Music 需要访问您设备上的音频文件。请授予权限后继续。'),
           style: TextStyle(color: colors.textSecondary),
         ),
         actions: [

@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/backup/webdav_service.dart';
 import '../../../core/storage/app_preferences.dart';
+import '../../../core/constants/app_constants.dart';
 import '../../../core/l10n/app_locale.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/platform/download_paths.dart';
@@ -519,7 +520,7 @@ final fullScreenBackgroundModeProvider = Provider<FullScreenBackgroundMode>(
 
 // -- app version (loaded once) --
 final appVersionProvider = FutureProvider<String>((ref) async {
-  return '1.1.1';
+  return AppConstants.appVersion;
 });
 
 class EqPreset {

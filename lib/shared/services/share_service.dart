@@ -47,7 +47,7 @@ class ShareService {
     Playlist playlist, {
     PosterTemplate template = PosterTemplate.classic,
   }) async {
-    final text = '【薄荷音乐】${tr('分享歌单')}：${playlist.name}';
+    final text = '【Music】${tr('分享歌单')}：${playlist.name}';
 
     Uint8List? coverBytes;
     if (playlist.coverImgUrl.isNotEmpty) {
@@ -122,7 +122,7 @@ class ShareService {
 
   static String _buildSongText(Song song) {
     final buffer = StringBuffer();
-    buffer.write('【薄荷音乐】');
+    buffer.write('【Music】');
     buffer.write(song.title);
     if (song.artist.isNotEmpty) {
       buffer.write(' - ${song.artist}');
@@ -139,7 +139,7 @@ class ShareService {
 
   static String shareQrContent(Song song) {
     final buffer = StringBuffer();
-    buffer.write('【薄荷音乐】${song.title}');
+    buffer.write('【Music】${song.title}');
     if (song.artist.isNotEmpty) {
       buffer.write(' - ${song.artist}');
     }

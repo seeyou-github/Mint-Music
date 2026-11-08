@@ -23,7 +23,7 @@ class SharePosterGenerator {
     final coverImage = coverBytes != null
         ? await _decodeImage(coverBytes)
         : null;
-    final qr = qrContent ?? '【薄荷音乐】${song.title} - ${song.artist}';
+    final qr = qrContent ?? '【Music】${song.title} - ${song.artist}';
 
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder, Rect.fromLTWH(0, 0, _width, _height));
@@ -74,7 +74,7 @@ class SharePosterGenerator {
       coverImage = await _decodeImage(coverBytes);
     }
 
-    final qr = qrContent ?? '【薄荷音乐】${tr('分享歌单')}：${playlist.name}';
+    final qr = qrContent ?? '【Music】${tr('分享歌单')}：${playlist.name}';
 
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder, Rect.fromLTWH(0, 0, _width, _height));
@@ -213,7 +213,7 @@ class SharePosterGenerator {
       fontSize: 14,
       letterSpacing: 4,
     );
-    _drawCenteredText(canvas, '薄荷音乐', brandStyle, _height - 50);
+    _drawCenteredText(canvas, 'Music', brandStyle, _height - 50);
   }
 
   static void _drawMinimalPoster({
@@ -289,7 +289,7 @@ class SharePosterGenerator {
 
     _drawCenteredText(
       canvas,
-      '薄荷音乐',
+      'Music',
       TextStyle(
         color: Colors.white.withValues(alpha: 0.2),
         fontSize: 13,
@@ -381,7 +381,7 @@ class SharePosterGenerator {
 
     _drawCenteredText(
       canvas,
-      '薄荷音乐',
+      'Music',
       TextStyle(color: const Color(0xFFBBBBCC), fontSize: 12, letterSpacing: 3),
       cardTop + cardHeight + 30,
     );
