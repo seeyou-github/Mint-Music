@@ -15,11 +15,12 @@ import '../../features/player/application/mini_player_visibility.dart';
 ///
 /// 布局规则（整组居中、间距固定，各平台一致，和 Android 的分页条一样）：
 /// - 所有页码都能放下 → 只显示页码按钮，**不显示「第 N 页」下拉**；
-/// - 放不下时 → 首页 + 当前页前后各一页 + 末页，跨页用省略号，
-///   右侧紧跟「第 N 页」下拉（下拉紧挨着最后一个页码按钮）；
-/// - **不铺满整行、不放「上一页 / 下一页」按钮**：页码少（2 页）时铺满会把
-///   两个页码顶到屏幕两端，看起来像坏了一条横贯全屏的空线；翻页直接点页码，
-///   跨页由「第 N 页」下拉直达。
+/// - 放不下时 → 首页 + 末页 + 当前页前后一段连续页码，跨页用省略号，
+///   右侧紧跟「第 N 页」下拉；这段连续页码的半径按**可用宽度取最大值**，
+///   页数越多就显示越多页码按钮，尽量把列表宽度用满，而不是固定只给 7 个；
+/// - **间距恒定、不拉伸**：整组居中，页码少时自然留出两边空白，不会为了
+///   「铺满一行」把两个按钮顶到屏幕两端；也不放「上一页 / 下一页」按钮，
+///   翻页直接点页码，跨页由「第 N 页」下拉直达。
 ///
 /// [docked] 为 true 时表示分页条**常驻在内容区底部**（不是列表项），
 /// 会给自身补一段下内边距避开 Android 的迷你播放器，避免被播放栏盖住。
@@ -70,6 +71,10 @@ class _PageBarState extends ConsumerState<PageBar> {
   static const double _buttonHeight = 36;
   static const double _buttonPadding = 6;
   static const double _elementGap = 2;
+
+  /// 页码元素之间的水平间距：固定值，不随页数多少变化，也不用
+  /// `spaceBetween` 之类的对齐方式把间距拉开。
+  static const double _gap = AppSpacing.sm;
 
   static const double _menuItemHeight = 44;
 
@@ -159,28 +164,36 @@ class _PageBarState extends ConsumerState<PageBar> {
             ];
             var showDropdown = false;
             List<int?> pages;
-            if (_pagesWidth(context, allPages) <= budget) {
+            if (_rowWidth(context, allPages, withDropdown: false) <= budget) {
               pages = allPages;
             } else {
-              // 2) 放不下才出现省略号 + 下拉。当前页前后各留一页（9 10 11），
-              //    再缩就只能去掉相邻页了，所以半径最小为 1。
-              //    页码窗口按「已知页数」算，末页未知时末尾再补一个「…」入口，
-              //    看起来就是 `1 2 3 4 5 … 20 …`：末尾那个 20 是已知的最后一页，
-              //    它后面的省略号表示「20 之后还有，但不知道第几页」。
+              // 2) 放不下才出现省略号 + 下拉。页码窗口按「已知页数」算：
+              //    首页 + 末页 + 当前页前后一段连续页码，跨页用省略号，
+              //    末页未知时末尾再补一个「…」入口（`1 2 3 4 5 … 20 …`）。
+              //
+              //    半径不写死：窗口元素越多越宽且单调不减，二分找出刚好
+              //    放得下的最大半径，页数多时把列表宽度尽量用满。以前固定
+              //    从 5 开始、只会往小缩，49 页也只肯显示 6 个页码按钮。
               showDropdown = true;
-              final dropdownWidth = _dropdownWidth(context);
-              var radius = 5;
-              pages = _withMoreEntry(
-                _windowPages(_current, _knownCount, radius),
+              var low = 1;
+              var high = _knownCount;
+              var best = _withMoreEntry(
+                _windowPages(_current, _knownCount, low),
               );
-              while (radius > 1 &&
-                  _pagesWidth(context, pages) + _elementGap + dropdownWidth >
-                      budget) {
-                radius--;
-                pages = _withMoreEntry(
-                  _windowPages(_current, _knownCount, radius),
+              while (low < high) {
+                final mid = (low + high + 1) ~/ 2;
+                final candidate = _withMoreEntry(
+                  _windowPages(_current, _knownCount, mid),
                 );
+                if (_rowWidth(context, candidate, withDropdown: true) <=
+                    budget) {
+                  low = mid;
+                  best = candidate;
+                } else {
+                  high = mid - 1;
+                }
               }
+              pages = best;
             }
 
             // 末尾那一格如果是「末页未知」留下的省略号，就做成可点的入口：
@@ -205,24 +218,27 @@ class _PageBarState extends ConsumerState<PageBar> {
 
             // 整组居中、间距固定（不铺满整行，也不放「上一页 / 下一页」）：
             // 页码少的时候（比如只有 2 页）铺满会把两个页码顶到屏幕两端，
-            // 中间空出一条横贯全屏的空白，看着像坏了。
-            final contentWidth =
-                _pagesWidth(context, pages) +
-                (showDropdown ? AppSpacing.xs + _dropdownWidth(context) : 0) +
-                (pageChildren.length - 1) * AppSpacing.sm;
+            // 中间空出一条横贯全屏的空白，看着像坏了。宽度估算和这里 Row 的
+            // spacing 必须用同一个 [_gap]，否则「能放几页」会算得偏大。
+            final contentWidth = _rowWidth(
+              context,
+              pages,
+              withDropdown: showDropdown,
+            );
             // 极端窄屏（超大字号 / 极小屏）放不下时退化成可横滚，避免溢出条纹。
             if (contentWidth > constraints.maxWidth) {
               return SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
+                  spacing: _gap,
                   children: pageChildren,
                 ),
               );
             }
             return Row(
               mainAxisAlignment: MainAxisAlignment.center,
-              spacing: AppSpacing.sm,
+              spacing: _gap,
               children: pageChildren,
             );
           },
@@ -322,6 +338,9 @@ class _PageBarState extends ConsumerState<PageBar> {
         math.min(rows, _maxMenuRows) * _menuItemHeight + AppSpacing.xs * 2;
     return PopupMenuButton<int>(
       enabled: !widget.loading,
+      // 默认会给 child 套一圈 8px 内边距，宽度估算里算不到它，页码窗口会
+      // 按偏大的预算多塞一个按钮导致轻微溢出。这里自己控制内边距。
+      padding: EdgeInsets.zero,
       tooltip: context.tr('跳转到指定页'),
       color: colors.surface,
       elevation: 8,
@@ -468,6 +487,22 @@ class _PageBarState extends ConsumerState<PageBar> {
       }
     }
     return total;
+  }
+
+  /// 整行实际占用的宽度：按钮 / 省略号本身 + Row 的固定间距 + 下拉。
+  ///
+  /// 以前只拿 [_pagesWidth] 去和可用宽度比，漏算了 Row 的 spacing，预算被
+  /// 高估；下拉前那个 `SizedBox(AppSpacing.xs)` 也是 Row 的 child，会占一段
+  /// 宽度并左右各吃一个间距，所以带下拉时 child 数是 `pages.length + 2`。
+  double _rowWidth(
+    BuildContext context,
+    List<int?> pages, {
+    required bool withDropdown,
+  }) {
+    final childCount = pages.length + (withDropdown ? 2 : 0);
+    return _pagesWidth(context, pages) +
+        (withDropdown ? AppSpacing.xs + _dropdownWidth(context) : 0) +
+        (childCount - 1) * _gap;
   }
 
   /// 末页未知时，页码行末尾再补一个省略号入口（点它取下一页）。
