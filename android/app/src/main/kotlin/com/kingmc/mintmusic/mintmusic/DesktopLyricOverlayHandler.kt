@@ -597,8 +597,8 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
             tv.setShadowLayer(SHADOW_RADIUS, SHADOW_DX, SHADOW_DY, shadowColor)
             tv.playedColor = playedColor
             tv.shadowRadiusPx = SHADOW_RADIUS
-            tv.shadowDx = SHADOW_DX
-            tv.shadowDy = SHADOW_DY
+            tv.shadowOffsetX = SHADOW_DX
+            tv.shadowOffsetY = SHADOW_DY
             tv.shadowTint = shadowColor
 
             val hasSub = !slot.translation.isNullOrBlank() || !slot.roman.isNullOrBlank()
@@ -1100,9 +1100,12 @@ private class ProgressFillTextView(context: Context) : TextView(context) {
     var playedColor: Int = Color.WHITE
 
     // 阴影参数自己存一份：重画已播放部分时要临时去掉阴影，画完再按原参数恢复。
+    // 名字不能叫 shadowDx / shadowDy：TextView 自己就有 getShadowDx() /
+    // getShadowDy()，Kotlin 属性生成的 getter 会和父类方法撞 JVM 签名，
+    // 编译期直接报 "Accidental override"。
     var shadowRadiusPx: Float = 0f
-    var shadowDx: Float = 0f
-    var shadowDy: Float = 0f
+    var shadowOffsetX: Float = 0f
+    var shadowOffsetY: Float = 0f
     var shadowTint: Int = Color.TRANSPARENT
 
     /** 是否为当前播放行：只有它需要分段着色。 */
@@ -1170,7 +1173,7 @@ private class ProgressFillTextView(context: Context) : TextView(context) {
         textPaint.setShadowLayer(0f, 0f, 0f, 0)
         super.onDraw(canvas)
         if (shadowRadiusPx > 0f) {
-            textPaint.setShadowLayer(shadowRadiusPx, shadowDx, shadowDy, shadowTint)
+            textPaint.setShadowLayer(shadowRadiusPx, shadowOffsetX, shadowOffsetY, shadowTint)
         }
         textPaint.color = oldColor
         canvas.restore()
