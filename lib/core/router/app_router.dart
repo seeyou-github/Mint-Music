@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import '../../app/app_page_background.dart';
 import '../../app/app_shell.dart';
 import '../../features/discover/presentation/discover_page.dart';
 import '../../features/discover/presentation/search_page.dart';
@@ -26,6 +27,27 @@ import '../../features/player/presentation/lyric_page.dart';
 import '../constants/app_routes.dart';
 import 'navigation_shell_provider.dart';
 
+/// 二级页面的统一转场：从右侧滑入，并给页面铺一层不透明的主界面背景。
+///
+/// 页面自己的 `Scaffold` 是透明的（主界面背景由 `MaterialApp.builder` 里那层
+/// 全局渐变负责）。转场里**必须**把这份背景也塞进滑动的那一块：
+/// 否则滑入时下面那一页的内容会从缝隙里透出来，滑出时看着像底部页面提前出现，
+/// 而不是被慢慢地揭开。详见 [AppPageBackground]。
+Widget _slideTransition(
+  BuildContext context,
+  Animation<double> animation,
+  Animation<double> secondaryAnimation,
+  Widget child,
+) {
+  return SlideTransition(
+    position: Tween<Offset>(
+      begin: const Offset(1, 0),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOutCubic)),
+    child: AppPageBackground(child: child),
+  );
+}
+
 /// 右侧滑入的二级页面转场。
 CustomTransitionPage<void> _slidePage({
   required LocalKey key,
@@ -36,15 +58,7 @@ CustomTransitionPage<void> _slidePage({
     child: child,
     transitionDuration: const Duration(milliseconds: 220),
     reverseTransitionDuration: const Duration(milliseconds: 180),
-    transitionsBuilder: (context, animation, secondaryAnimation, child) {
-      return SlideTransition(
-        position: Tween<Offset>(begin: const Offset(1, 0), end: Offset.zero)
-            .animate(
-              CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
-            ),
-        child: child,
-      );
-    },
+    transitionsBuilder: _slideTransition,
   );
 }
 
@@ -81,22 +95,7 @@ final appRouter = GoRouter(
                   ),
                   transitionDuration: const Duration(milliseconds: 220),
                   reverseTransitionDuration: const Duration(milliseconds: 180),
-                  transitionsBuilder:
-                      (context, animation, secondaryAnimation, child) {
-                        return SlideTransition(
-                          position:
-                              Tween<Offset>(
-                                begin: const Offset(1, 0),
-                                end: Offset.zero,
-                              ).animate(
-                                CurvedAnimation(
-                                  parent: animation,
-                                  curve: Curves.easeOutCubic,
-                                ),
-                              ),
-                          child: child,
-                        );
-                      },
+                  transitionsBuilder: _slideTransition,
                 );
               },
             ),
@@ -117,22 +116,7 @@ final appRouter = GoRouter(
                 child: const SearchPage(),
                 transitionDuration: const Duration(milliseconds: 220),
                 reverseTransitionDuration: const Duration(milliseconds: 180),
-                transitionsBuilder:
-                    (context, animation, secondaryAnimation, child) {
-                      return SlideTransition(
-                        position:
-                            Tween<Offset>(
-                              begin: const Offset(1, 0),
-                              end: Offset.zero,
-                            ).animate(
-                              CurvedAnimation(
-                                parent: animation,
-                                curve: Curves.easeOutCubic,
-                              ),
-                            ),
-                        child: child,
-                      );
-                    },
+                transitionsBuilder: _slideTransition,
               ),
             ),
           ],
@@ -154,22 +138,7 @@ final appRouter = GoRouter(
                   child: LocalPlaylistDetailPage(playlistId: playlistId),
                   transitionDuration: const Duration(milliseconds: 220),
                   reverseTransitionDuration: const Duration(milliseconds: 180),
-                  transitionsBuilder:
-                      (context, animation, secondaryAnimation, child) {
-                        return SlideTransition(
-                          position:
-                              Tween<Offset>(
-                                begin: const Offset(1, 0),
-                                end: Offset.zero,
-                              ).animate(
-                                CurvedAnimation(
-                                  parent: animation,
-                                  curve: Curves.easeOutCubic,
-                                ),
-                              ),
-                          child: child,
-                        );
-                      },
+                  transitionsBuilder: _slideTransition,
                 );
               },
               routes: [
@@ -222,22 +191,7 @@ final appRouter = GoRouter(
                 child: const PluginManagementPage(),
                 transitionDuration: const Duration(milliseconds: 220),
                 reverseTransitionDuration: const Duration(milliseconds: 180),
-                transitionsBuilder:
-                    (context, animation, secondaryAnimation, child) {
-                      return SlideTransition(
-                        position:
-                            Tween<Offset>(
-                              begin: const Offset(1, 0),
-                              end: Offset.zero,
-                            ).animate(
-                              CurvedAnimation(
-                                parent: animation,
-                                curve: Curves.easeOutCubic,
-                              ),
-                            ),
-                        child: child,
-                      );
-                    },
+                transitionsBuilder: _slideTransition,
               ),
             ),
             GoRoute(
@@ -247,22 +201,7 @@ final appRouter = GoRouter(
                 child: const RecentlyPlayedPage(),
                 transitionDuration: const Duration(milliseconds: 220),
                 reverseTransitionDuration: const Duration(milliseconds: 180),
-                transitionsBuilder:
-                    (context, animation, secondaryAnimation, child) {
-                      return SlideTransition(
-                        position:
-                            Tween<Offset>(
-                              begin: const Offset(1, 0),
-                              end: Offset.zero,
-                            ).animate(
-                              CurvedAnimation(
-                                parent: animation,
-                                curve: Curves.easeOutCubic,
-                              ),
-                            ),
-                        child: child,
-                      );
-                    },
+                transitionsBuilder: _slideTransition,
               ),
             ),
             GoRoute(
@@ -277,22 +216,7 @@ final appRouter = GoRouter(
                 child: const RecognizePage(),
                 transitionDuration: const Duration(milliseconds: 220),
                 reverseTransitionDuration: const Duration(milliseconds: 180),
-                transitionsBuilder:
-                    (context, animation, secondaryAnimation, child) {
-                      return SlideTransition(
-                        position:
-                            Tween<Offset>(
-                              begin: const Offset(1, 0),
-                              end: Offset.zero,
-                            ).animate(
-                              CurvedAnimation(
-                                parent: animation,
-                                curve: Curves.easeOutCubic,
-                              ),
-                            ),
-                        child: child,
-                      );
-                    },
+                transitionsBuilder: _slideTransition,
               ),
             ),
           ],
@@ -312,21 +236,7 @@ final appRouter = GoRouter(
           child: TagEditorPage(songId: songId, autoSearch: autoSearch),
           transitionDuration: const Duration(milliseconds: 220),
           reverseTransitionDuration: const Duration(milliseconds: 180),
-          transitionsBuilder: (context, animation, secondaryAnimation, child) {
-            return SlideTransition(
-              position:
-                  Tween<Offset>(
-                    begin: const Offset(1, 0),
-                    end: Offset.zero,
-                  ).animate(
-                    CurvedAnimation(
-                      parent: animation,
-                      curve: Curves.easeOutCubic,
-                    ),
-                  ),
-              child: child,
-            );
-          },
+          transitionsBuilder: _slideTransition,
         );
       },
     ),
@@ -337,18 +247,7 @@ final appRouter = GoRouter(
         child: const QuickMatchPage(),
         transitionDuration: const Duration(milliseconds: 220),
         reverseTransitionDuration: const Duration(milliseconds: 180),
-        transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          return SlideTransition(
-            position: Tween<Offset>(begin: const Offset(1, 0), end: Offset.zero)
-                .animate(
-                  CurvedAnimation(
-                    parent: animation,
-                    curve: Curves.easeOutCubic,
-                  ),
-                ),
-            child: child,
-          );
-        },
+        transitionsBuilder: _slideTransition,
       ),
     ),
     GoRoute(
