@@ -141,6 +141,7 @@ class _PlayQueueSheetContentState
         _listScrollController,
         index: index,
         itemExtent: _kQueueItemExtent,
+        alignment: 0.5,
         duration: animate ? const Duration(milliseconds: 260) : Duration.zero,
       ),
     );

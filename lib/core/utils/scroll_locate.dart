@@ -32,6 +32,10 @@ Future<void> scrollToItemIndex(
   final itemTop = index * itemExtent;
   final slack = math.max(0.0, viewport - itemExtent);
   final target = (itemTop - slack * alignment).clamp(minExtent, maxExtent);
+  if (duration == Duration.zero) {
+    controller.jumpTo(target);
+    return;
+  }
   final delta = target - position.pixels;
 
   // 距离超过 1.5 屏就先瞬移到目标附近，只把最后一屏留给动画。

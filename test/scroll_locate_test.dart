@@ -25,6 +25,39 @@ Widget _buildList(ScrollController controller, {double viewportHeight = 600}) {
 }
 
 void main() {
+  for (final index in [0, 8, 30, 85, _itemCount - 1]) {
+    testWidgets('零时长定位第 $index 项直接到最终落点且不启动动画', (tester) async {
+      final controller = ScrollController();
+      addTearDown(controller.dispose);
+      await tester.pumpWidget(_buildList(controller));
+      controller.jumpTo(index == 0 ? 1200 : 0);
+      final offsets = <double>[];
+      controller.addListener(() => offsets.add(controller.offset));
+      final position = controller.position;
+      final target =
+          (index * _itemExtent -
+                  (position.viewportDimension - _itemExtent) * 0.5)
+              .clamp(position.minScrollExtent, position.maxScrollExtent);
+
+      await scrollToItemIndex(
+        controller,
+        index: index,
+        itemExtent: _itemExtent,
+        alignment: 0.5,
+        duration: Duration.zero,
+      );
+
+      expect(controller.offset, target);
+      expect(offsets, [target]);
+      expect(position.isScrollingNotifier.value, isFalse);
+      await tester.pump();
+      final viewport = tester.getRect(find.byType(ListView));
+      final item = tester.getRect(find.text('song-$index'));
+      expect(item.top, greaterThanOrEqualTo(viewport.top));
+      expect(item.bottom, lessThanOrEqualTo(viewport.bottom));
+    });
+  }
+
   testWidgets('定位到很远的条目时最终偏移正确且目标仍在可视区内', (tester) async {
     final controller = ScrollController();
     await tester.pumpWidget(_buildList(controller));
