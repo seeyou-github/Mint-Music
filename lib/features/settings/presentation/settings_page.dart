@@ -1199,7 +1199,6 @@ class _AppearanceContent extends ConsumerWidget {
         SettingRow(
           icon: Icons.auto_awesome,
           title: '主界面跟随封面变色',
-          subtitle: isLight ? '仅深色主题生效，当前是浅色主题' : '背景由当前歌曲封面主色派生，与播放详情页同一套算法',
           trailing: Switch(
             value: coverBackground,
             onChanged: (v) => _persistBool(
