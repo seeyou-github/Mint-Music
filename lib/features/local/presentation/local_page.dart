@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -69,17 +68,21 @@ class _LocalPageState extends ConsumerState<LocalPage>
   // 只做一层 Transform（GPU 变换），不重建列表子树；切换后新文件夹从另一侧
   // 28% 屏宽处滑入。
 
-  /// 前 [_kFolderFreeDragRatio] 屏宽内完全跟手。
-  static const double _kFolderFreeDragRatio = 0.25;
-
-  /// 超过跟手段后按这个倍数放大位移，快到边缘时「加速消失」。
-  static const double _kFolderOverDragFactor = 2.4;
-
   /// 手指位移达到这么多屏宽就算一次翻页（剩下的靠甩动速度判断）。
   static const double _kFolderSwitchDragRatio = 0.18;
 
   /// 文件夹列表当前的横向位移（像素）。
   final ValueNotifier<double> _folderOffsetX = ValueNotifier<double>(0);
+
+  /// 拖动过程中显示在「下一屏」的文件夹。
+  ///
+  /// [_dragTargetFolderActive] 为 false 表示没有拖动，或者已经滑到第一个 /
+  /// 最后一个文件夹（越界时只能回弹）。与 [_folderOffsetX] 配合：当前列表从
+  /// 0 平移到 ±整屏时，另一个文件夹的列表从另一侧同步平移进来，滑动过程中
+  /// 就能看到对面的内容（同 PageView）。
+  bool _dragTargetFolderActive = false;
+  String? _dragTargetFolder;
+  int _dragDir = 0;
 
   /// 位移动画驱动（时长每次按需设置）。
   late final AnimationController _folderAnim = AnimationController(vsync: this);
@@ -114,18 +117,25 @@ class _LocalPageState extends ConsumerState<LocalPage>
     });
   }
 
-  /// 手指位移 → 列表位移（前段跟手，后段加速）。
+  /// 手指位移 → 列表位移（1:1 跟手，最多一屏）。
+  ///
+  /// 必须与手指严格同步：下一屏是按「当前位移 ± 整屏宽」算位置的，这里一旦
+  /// 做加速，两页之间就会露出缝或叠在一起。
+  ///
+  /// 文件夹是「全部 + 各扫描目录」的有限序列（不循环）：已经在第一个还往右
+  /// 拖、或已经在最后一个还往左拖时直接不动，避免拖出一片空白。
   double _folderContentOffset(double dx) {
     final width = MediaQuery.sizeOf(context).width;
     if (width <= 0) return dx;
-    final free = width * _kFolderFreeDragRatio;
-    final distance = dx.abs();
-    if (distance <= free) return dx;
-    final eased = math.min(
-      free + (distance - free) * _kFolderOverDragFactor,
-      width,
-    );
-    return dx < 0 ? -eased : eased;
+    final clamped = dx.clamp(-width, width).toDouble();
+    final dir = clamped < 0 ? 1 : (clamped > 0 ? -1 : 0);
+    if (dir != 0) {
+      final folders = _folderOptions;
+      final index = folders.indexOf(_selectedFolder);
+      final target = index < 0 ? -1 : index + dir;
+      if (target < 0 || target >= folders.length) return 0;
+    }
+    return clamped;
   }
 
   /// 「全部」+ 各扫描目录，滑动切换按这个顺序走。
@@ -265,15 +275,10 @@ class _LocalPageState extends ConsumerState<LocalPage>
         ? allSongs
         : allSongs.where((s) => _isInFolder(s, _selectedFolder!)).toList();
 
-    // 在 build 中直接计算按钮可见性，避免滚动事件初值问题导致按钮永远不显示。
-    // 仅当正在播放本地歌曲且该歌曲在当前筛选列表中时显示。
+    // 当前播放歌曲：判断某个文件夹要不要显示「定位」按钮（见 [_buildSongsPage]）。
     final currentSong = ref.watch(
       playbackControllerProvider.select((s) => s.currentSong),
     );
-    final showLocateBtn =
-        currentSong != null &&
-        currentSong.source == 'local' &&
-        songs.indexWhere((s) => s.id == currentSong.id) >= 0;
 
     // 选择状态变化只影响「选择栏 + 列表勾选态 + 底部操作栏」，
     // 用 ListenableBuilder 收窄重建范围。
@@ -327,25 +332,55 @@ class _LocalPageState extends ConsumerState<LocalPage>
                               ? _onFolderSwipeEnd
                               : null,
                           child: ClipRect(
-                            child: AnimatedBuilder(
-                              animation: _folderOffsetX,
-                              builder: (context, child) => Transform.translate(
-                                offset: Offset(_folderOffsetX.value, 0),
-                                child: child,
-                              ),
-                              // 只做一层 transform，拖动过程不重建列表子树。
-                              child: songsAsync.when(
-                                data: (_) => _buildSongList(
-                                  colors,
-                                  songs,
-                                  showLocateBtn,
+                            // 两个文件夹的列表一起平移：当前列表从 0 滑到
+                            // ±整屏时，下一个文件夹从另一侧同步滑进来，
+                            // 拖动过程中就能看到对面的内容（同 PageView）。
+                            child: Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                if (_dragTargetFolderActive && _dragDir != 0)
+                                  AnimatedBuilder(
+                                    animation: _folderOffsetX,
+                                    builder: (context, child) =>
+                                        Transform.translate(
+                                          offset: Offset(
+                                            _folderOffsetX.value +
+                                                _dragDir *
+                                                    MediaQuery.sizeOf(
+                                                      context,
+                                                    ).width,
+                                            0,
+                                          ),
+                                          child: child,
+                                        ),
+                                    // 下一屏只是预览：用独立的滚动位置，
+                                    // 两个 ListView 不能共用同一个 controller。
+                                    child: _buildSongsPage(
+                                      colors,
+                                      songsAsync,
+                                      allSongs,
+                                      _dragTargetFolder,
+                                      currentSong,
+                                      primary: false,
+                                    ),
+                                  ),
+                                AnimatedBuilder(
+                                  animation: _folderOffsetX,
+                                  builder: (context, child) =>
+                                      Transform.translate(
+                                        offset: Offset(_folderOffsetX.value, 0),
+                                        child: child,
+                                      ),
+                                  child: _buildSongsPage(
+                                    colors,
+                                    songsAsync,
+                                    allSongs,
+                                    _selectedFolder,
+                                    currentSong,
+                                    primary: true,
+                                  ),
                                 ),
-                                loading: () => const Center(
-                                  child: CircularProgressIndicator(),
-                                ),
-                                error: (e, _) =>
-                                    _buildErrorState(colors, e.toString()),
-                              ),
+                              ],
                             ),
                           ),
                         ),
@@ -624,8 +659,8 @@ class _LocalPageState extends ConsumerState<LocalPage>
 
   /// 切换选中的文件夹（null = 全部）。
   ///
-  /// 点击文件夹标签与左右滑动都走这里：新文件夹从切换方向的另一侧 28% 屏宽
-  /// 处滑入，和发现页切换「歌单 / 榜单 / 电台」的进场动画一致。
+  /// 点击文件夹标签时 [animate] 为 true：新文件夹从切换方向的另一侧 28% 屏宽
+  /// 处滑入；左右滑动切换时传 false —— 两页已经跟着手指一起平移到位了。
   void _selectFolder(String? dir, {bool animate = true}) {
     if (_selectedFolder == dir) return;
     final folders = _folderOptions;
@@ -639,7 +674,13 @@ class _LocalPageState extends ConsumerState<LocalPage>
     }
     // 新文件夹的列表从头开始，不要把上一个文件夹的滚动位置带过去。
     if (_scrollController.hasClients) _scrollController.jumpTo(0);
-    setState(() => _selectedFolder = dir);
+    setState(() {
+      _selectedFolder = dir;
+      // 切换完成后收掉「下一屏」的预览。
+      _dragTargetFolderActive = false;
+      _dragTargetFolder = null;
+      _dragDir = 0;
+    });
     _revealFolderChip(dir);
   }
 
@@ -676,11 +717,48 @@ class _LocalPageState extends ConsumerState<LocalPage>
     _folderTween = null;
     _folderSwipeDx = 0;
     _folderOffsetX.value = 0;
+    if (_dragTargetFolderActive || _dragDir != 0) {
+      setState(() {
+        _dragTargetFolderActive = false;
+        _dragTargetFolder = null;
+        _dragDir = 0;
+      });
+    }
   }
 
   void _onFolderSwipeUpdate(DragUpdateDetails details) {
     _folderSwipeDx += details.delta.dx;
-    _folderOffsetX.value = _folderContentOffset(_folderSwipeDx);
+    final offset = _folderContentOffset(_folderSwipeDx);
+    _folderOffsetX.value = offset;
+    _syncFolderDragTarget(offset);
+  }
+
+  /// 根据当前位移确定「下一屏」是哪个文件夹（到头 / 到第一个就没有下一屏）。
+  ///
+  /// 只在方向或目标变化时 `setState` 一次，拖动过程中不反复重建列表。
+  void _syncFolderDragTarget(double offset) {
+    final dir = offset < 0 ? 1 : (offset > 0 ? -1 : 0);
+    final folders = _folderOptions;
+    final index = folders.indexOf(_selectedFolder);
+    var active = false;
+    String? folder;
+    if (dir != 0 && index >= 0) {
+      final target = index + dir;
+      if (target >= 0 && target < folders.length) {
+        active = true;
+        folder = folders[target];
+      }
+    }
+    if (active == _dragTargetFolderActive &&
+        folder == _dragTargetFolder &&
+        dir == _dragDir) {
+      return;
+    }
+    setState(() {
+      _dragTargetFolderActive = active;
+      _dragTargetFolder = folder;
+      _dragDir = dir;
+    });
   }
 
   /// 左右滑动结束：位移够就翻页，不够看甩动速度；都不够就弹回原位。
@@ -695,29 +773,42 @@ class _LocalPageState extends ConsumerState<LocalPage>
     } else if (velocity.abs() >= 260) {
       swipeLeft = velocity < 0;
     } else {
-      unawaited(_animateFolderOffset(0, 180));
+      unawaited(_settleFolderDrag(null, 0));
       return;
     }
-    unawaited(_completeFolderSwipe(swipeLeft: swipeLeft));
-  }
-
-  /// 当前文件夹顺着滑动方向滑出去，再切换选中项
-  /// （新文件夹的进场动画由 [_selectFolder] 负责）。
-  Future<void> _completeFolderSwipe({required bool swipeLeft}) async {
     final folders = _folderOptions;
     final index = folders.indexOf(_selectedFolder);
-    if (index < 0) return;
-    final next = index + (swipeLeft ? 1 : -1);
-    if (next < 0 || next >= folders.length) {
+    final next = index < 0 ? null : index + (swipeLeft ? 1 : -1);
+    if (next == null || next < 0 || next >= folders.length) {
       // 已经是第一个 / 最后一个文件夹：没有可切换的，弹回原位。
-      await _animateFolderOffset(0, 180);
+      unawaited(_settleFolderDrag(null, 0));
       return;
     }
+    unawaited(_settleFolderDrag(folders[next], swipeLeft ? 1 : -1));
+  }
+
+  /// 收尾：两页一起滑到位后切换文件夹，或者回弹。
+  ///
+  /// 切换用 `animate: false` —— 位移已经自己走完，再让 [_selectFolder] 做一次
+  /// 「从侧边 28% 进场」会闪。
+  Future<void> _settleFolderDrag(String? next, int dir) async {
     final width = MediaQuery.sizeOf(context).width;
-    // 滑出去只用 140ms：越拖到边缘越「加速消失」。
-    await _animateFolderOffset(swipeLeft ? -width : width, 140);
+    if (next != null) {
+      await _animateFolderOffset(dir > 0 ? -width : width, 220);
+      if (!mounted) return;
+      _selectFolder(next, animate: false);
+      _folderOffsetX.value = 0;
+      return;
+    }
+    await _animateFolderOffset(0, 200);
     if (!mounted) return;
-    _selectFolder(folders[next]);
+    if (_dragTargetFolderActive || _dragDir != 0) {
+      setState(() {
+        _dragTargetFolderActive = false;
+        _dragTargetFolder = null;
+        _dragDir = 0;
+      });
+    }
   }
 
   /// 文件夹显示名（取最后一级目录名）。
@@ -779,11 +870,47 @@ class _LocalPageState extends ConsumerState<LocalPage>
     );
   }
 
+  /// 构建某个文件夹的歌曲页（列表 / 空态 / 加载 / 错误）。
+  ///
+  /// [primary] 为当前选中的文件夹：它独占 [_scrollController]、显示「定位当前
+  /// 播放歌曲」按钮，并跟随多选状态；拖动过程中露出的下一屏只是预览，用独立的
+  /// 滚动状态（两个 ListView 不能共用同一个 ScrollController）。
+  Widget _buildSongsPage(
+    ThemeColors colors,
+    AsyncValue<List<Song>> songsAsync,
+    List<Song> allSongs,
+    String? folder,
+    Song? currentSong, {
+    required bool primary,
+  }) {
+    final songs = folder == null
+        ? allSongs
+        : allSongs.where((s) => _isInFolder(s, folder)).toList();
+    // 定位按钮只在当前页显示：下一屏还没切过去，点了也没有可滚动的位置。
+    final showLocateBtn =
+        primary &&
+        !_selection.isActive &&
+        currentSong != null &&
+        currentSong.source == 'local' &&
+        songs.any((s) => s.id == currentSong.id);
+    return songsAsync.when(
+      data: (_) => _buildSongList(
+        colors,
+        songs,
+        showLocateBtn,
+        controller: primary ? _scrollController : null,
+      ),
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (e, _) => _buildErrorState(colors, e.toString()),
+    );
+  }
+
   Widget _buildSongList(
     ThemeColors colors,
     List<Song> songs,
-    bool showLocateBtn,
-  ) {
+    bool showLocateBtn, {
+    ScrollController? controller,
+  }) {
     if (songs.isEmpty) {
       return _buildEmptyState(colors);
     }
@@ -797,7 +924,10 @@ class _LocalPageState extends ConsumerState<LocalPage>
     return Stack(
       children: [
         ListView.separated(
-          controller: _scrollController,
+          // 当前页显式传 [_scrollController]（定位 / 切文件夹要用），
+          // 拖动中露出的下一屏传 null，让它用自己的滚动状态。
+          controller: controller,
+          primary: controller == null ? false : null,
           padding: EdgeInsets.only(
             // 左右各 8（原来是 16）：配合行内 4px 内边距，序号左边距、
             // 「更多」按钮到屏幕边缘的距离都缩到原来的一半。

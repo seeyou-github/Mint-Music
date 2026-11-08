@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -126,12 +125,6 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
   /// 本次横向滑动累计的手指位移（用来判断是否达到翻页门槛）。
   double _tabSwipeDx = 0;
 
-  /// 前这么多屏宽的内容位移完全跟手，之后开始加速。
-  static const double _kTabFreeDragRatio = 0.25;
-
-  /// 超过跟手段后位移的放大倍数（越大越快「消失」）。
-  static const double _kTabOverDragFactor = 2.4;
-
   /// 手指位移达到这么多屏宽就算一次翻页（剩下的靠甩动速度判断）。
   static const double _kTabSwitchDragRatio = 0.18;
 
@@ -141,6 +134,20 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
   /// 或顺着方向滑出去）。用一层 `Transform` 平移整块内容，只是 GPU 变换，
   /// 不会重建三个分类各自的列表子树。
   final ValueNotifier<double> _tabOffsetX = ValueNotifier<double>(0);
+
+  /// 拖动过程中显示在「下一屏」的分类；null 表示没有拖动（或已到边界）。
+  ///
+  /// 与 [_tabOffsetX] 配合：当前页从 0 平移到 ±整屏时，下一屏从另一侧同步
+  /// 平移进来，滑动过程中就能看到对面的内容（与 `PageView` 一致），
+  /// 而不是「当前页滑走、新页再从边上飞入」。
+  DiscoverTab? _dragTargetTab;
+
+  /// 拖动方向：+1 = 左滑（下一个分类，下一屏在右侧）、-1 = 右滑。
+  int _dragDir = 0;
+
+  /// 本次切换由滑动触发：位移已经自己走完，`discoverTabProvider` 的监听里
+  /// 不要再做「新分类从侧边 28% 进场」，否则会闪一下。
+  bool _swipeTransition = false;
 
   /// 分类内容横向位移的动画驱动（时长每次按需设置）。
   late final AnimationController _tabAnim = AnimationController(vsync: this);
@@ -192,6 +199,8 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
   /// 否则一停手分类栏就会自己弹回来。电台页没有这一层分类栏，也不处理。
   void _onCategoryScroll(UserScrollNotification notification) {
     if (!Platform.isAndroid) return;
+    // 拖动切换分类时两页都在屏幕上，滚动通知可能来自下一屏，先不响应。
+    if (_dragTargetTab != null) return;
     if (notification.metrics.axis != Axis.vertical) return;
     if (notification.direction == ScrollDirection.idle) return;
     if (ref.read(discoverTabProvider) == DiscoverTab.radio) return;
@@ -229,23 +238,14 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
     });
   }
 
-  /// 手指位移 → 内容位移。
+  /// 手指位移 → 内容位移（1:1 跟手，最多一屏）。
   ///
-  /// 前 [_kTabFreeDragRatio] 屏宽完全跟手（正常左右滑时手感不变）；
-  /// 拖过这段之后按 [_kTabOverDragFactor] 倍放大——越接近屏幕边缘内容跑得
-  /// 越快，松手前就能「加速消失」，而不是被手指顶在屏幕边上一动不动。
-  /// 最多滑出一整屏，再多也没意义。
+  /// 必须与手指严格同步：下一屏是按「当前位移 ± 整屏宽」算位置的，这里一旦
+  /// 做加速，两页之间就会露出缝或叠在一起。
   double _tabContentOffset(double dx) {
     final width = MediaQuery.sizeOf(context).width;
     if (width <= 0) return dx;
-    final free = width * _kTabFreeDragRatio;
-    final distance = dx.abs();
-    if (distance <= free) return dx;
-    final eased = math.min(
-      free + (distance - free) * _kTabOverDragFactor,
-      width,
-    );
-    return dx < 0 ? -eased : eased;
+    return dx.clamp(-width, width).toDouble();
   }
 
   @override
@@ -403,8 +403,9 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
       if (from < 0 || to < 0) return;
       final forward = (to - from + _tabOrder.length) % _tabOrder.length == 1;
       if (!Platform.isAndroid) return;
-      // 新分类从滑动方向的另一侧进场：拖动时内容往哪边出去，新内容就从
-      // 另一边回来，衔接成一次完整的「翻页」。
+      // 滑动切换时两页已经一起平移到位，这里再插一次「从侧边进场」会闪一下。
+      if (_swipeTransition) return;
+      // 点标签切换：新分类从切换方向的另一侧 28% 处滑入。
       final width = MediaQuery.sizeOf(context).width;
       _tabOffsetX.value = forward ? width * 0.28 : -width * 0.28;
       unawaited(_animateTabOffset(0, 200));
@@ -509,28 +510,39 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
                     : null,
                 onHorizontalDragEnd: Platform.isAndroid ? _onTabSwipeEnd : null,
                 child: ClipRect(
-                  child: AnimatedBuilder(
-                    animation: _tabOffsetX,
-                    builder: (context, child) => Transform.translate(
-                      offset: Offset(_tabOffsetX.value, 0),
-                      child: child,
-                    ),
-                    // 三个分类各是一整页长列表，这里只做一层 transform，
-                    // 拖动过程不重建子树。
-                    child: NotificationListener<UserScrollNotification>(
-                      onNotification: (notification) {
-                        _onCategoryScroll(notification);
-                        // 不消费通知：列表自身、分页条该收到的滚动事件照常。
-                        return false;
-                      },
-                      child: switch (tab) {
-                        DiscoverTab.playlists => _buildPlaylistsTab(colors),
-                        DiscoverTab.leaderboards => _buildLeaderboardsTab(
-                          colors,
+                  // 两页一起平移：当前页从 0 滑到 ±整屏时，下一屏从另一侧
+                  // 同步滑进来，拖动过程中就能看到对面的内容（同 PageView）。
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      // 下一屏垫在下面，位置 = 当前位移 + 方向 × 整屏宽。
+                      // 只包一层 Transform，拖动过程不重建列表子树。
+                      if (_dragTargetTab != null && _dragTargetTab != tab)
+                        AnimatedBuilder(
+                          animation: _tabOffsetX,
+                          builder: (context, child) => Transform.translate(
+                            offset: Offset(
+                              _tabOffsetX.value +
+                                  _dragDir * MediaQuery.sizeOf(context).width,
+                              0,
+                            ),
+                            child: child,
+                          ),
+                          child: _buildTabPage(
+                            _dragTargetTab!,
+                            colors,
+                            primary: false,
+                          ),
                         ),
-                        DiscoverTab.radio => const RadioPanel(),
-                      },
-                    ),
+                      AnimatedBuilder(
+                        animation: _tabOffsetX,
+                        builder: (context, child) => Transform.translate(
+                          offset: Offset(_tabOffsetX.value, 0),
+                          child: child,
+                        ),
+                        child: _buildTabPage(tab, colors, primary: true),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -538,6 +550,35 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
           ],
         ),
       ),
+    );
+  }
+
+  /// 构建某个分类的整页内容（含「垂直滚动 → 分类栏显隐」的监听）。
+  ///
+  /// [primary] 为当前分类：它用页面持有的滚动控制器（定位 / 回顶要用）；
+  /// 拖动中露出的下一屏传 false，滚动视图自建 controller，两页才不会抢同一个。
+  Widget _buildTabPage(
+    DiscoverTab tab,
+    ThemeColors colors, {
+    required bool primary,
+  }) {
+    return NotificationListener<UserScrollNotification>(
+      onNotification: (notification) {
+        _onCategoryScroll(notification);
+        // 不消费通知：列表自身、分页条该收到的滚动事件照常。
+        return false;
+      },
+      child: switch (tab) {
+        DiscoverTab.playlists => _buildPlaylistsTab(
+          colors,
+          controller: primary ? _scrollController : null,
+        ),
+        DiscoverTab.leaderboards => _buildLeaderboardsTab(
+          colors,
+          controller: primary ? _leaderboardScrollController : null,
+        ),
+        DiscoverTab.radio => const RadioPanel(),
+      },
     );
   }
 
@@ -601,7 +642,29 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
 
   void _onTabSwipeUpdate(DragUpdateDetails details) {
     _tabSwipeDx += details.delta.dx;
-    _tabOffsetX.value = _tabContentOffset(_tabSwipeDx);
+    final offset = _tabContentOffset(_tabSwipeDx);
+    _tabOffsetX.value = offset;
+    _syncDragTarget(offset);
+  }
+
+  /// 根据当前位移确定「下一屏」是哪个分类。
+  ///
+  /// 只在方向变化时 `setState` 一次：拖动过程中每帧都改状态会把整页列表
+  /// 反复重建。
+  void _syncDragTarget(double offset) {
+    final dir = offset < 0 ? 1 : (offset > 0 ? -1 : 0);
+    final current = ref.read(discoverTabProvider);
+    final index = _tabOrder.indexOf(current);
+    DiscoverTab? target;
+    if (dir != 0 && index >= 0) {
+      target = _tabOrder[(index + dir + _tabOrder.length) % _tabOrder.length];
+      if (target == current) target = null;
+    }
+    if (target == _dragTargetTab && dir == _dragDir) return;
+    setState(() {
+      _dragTargetTab = target;
+      _dragDir = dir;
+    });
   }
 
   /// 左右滑动切换顶部分类（Android）。
@@ -620,28 +683,45 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
     } else if (velocity.abs() >= 260) {
       swipeLeft = velocity < 0;
     } else {
-      unawaited(_animateTabOffset(0, 180));
+      unawaited(_settleTabDrag(null));
       return;
     }
-    unawaited(_completeTabSwipe(swipeLeft: swipeLeft));
-  }
-
-  /// 当前分类顺着滑动方向加速滑出去，然后切换分类（新分类的进场由
-  /// `discoverTabProvider` 的监听负责）。
-  Future<void> _completeTabSwipe({required bool swipeLeft}) async {
     final current = ref.read(discoverTabProvider);
     final index = _tabOrder.indexOf(current);
-    if (index < 0) return;
+    if (index < 0) {
+      unawaited(_settleTabDrag(null));
+      return;
+    }
     final step = swipeLeft ? 1 : -1;
     final next =
         _tabOrder[(index + step + _tabOrder.length) % _tabOrder.length];
-    if (next == current) return;
+    unawaited(_settleTabDrag(next, step));
+  }
 
+  /// 收尾：两页一起滑到位后切换分类，或者回弹。
+  ///
+  /// 切换时「改分类」和「位移归零」在同一个同步块里完成（两者都只是
+  /// markNeedsBuild，不会立即 build），build 时读到的已经是新分类 + 0，不闪。
+  Future<void> _settleTabDrag(DiscoverTab? next, [int dir = 0]) async {
     final width = MediaQuery.sizeOf(context).width;
-    // 滑出去只用 140ms：越拖到边缘越「加速消失」。
-    await _animateTabOffset(swipeLeft ? -width : width, 140);
+    if (next == null) {
+      await _animateTabOffset(0, 200);
+    } else {
+      await _animateTabOffset(dir > 0 ? -width : width, 220);
+      if (!mounted) return;
+      // 滑动已经自己走完位移，监听里不要再做「从侧边 28% 进场」。
+      _swipeTransition = true;
+      ref.read(discoverTabProvider.notifier).state = next;
+      _tabOffsetX.value = 0;
+      _swipeTransition = false;
+    }
     if (!mounted) return;
-    ref.read(discoverTabProvider.notifier).state = next;
+    if (_dragTargetTab != null || _dragDir != 0) {
+      setState(() {
+        _dragTargetTab = null;
+        _dragDir = 0;
+      });
+    }
   }
 
   Widget _buildHeader(BuildContext context, ThemeColors colors) {
@@ -939,7 +1019,10 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
     );
   }
 
-  Widget _buildPlaylistsTab(ThemeColors colors) {
+  Widget _buildPlaylistsTab(
+    ThemeColors colors, {
+    ScrollController? controller,
+  }) {
     final tagsAsync = ref.watch(playlistTagsProvider);
     final hotTagsAsync = ref.watch(hotPlaylistTagsProvider);
     final activeTagId = ref.watch(activeTagIdProvider);
@@ -976,7 +1059,12 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
         ),
         Expanded(
           child: _isCustomTag(activeTagId)
-              ? _buildCustomSheetGrid(colors, customSheets, sourceId: sourceId)
+              ? _buildCustomSheetGrid(
+                  colors,
+                  customSheets,
+                  sourceId: sourceId,
+                  controller: controller,
+                )
               : playlistsAsync.when(
                   data: (playlists) {
                     if (playlists.isEmpty) {
@@ -987,6 +1075,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
                           colors,
                           customSheets,
                           sourceId: sourceId,
+                          controller: controller,
                         );
                       }
                       // 插件音源可能只提供搜索 / 播放地址，不提供歌单与榜单，
@@ -1021,7 +1110,11 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
                         ),
                       );
                     }
-                    return _buildPlaylistGrid(colors, playlists);
+                    return _buildPlaylistGrid(
+                      colors,
+                      playlists,
+                      controller: controller,
+                    );
                   },
                   loading: () =>
                       const Center(child: CircularProgressIndicator()),
@@ -1374,6 +1467,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
     ThemeColors colors,
     List<CustomSheet> sheets, {
     String? sourceId,
+    ScrollController? controller,
   }) {
     if (sheets.isEmpty) {
       return Center(
@@ -1401,7 +1495,10 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
     final crossAxisCount = ResponsiveLayout.gridCrossAxisCount(context);
     final isTablet = ResponsiveLayout.isTablet(context);
     return CustomScrollView(
-      controller: _scrollController,
+      controller: controller,
+      // 下一屏预览没有 controller：不要继承外层 PrimaryScrollController，
+      // 由 ScrollView 自建，否则两页会抢同一个。
+      primary: controller == null ? false : null,
       slivers: [
         SliverPadding(
           padding: EdgeInsets.only(
@@ -1652,7 +1749,11 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
         );
   }
 
-  Widget _buildPlaylistGrid(ThemeColors colors, List<Playlist> playlists) {
+  Widget _buildPlaylistGrid(
+    ThemeColors colors,
+    List<Playlist> playlists, {
+    ScrollController? controller,
+  }) {
     final notifier = ref.read(categoryPlaylistsProvider.notifier);
     final crossAxisCount = ResponsiveLayout.gridCrossAxisCount(context);
     final isTablet = ResponsiveLayout.isTablet(context);
@@ -1680,7 +1781,10 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
     }
 
     return CustomScrollView(
-      controller: _scrollController,
+      controller: controller,
+      // 下一屏预览没有 controller：不要继承外层 PrimaryScrollController，
+      // 由 ScrollView 自建，否则两页会抢同一个。
+      primary: controller == null ? false : null,
       cacheExtent: 360,
       slivers: [
         SliverPadding(
@@ -1846,7 +1950,10 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
     );
   }
 
-  Widget _buildLeaderboardsTab(ThemeColors colors) {
+  Widget _buildLeaderboardsTab(
+    ThemeColors colors, {
+    ScrollController? controller,
+  }) {
     final isHot = _leaderboardCategory == _LeaderboardCategory.hot;
     // 榜单分类与「热榜 / 所有」合并成一行：「所有」是全部数据，
     // 右侧各分类直接过滤（分类来自插件给的 group，少于 2 组不显示）。
@@ -1937,7 +2044,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
         Expanded(
           child: isHot
               ? _buildHotBoardTab(colors)
-              : _buildAllLeaderboardsTab(colors),
+              : _buildAllLeaderboardsTab(colors, controller: controller),
         ),
       ],
     );
@@ -2625,7 +2732,10 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
     );
   }
 
-  Widget _buildAllLeaderboardsTab(ThemeColors colors) {
+  Widget _buildAllLeaderboardsTab(
+    ThemeColors colors, {
+    ScrollController? controller,
+  }) {
     final leaderboardsAsync = ref.watch(leaderboardsProvider);
 
     return leaderboardsAsync.when(
@@ -2656,7 +2766,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
             : leaderboards
                   .where((board) => board.group == selected)
                   .toList(growable: false);
-        return _buildLeaderboardGrid(colors, filtered);
+        return _buildLeaderboardGrid(colors, filtered, controller: controller);
       },
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (_, __) => Center(
@@ -2679,8 +2789,9 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
 
   Widget _buildLeaderboardGrid(
     ThemeColors colors,
-    List<Leaderboard> leaderboards,
-  ) {
+    List<Leaderboard> leaderboards, {
+    ScrollController? controller,
+  }) {
     final crossAxisCount = ResponsiveLayout.gridCrossAxisCount(context);
     final isTablet = ResponsiveLayout.isTablet(context);
 
@@ -2688,7 +2799,8 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
     _leaderboardPager.clampTo(leaderboards.length, hasMore: false);
     final visible = _leaderboardPager.slice(leaderboards);
     return CustomScrollView(
-      controller: _leaderboardScrollController,
+      controller: controller,
+      primary: controller == null ? false : null,
       cacheExtent: 360,
       slivers: [
         SliverPadding(
