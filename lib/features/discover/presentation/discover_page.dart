@@ -787,10 +787,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
               child: Container(
                 width: _searchBarHeight,
                 height: _searchBarHeight,
-                decoration: BoxDecoration(
-                  color: colors.surface,
-                  shape: BoxShape.circle,
-                ),
+                decoration: floatingButtonDecoration(colors, circle: true),
                 alignment: Alignment.center,
                 // 放大镜比音源圆标小一圈（音源圆标是实心图案，铺满才不显空），
                 // 38 的话放大镜会顶到圆边，显得又大又笨。
@@ -828,17 +825,24 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
             child: Container(
               width: _searchBarHeight,
               height: _searchBarHeight,
-              decoration: BoxDecoration(
-                color: colors.surface,
-                shape: BoxShape.circle,
-              ),
+              decoration: floatingButtonDecoration(colors, circle: true),
               alignment: Alignment.center,
               child: currentSource != null
-                  ? _buildSourceIcon(
-                      // 变体 id 也一起传进去：插件自带图标时优先显示它。
-                      currentSource.id,
-                      size: _circleIconSize,
-                      label: currentSource.name,
+                  ? ColorFiltered(
+                      // 亮度压到 20%（降低 80%）：音源图标都是饱和实心色块，
+                      // 原亮度在深色顶栏上太抢眼，压暗后只作「当前音源」的暗示。
+                      colorFilter: const ColorFilter.matrix(<double>[
+                        0.2, 0, 0, 0, 0, //
+                        0, 0.2, 0, 0, 0, //
+                        0, 0, 0.2, 0, 0, //
+                        0, 0, 0, 1, 0, //
+                      ]),
+                      child: _buildSourceIcon(
+                        // 变体 id 也一起传进去：插件自带图标时优先显示它。
+                        currentSource.id,
+                        size: _circleIconSize,
+                        label: currentSource.name,
+                      ),
                     )
                   : Icon(
                       Icons.music_note,
@@ -876,13 +880,8 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
       child: Container(
         height: _searchBarHeight,
         padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-        // 和分类胶囊（歌单 / 排行榜 / 电台）同一套「细边框 + 轻阴影」：
-        // 背景色和页面背景只差一点点，纯色块在深色下几乎看不出来。
-        decoration: floatingSurfaceDecoration(
-          colors,
-          radius: AppRadius.full,
-          subtle: true,
-        ),
+        // 与顶栏按钮统一：底色 + 轻阴影，不画描边。
+        decoration: floatingButtonDecoration(colors),
         child: Row(
           children: [
             Icon(Icons.search, size: 18, color: colors.textHint),

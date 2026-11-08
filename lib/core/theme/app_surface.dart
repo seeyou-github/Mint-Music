@@ -73,6 +73,24 @@ BoxDecoration floatingSurfaceDecoration(
   );
 }
 
+/// 顶栏按钮 / 搜索框统一的「轻阴影表面」。
+///
+/// 只有底色 + 一层很轻的阴影，**不画描边**：发现页、收藏页、本地页的顶栏
+/// 控件都用它，三页观感才一致（收藏页以前用的是 1px 描边，和发现页的
+/// 纯色块对不上）。[circle] 为 true 时做成圆形（圆形图标按钮）。
+BoxDecoration floatingButtonDecoration(
+  ThemeColors colors, {
+  double radius = 999,
+  bool circle = false,
+}) {
+  return BoxDecoration(
+    color: colors.surface,
+    shape: circle ? BoxShape.circle : BoxShape.rectangle,
+    borderRadius: circle ? null : BorderRadius.circular(radius),
+    boxShadow: floatingSubtleShadows(colors),
+  );
+}
+
 /// 给「内部带 `clipBehavior` 裁剪」的卡片套一层不会被裁掉的阴影。
 ///
 /// `Container(clipBehavior: Clip.antiAlias)` 会把 `BoxDecoration.boxShadow`

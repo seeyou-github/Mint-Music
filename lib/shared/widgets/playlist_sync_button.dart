@@ -9,6 +9,7 @@ import '../../core/backup/sync_timeout.dart';
 import '../../core/backup/webdav_service.dart';
 import '../../core/l10n/l10n.dart';
 import '../../core/theme/app_spacing.dart';
+import '../../core/theme/app_surface.dart';
 import '../../core/theme/theme_provider.dart';
 import '../../features/library/application/playlist_providers.dart';
 import '../../features/settings/application/settings_providers.dart';
@@ -191,15 +192,14 @@ class _PlaylistSyncButtonState extends ConsumerState<PlaylistSyncButton> {
             horizontal: AppSpacing.md,
             vertical: 6,
           ),
-          decoration: BoxDecoration(
-            color: success
-                ? colors.success.withValues(alpha: 0.08)
-                : Colors.transparent,
-            border: Border.all(
-              color: success ? colors.success : colors.divider,
-            ),
-            borderRadius: BorderRadius.circular(AppRadius.full),
-          ),
+          decoration: success
+              ? BoxDecoration(
+                  color: colors.success.withValues(alpha: 0.08),
+                  border: Border.all(color: colors.success),
+                  borderRadius: BorderRadius.circular(AppRadius.full),
+                )
+              // 常态与发现页 / 本地页顶栏按钮一致：底色 + 轻阴影，不画描边。
+              : floatingButtonDecoration(colors),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [

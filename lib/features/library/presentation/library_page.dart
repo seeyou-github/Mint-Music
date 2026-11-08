@@ -8,6 +8,7 @@ import 'package:go_router/go_router.dart';
 import 'package:path/path.dart' as p;
 
 import '../../../core/l10n/l10n.dart';
+import '../../../core/theme/app_surface.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
@@ -141,21 +142,18 @@ class LibraryPage extends ConsumerWidget {
           horizontal: AppSpacing.md,
           vertical: 6,
         ),
-        decoration: BoxDecoration(
-          color: colors.primary,
-          borderRadius: BorderRadius.circular(AppRadius.full),
-        ),
+        decoration: floatingButtonDecoration(colors),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.add, size: 14, color: colors.textOnPrimary),
+            Icon(Icons.add, size: 14, color: colors.textPrimary),
             const SizedBox(width: AppSpacing.xs),
             Text(
               context.tr('新建歌单'),
               style: TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w500,
-                color: colors.textOnPrimary,
+                color: colors.textPrimary,
               ),
             ),
           ],
@@ -176,10 +174,7 @@ class LibraryPage extends ConsumerWidget {
           horizontal: AppSpacing.md,
           vertical: 6,
         ),
-        decoration: BoxDecoration(
-          border: Border.all(color: colors.divider),
-          borderRadius: BorderRadius.circular(AppRadius.full),
-        ),
+        decoration: floatingButtonDecoration(colors),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [

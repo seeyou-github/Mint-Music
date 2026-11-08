@@ -517,10 +517,7 @@ class _LocalPageState extends ConsumerState<LocalPage>
         child: Container(
           width: 40,
           height: 40,
-          decoration: BoxDecoration(
-            color: colors.surface,
-            borderRadius: BorderRadius.circular(AppRadius.md),
-          ),
+          decoration: floatingButtonDecoration(colors, radius: AppRadius.md),
           child: Icon(
             icon,
             size: 20,
@@ -840,12 +837,8 @@ class _LocalPageState extends ConsumerState<LocalPage>
     return Container(
       height: 40,
       padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-      // 与发现页搜索框 / 分类胶囊一致：细边框 + 轻阴影，深色下才看得出边界。
-      decoration: floatingSurfaceDecoration(
-        colors,
-        radius: AppRadius.full,
-        subtle: true,
-      ),
+      // 与顶栏按钮统一：底色 + 轻阴影，不画描边。
+      decoration: floatingButtonDecoration(colors),
       child: Row(
         children: [
           Icon(Icons.search, size: 18, color: colors.textHint),
