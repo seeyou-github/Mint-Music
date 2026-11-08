@@ -43,13 +43,29 @@ class MinePage extends ConsumerWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Expanded(
-                  child: Text(
-                    context.tr('我的'),
-                    style: TextStyle(
-                      fontSize: isTablet ? 26 : 22,
-                      fontWeight: FontWeight.bold,
-                      color: colors.textPrimary,
-                    ),
+                  child: Row(
+                    children: [
+                      // 主色竖条：与本地页 / 收藏页标题同款。
+                      Container(
+                        width: 4,
+                        height: 24,
+                        decoration: BoxDecoration(
+                          color: colors.primary,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                      const SizedBox(width: AppSpacing.md),
+                      Expanded(
+                        child: Text(
+                          context.tr('我的'),
+                          style: TextStyle(
+                            fontSize: isTablet ? 26 : 22,
+                            fontWeight: FontWeight.bold,
+                            color: colors.textPrimary,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
                 // 应用版本号放在标题栏右侧
