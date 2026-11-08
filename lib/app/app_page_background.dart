@@ -43,28 +43,27 @@ class AppPageBackground extends ConsumerWidget {
     final topInset = Platform.isWindows && WindowChrome.hasCustomTitleBar
         ? WindowsTitleBar.height
         : 0.0;
-    final windowHeight = MediaQuery.sizeOf(context).height;
-    // 渐变的盒子按「整个窗口」的高度铺，再上移 topInset：页面里看到的就是
-    // 全局渐变从 topInset 到窗口底部那一段，相位天然对齐。
+    // 渐变盒：向上伸出 topInset、向下铺到页面底部。页面本身从 topInset 开始、
+    // 一直铺到窗口底部，所以这个盒子的高度**恰好等于窗口高度**，页面里看到的
+    // 就是全局渐变从标题栏下沿到底部那一段 —— 相位天然对齐，不需要拿窗口高度
+    // 算任何东西。
     //
-    // 之前是拿 MediaQuery 高度反推 `Alignment(0, 2*topInset/H - 1)`，把渐变
-    // 压缩进页面区域。问题在于窗口从最小化恢复 / 刚创建时，MediaQuery 会先
-    // 报一个很小的尺寸（几十 px），算出来的相位接近 +1，整个窗口背景被压成
-    // 底部一条、看起来「整体变浅」；尺寸恢复后 1 秒的 AnimatedContainer 又把
-    // 它补间回来，视觉上就是「窗口一出现，背景由浅变深」。
+    // 之前用 `Alignment(0, 2*topInset/H - 1)` 反推相位：窗口从最小化恢复 /
+    // 刚创建时 MediaQuery 会先报一个很小的 H，相位算成接近 +1，整屏背景被压成
+    // 底部一条（看起来「整体变浅」），尺寸恢复后 1 秒补间又摊开，就是那个
+    // 「由浅变深」的闪动。
     //
-    // 现在相位是常量，窗口尺寸只影响这个盒子的高度（被 Stack 裁掉），
-    // 尺寸抖动不会再改变 decoration，也就不会触发那段补间。
-    final boxHeight = windowHeight < 200 ? 200.0 : windowHeight;
+    // 现在这里不读 MediaQuery、不读窗口尺寸：decoration 是常量，窗口尺寸怎么
+    // 变都只是这个盒子的高度变（超出部分被 Stack 裁掉），不会重算、不会补间。
     return Stack(
-      // 超出页面的部分（顶栏那一条）直接裁掉。
+      // 超出页面的部分（标题栏那一条）直接裁掉。
       clipBehavior: Clip.hardEdge,
       children: [
         Positioned(
           left: 0,
           right: 0,
           top: -topInset,
-          height: boxHeight,
+          bottom: 0,
           child: AnimatedContainer(
             // 与全局那层同一条曲线：改「背景渐变」时两边一起过渡，不会一快一慢。
             duration: const Duration(seconds: 1),
