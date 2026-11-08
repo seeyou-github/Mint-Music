@@ -13,7 +13,6 @@ import android.graphics.RectF;
 import android.os.Build;
 import android.support.v4.media.MediaDescriptionCompat;
 import android.support.v4.media.session.PlaybackStateCompat;
-import android.view.View;
 import android.widget.RemoteViews;
 
 import androidx.core.app.NotificationCompat;
@@ -48,8 +47,19 @@ public final class MintNotification {
     /** 桌面歌词按钮的广播。 */
     public static final String ACTION_LYRIC = "com.mintmusic.notification.LYRIC";
 
+    /**
+     * 右上角关闭按钮的广播。
+     *
+     * <p>不走媒体键 {@code ACTION_STOP}：媒体键会经 MediaSession 分发，服务还可能被
+     * {@code startForegroundService} 顺带拉起，关闭时容易被系统重新派发成一次播放
+     * （表现为「点了关闭，退出后又响一下，再点一次才真的停」）。改成和收藏 / 词
+     * 一样的自有广播，由 Dart 明确地停播放并收起通知。
+     */
+    public static final String ACTION_CLOSE = "com.mintmusic.notification.CLOSE";
+
     private static final int REQUEST_FAVORITE = 0x4D4D31;
     private static final int REQUEST_LYRIC = 0x4D4D32;
+    private static final int REQUEST_CLOSE = 0x4D4D33;
 
     /** 当前歌曲是否已收藏（由 Dart 侧通过 MethodChannel 同步过来）。 */
     private static boolean favorite = false;
@@ -107,8 +117,7 @@ public final class MintNotification {
             Bitmap art,
             boolean playing,
             boolean ongoing,
-            PendingIntent contentIntent,
-            PendingIntent stopIntent) {
+            PendingIntent contentIntent) {
         if (description == null || description.getTitle() == null) return null;
         try {
             final Context context = service;
@@ -170,12 +179,9 @@ public final class MintNotification {
             views.setOnClickPendingIntent(
                     lyricId, broadcast(context, ACTION_LYRIC, REQUEST_LYRIC));
 
-            // 右上角关闭：与原 MediaStyle 的取消按钮一样 = 停止播放并移除通知。
-            if (stopIntent != null) {
-                views.setOnClickPendingIntent(closeId, stopIntent);
-            } else {
-                views.setViewVisibility(closeId, View.GONE);
-            }
+            // 右上角关闭：发自有广播，由 Dart 停播放并收起通知（见 ACTION_CLOSE）。
+            views.setOnClickPendingIntent(
+                    closeId, broadcast(context, ACTION_CLOSE, REQUEST_CLOSE));
 
             // 点卡片本体打开应用（与系统媒体通知一致）。
             if (contentIntent != null) builder.setContentIntent(contentIntent);

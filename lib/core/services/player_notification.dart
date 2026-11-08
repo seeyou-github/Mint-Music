@@ -9,9 +9,13 @@ import 'package:flutter/services.dart';
 ///   audio_service 里，改掉默认的 MediaStyle 通知）；
 /// - 通道：`android/app/src/main/kotlin/.../PlayerNotificationChannel.kt`。
 ///
-/// 卡片上的五个按钮：收藏 / 上一首 / 播放暂停 / 下一首 / 桌面歌词。其中上一首、
+/// 卡片上的按钮：关闭 / 收藏 / 上一首 / 播放暂停 / 下一首 / 桌面歌词。其中上一首、
 /// 播放暂停、下一首是系统媒体键，完全走原生（和耳机线控同一条链路），Dart 不用参与；
-/// 只有「收藏」和「桌面歌词」需要应用层处理，就是这里的两条通道。
+/// 「收藏」「桌面歌词」「关闭」需要应用层处理，就是这里的几条通道。
+///
+/// 关闭特意不走媒体键 `ACTION_STOP`：媒体键经 MediaSession 分发、还会顺带把服务
+/// 拉起来，关闭时容易被系统再派发成一次播放（点了关闭又响一下）。改成自有广播后
+/// 由 Dart 明确地停播放并收起通知。
 class PlayerNotification {
   PlayerNotification._();
 
@@ -23,6 +27,9 @@ class PlayerNotification {
   /// 通知栏按钮的动作。
   static const String actionFavorite = 'favorite';
   static const String actionLyric = 'lyric';
+
+  /// 右上角关闭：停止播放并收起通知栏。
+  static const String actionClose = 'close';
 
   /// 注册 Dart 侧处理器（应用启动时调用一次）。
   static void attach({required void Function(String action) onAction}) {

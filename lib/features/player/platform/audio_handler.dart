@@ -759,7 +759,14 @@ class MusicAudioHandler extends BaseAudioHandler
   @override
   Future<void> stop() async {
     debugPrint('MusicAudioHandler: 停止播放');
-    await _player.stop();
+    try {
+      await _player.stop();
+    } catch (e) {
+      debugPrint('[MusicAudioHandler] stop() error: $e');
+    }
+    // super.stop()（BaseAudioHandler）负责把 processingState 推成 idle：
+    // Android 端只有收到「非 idle → idle」的跳变才会收回通知栏 / 停掉前台服务。
+    // 所以上面停播放器失败也必须走到这里，否则通知栏会一直留着。
     await super.stop();
   }
 

@@ -625,9 +625,7 @@ public class AudioService extends MediaBrowserServiceCompat {
                 playing,
                 config.androidNotificationOngoing,
                 config.androidNotificationClickStartsActivity
-                        ? mediaSession.getController().getSessionActivity() : null,
-                config.androidNotificationOngoing
-                        ? buildMediaButtonPendingIntent(PlaybackStateCompat.ACTION_STOP) : null);
+                        ? mediaSession.getController().getSessionActivity() : null);
         if (custom != null) return custom;
         return buildNotificationMedia();
     }
@@ -776,6 +774,10 @@ public class AudioService extends MediaBrowserServiceCompat {
         }
         // Force cancellation of the notification
         getNotificationManager().cancel(NOTIFICATION_ID);
+        // patched by MintMusic: 取消之后必须把 notificationCreated 复位，否则之后
+        // 任何一次 updateNotification()（收藏 / 底色刷新 / 状态更新）都会把通知
+        // 重新贴回来 —— 表现为「关掉之后通知又冒出来一次」。
+        notificationCreated = false;
     }
 
     private void releaseMediaSession() {

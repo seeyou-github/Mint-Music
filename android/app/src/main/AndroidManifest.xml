@@ -49,13 +49,14 @@
                 <action android:name="android.intent.action.MEDIA_BUTTON" />
             </intent-filter>
         </receiver>
-        <!-- 通知栏播放卡片的「收藏 / 桌面歌词」按钮：只接收本应用发出的广播（不导出）。 -->
+        <!-- 通知栏播放卡片的「收藏 / 桌面歌词 / 关闭」按钮：只接收本应用发出的广播（不导出）。 -->
         <receiver
             android:name=".NotificationActionReceiver"
             android:exported="false">
             <intent-filter>
                 <action android:name="com.mintmusic.notification.FAVORITE" />
                 <action android:name="com.mintmusic.notification.LYRIC" />
+                <action android:name="com.mintmusic.notification.CLOSE" />
             </intent-filter>
         </receiver>
         <meta-data

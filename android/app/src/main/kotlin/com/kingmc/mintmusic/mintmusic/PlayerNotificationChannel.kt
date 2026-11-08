@@ -6,12 +6,13 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
 /**
- * 通知栏播放卡片上「收藏 / 桌面歌词」按钮与 Dart 之间的桥。
+ * 通知栏播放卡片上「收藏 / 桌面歌词 / 关闭」按钮与 Dart 之间的桥。
  *
- * 通知卡片由 audio_service 的 `MintNotification` 生成，两个按钮都是「只发本应用广播」
+ * 通知卡片由 audio_service 的 `MintNotification` 生成，三个按钮都是「只发本应用广播」
  * → [NotificationActionReceiver] → 这里 → Dart，不打开界面：
  *  - 收藏：切换当前歌曲的收藏状态；
- *  - 桌面歌词：切换系统悬浮歌词窗（未授权时会跳到系统的「显示在其他应用上层」页）。
+ *  - 桌面歌词：切换系统悬浮歌词窗（未授权时会跳到系统的「显示在其他应用上层」页）；
+ *  - 关闭：停止播放并收起通知栏（不走媒体键，避免被系统再派发成一次播放）。
  *
  * Dart 同步收藏、卡片底色及桌面歌词开关与主题色。
  */
@@ -21,6 +22,7 @@ object PlayerNotificationChannel {
 
     const val ACTION_FAVORITE = "favorite"
     const val ACTION_LYRIC = "lyric"
+    const val ACTION_CLOSE = "close"
 
     private var channel: MethodChannel? = null
 

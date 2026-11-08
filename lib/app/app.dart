@@ -89,6 +89,9 @@ class _AppState extends ConsumerState<App> {
         unawaited(_toggleCurrentFavorite());
       case PlayerNotification.actionLyric:
         unawaited(_toggleDesktopLyric());
+      case PlayerNotification.actionClose:
+        // 通知栏 ✕：停播放并收起通知，队列保留（回到界面点播放还能接着听）。
+        unawaited(ref.read(playbackControllerProvider.notifier).stopPlayback());
     }
   }
 

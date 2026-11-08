@@ -1843,6 +1843,27 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     await _audioHandler.pause();
   }
 
+  /// 通知栏「关闭」：停止播放并收起通知栏 / 系统媒体控制。
+  ///
+  /// 与 [pause] 的区别是会真的把播放器停到 idle（通知栏随之收回），但**保留队列
+  /// 与当前歌曲**——回到界面点播放还能接着听。
+  Future<void> stopPlayback() async {
+    _cancelPendingAutoNext();
+    _userPlayActionSeq++;
+    _justCompleted = false;
+    // 先落 UI 状态再停播放器：即使 stop() 抛异常，界面也不会停在「正在播放」。
+    state = state.copyWith(
+      isPlaying: false,
+      isLoading: false,
+      isBuffering: false,
+    );
+    try {
+      await _audioHandler.stop();
+    } catch (e) {
+      debugPrint('[PlaybackController] stopPlayback error: $e');
+    }
+  }
+
   Future<void> togglePlayPause() async {
     // 遵循 CeruMusic：以实际播放器状态判断按钮意图，
     // 不依赖可能滞后的 state.isPlaying。
