@@ -275,6 +275,35 @@ Win32Window::MessageHandler(HWND hwnd,
                             WPARAM const wparam,
                             LPARAM const lparam) noexcept {
   switch (message) {
+    case WM_GETMINMAXINFO: {
+      // 自绘标题栏窗口（去掉 WS_CAPTION、保留 WS_THICKFRAME）最大化时，系统
+      // 会把窗口矩形铺满整块显示器（实测 1920×1080 屏上是 (-8,-8)-(1928,1088)），
+      // 连带把任务栏那一条也盖进窗口里。而下面 WM_NCCALCSIZE 又把客户区对齐
+      // 到工作区，多出来的那条就变成「没人绘制的非客户区」——窗口类没设背景
+      // 画刷，DWM 直接呈现成纯黑，和深色任务栏一个颜色，看上去像任务栏还在，
+      // 实际已经点不动了（任务栏在右侧时尤其明显，左边也会露出黑边）。
+      //
+      // 把最大化的尺寸 / 位置直接限制到显示器工作区，窗口矩形就不会越过
+      // 任务栏；任务栏在上下左右哪个方向都适用，多显示器按窗口所在屏计算。
+      MINMAXINFO* min_max_info = reinterpret_cast<MINMAXINFO*>(lparam);
+      MONITORINFO monitor_info{};
+      monitor_info.cbSize = sizeof(monitor_info);
+      if (::GetMonitorInfo(
+              ::MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST),
+              &monitor_info)) {
+        min_max_info->ptMaxSize.x =
+            monitor_info.rcWork.right - monitor_info.rcWork.left;
+        min_max_info->ptMaxSize.y =
+            monitor_info.rcWork.bottom - monitor_info.rcWork.top;
+        // ptMaxPosition 是相对本显示器左上角的偏移，副屏上同样成立。
+        min_max_info->ptMaxPosition.x =
+            monitor_info.rcWork.left - monitor_info.rcMonitor.left;
+        min_max_info->ptMaxPosition.y =
+            monitor_info.rcWork.top - monitor_info.rcMonitor.top;
+      }
+      return 0;
+    }
+
     case WM_NCCALCSIZE: {
       // 自绘标题栏模式下不要任何非客户区：留着的话 WS_THICKFRAME 的缩放边框
       // 会占掉窗口顶部几个像素，而那一条既没有人绘制（窗口类没设背景画刷，
@@ -285,8 +314,9 @@ Win32Window::MessageHandler(HWND hwnd,
       }
       auto params = reinterpret_cast<NCCALCSIZE_PARAMS*>(lparam);
       if (::IsZoomed(hwnd)) {
-        // 最大化时系统给的矩形比工作区大出一圈边框。客户区既然要铺满整个
-        // 窗口，这里直接对齐显示器工作区，否则内容会被屏幕边缘裁掉。
+        // 窗口矩形已经由 WM_GETMINMAXINFO 限制到工作区，但系统在这里给的
+        // 建议矩形仍会向外扩一圈边框（约 8px）。客户区直接对齐工作区正好
+        // 把这一圈抵消掉：窗口矩形与客户区完全重合，内容不会被屏幕边缘裁。
         MONITORINFO monitor_info{};
         monitor_info.cbSize = sizeof(monitor_info);
         if (::GetMonitorInfo(::MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST),

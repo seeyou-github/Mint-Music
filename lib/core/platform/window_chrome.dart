@@ -46,6 +46,8 @@ typedef _DwmSetWindowAttributeDart = int Function(int, int, Pointer<Void>, int);
 ///   （边框可拖动缩放）、`WS_SYSMENU` / `WS_MINIMIZEBOX` / `WS_MAXIMIZEBOX`
 ///   （Alt+F4、任务栏右键菜单、Aero Snap 都照常），客户端区域顶到窗口最上边；
 ///   配合原生侧 `windows/runner/win32_window.cpp`：
+///   - `WM_GETMINMAXINFO`：把最大化尺寸限制到显示器工作区，否则无标题栏窗口
+///     最大化会铺满整块屏幕、盖住任务栏；
 ///   - `WM_NCCALCSIZE`：客户区铺满整个窗口，否则 `WS_THICKFRAME` 的缩放边框
 ///     会在标题栏上方留一条没人绘制的黑边；
 ///   - `WM_NCHITTEST` + Flutter 视图的边缘让位：把边角缩放区域还给系统；
