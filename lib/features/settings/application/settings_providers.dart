@@ -10,6 +10,7 @@ import '../../../core/constants/app_constants.dart';
 import '../../../core/l10n/app_locale.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/platform/download_paths.dart';
+import '../../../core/platform/windows_file_version.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../plugin/application/plugin_providers.dart';
 import '../../plugin/domain/plugin_types.dart';
@@ -521,13 +522,23 @@ final fullScreenBackgroundModeProvider = Provider<FullScreenBackgroundMode>(
 );
 
 // -- app version (loaded once) --
-/// 应用版本号：Windows 上显示「编译时间」，格式 `年.月日.时分`（如 `2026.1109.0512`）。
+/// 应用版本号：Windows 上显示「编译时间」，格式 `年.月日.时分`（如 `2026.1110.0106`）。
 ///
-/// 直接读可执行文件的修改时间 —— 就是这次链接完成的时间，所以每次编译后运行
-/// 看到的都是最新值，不需要构建脚本去改代码或 pubspec。读不到（或非 Windows）
-/// 时回退到 [AppConstants.appVersion]。
+/// 取值顺序：
+/// 1. **exe 的版本资源**（`FileVersion`）：构建时由 `tool/win_build_stamp.dart`
+///    按北京时间写进 `Runner.rc`，解压、拷贝、改名都不会变，是判断「这个 exe
+///    是哪次编译出来的」最可靠的来源；
+/// 2. 读不到时退回产物（exe / `app.so` / `kernel_blob.bin`）的修改时间，并
+///    **统一换算成北京时间**再显示 —— CI 在 UTC 上构建、zip 解压时按本地时间
+///    解释，直接用本地时间会偏 8 小时；
+/// 3. 都不行（或非 Windows）才用 [AppConstants.appVersion]。
 final appVersionProvider = FutureProvider<String>((ref) async {
   if (Platform.isWindows) {
+    final stamped = readWindowsFileVersion();
+    // 只认「年.月日.时分」这种编译时间；旧版本 exe 的 `2.0.0+1` 不显示。
+    if (stamped != null && RegExp(r'^\d{4}\.\d{4}\.\d{4}$').hasMatch(stamped)) {
+      return stamped;
+    }
     try {
       final exe = File(Platform.resolvedExecutable);
       final dir = exe.parent.path;
@@ -548,9 +559,12 @@ final appVersionProvider = FutureProvider<String>((ref) async {
         if (latest == null || modified.isAfter(latest)) latest = modified;
       }
       if (latest != null) {
+        // 文件时间是「本机时区」的时刻，先归一成 UTC 再加 8 小时，得到的是
+        // 北京时间，和构建机 / 运行机所在时区无关。
+        final beijing = latest.toUtc().add(const Duration(hours: 8));
         String two(int value) => value.toString().padLeft(2, '0');
-        return '${latest.year}.${two(latest.month)}${two(latest.day)}.'
-            '${two(latest.hour)}${two(latest.minute)}';
+        return '${beijing.year}.${two(beijing.month)}${two(beijing.day)}.'
+            '${two(beijing.hour)}${two(beijing.minute)}';
       }
     } catch (_) {
       // 读不到文件信息就退回静态版本号。
