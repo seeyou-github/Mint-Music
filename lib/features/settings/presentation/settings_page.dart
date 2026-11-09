@@ -2405,15 +2405,17 @@ const _lyricColorPresets = <(String, int)>[
 
 /// 桌面歌词文字描边颜色预设。
 ///
+/// 第一个是默认描边色（与 [DesktopLyricSettings.defaults] 保持一致）；
 /// 「无描边」用全透明色表示，原生侧检测到 alpha=0 就整层跳过绘制。
 const _strokeColorPresets = <(String, int)>[
-  ('无描边', 0x00000000),
+  ('紫黑', 0xD21F1929),
   ('白色', 0xFFFFFFFF),
   ('浅灰', 0xFFD1D5DB),
   ('黑色', 0xFF000000),
   ('深蓝', 0xFF1E3A8A),
   ('薄荷绿', 0xFF07C556),
   ('半透明白', 0x99FFFFFF),
+  ('无描边', 0x00000000),
 ];
 
 Widget _colorSwatch(int argb, ThemeColors colors) {

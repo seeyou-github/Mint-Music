@@ -102,12 +102,14 @@ class DesktopLyricOverlayHandler(private val context: Context) : MethodChannel.M
     private var lastFraction = -1f
 
     // ---- 配置 ----
-    private var fontSizeSp = 18f
+    // 初始值与 Flutter 侧 DesktopLyricSettings.defaults 保持一致：收到第一帧
+    // 设置前也能保持同样的字号 / 描边，不会先闪一下 18sp + 无描边。
+    private var fontSizeSp = 26f
     private var playedColor = Color.parseColor("#07C556")
     private var unplayColor = Color.WHITE
     private var shadowColor = Color.argb(153, 0, 0, 0)
     // 文字描边：透明色表示关闭；宽度存「占字号的比例」，绘制时再换算成 px。
-    private var strokeColor = Color.TRANSPARENT
+    private var strokeColor = 0xD21F1929.toInt()
     private var strokeWidthRatio = 0.06f
     private var positionXPercent = 3.0
     private var positionYPercent = 8.0

@@ -44,23 +44,24 @@ class DesktopLyricSettings {
   static DesktopLyricSettings get defaults => DesktopLyricSettings(
     enable: false,
     // Windows 上桌面歌词是独立窗口，字号比手机大得多。
-    fontSize: Platform.isWindows ? 50 : 18,
-    // 水平居中；Windows 靠近底部（不贴边），Android 在顶部状态栏下方。
+    fontSize: Platform.isWindows ? 50 : 26,
+    // 水平居中；Windows 紧贴工作区底边（不压任务栏），Android 在顶部状态栏下方。
     positionX: 50,
-    positionY: Platform.isWindows ? 85 : 0,
+    positionY: Platform.isWindows ? 100 : 0,
     playedColor: 0xFF07C556,
     unplayColor: 0xFFFFFFFF,
     shadowColor: 0x99000000,
-    // 默认不描边：老用户升级后观感不变，想要描边在设置里选颜色即可。
-    // 描边宽度按「字号的比例」存，Windows 50px 与手机 18sp 都能得到同样粗细。
-    strokeColor: 0x00000000,
+    // 默认开描边：深紫黑半透明，深色背景和亮封面上都压得住。
+    // 描边宽度按「字号的比例」存，Windows 50px 与手机 26sp 得到同样的观感。
+    strokeColor: 0xD21F1929,
     strokeWidth: 0.06,
   );
 
   /// 当前配置版本。
   ///
-  /// 1 → 2 → 3 改过字号 / 位置的默认值；4 把 Windows 字号默认值改成 50。
-  static const int configVersion = 4;
+  /// 1 → 2 → 3 改过字号 / 位置的默认值；4 把 Windows 字号默认值改成 50；
+  /// 5 默认开启描边（#D21F1929 / 6%）、Android 字号默认 26。
+  static const int configVersion = 5;
 
   /// 是否启用桌面歌词。
   final bool enable;
@@ -89,7 +90,7 @@ class DesktopLyricSettings {
   /// 文字描边宽度,占歌词字号的比例（0 ~ 0.2）。
   ///
   /// 原生侧按 `字号 × 比例` 换算成像素线宽；存比例而不是像素，是为了让
-  /// Windows（默认 50px）与 Android（默认 18sp）的描边看起来一样粗。
+  /// Windows（默认 50px）与 Android（默认 26sp）的描边看起来一样粗。
   final double strokeWidth;
 
   /// 「新增颜色」保存的自定义色板（ARGB hex：`#AARRGGBB` 或 `#RRGGBB`）。
@@ -141,11 +142,23 @@ class DesktopLyricSettings {
     num? readNum(dynamic v) => v is num ? v : null;
 
     final version = json['v'] is num ? (json['v'] as num).toInt() : 0;
-    // 字号默认值改过（42 → 50）：旧版本保存的是按老默认值算出来的字号，
+    // 字号默认值改过（42 → 50 / 26）：旧版本保存的是按老默认值算出来的字号，
     // 这里直接换成新的默认值，用户改过的大小也只能放弃（否则看不出变化）。
     final legacyFontSize = version < configVersion;
     // 位置：v3 之前的默认值与布局都不同，一并重置；v3 起保留用户拖动的位置。
     final legacyPosition = version < 3;
+    // v5 起默认开描边（#D21F1929 / 6%）：旧配置一并切到新默认，
+    // 不然从「无描边」升级上来完全看不到变化。
+    final legacyStroke = version < configVersion;
+    // Windows「靠近底部」的旧默认值是 85，v5 起改成紧贴工作区底边（100）：
+    // 只有位置还停在旧默认值时才换，用户手动拖过的保持不动。
+    final savedPositionY = readNum(json['positionY'])?.toDouble();
+    final migratedPositionY =
+        Platform.isWindows &&
+            savedPositionY != null &&
+            (savedPositionY - 85).abs() < 0.5
+        ? defaults.positionY
+        : savedPositionY;
 
     return DesktopLyricSettings(
       enable: json['enable'] as bool? ?? defaults.enable,
@@ -161,21 +174,22 @@ class DesktopLyricSettings {
                 .clamp(0.0, 100.0),
       positionY: legacyPosition
           ? defaults.positionY
-          : (readNum(json['positionY'])?.toDouble() ?? defaults.positionY)
-                .clamp(0.0, 100.0),
+          : (migratedPositionY ?? defaults.positionY).clamp(0.0, 100.0),
       playedColor:
           readNum(json['playedColor'])?.toInt() ?? defaults.playedColor,
       unplayColor:
           readNum(json['unplayColor'])?.toInt() ?? defaults.unplayColor,
       shadowColor:
           readNum(json['shadowColor'])?.toInt() ?? defaults.shadowColor,
-      // 老配置没有描边字段：回落到「透明 = 不描边」，保持原有观感。
-      strokeColor:
-          readNum(json['strokeColor'])?.toInt() ?? defaults.strokeColor,
-      strokeWidth:
-          (readNum(json['strokeWidth'])?.toDouble() ?? defaults.strokeWidth)
-              .clamp(0.0, 0.2)
-              .toDouble(),
+      // 老配置没有描边字段 / 停在「无描边」：v5 起统一换成默认描边。
+      strokeColor: legacyStroke
+          ? defaults.strokeColor
+          : (readNum(json['strokeColor'])?.toInt() ?? defaults.strokeColor),
+      strokeWidth: legacyStroke
+          ? defaults.strokeWidth
+          : (readNum(json['strokeWidth'])?.toDouble() ?? defaults.strokeWidth)
+                .clamp(0.0, 0.2)
+                .toDouble(),
       customColors: json['customColors'] is List
           ? (json['customColors'] as List).whereType<String>().toList()
           : const <String>[],
