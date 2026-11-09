@@ -9,6 +9,7 @@ import '../../../app/app_page_background.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/background_derivation.dart';
+import '../../../core/theme/background_gradient.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../../../shared/widgets/hsv_color_picker.dart';
@@ -19,8 +20,9 @@ import '../application/settings_providers.dart';
 ///
 /// 只让用户选**一个基色**（手动滑色板，或从图片取主色），三段背景由
 /// [deriveBackgroundGradient] 自动派生，与播放详情页 / 歌词页背景是同一套
-/// 算法。两个滑条分别调整体亮度和上下落差，改完在页面里直接看到「整块界面」
-/// 的效果（背景 + 卡片 + 底栏），点保存才真正写入设置。
+/// 算法。滑条调整体亮度 / 渐变幅度（0%~1000%）/ 饱和度，方向可选 8 个固定
+/// 方向或「随机」；改完在页面里直接看到「整块界面」的效果（背景 + 卡片 +
+/// 底栏），点保存才真正写入设置。
 class BackgroundEditorPage extends ConsumerStatefulWidget {
   const BackgroundEditorPage({
     super.key,
@@ -50,11 +52,14 @@ class _BackgroundEditorPageState extends ConsumerState<BackgroundEditorPage> {
   /// 整体亮度偏移：-1 ~ 1。
   double _brightness = 0;
 
-  /// 渐变幅度：0（纯色）~ 2（落差翻倍）。
+  /// 渐变幅度：0（纯色）~ 10（落差 ×10，即 0%~1000%）。
   double _spread = 1;
 
   /// 饱和度倍率：1 = 保持原色，0 = 灰，2 = 加倍。
   double _saturation = 1;
+
+  /// 渐变方向（默认上下；也有「随机」，见 [GradientDirection]）。
+  GradientDirection _direction = GradientDirection.topToBottom;
 
   /// 正在从图片取色。
   bool _extracting = false;
@@ -63,13 +68,16 @@ class _BackgroundEditorPageState extends ConsumerState<BackgroundEditorPage> {
   void initState() {
     super.initState();
     _base = _initialBaseColor();
+    _direction = gradientDirectionFromTokens(widget.editing ?? const []);
   }
 
   Color _initialBaseColor() {
     final editing = widget.editing;
     if (editing != null && editing.isNotEmpty) {
+      // 列表末尾可能带 `@n` 方向标记，取中间那一段颜色当基色时要先滤掉它；
       // 旧的三色渐变没法反推基色，取中间那段（观感最接近）。
-      return _parseHex(editing[editing.length ~/ 2]);
+      final colors = gradientColorTokens(editing);
+      if (colors.isNotEmpty) return _parseHex(colors[colors.length ~/ 2]);
     }
     // 新增：以当前生效背景的最上面一段为起点，改起来有参照。
     final current = ref.read(
@@ -77,7 +85,8 @@ class _BackgroundEditorPageState extends ConsumerState<BackgroundEditorPage> {
           ? lightThemeBackgroundColorsProvider
           : darkThemeBackgroundColorsProvider,
     );
-    if (current.isNotEmpty) return _parseHex(current.first);
+    final colors = gradientColorTokens(current);
+    if (colors.isNotEmpty) return _parseHex(colors.first);
     return _parseHex(
       widget.isLight ? defaultLightBackgroundColor : defaultDarkBackgroundColor,
     );
@@ -93,6 +102,12 @@ class _BackgroundEditorPageState extends ConsumerState<BackgroundEditorPage> {
     protect: 1,
     saturationScale: _saturation,
   );
+
+  /// 预览实际使用的方向：`random` 按派生出的颜色解析成一个固定方向。
+  GradientDirection get _effectiveDirection =>
+      _direction == GradientDirection.random
+      ? randomDirectionFor(_derived)
+      : _direction;
 
   Future<void> _pickFromImage() async {
     final picked = await FilePicker.platform.pickFiles(type: FileType.image);
@@ -119,7 +134,12 @@ class _BackgroundEditorPageState extends ConsumerState<BackgroundEditorPage> {
   }
 
   Future<void> _save() async {
-    final hexes = [for (final color in _derived) _toHex(color)];
+    // 颜色后面跟一个 `@n` 方向标记，和自定义渐变列表一起存（旧数据没有它，
+    // 按「上下」处理）。
+    final hexes = [
+      for (final color in _derived) _toHex(color),
+      gradientDirectionToken(_direction),
+    ];
     final customProvider = widget.isLight
         ? customBackgroundGradientsLightProvider
         : customBackgroundGradientsDarkProvider;
@@ -248,6 +268,18 @@ class _BackgroundEditorPageState extends ConsumerState<BackgroundEditorPage> {
                       ),
                     ),
                     const SizedBox(height: AppSpacing.lg),
+                    _sectionTitle(colors, '渐变方向'),
+                    const SizedBox(height: AppSpacing.sm),
+                    Container(
+                      padding: const EdgeInsets.all(AppSpacing.md),
+                      decoration: BoxDecoration(
+                        color: colors.surface,
+                        borderRadius: BorderRadius.circular(AppRadius.lg),
+                        border: Border.all(color: colors.divider, width: 0.5),
+                      ),
+                      child: _buildDirectionPicker(colors),
+                    ),
+                    const SizedBox(height: AppSpacing.lg),
                     _sectionTitle(colors, '微调'),
                     const SizedBox(height: AppSpacing.sm),
                     Container(
@@ -279,7 +311,7 @@ class _BackgroundEditorPageState extends ConsumerState<BackgroundEditorPage> {
                             label: '渐变幅度',
                             value: _spread,
                             min: 0,
-                            max: 2,
+                            max: 10,
                             display: '${(_spread * 100).round()}%',
                             onChanged: (value) =>
                                 setState(() => _spread = value),
@@ -343,6 +375,72 @@ class _BackgroundEditorPageState extends ConsumerState<BackgroundEditorPage> {
     );
   }
 
+  /// 渐变方向选择：8 个固定方向 + 「随机」。
+  ///
+  /// 「随机」不存具体角度，只存 random 标记；实际方向由渐变的颜色哈希决定 ——
+  /// 不同渐变方向各不相同，同一个渐变每次启动又保持同一个方向（不会闪）。
+  Widget _buildDirectionPicker(ThemeColors colors) {
+    return Wrap(
+      spacing: AppSpacing.sm,
+      runSpacing: AppSpacing.sm,
+      children: [
+        for (final direction in GradientDirection.values)
+          _buildDirectionChip(colors, direction),
+      ],
+    );
+  }
+
+  Widget _buildDirectionChip(ThemeColors colors, GradientDirection direction) {
+    final selected = _direction == direction;
+    final foreground = selected ? colors.primary : colors.textSecondary;
+    return GestureDetector(
+      onTap: () => setState(() => _direction = direction),
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md,
+          vertical: 7,
+        ),
+        decoration: BoxDecoration(
+          color: selected
+              ? colors.primary.withValues(alpha: 0.15)
+              : Colors.transparent,
+          borderRadius: BorderRadius.circular(AppRadius.full),
+          border: Border.all(
+            color: selected ? colors.primary : colors.divider,
+            width: selected ? 1.2 : 0.5,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(_directionIcon(direction), size: 14, color: foreground),
+            const SizedBox(width: AppSpacing.xs),
+            Text(
+              context.tr(direction.label),
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+                color: foreground,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  IconData _directionIcon(GradientDirection direction) => switch (direction) {
+    GradientDirection.topToBottom => Icons.arrow_downward,
+    GradientDirection.bottomToTop => Icons.arrow_upward,
+    GradientDirection.leftToRight => Icons.arrow_forward,
+    GradientDirection.rightToLeft => Icons.arrow_back,
+    GradientDirection.diagonalDownRight => Icons.south_east,
+    GradientDirection.diagonalDownLeft => Icons.south_west,
+    GradientDirection.diagonalUpRight => Icons.north_east,
+    GradientDirection.diagonalUpLeft => Icons.north_west,
+    GradientDirection.random => Icons.shuffle,
+  };
+
   /// 迷你可视化：一整块渐变 + 两张卡片 + 底部一条播放栏。
   ///
   /// 只预览一条渐变色是不够的 —— 背景还会派生 surface / divider，卡片是不是
@@ -359,8 +457,8 @@ class _BackgroundEditorPageState extends ConsumerState<BackgroundEditorPage> {
         borderRadius: BorderRadius.circular(AppRadius.lg),
         border: Border.all(color: colors.divider, width: 0.5),
         gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
+          begin: _effectiveDirection.begin,
+          end: _effectiveDirection.end,
           colors: derived,
         ),
       ),

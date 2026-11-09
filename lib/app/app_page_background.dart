@@ -70,8 +70,8 @@ class AppPageBackground extends ConsumerWidget {
             curve: Curves.easeInOut,
             decoration: BoxDecoration(
               gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
+                begin: gradient.begin,
+                end: gradient.end,
                 colors: gradient.colors,
               ),
             ),

@@ -419,8 +419,8 @@ class _AppState extends ConsumerState<App> {
                       curve: Curves.easeInOut,
                       decoration: BoxDecoration(
                         gradient: LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
+                          begin: backgroundGradient.begin,
+                          end: backgroundGradient.end,
                           colors: backgroundGradient.colors,
                         ),
                       ),

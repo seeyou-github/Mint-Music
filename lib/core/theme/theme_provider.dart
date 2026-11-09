@@ -201,13 +201,14 @@ final backgroundGradientProvider = Provider<BackgroundGradient>((ref) {
       return BackgroundGradient(colors: colors, mid: colors[1]);
     }
   }
-  final hexes = ref.watch(
+  final tokens = ref.watch(
     isLight
         ? lightThemeBackgroundColorsProvider
         : darkThemeBackgroundColorsProvider,
   );
   final picked = <Color>[];
-  for (final hex in hexes) {
+  // 列表末尾可能带一个 `@n` 方向标记，解析颜色时跳过它。
+  for (final hex in gradientColorTokens(tokens)) {
     final parsed = _parseOptionalColor(hex);
     if (parsed != null) picked.add(parsed);
   }
@@ -216,6 +217,7 @@ final backgroundGradientProvider = Provider<BackgroundGradient>((ref) {
     fallback: isLight
         ? ThemeColors.light.background
         : ThemeColors.dark.background,
+    direction: gradientDirectionFromTokens(tokens),
   );
 });
 

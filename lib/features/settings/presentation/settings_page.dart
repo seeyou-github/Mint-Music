@@ -16,6 +16,7 @@ import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/app_surface.dart';
 import '../../../core/theme/app_font_manager.dart';
 import '../../../core/theme/app_typography.dart';
+import '../../../core/theme/background_gradient.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import 'backup_restore_content.dart';
@@ -815,6 +816,21 @@ Color _parseHexColor(String hex) {
   }
 }
 
+/// 渐变预览用：先滤掉末尾的 `@n` 方向标记，再解析颜色。
+List<Color> _gradientPreviewColors(List<String> tokens) =>
+    gradientColorTokens(tokens).map(_parseHexColor).toList(growable: false);
+
+/// 渐变预览用：`@n` 标记 → 具体方向（random 按颜色解析）。
+GradientDirection _gradientPreviewDirection(
+  List<String> tokens,
+  List<Color> colors,
+) {
+  final direction = gradientDirectionFromTokens(tokens);
+  return direction == GradientDirection.random
+      ? randomDirectionFor(colors)
+      : direction;
+}
+
 /// 外观设置里「主题色 / 字体颜色 / 第二字体颜色」的内置颜色。
 const List<(String, String)> _presetColors = [
   ('#1DB954', 'Spotify 绿'),
@@ -946,7 +962,8 @@ class _ColorDot extends StatelessWidget {
 
 /// 一个个渐变色卡：圆形/圆角预览 + 名称，选中时描边用主题色。
 ///
-/// 内置渐变用 2 个颜色，用户自定义的渐变用 3 个颜色，都直接画成纵向渐变。
+/// 内置渐变用 2 个颜色（没有方向标记，按「上下」画）；用户自定义的渐变用
+/// 3 个颜色 + 末尾 `@n` 方向标记，按保存的方向画。
 class _GradientSwatch extends StatelessWidget {
   const _GradientSwatch({
     required this.colors,
@@ -970,7 +987,8 @@ class _GradientSwatch extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final preview = hexes.map(_parseHexColor).toList(growable: false);
+    final preview = _gradientPreviewColors(hexes);
+    final direction = _gradientPreviewDirection(hexes, preview);
     return GestureDetector(
       onTap: onTap,
       onLongPress: onLongPress,
@@ -987,8 +1005,8 @@ class _GradientSwatch extends StatelessWidget {
                 width: selected ? 2 : 0.5,
               ),
               gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
+                begin: direction.begin,
+                end: direction.end,
                 colors: preview.length == 1
                     ? [preview.first, preview.first]
                     : preview,
@@ -1115,7 +1133,8 @@ class _AppearanceContent extends ConsumerWidget {
                   ? ThemeColors.light.background
                   : ThemeColors.dark.background,
             ]
-          : hexes.map(_parseHexColor).toList();
+          : _gradientPreviewColors(hexes);
+      final direction = _gradientPreviewDirection(hexes, preview);
       return SettingRow(
         icon: Icons.gradient,
         title: '背景渐变（$modeLabel）',
@@ -1126,8 +1145,8 @@ class _AppearanceContent extends ConsumerWidget {
             borderRadius: BorderRadius.circular(6),
             border: Border.all(color: colors.divider, width: 1),
             gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
+              begin: direction.begin,
+              end: direction.end,
               colors: preview.length == 1 ? [preview[0], preview[0]] : preview,
             ),
           ),
@@ -1499,6 +1518,8 @@ class _AppearanceContent extends ConsumerWidget {
     required VoidCallback onEdit,
     required VoidCallback onDelete,
   }) {
+    final preview = _gradientPreviewColors(gradient);
+    final direction = _gradientPreviewDirection(gradient, preview);
     showModalBottomSheet<void>(
       useRootNavigator: true,
       context: context,
@@ -1525,9 +1546,9 @@ class _AppearanceContent extends ConsumerWidget {
                       borderRadius: BorderRadius.circular(6),
                       border: Border.all(color: colors.divider, width: 1),
                       gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: gradient.map(_parseHexColor).toList(),
+                        begin: direction.begin,
+                        end: direction.end,
+                        colors: preview,
                       ),
                     ),
                   ),

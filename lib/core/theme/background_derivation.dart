@@ -63,7 +63,8 @@ Color coverDarkBackgroundColor(Color color, {required double lightness}) {
 /// 与封面取色、设置里的「背景渐变」共用：
 /// - [isLight]：浅色主题走「提亮」版本，深色主题走「压暗」版本；
 /// - [brightness]：整体亮度偏移，-1 ~ 1（0 = 默认）；
-/// - [spread]：上下落差倍率，0 = 纯色，1 = 默认，2 = 落差翻倍；
+/// - [spread]：渐变落差倍率，0 = 纯色，1 = 默认，最大 10 = 落差 ×10；
+///   编辑器里的「渐变幅度」滑条就是 0%~1000%。
 /// - [protect]：0 = 完全按背景规则压暗 / 降饱和，1 = 用原色本身。
 ///   设置里的编辑器（手选颜色、图片取色）都用 1，即不做任何处理；
 ///   只有「跟随封面」这类自动取色用 0。
@@ -106,7 +107,7 @@ List<Color> deriveBackgroundGradient(
       saturationScale.clamp(0.0, 2.0);
 
   final delta =
-      (isLight ? _kLightSpread : _kDarkSpread) * spread.clamp(0.0, 2.0);
+      (isLight ? _kLightSpread : _kDarkSpread) * spread.clamp(0.0, 10.0);
   final offset =
       brightness.clamp(-1.0, 1.0) *
       (isLight ? _kLightBrightnessRange : _kDarkBrightnessRange);
