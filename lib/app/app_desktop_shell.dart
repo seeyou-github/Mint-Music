@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../core/constants/app_routes.dart';
+import 'package:go_router/go_router.dart';
 import '../core/router/app_router.dart';
-import '../core/router/current_route_provider.dart';
 import '../core/router/navigation_shell_provider.dart';
 import '../core/utils/responsive_layout.dart';
 import 'app_sidebar.dart';
@@ -46,14 +45,16 @@ class _AppDesktopShellState extends ConsumerState<AppDesktopShell> {
     return AppSidebar.indexForLocation(configuration.uri.path);
   }
 
-  /// 当前是否停在播放详情页（`/player/full` 或歌词页）。
+  /// 内容区上是否盖着 `push()` 出来的页面（播放详情页、设置、插件管理…）。
   ///
-  /// 播放页是 `push` 进来的（ImperativeRouteMatch），
-  /// `currentConfiguration.uri` 只反映 `go()` 级的位置、不会变成播放页路径，
-  /// 所以必须用 [currentPageUri] 取匹配栈顶。
-  bool _isPlayerPage() {
-    final path = currentPageUri(appRouter).path;
-    return path == AppRoutes.fullPlayer || path == AppRoutes.lyric;
+  /// 这些页面挂在根 navigator 上，会把整个右侧内容区盖住；而 `goBranch`
+  /// 只切换 shell 内部的分支，**不会**关掉它们 —— 切完新分类还压在这些
+  /// 页面底下，用户看到的就是「点侧栏没反应」。
+  bool _hasRootPushedPage() {
+    for (final match in appRouter.routerDelegate.currentConfiguration.matches) {
+      if (match is ImperativeRouteMatch) return true;
+    }
+    return false;
   }
 
   void _handleLocationChanged() {
@@ -71,35 +72,41 @@ class _AppDesktopShellState extends ConsumerState<AppDesktopShell> {
   }
 
   void _handleSelect(int index) {
-    // 播放详情页盖在内容区上：先把它关掉再切分类，否则切完还停在播放页上，
-    // 侧栏播放器也会一直被藏着。
-    if (_isPlayerPage()) {
-      appRouter.pop();
-    }
     final route = appNavItems[index].route;
-    final currentPath = appRouter.routerDelegate.currentConfiguration.uri.path;
-    // 导航壳（StatefulNavigationShell）负责切换分支：
-    // * initialLocation: false —— 保留该分支自己的页面栈，切回来时恢复
-    //   之前打开的二级页面（例如发现页里打开的歌单详情）；
-    // * initialLocation: true —— 回到该分类的第一级界面。
     final shell = ref.read(navigationShellProvider);
 
-    if (index == _activeIndex) {
-      // 连续点击同一个分类：回到该分类的第一级界面。
-      if (shell != null) {
-        shell.goBranch(index, initialLocation: true);
-      } else if (currentPath != route) {
-        appRouter.go(route);
-      }
+    // 1) 有 push 到根 navigator 的页面（播放页 / 设置 / 插件管理…）时，
+    //    直接用 `go` 把栈重置到目标分类 —— 它同时关掉这些页面。
+    //    用 goBranch 的话新分类会留在它们底下，表现为「点了没反应」，
+    //    高亮还会被紧接着的路由通知改回去。
+    if (_hasRootPushedPage() || shell == null) {
+      setState(() => _activeIndex = index);
+      appRouter.go(route);
       return;
     }
 
-    setState(() => _activeIndex = index);
-    if (shell != null) {
-      shell.goBranch(index, initialLocation: false);
-    } else {
-      appRouter.go(route);
+    // 2) 连续点击同一个分类：回到该分类的第一级界面。
+    if (index == _activeIndex) {
+      shell.goBranch(index, initialLocation: true);
+      _ensureBranchSwitched(route);
+      return;
     }
+
+    // 3) 普通切换：保留各分支自己的页面栈（切回来时恢复之前打开的二级页）。
+    setState(() => _activeIndex = index);
+    shell.goBranch(index, initialLocation: false);
+    _ensureBranchSwitched(route);
+  }
+
+  /// 兜底：`goBranch` 偶尔不生效（导航壳实例被重建后，旧实例切不动分支），
+  /// 下一帧发现还停在原路径就改用 `go` 强切，保证点侧栏一定有反馈。
+  void _ensureBranchSwitched(String route) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final path = appRouter.routerDelegate.currentConfiguration.uri.path;
+      if (path == route || path.startsWith('$route/')) return;
+      appRouter.go(route);
+    });
   }
 
   @override
