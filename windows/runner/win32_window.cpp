@@ -449,9 +449,7 @@ Win32Window::MessageHandler(HWND hwnd,
       }
       // 只记录普通状态下的窗口尺寸：最大化（最大化按钮 / 双击标题栏）
       // 不记录，下次启动仍恢复成用户调整过的尺寸。
-      // 自定义最大化是 SetWindowPos 实现的，系统按 SIZE_RESTORED 上报，
-      // 要用 custom_maximized_ 把它排除掉。
-      if (wparam == SIZE_RESTORED && !custom_maximized_) {
+      if (wparam == SIZE_RESTORED) {
         RECT window_rect{};
         if (::GetWindowRect(hwnd, &window_rect)) {
           const double scale = WindowState::GetScaleFactor(hwnd);
@@ -473,11 +471,6 @@ Win32Window::MessageHandler(HWND hwnd,
       // 拖动 / 缩放结束时再落盘一次，避免拖动过程中频繁写注册表。
       SaveWindowSize();
       return 0;
-    }
-
-    case WM_APP + 101: {
-      // 给 Dart 侧查「现在是不是最大化」：自定义最大化时 IsZoomed 是 false。
-      return (custom_maximized_ || ::IsZoomed(hwnd)) ? 1 : 0;
     }
 
     case WM_ACTIVATE:
@@ -555,80 +548,6 @@ void Win32Window::SaveWindowSize() {
     return;
   }
   WindowState::SaveSize(last_normal_size_);
-}
-
-bool Win32Window::HandleMaximizeSysCommand(UINT command) {
-  const HWND hwnd = window_handle_;
-  if (hwnd == nullptr || !HasCustomTitleBar(hwnd)) {
-    return false;
-  }
-  if (command != SC_MAXIMIZE && command != SC_RESTORE) {
-    return false;
-  }
-  ToggleCustomMaximize(command == SC_MAXIMIZE);
-  return true;
-}
-
-void Win32Window::ToggleCustomMaximize(bool maximize) {
-  const HWND hwnd = window_handle_;
-  if (hwnd == nullptr) {
-    return;
-  }
-
-  // 最小化状态下先让系统还原（这一步没有过渡动画），并保持最大化外观：
-  // 系统给的是「最小化前的矩形」，我们只负责把它纠正成工作区。
-  if (::IsIconic(hwnd)) {
-    ::ShowWindow(hwnd, SW_RESTORE);
-    if (custom_maximized_) {
-      MONITORINFO monitor_info{};
-      monitor_info.cbSize = sizeof(monitor_info);
-      if (::GetMonitorInfo(::MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST),
-                           &monitor_info)) {
-        const RECT& work = monitor_info.rcWork;
-        ::SetWindowPos(hwnd, nullptr, work.left, work.top,
-                       work.right - work.left, work.bottom - work.top,
-                       SWP_NOZORDER | SWP_NOACTIVATE);
-      }
-    }
-    return;
-  }
-
-  // 由系统自己最大化的窗口（例如把窗口拖到屏幕顶部触发 Aero Snap）：
-  // 还原交回系统处理，我们只清状态。
-  if (!maximize && ::IsZoomed(hwnd)) {
-    ::ShowWindow(hwnd, SW_RESTORE);
-    custom_maximized_ = false;
-    return;
-  }
-
-  if (maximize) {
-    if (custom_maximized_ || ::IsZoomed(hwnd)) {
-      return;  // 已经是最大化，不重复处理
-    }
-    MONITORINFO monitor_info{};
-    monitor_info.cbSize = sizeof(monitor_info);
-    if (!::GetMonitorInfo(::MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST),
-                          &monitor_info)) {
-      return;
-    }
-    // 记住当前位置，还原时用。
-    ::GetWindowRect(hwnd, &custom_normal_rect_);
-    custom_maximized_ = true;
-    const RECT& work = monitor_info.rcWork;
-    ::SetWindowPos(hwnd, nullptr, work.left, work.top, work.right - work.left,
-                   work.bottom - work.top, SWP_NOZORDER | SWP_NOACTIVATE);
-    return;
-  }
-
-  if (!custom_maximized_) {
-    return;
-  }
-  // 还原到进入最大化之前的矩形（位置 + 大小）。用 SetWindowPos 直接到位，
-  // 不走 ShowWindow(SW_RESTORE)，同样避免过渡动画。
-  const RECT rect = custom_normal_rect_;
-  custom_maximized_ = false;
-  ::SetWindowPos(hwnd, nullptr, rect.left, rect.top, rect.right - rect.left,
-                 rect.bottom - rect.top, SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
 bool Win32Window::OnCreate() {

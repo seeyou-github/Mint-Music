@@ -49,14 +49,6 @@ class Win32Window {
   // window properties. Returns nullptr if the window has been destroyed.
   HWND GetHandle();
 
-  /// 自绘标题栏窗口的「最大化 / 还原」命令处理。
-  ///
-  /// 必须由 [FlutterWindow] 在把消息交给 Flutter 引擎**之前**调用：引擎
-  /// `HandleTopLevelWindowProc` 一旦返回处理结果，消息就不会再走到
-  /// `Win32Window::MessageHandler`，放在后面等于没拦到。
-  /// 返回 true 表示这条 WM_SYSCOMMAND 已经处理完，调用方应直接返回 0。
-  bool HandleMaximizeSysCommand(UINT command);
-
   // If true, closing this window will quit the application.
   void SetQuitOnClose(bool quit_on_close);
 
@@ -116,23 +108,6 @@ class Win32Window {
   // The last known size of the window in its "normal" (not maximized) state.
   Size last_normal_size_{0, 0};
   bool has_normal_size_ = false;
-
-  // ── 自绘标题栏窗口自己的最大化状态 ─────────────────────────────────────
-  //
-  // 不用系统的 ShowWindow(SW_MAXIMIZE)：Win10 上无边框窗口的最大化会播一段
-  // DWM 过渡动画，动画缩放的是「已经按新尺寸重排好的内容」的旧帧，看起来就是
-  // 窗口先变回原尺寸再放大（DWMWA_TRANSITIONS_FORCEDISABLED 从 Win8 起已不
-  // 生效，拦不住）。改成直接 SetWindowPos 到工作区，一步到位、没有中间帧。
-  //
-  // 代价：窗口不再处于系统的「最大化」状态（IsZoomed 为 false），所以状态自己
-  // 记，并通过 WM_APP+101 暴露给 Dart 侧查。
-  bool custom_maximized_ = false;
-
-  // 进入自定义最大化之前的窗口矩形，还原时原样恢复。
-  RECT custom_normal_rect_{0, 0, 0, 0};
-
-  // 最大化 / 还原（无动画）。
-  void ToggleCustomMaximize(bool maximize);
 };
 
 #endif  // RUNNER_WIN32_WINDOW_H_
