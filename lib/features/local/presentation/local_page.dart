@@ -1523,11 +1523,12 @@ class _LocalPageState extends ConsumerState<LocalPage>
                               dirs.insert(newIndex, item);
                               setModalState(() {});
                               // 顺序即扫描顺序，拖完立即持久化，避免不点确认
-                              // 直接关闭弹窗后丢失。
+                              // 直接关闭弹窗后丢失；只重排不算歌曲索引，
+                              // 目录栏能马上按新顺序刷新。
                               unawaited(
                                 ref
                                     .read(localMusicNotifierProvider.notifier)
-                                    .setDirectories(dirs),
+                                    .reorderDirectories(dirs),
                               );
                             },
                             itemBuilder: (context, index) {

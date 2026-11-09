@@ -202,6 +202,25 @@ class LocalMusicRepository {
     }
   }
 
+  /// 只调整扫描目录的顺序（集合没变）。
+  ///
+  /// 目录栏、「全部 + 各目录」的滑动顺序、扫描顺序都按这条顺序走，所以要
+  /// 立即写盘并让 [scannedDirectoriesProvider] 重新读一次。集合不变时不能
+  /// 走 [setDirectories]：那会重算歌曲归属并整库回写索引，几千首歌要等
+  /// 好几秒，目录栏会一直停在旧顺序。
+  Future<void> reorderDirectories(List<String> dirs) async {
+    await init();
+    final ordered = dirs.where((d) => d.isNotEmpty).toList();
+    final sameSet =
+        ordered.length == _scannedDirs.length &&
+        ordered.every(_scannedDirs.contains);
+    if (!sameSet) return setDirectories(ordered);
+    _scannedDirs
+      ..clear()
+      ..addAll(ordered);
+    await _persistDirectories();
+  }
+
   Future<void> addDirectory(String dirPath) async {
     await init();
     if (_scannedDirs.contains(dirPath)) return;

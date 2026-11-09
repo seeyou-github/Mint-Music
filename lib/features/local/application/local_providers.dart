@@ -242,6 +242,12 @@ class LocalMusicNotifier extends StateNotifier<AsyncValue<List<Song>>> {
     }
   }
 
+  /// 只重排扫描目录（集合不变）：不重算歌曲归属，目录栏立刻按新顺序显示。
+  Future<void> reorderDirectories(List<String> dirs) async {
+    await _ref.read(localMusicRepositoryProvider).reorderDirectories(dirs);
+    _refreshScannedDirs();
+  }
+
   /// 目录变更后使扫描目录缓存失效，保证弹窗再次打开时读到最新列表。
   void _refreshScannedDirs() {
     _ref.invalidate(scannedDirectoriesProvider);
