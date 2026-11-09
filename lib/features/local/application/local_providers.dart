@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:on_audio_query/on_audio_query.dart';
 import '../data/local_music_repository.dart';
+import '../data/local_quality_reader.dart';
 import '../../player/domain/models/song.dart';
 import '../../../shared/services/cover_cache_service.dart';
 
@@ -90,6 +91,15 @@ final scannedDirectoriesProvider = FutureProvider<List<String>>((ref) async {
 final scanProgressProvider = StateProvider<ScanProgress>((ref) {
   return const ScanProgress();
 });
+
+/// 本地歌曲的真实音质标签（如 `128K`、`320K`、`Flac24bit`）。
+///
+/// 播放页按文件实时读取：有损显示真实码率，无损及以上只显示等级；
+/// 读不出来时返回 null，界面退回原来的音质名称。
+final localQualityLabelProvider = FutureProvider.autoDispose
+    .family<String?, String>((ref, filePath) {
+      return LocalQualityReader.readLabel(filePath);
+    });
 
 final batchMatchProgressProvider = StateProvider<BatchMatchProgress>((ref) {
   return const BatchMatchProgress();

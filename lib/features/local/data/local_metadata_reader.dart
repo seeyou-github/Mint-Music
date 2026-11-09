@@ -279,6 +279,100 @@ class LocalMetadataReader {
     return null;
   }
 
+  /// 读取 MP3 音频流的真实码率（kbps），播放页显示本地歌曲音质用。
+  ///
+  /// 有 Xing/Info 头时按其中的音频字节数 / 总时长算平均码率——VBR 文件的
+  /// 首帧码率不代表整首；没有 Xing/Info 说明是 CBR，首帧码率就是真实码率。
+  static Future<int?> readMp3Bitrate(String filePath) async {
+    try {
+      final file = File(filePath);
+      if (!await file.exists()) return null;
+      final raf = await file.open(mode: FileMode.read);
+      try {
+        final fileLength = await raf.length();
+        await raf.setPosition(0);
+        final id3 = await raf.read(10);
+        var audioStart = 0;
+        if (id3.length == 10 &&
+            id3[0] == 0x49 &&
+            id3[1] == 0x44 &&
+            id3[2] == 0x33) {
+          audioStart = 10 + _synchSafeToInt(id3, 6);
+          // ID3v2.4 的 footer 也占 10 字节。
+          if ((id3[5] & 0x10) != 0) audioStart += 10;
+        }
+        if (audioStart >= fileLength) return null;
+        await raf.setPosition(audioStart);
+        final readLength = fileLength - audioStart > 65536
+            ? 65536
+            : fileLength - audioStart;
+        final buffer = await raf.read(readLength);
+        final audioBytes = fileLength - audioStart;
+        for (var i = 0; i + 4 <= buffer.length; i++) {
+          if (buffer[i] != 0xFF || (buffer[i + 1] & 0xE0) != 0xE0) continue;
+          final frame = _parseMpegFrameHeader(buffer, i);
+          if (frame == null) continue;
+          final xingKbps = _mp3XingBitrate(
+            buffer,
+            i,
+            frame.version,
+            frame.channelMode,
+            frame.samplesPerFrame,
+            frame.sampleRate,
+            audioBytes,
+          );
+          if (xingKbps != null) return xingKbps;
+          return frame.bitrate > 0 ? (frame.bitrate / 1000).round() : null;
+        }
+        return null;
+      } finally {
+        await raf.close();
+      }
+    } catch (e) {
+      debugPrint('[LocalMetadata] 读取 MP3 码率失败 $filePath: $e');
+      return null;
+    }
+  }
+
+  /// 从 Xing / Info 头算平均码率（kbps）；没有该头或信息不全时返回 null。
+  static int? _mp3XingBitrate(
+    Uint8List buffer,
+    int frameOffset,
+    int version,
+    int channelMode,
+    int samplesPerFrame,
+    int sampleRate,
+    int audioBytes,
+  ) {
+    final sideInfo = version == 1
+        ? (channelMode == 3 ? 17 : 32)
+        : (channelMode == 3 ? 9 : 17);
+    final xingOffset = frameOffset + 4 + sideInfo;
+    if (xingOffset + 12 > buffer.length) return null;
+    final tag = String.fromCharCodes(
+      buffer.sublist(xingOffset, xingOffset + 4),
+    );
+    if (tag != 'Xing' && tag != 'Info') return null;
+    final flags = _be32(buffer, xingOffset + 4);
+    var offset = xingOffset + 8;
+    int? frames;
+    int? bytes;
+    if ((flags & 0x01) != 0) {
+      if (offset + 4 > buffer.length) return null;
+      frames = _be32(buffer, offset);
+      offset += 4;
+    }
+    if ((flags & 0x02) != 0) {
+      if (offset + 4 > buffer.length) return null;
+      bytes = _be32(buffer, offset);
+    }
+    if (frames == null || frames <= 0 || sampleRate <= 0) return null;
+    final durationMs = frames * samplesPerFrame * 1000 ~/ sampleRate;
+    if (durationMs <= 0) return null;
+    final kbps = ((bytes ?? audioBytes) * 8 / durationMs).round();
+    return kbps > 0 ? kbps : null;
+  }
+
   /// 解析 MPEG 帧头，返回码率（bps）/采样率/每帧采样数等信息。
   static ({
     int bitrate,

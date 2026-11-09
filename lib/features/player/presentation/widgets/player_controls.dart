@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/l10n/l10n.dart';
 import '../../domain/models/play_mode.dart';
+import '../../domain/models/song.dart';
+import '../../../local/application/local_providers.dart';
 import '../../../settings/application/settings_providers.dart';
 
 /// 根据音质标识和时长（秒）估算文件大小
@@ -25,7 +28,7 @@ String _estimateSize(String qualityId, int durationSec) {
   return '${(sizeBytes / (1024 * 1024)).toStringAsFixed(2)}MB';
 }
 
-class PlayerProgressBar extends StatefulWidget {
+class PlayerProgressBar extends ConsumerStatefulWidget {
   /// 非紧凑模式下进度条（与时间标签）的水平留白。
   ///
   /// 竖屏播放页的操作按钮行要与进度条左右对齐，统一引用这个值。
@@ -40,6 +43,9 @@ class PlayerProgressBar extends StatefulWidget {
   final ValueChanged<double?>? onSeekPreview;
   final String currentQuality;
   final List<String> availableQualities;
+
+  /// 当前歌曲：本地歌曲按文件实时读取真实码率，并禁止切换音质。
+  final Song? currentSong;
 
   /// 需要登录才能使用的档位：菜单里照常列出但置灰，点击给出「去填凭据」提示。
   final Set<String> gatedQualities;
@@ -57,16 +63,17 @@ class PlayerProgressBar extends StatefulWidget {
     this.onSeekPreview,
     this.currentQuality = '320k',
     this.availableQualities = const [],
+    this.currentSong,
     this.gatedQualities = const {},
     this.onQualityTap,
     this.compact = false,
   });
 
   @override
-  State<PlayerProgressBar> createState() => _PlayerProgressBarState();
+  ConsumerState<PlayerProgressBar> createState() => _PlayerProgressBarState();
 }
 
-class _PlayerProgressBarState extends State<PlayerProgressBar> {
+class _PlayerProgressBarState extends ConsumerState<PlayerProgressBar> {
   bool _isDragging = false;
   double _dragProgress = 0.0;
 
@@ -181,6 +188,15 @@ class _PlayerProgressBarState extends State<PlayerProgressBar> {
   @override
   Widget build(BuildContext context) {
     final compact = widget.compact;
+    // 本地文件只有一个「音源」，读真实码率显示，切换音质没有意义。
+    final song = widget.currentSong;
+    final isLocal = song?.source == 'local';
+    final filePath = isLocal ? song?.filePath : null;
+    final localLabel = (filePath != null && filePath.isNotEmpty)
+        ? ref.watch(localQualityLabelProvider(filePath)).valueOrNull
+        : null;
+    final qualityLabel =
+        localLabel ?? getQualityDisplayName(widget.currentQuality);
     return Padding(
       padding: EdgeInsets.symmetric(
         horizontal: compact ? 8 : PlayerProgressBar.horizontalPadding,
@@ -302,7 +318,8 @@ class _PlayerProgressBarState extends State<PlayerProgressBar> {
                 const Spacer(),
                 if (widget.availableQualities.isNotEmpty)
                   GestureDetector(
-                    onTap: _showQualityPicker,
+                    // 本地歌曲：音质只是展示，点不开切换菜单。
+                    onTap: isLocal ? null : _showQualityPicker,
                     child: Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 8,
@@ -313,7 +330,7 @@ class _PlayerProgressBarState extends State<PlayerProgressBar> {
                         borderRadius: BorderRadius.circular(4),
                       ),
                       child: Text(
-                        getQualityDisplayName(widget.currentQuality),
+                        qualityLabel,
                         style: TextStyle(
                           fontSize: 11,
                           color: Colors.white.withValues(alpha: 0.8),
