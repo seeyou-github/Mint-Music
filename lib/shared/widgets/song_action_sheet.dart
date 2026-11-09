@@ -31,6 +31,7 @@ import '../../features/settings/application/settings_providers.dart';
 import '../../features/settings/data/settings_service.dart';
 import '../../features/plugin/application/plugin_providers.dart';
 import '../../features/plugin/domain/plugin_types.dart';
+import 'playlist_manager.dart';
 
 const _sheetAnimationStyle = AnimationStyle(
   duration: Duration(milliseconds: 220),
@@ -677,10 +678,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
     final filePath = song.filePath;
     // 本地歌曲补一行「音质 - 扩展名」（如 `320K - Mp3`），放在专辑下方。
     final localInfo = song.isLocal && filePath != null && filePath.isNotEmpty
-        ? ref
-              .watch(localTrackInfoProvider(filePath))
-              .valueOrNull
-              ?.description
+        ? ref.watch(localTrackInfoProvider(filePath)).valueOrNull?.description
         : null;
     return Column(
       children: [
@@ -705,11 +703,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
             onTap: _openAlbum,
           ),
         if (localInfo != null)
-          _buildMetaRow(
-            colors,
-            label: context.tr('信息'),
-            value: localInfo,
-          ),
+          _buildMetaRow(colors, label: context.tr('信息'), value: localInfo),
         ?sourceRow,
       ],
     );
@@ -1759,11 +1753,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
     // Save song reference BEFORE any pops (widget becomes invalid after pop).
     final targetSong = widget.song;
     playlistsAsync.when(
-      data: (List<Playlist> playlists) {
-        // Exclude __favorites__ from the picker (it has its own "收藏" toggle)
-        final playlistList = playlists
-            .where((p) => p.id != '__favorites__')
-            .toList();
+      data: (_) {
         // Save root navigator context BEFORE popping (after pop the widget context becomes invalid).
         final navContext = Navigator.of(context, rootNavigator: true).context;
         // Pop SongActionSheet first
@@ -1775,126 +1765,144 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
           context: navContext,
           sheetAnimationStyle: _sheetAnimationStyle,
           backgroundColor: Colors.transparent,
-          builder: (ctx) => Container(
-            decoration: BoxDecoration(
-              color: AppColors.surface,
-              borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(16),
-              ),
-            ),
-            child: SafeArea(
-              top: false,
-              child: Padding(
-                padding: EdgeInsets.only(bottom: bottomPadding + 16),
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const SizedBox(height: AppSpacing.md),
-                      Container(
-                        width: 40,
-                        height: 4,
-                        decoration: BoxDecoration(
-                          color: AppColors.divider,
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                      ),
-                      const SizedBox(height: AppSpacing.md),
-                      Text(
-                        ctx.tr('添加到歌单'),
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.textPrimary,
-                        ),
-                      ),
-                      const SizedBox(height: AppSpacing.md),
-                      if (playlistList.isEmpty)
-                        Padding(
-                          padding: const EdgeInsets.all(AppSpacing.xl),
-                          child: Text(
-                            ctx.tr('暂无歌单'),
-                            style: TextStyle(color: AppColors.textHint),
-                          ),
-                        )
-                      else
-                        ...playlistList.map<Widget>(
-                          (Playlist playlist) => ListTile(
-                            leading: Icon(
-                              Icons.queue_music,
-                              color: AppColors.textSecondary,
-                            ),
-                            title: Text(
-                              playlist.name,
-                              style: TextStyle(color: AppColors.textPrimary),
-                            ),
-                            trailing: Text(
-                              ctx.tr('${playlist.songCount}首'),
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: AppColors.textHint,
-                              ),
-                            ),
-                            onTap: () async {
-                              // 转换文案需在 pop 之前捕获（ctx 在 pop 后失效）
-                              final addedMsg = ctx.tr('已添加到"${playlist.name}"');
-                              final existsMsg = ctx.tr(
-                                '歌曲已在歌单"${playlist.name}"中',
-                              );
-                              final failMsg = ctx.tr('添加到歌单失败');
-                              Navigator.pop(ctx);
-                              // Save messenger and container BEFORE any async gap.
-                              // navContext is the root navigator context which remains valid
-                              // across the entire app lifecycle.
-                              // ignore: use_build_context_synchronously
-                              final messenger = ScaffoldMessenger.of(
-                                navContext,
-                              );
-                              // ignore: use_build_context_synchronously
-                              final container = ProviderScope.containerOf(
-                                navContext,
-                              );
-                              final notifier = container.read(
-                                playlistsProvider.notifier,
-                              );
-                              try {
-                                final added = await notifier.addSongToPlaylist(
-                                  playlist.id,
-                                  targetSong,
-                                );
-                                if (added) {
-                                  messenger.showSnackBar(
-                                    SnackBar(
-                                      content: Text(addedMsg),
-                                      duration: const Duration(seconds: 2),
-                                    ),
-                                  );
-                                } else {
-                                  messenger.showSnackBar(
-                                    SnackBar(
-                                      content: Text(existsMsg),
-                                      duration: const Duration(seconds: 2),
-                                    ),
-                                  );
-                                }
-                              } catch (e) {
-                                messenger.showSnackBar(
-                                  SnackBar(
-                                    content: Text(failMsg),
-                                    duration: const Duration(seconds: 2),
-                                    backgroundColor: Colors.red,
-                                  ),
-                                );
-                              }
-                            },
-                          ),
-                        ),
-                      const SizedBox(height: AppSpacing.lg),
-                    ],
+          builder: (ctx) => Consumer(
+            builder: (ctx, sheetRef, _) {
+              final themeColors = sheetRef.watch(themeColorsProvider);
+              // 监听 provider：在「新增歌单」弹窗里新建 / 删除歌单后立即刷新。
+              final currentPlaylists =
+                  sheetRef.watch(playlistsProvider).valueOrNull ??
+                  const <Playlist>[];
+              final playlistList = currentPlaylists
+                  .where((p) => p.id != '__favorites__')
+                  .toList();
+              return Container(
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(16),
                   ),
                 ),
-              ),
-            ),
+                child: SafeArea(
+                  top: false,
+                  child: Padding(
+                    padding: EdgeInsets.only(bottom: bottomPadding + 16),
+                    child: SingleChildScrollView(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const SizedBox(height: AppSpacing.md),
+                          Container(
+                            width: 40,
+                            height: 4,
+                            decoration: BoxDecoration(
+                              color: AppColors.divider,
+                              borderRadius: BorderRadius.circular(2),
+                            ),
+                          ),
+                          const SizedBox(height: AppSpacing.md),
+                          Text(
+                            ctx.tr('添加到歌单'),
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                          const SizedBox(height: AppSpacing.sm),
+                          CreatePlaylistTile(colors: themeColors),
+                          if (playlistList.isEmpty)
+                            Padding(
+                              padding: const EdgeInsets.all(AppSpacing.xl),
+                              child: Text(
+                                ctx.tr('暂无歌单'),
+                                style: TextStyle(color: AppColors.textHint),
+                              ),
+                            )
+                          else
+                            ...playlistList.map<Widget>(
+                              (Playlist playlist) => ListTile(
+                                leading: Icon(
+                                  Icons.queue_music,
+                                  color: AppColors.textSecondary,
+                                ),
+                                title: Text(
+                                  playlist.name,
+                                  style: TextStyle(
+                                    color: AppColors.textPrimary,
+                                  ),
+                                ),
+                                trailing: Text(
+                                  ctx.tr('${playlist.songCount}首'),
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: AppColors.textHint,
+                                  ),
+                                ),
+                                onTap: () async {
+                                  // 转换文案需在 pop 之前捕获（ctx 在 pop 后失效）
+                                  final addedMsg = ctx.tr(
+                                    '已添加到"${playlist.name}"',
+                                  );
+                                  final existsMsg = ctx.tr(
+                                    '歌曲已在歌单"${playlist.name}"中',
+                                  );
+                                  final failMsg = ctx.tr('添加到歌单失败');
+                                  Navigator.pop(ctx);
+                                  // Save messenger and container BEFORE any async gap.
+                                  // navContext is the root navigator context which remains valid
+                                  // across the entire app lifecycle.
+                                  // ignore: use_build_context_synchronously
+                                  final messenger = ScaffoldMessenger.of(
+                                    navContext,
+                                  );
+                                  // ignore: use_build_context_synchronously
+                                  final container = ProviderScope.containerOf(
+                                    navContext,
+                                  );
+                                  final notifier = container.read(
+                                    playlistsProvider.notifier,
+                                  );
+                                  try {
+                                    final added = await notifier
+                                        .addSongToPlaylist(
+                                          playlist.id,
+                                          targetSong,
+                                        );
+                                    if (added) {
+                                      messenger.showSnackBar(
+                                        SnackBar(
+                                          content: Text(addedMsg),
+                                          duration: const Duration(seconds: 2),
+                                        ),
+                                      );
+                                    } else {
+                                      messenger.showSnackBar(
+                                        SnackBar(
+                                          content: Text(existsMsg),
+                                          duration: const Duration(seconds: 2),
+                                        ),
+                                      );
+                                    }
+                                  } catch (e) {
+                                    messenger.showSnackBar(
+                                      SnackBar(
+                                        content: Text(failMsg),
+                                        duration: const Duration(seconds: 2),
+                                        backgroundColor: Colors.red,
+                                      ),
+                                    );
+                                  }
+                                },
+                              ),
+                            ),
+                          const SizedBox(height: AppSpacing.lg),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
           ),
         );
       },

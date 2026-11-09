@@ -21,11 +21,13 @@ import '../../../core/theme/background_derivation.dart';
 import '../domain/services/cover_color_extractor.dart';
 import '../../settings/application/settings_providers.dart';
 import '../../library/application/playlist_providers.dart';
+import '../../library/domain/models/playlist.dart';
 import '../application/root_overlay_tracker.dart';
 import 'widgets/lyric_format_tag.dart';
 import 'widgets/lyric_scroll_view.dart';
 import 'widgets/player_controls.dart';
 import '../../../shared/widgets/sleep_timer_picker.dart';
+import '../../../shared/widgets/playlist_manager.dart';
 
 class LyricPage extends ConsumerStatefulWidget {
   const LyricPage({super.key});
@@ -628,67 +630,81 @@ class _LyricPageState extends ConsumerState<LyricPage> {
 
   void _showAddToPlaylist(Song song) {
     final playlistsAsync = ref.read(playlistsProvider);
-    playlistsAsync.whenData((playlists) {
-      final availablePlaylists = playlists
-          .where((p) => p.id != '__favorites__')
-          .toList();
+    playlistsAsync.whenData((_) {
       showModalBottomSheet(
         useRootNavigator: true,
         context: context,
         backgroundColor: Colors.transparent,
-        builder: (ctx) => Container(
-          decoration: BoxDecoration(
-            color: AppColors.surface,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-          ),
-          child: SafeArea(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const SizedBox(height: 8),
-                Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(2),
-                  ),
+        builder: (ctx) => Consumer(
+          builder: (ctx, sheetRef, _) {
+            // 监听 provider：在「新增歌单」弹窗里新建 / 删除歌单后立即刷新。
+            final currentPlaylists =
+                sheetRef.watch(playlistsProvider).valueOrNull ??
+                const <Playlist>[];
+            final availablePlaylists = currentPlaylists
+                .where((p) => p.id != '__favorites__')
+                .toList();
+            final themeColors = sheetRef.watch(themeColorsProvider);
+            return Container(
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(16),
                 ),
-                const SizedBox(height: 16),
-                Text(
-                  context.tr('添加到歌单'),
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.textPrimary,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                ...availablePlaylists.map(
-                  (playlist) => ListTile(
-                    title: Text(
-                      playlist.name,
-                      style: const TextStyle(color: AppColors.textPrimary),
+              ),
+              child: SafeArea(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const SizedBox(height: 8),
+                    Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
                     ),
-                    onTap: () {
-                      Navigator.pop(ctx);
-                      ref
-                          .read(playlistsProvider.notifier)
-                          .addSongToPlaylist(playlist.id, song);
-                      if (mounted)
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(context.tr('已添加到「${playlist.name}」')),
-                            duration: const Duration(seconds: 1),
-                          ),
-                        );
-                    },
-                  ),
+                    const SizedBox(height: 16),
+                    Text(
+                      context.tr('添加到歌单'),
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    CreatePlaylistTile(colors: themeColors),
+                    ...availablePlaylists.map(
+                      (playlist) => ListTile(
+                        title: Text(
+                          playlist.name,
+                          style: const TextStyle(color: AppColors.textPrimary),
+                        ),
+                        onTap: () {
+                          Navigator.pop(ctx);
+                          ref
+                              .read(playlistsProvider.notifier)
+                              .addSongToPlaylist(playlist.id, song);
+                          if (mounted)
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  context.tr('已添加到「${playlist.name}」'),
+                                ),
+                                duration: const Duration(seconds: 1),
+                              ),
+                            );
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                  ],
                 ),
-                const SizedBox(height: 16),
-              ],
-            ),
-          ),
+              ),
+            );
+          },
         ),
       );
     });

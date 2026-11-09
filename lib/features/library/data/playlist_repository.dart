@@ -91,7 +91,10 @@ class PlaylistRepository {
   Future<List<Map<String, dynamic>>> exportAll() async {
     await _migrateLegacyFile();
     final db = await AppDatabase.importantDatabase();
-    final rows = await db.query('playlists', orderBy: 'create_time ASC, id ASC');
+    final rows = await db.query(
+      'playlists',
+      orderBy: 'sort_order ASC, create_time ASC, id ASC',
+    );
     if (rows.isEmpty) return const [];
     final songRows = await db.query(
       'playlist_songs',
@@ -102,9 +105,10 @@ class PlaylistRepository {
       final data = AppDatabase.decodeMap(row['data']);
       if (data.isEmpty) continue;
       final updatedAt = (row['added_at'] as num?)?.toInt() ?? 0;
-      songsByPlaylist
-          .putIfAbsent('${row['playlist_id']}', () => [])
-          .add({...data, 'updatedAt': updatedAt});
+      songsByPlaylist.putIfAbsent('${row['playlist_id']}', () => []).add({
+        ...data,
+        'updatedAt': updatedAt,
+      });
     }
     final result = <Map<String, dynamic>>[];
     for (final row in rows) {
@@ -139,30 +143,29 @@ class PlaylistRepository {
       await db.transaction((txn) async {
         await txn.delete('playlist_songs');
         await txn.delete('playlists');
+        var order = 0;
         for (final item in snapshot) {
           final json = item.map((key, value) => MapEntry(key, value));
           final rawSongs = json['songs'];
           final playlistJson = {...json}..remove('songs');
           final playlist = Playlist.fromJson(playlistJson);
           if (playlist.id.isEmpty) continue;
-          await _insertRow(txn, playlist);
+          await _insertRow(txn, playlist, sortOrder: order++);
           if (rawSongs is List) {
-            var order = 0;
+            var songOrder = 0;
             final batch = txn.batch();
             for (final songItem in rawSongs) {
               if (songItem is! Map) continue;
               final songJson = songItem.map(
                 (key, value) => MapEntry('$key', value),
               );
-              final updatedAt = (songJson.remove('updatedAt') as num?)
-                  ?.toInt();
+              final updatedAt = (songJson.remove('updatedAt') as num?)?.toInt();
               batch.insert('playlist_songs', {
                 'playlist_id': playlist.id,
                 'song_id': '${songJson['id'] ?? ''}',
-                'sort_order': order++,
+                'sort_order': songOrder++,
                 'added_at':
-                    updatedAt ??
-                    playlist.updateTime.millisecondsSinceEpoch,
+                    updatedAt ?? playlist.updateTime.millisecondsSinceEpoch,
                 'data': jsonEncode(songJson),
               }, conflictAlgorithm: ConflictAlgorithm.replace);
             }
@@ -307,7 +310,11 @@ class PlaylistRepository {
     return _serialized(() async {
       final db = await AppDatabase.importantDatabase();
       await db.transaction((txn) async {
-        await txn.delete('playlist_songs', where: 'playlist_id = ?', whereArgs: [id]);
+        await txn.delete(
+          'playlist_songs',
+          where: 'playlist_id = ?',
+          whereArgs: [id],
+        );
         await txn.delete('playlists', where: 'id = ?', whereArgs: [id]);
       });
       // 记录墓碑，跨设备同步时把这次删除传播到其它端。
@@ -316,6 +323,27 @@ class PlaylistRepository {
       if (songTombstones.remove(id) != null) {
         await PlaylistStore.writeSongTombstones(songTombstones);
       }
+    });
+  }
+
+  /// 保存用户自定义的歌单顺序（「我的收藏」固定在最前，不参与排序）。
+  Future<void> reorderPlaylists(List<String> orderedIds) {
+    return _serialized(() async {
+      final db = await AppDatabase.importantDatabase();
+      await db.transaction((txn) async {
+        var order = 0;
+        final batch = txn.batch();
+        for (final id in orderedIds) {
+          if (id == _favoritesId) continue;
+          batch.update(
+            'playlists',
+            {'sort_order': order++},
+            where: 'id = ?',
+            whereArgs: [id],
+          );
+        }
+        await batch.commit(noResult: true);
+      });
     });
   }
 
@@ -513,7 +541,10 @@ class PlaylistRepository {
   );
 
   Future<List<Playlist>> _readPlaylists(DatabaseExecutor db) async {
-    final rows = await db.query('playlists', orderBy: 'create_time ASC, id ASC');
+    final rows = await db.query(
+      'playlists',
+      orderBy: 'sort_order ASC, create_time ASC, id ASC',
+    );
     if (rows.isEmpty) return const [];
     final songRows = await db.query(
       'playlist_songs',
@@ -533,10 +564,7 @@ class PlaylistRepository {
     ];
   }
 
-  Playlist _playlistFromRow(
-    Map<String, Object?> row,
-    List<Song> songs,
-  ) {
+  Playlist _playlistFromRow(Map<String, Object?> row, List<Song> songs) {
     final data = AppDatabase.decodeMap(row['data']);
     if (data.isNotEmpty) {
       final json = {...data, 'songs': const <dynamic>[]};
@@ -667,7 +695,10 @@ class PlaylistRepository {
       coverSource.copyWith(
         updateTime: now,
         // 收藏的专辑 / 作者保留封面；普通歌单只有封面跟随第一首歌时才更新。
-        coverImgUrl: playlistCoverAfterSongChange(coverSource, coverSource.songs),
+        coverImgUrl: playlistCoverAfterSongChange(
+          coverSource,
+          coverSource.songs,
+        ),
       ),
     );
   }
@@ -699,24 +730,46 @@ class PlaylistRepository {
   Future<void> _writeRow(DatabaseExecutor db, Playlist playlist) async {
     final now = DateTime.now().millisecondsSinceEpoch;
     final json = playlist.copyWith(songs: const []).toJson();
+    // 改名 / 换封面 / 加歌都要保留用户拖出来的顺序：已有行沿用原值，
+    // 新歌单追加到末尾（老数据全是 0 时继续按 create_time 排）。
+    final existing = await db.query(
+      'playlists',
+      columns: ['sort_order'],
+      where: 'id = ?',
+      whereArgs: [playlist.id],
+      limit: 1,
+    );
+    int sortOrder;
+    if (existing.isNotEmpty) {
+      sortOrder = (existing.first['sort_order'] as num?)?.toInt() ?? 0;
+    } else {
+      final rows = await db.rawQuery(
+        'SELECT MAX(sort_order) AS value FROM playlists',
+      );
+      sortOrder = ((rows.first['value'] as num?)?.toInt() ?? -1) + 1;
+    }
     await db.insert('playlists', {
       'id': playlist.id,
       'name': playlist.name,
       'description': playlist.description,
       'cover_url': playlist.coverImgUrl,
       'source': playlist.source,
-      'create_time':
-          playlist.createTime.millisecondsSinceEpoch == 0
+      'create_time': playlist.createTime.millisecondsSinceEpoch == 0
           ? now
           : playlist.createTime.millisecondsSinceEpoch,
       'update_time': playlist.updateTime.millisecondsSinceEpoch,
+      'sort_order': sortOrder,
       'meta': jsonEncode(playlist.meta),
       'data': jsonEncode(json),
     }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   /// 只插入歌单行（不碰歌曲），用于快照导入。
-  Future<void> _insertRow(DatabaseExecutor db, Playlist playlist) async {
+  Future<void> _insertRow(
+    DatabaseExecutor db,
+    Playlist playlist, {
+    required int sortOrder,
+  }) async {
     final now = DateTime.now().millisecondsSinceEpoch;
     final createTime = playlist.createTime.millisecondsSinceEpoch;
     await db.insert('playlists', {
@@ -727,6 +780,7 @@ class PlaylistRepository {
       'source': playlist.source,
       'create_time': createTime == 0 ? now : createTime,
       'update_time': playlist.updateTime.millisecondsSinceEpoch,
+      'sort_order': sortOrder,
       'meta': jsonEncode(playlist.meta),
       'data': jsonEncode(playlist.copyWith(songs: const []).toJson()),
     }, conflictAlgorithm: ConflictAlgorithm.replace);

@@ -272,7 +272,8 @@ class AppDatabase {
       // v4：play_totals 加 `song_count`（累计「听过的歌」，清理老歌时不能跟着减）。
       // v5：移除听歌统计与排行，删掉 song_play_stats / play_totals / play_daily，
       //     只保留 song_play_progress（已听进度）。
-      version: 5,
+      // v6：playlists 加 `sort_order`，支持在「新增歌单」弹窗里自定义歌单顺序。
+      version: 6,
       onConfigure: (db) async {
         // WAL：写入不阻塞读取；synchronous=FULL：断电也不会丢已提交的事务。
         await _applyPragmas(
@@ -288,6 +289,9 @@ class AppDatabase {
       onUpgrade: (db, oldVersion, newVersion) async {
         // 建表语句都写成 IF NOT EXISTS，重复执行安全。
         await _createImportantSchema(db);
+        if (oldVersion < 6) {
+          await _ensurePlaylistSortOrderColumn(db);
+        }
         // 听歌统计与排行已移除：老库里的这几张表直接删掉，不再占用空间。
         for (final table in const [
           'song_play_stats',
@@ -318,6 +322,7 @@ class AppDatabase {
             source TEXT NOT NULL DEFAULT 'local',
             create_time INTEGER NOT NULL DEFAULT 0,
             update_time INTEGER NOT NULL DEFAULT 0,
+            sort_order INTEGER NOT NULL DEFAULT 0,
             meta TEXT NOT NULL DEFAULT '{}',
             data TEXT NOT NULL DEFAULT '{}'
           )
@@ -357,6 +362,18 @@ class AppDatabase {
     await db.execute(
       'CREATE INDEX IF NOT EXISTS idx_song_play_progress_time '
       'ON song_play_progress (updated_at DESC)',
+    );
+  }
+
+  /// v5 → v6：给已存在的 `playlists` 表补 `sort_order` 列。
+  ///
+  /// 老数据全部落成 0，读取时继续按 `create_time` 排；用户下次拖拽排序后
+  /// 才会写入 0..n-1。
+  static Future<void> _ensurePlaylistSortOrderColumn(Database db) async {
+    final columns = await db.rawQuery('PRAGMA table_info(playlists)');
+    if (columns.any((column) => column['name'] == 'sort_order')) return;
+    await db.execute(
+      'ALTER TABLE playlists ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0',
     );
   }
 

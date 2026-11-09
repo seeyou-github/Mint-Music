@@ -8,6 +8,7 @@ import '../../features/download/application/download_providers.dart';
 import '../../features/library/application/playlist_providers.dart';
 import '../../features/player/domain/models/song.dart';
 import '../../features/plugin/application/plugin_providers.dart';
+import 'playlist_manager.dart';
 
 /// 歌曲批量选择控制器。
 ///
@@ -294,95 +295,106 @@ Future<void> showAddSongsToPlaylistSheet(
   List<Song> songs,
 ) async {
   if (songs.isEmpty) return;
-  final playlistsAsync = ref.read(playlistsProvider);
-  final playlists = playlistsAsync.valueOrNull;
-  if (playlists == null) {
+  if (ref.read(playlistsProvider).valueOrNull == null) {
     _snack(context, '加载歌单中...');
     return;
   }
-  // 「我的收藏」有自己的入口，不出现在普通歌单列表里（与单曲菜单一致）。
-  final targets = playlists.where((p) => p.id != '__favorites__').toList();
   final bottomPadding = MediaQuery.of(context).padding.bottom;
 
   await showModalBottomSheet(
     context: context,
     useRootNavigator: true,
     backgroundColor: Colors.transparent,
-    builder: (ctx) => Container(
-      decoration: BoxDecoration(
-        color: colors.surface,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      child: SafeArea(
-        top: false,
-        child: Padding(
-          padding: EdgeInsets.only(bottom: bottomPadding),
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const SizedBox(height: AppSpacing.md),
-                Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: colors.divider,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-                const SizedBox(height: AppSpacing.md),
-                Text(
-                  ctx.tr('添加到歌单'),
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: colors.textPrimary,
-                  ),
-                ),
-                const SizedBox(height: AppSpacing.md),
-                if (targets.isEmpty)
-                  Padding(
-                    padding: const EdgeInsets.all(AppSpacing.xl),
-                    child: Text(
-                      ctx.tr('暂无歌单'),
-                      style: TextStyle(color: colors.textHint),
+    builder: (ctx) => Consumer(
+      builder: (ctx, sheetRef, _) {
+        // 监听 provider：在「新增歌单」弹窗里新建 / 删除歌单后，这里立即刷新。
+        // 「我的收藏」有自己的入口，不出现在普通歌单列表里（与单曲菜单一致）。
+        final playlists =
+            sheetRef.watch(playlistsProvider).valueOrNull ?? const [];
+        final targets = playlists
+            .where((p) => p.id != '__favorites__')
+            .toList();
+        return Container(
+          decoration: BoxDecoration(
+            color: colors.surface,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+          ),
+          child: SafeArea(
+            top: false,
+            child: Padding(
+              padding: EdgeInsets.only(bottom: bottomPadding),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const SizedBox(height: AppSpacing.md),
+                    Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: colors.divider,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
                     ),
-                  )
-                else
-                  ...targets.map(
-                    (playlist) => ListTile(
-                      leading: Icon(
-                        Icons.queue_music,
-                        color: colors.textSecondary,
+                    const SizedBox(height: AppSpacing.md),
+                    Text(
+                      ctx.tr('添加到歌单'),
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: colors.textPrimary,
                       ),
-                      title: Text(
-                        playlist.name,
-                        style: TextStyle(color: colors.textPrimary),
-                      ),
-                      trailing: Text(
-                        ctx.tr('${playlist.songCount}首'),
-                        style: TextStyle(fontSize: 12, color: colors.textHint),
-                      ),
-                      onTap: () async {
-                        Navigator.pop(ctx);
-                        await ref
-                            .read(playlistsProvider.notifier)
-                            .addSongsToPlaylist(playlist.id, songs);
-                        if (context.mounted) {
-                          _snack(
-                            context,
-                            '已添加 ${songs.length} 首到"${playlist.name}"',
-                          );
-                        }
-                      },
                     ),
-                  ),
-                const SizedBox(height: AppSpacing.lg),
-              ],
+                    const SizedBox(height: AppSpacing.sm),
+                    CreatePlaylistTile(colors: colors),
+                    if (targets.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.all(AppSpacing.xl),
+                        child: Text(
+                          ctx.tr('暂无歌单'),
+                          style: TextStyle(color: colors.textHint),
+                        ),
+                      )
+                    else
+                      ...targets.map(
+                        (playlist) => ListTile(
+                          leading: Icon(
+                            Icons.queue_music,
+                            color: colors.textSecondary,
+                          ),
+                          title: Text(
+                            playlist.name,
+                            style: TextStyle(color: colors.textPrimary),
+                          ),
+                          trailing: Text(
+                            ctx.tr('${playlist.songCount}首'),
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: colors.textHint,
+                            ),
+                          ),
+                          onTap: () async {
+                            Navigator.pop(ctx);
+                            await ref
+                                .read(playlistsProvider.notifier)
+                                .addSongsToPlaylist(playlist.id, songs);
+                            if (context.mounted) {
+                              _snack(
+                                context,
+                                '已添加 ${songs.length} 首到"${playlist.name}"',
+                              );
+                            }
+                          },
+                        ),
+                      ),
+                    const SizedBox(height: AppSpacing.lg),
+                  ],
+                ),
+              ),
             ),
           ),
-        ),
-      ),
+        );
+      },
     ),
   );
 }

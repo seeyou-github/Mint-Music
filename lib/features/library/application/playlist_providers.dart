@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/backup/playlist_sync_service.dart';
@@ -130,6 +133,38 @@ class PlaylistsNotifier extends AsyncNotifier<List<Playlist>> {
     await repo.deletePlaylist(id);
     ref.invalidateSelf();
     _syncToRemote();
+  }
+
+  /// 调整歌单顺序：先同步更新内存状态让弹窗 / 收藏页立即换位，再落库。
+  ///
+  /// 「我的收藏」始终固定在最前，[orderedIds] 里即使带了它也会被跳过。
+  void reorderPlaylists(List<String> orderedIds) {
+    final current = state.valueOrNull;
+    if (current == null) return;
+    final byId = {for (final playlist in current) playlist.id: playlist};
+    final favorites = [
+      for (final playlist in current)
+        if (playlist.id == '__favorites__') playlist,
+    ];
+    // 先把「我的收藏」从待排列表里摘掉，最后再固定放回最前，
+    // 否则它会同时出现在开头和末尾。
+    byId.remove('__favorites__');
+    final ordered = <Playlist>[
+      ...favorites,
+      for (final id in orderedIds)
+        if (id != '__favorites__' && byId[id] != null) byId.remove(id)!,
+      ...byId.values,
+    ];
+    state = AsyncData(ordered);
+    unawaited(_persistPlaylistOrder(orderedIds));
+  }
+
+  Future<void> _persistPlaylistOrder(List<String> orderedIds) async {
+    try {
+      await ref.read(playlistRepositoryProvider).reorderPlaylists(orderedIds);
+    } catch (e) {
+      debugPrint('[Playlists] 保存歌单排序失败: $e');
+    }
   }
 
   /// 本地歌单增删改后自动同步（开启了「自动同步」时）。
