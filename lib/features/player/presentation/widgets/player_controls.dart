@@ -28,6 +28,21 @@ String _estimateSize(String qualityId, int durationSec) {
   return '${(sizeBytes / (1024 * 1024)).toStringAsFixed(2)}MB';
 }
 
+/// 播放页的音质短名称：有损只显示档位码率，无损只显示编码格式，
+/// 其余档位沿用全局名称（如「高清臻音」「超清母带」）。
+String _playerQualityName(String qualityId) {
+  switch (qualityId) {
+    case '128k':
+      return '128K';
+    case '320k':
+      return '320K';
+    case 'flac':
+      return 'Flac';
+    default:
+      return getQualityDisplayName(qualityId);
+  }
+}
+
 class PlayerProgressBar extends ConsumerStatefulWidget {
   /// 非紧凑模式下进度条（与时间标签）的水平留白。
   ///
@@ -118,7 +133,7 @@ class _PlayerProgressBarState extends ConsumerState<PlayerProgressBar> {
       elevation: 8,
       items: widget.availableQualities.map((q) {
         final gated = widget.gatedQualities.contains(q);
-        final displayName = getQualityDisplayName(q);
+        final displayName = _playerQualityName(q);
         final subtitle = gated
             ? tr('需登录')
             : _estimateSize(q, widget.duration.inSeconds);
@@ -173,7 +188,7 @@ class _PlayerProgressBarState extends ConsumerState<PlayerProgressBar> {
           SnackBar(
             content: Text(
               tr(
-                '「${getQualityDisplayName(selected)}」需要先在插件管理 → 该插件 → 凭据 里填写登录信息',
+                '「${_playerQualityName(selected)}」需要先在插件管理 → 该插件 → 凭据 里填写登录信息',
               ),
             ),
             duration: const Duration(seconds: 3),
@@ -195,8 +210,7 @@ class _PlayerProgressBarState extends ConsumerState<PlayerProgressBar> {
     final localLabel = (filePath != null && filePath.isNotEmpty)
         ? ref.watch(localQualityLabelProvider(filePath)).valueOrNull
         : null;
-    final qualityLabel =
-        localLabel ?? getQualityDisplayName(widget.currentQuality);
+    final qualityLabel = localLabel ?? _playerQualityName(widget.currentQuality);
     return Padding(
       padding: EdgeInsets.symmetric(
         horizontal: compact ? 8 : PlayerProgressBar.horizontalPadding,
