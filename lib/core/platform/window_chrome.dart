@@ -17,8 +17,6 @@ typedef _SetWindowLongPtrDart = int Function(int, int, int);
 typedef _SetWindowPosNative =
     Int32 Function(IntPtr, IntPtr, Int32, Int32, Int32, Int32, Uint32);
 typedef _SetWindowPosDart = int Function(int, int, int, int, int, int, int);
-typedef _ShowWindowNative = Int32 Function(IntPtr, Int32);
-typedef _ShowWindowDart = int Function(int, int);
 typedef _PostMessageWNative = Int32 Function(IntPtr, Uint32, IntPtr, IntPtr);
 typedef _PostMessageWDart = int Function(int, int, int, int);
 typedef _SendMessageWNative = IntPtr Function(IntPtr, Uint32, IntPtr, IntPtr);
@@ -80,9 +78,16 @@ class WindowChrome {
   static const int _swpNoActivate = 0x0010;
   static const int _swpFrameChanged = 0x0020;
 
-  static const int _swMinimize = 6;
-  static const int _swMaximize = 3;
-  static const int _swRestore = 9;
+  // 最大化 / 还原 / 最小化的发起方式：完全照搬 window_manager（PiliPlus），
+  // 用 **PostMessage** 异步发 WM_SYSCOMMAND，而不是同步调 ShowWindow。
+  //
+  // 同步 ShowWindow(SW_MAXIMIZE) 会在 Dart 的 onPressed 回调栈里立即启动
+  // DWM 最大化动画，和 Flutter 的帧节奏撞在一起；异步消息则排到下一轮
+  // 消息循环，动画由系统正常推进，不会出现「移到左上角 → 回弹 → 再最大化」。
+  static const int _wmSysCommand = 0x0112;
+  static const int _scMinimize = 0xF020;
+  static const int _scMaximize = 0xF030;
+  static const int _scRestore = 0xF120;
 
   static const int _wmClose = 0x0010;
   static const int _wmNcLButtonDown = 0x00A1;
@@ -106,7 +111,6 @@ class WindowChrome {
   static _GetWindowLongPtrDart? _getWindowLong;
   static _SetWindowLongPtrDart? _setWindowLong;
   static _SetWindowPosDart? _setWindowPos;
-  static _ShowWindowDart? _showWindow;
   static _PostMessageWDart? _postMessage;
   static _SendMessageWDart? _sendMessage;
   static _IsZoomedDart? _isZoomed;
@@ -212,7 +216,7 @@ class WindowChrome {
     if (!isSupported || _failed) return;
     final hwnd = _windowHandle();
     if (hwnd == 0) return;
-    _showWindow?.call(hwnd, _swMinimize);
+    _postMessage?.call(hwnd, _wmSysCommand, _scMinimize, 0);
   }
 
   /// 最大化 / 还原 切换。
@@ -220,7 +224,12 @@ class WindowChrome {
     if (!isSupported || _failed) return;
     final hwnd = _windowHandle();
     if (hwnd == 0) return;
-    _showWindow?.call(hwnd, isMaximized ? _swRestore : _swMaximize);
+    _postMessage?.call(
+      hwnd,
+      _wmSysCommand,
+      isMaximized ? _scRestore : _scMaximize,
+      0,
+    );
   }
 
   /// 窗口当前是否最大化（用来切换自绘按钮的图标）。
@@ -266,9 +275,6 @@ class WindowChrome {
           .lookupFunction<_SetWindowPosNative, _SetWindowPosDart>(
             'SetWindowPos',
           );
-      _showWindow = user32.lookupFunction<_ShowWindowNative, _ShowWindowDart>(
-        'ShowWindow',
-      );
       _postMessage = user32
           .lookupFunction<_PostMessageWNative, _PostMessageWDart>(
             'PostMessageW',
