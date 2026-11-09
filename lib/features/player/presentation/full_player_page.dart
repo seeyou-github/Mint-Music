@@ -24,6 +24,7 @@ import '../application/lyric_controller.dart';
 import '../../radio/application/radio_session.dart';
 import '../domain/models/song.dart';
 import '../../../core/theme/background_derivation.dart';
+import '../../../core/theme/background_gradient.dart';
 import '../domain/services/cover_color_extractor.dart';
 import '../../library/application/playlist_providers.dart';
 import '../../plugin/application/plugin_providers.dart';
@@ -161,6 +162,11 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
     final bgMode = ref.watch(fullScreenBackgroundModeProvider);
     final audioVisualizer = ref.watch(audioVisualizerEnabledProvider);
     final coverColorAsync = ref.watch(currentCoverColorProvider);
+    // 「主界面跟随封面变色」开启时（仅深色），播放页直接用主界面那条渐变：
+    // 颜色、方向都同源，不再各算一遍，侧栏和播放页之间才有「浑然一体」的观感。
+    final followCoverBackground =
+        !ref.watch(isLightThemeActiveProvider) &&
+        ref.watch(coverBackgroundEnabledProvider);
 
     final Color? dominantColor = coverColorAsync.whenOrNull(
       data: (result) => result?.dominantColor,
@@ -180,6 +186,11 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
                 dominantColor: dominantColor,
                 coverUrl: song?.coverUrl,
                 mode: bgMode,
+                // 跟随封面时直接用主界面那条渐变（颜色 + 方向同源），
+                // 否则仍按封面色自己派生。
+                mainGradient: followCoverBackground
+                    ? ref.watch(backgroundGradientProvider)
+                    : null,
               ),
             ),
             // 手机横屏左栏是紧凑的「封面 + 控件」，没有留给频谱条的空间，
@@ -1599,10 +1610,18 @@ class _BackgroundLayer extends StatefulWidget {
   final String? coverUrl;
   final FullScreenBackgroundMode mode;
 
+  /// 「主界面跟随封面变色」开启时传入主界面那条渐变。
+  ///
+  /// 非空时背景完全等于主界面（同一个 provider 的颜色 + 方向），并且不再
+  /// 叠暗色底和顶部光晕 —— 播放页比侧栏暗一档，正是之前「两块背景」割裂感
+  /// 的来源。
+  final BackgroundGradient? mainGradient;
+
   const _BackgroundLayer({
     required this.dominantColor,
     required this.coverUrl,
     required this.mode,
+    this.mainGradient,
   });
 
   @override
@@ -1633,6 +1652,23 @@ class _BackgroundLayerState extends State<_BackgroundLayer> {
   Widget build(BuildContext context) => _buildLayer(context);
 
   Widget _buildLayer(BuildContext context) {
+    // 跟随封面变色时把主界面那条渐变原样铺上来：颜色、方向都同源，侧栏和
+    // 播放页之间没有任何色差，切换歌曲时两边也是同一条 1s 过渡。
+    final mainGradient = widget.mainGradient;
+    if (mainGradient != null) {
+      return AnimatedContainer(
+        // 与主界面全局背景层同一条 1s 曲线：切歌时两边同步过渡，不会一快一慢。
+        duration: const Duration(seconds: 1),
+        curve: Curves.easeInOut,
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: mainGradient.begin,
+            end: mainGradient.end,
+            colors: mainGradient.colors,
+          ),
+        ),
+      );
+    }
     final mode = widget.mode;
     final dominantColor = _displayedDominantColor;
     // 与「设置 → 外观设置 → 背景渐变」共用同一条派生算法
