@@ -11,6 +11,11 @@ class LocalAudioMetadata {
   final String? album;
   final int? year;
   final int? durationSeconds;
+
+  /// 毫秒级时长：播放页按「音频字节数 / 时长」算平均码率时用，
+  /// 避免秒级取整把码率算偏。
+  final int? durationMs;
+
   final Uint8List? artwork;
 
   /// 文件里内嵌的歌词（ID3 的 USLT / FLAC 的 LYRICS / MP4 的 ©lyr）。
@@ -28,6 +33,7 @@ class LocalAudioMetadata {
     this.album,
     this.year,
     this.durationSeconds,
+    this.durationMs,
     this.artwork,
     this.lyrics,
     this.genre,
@@ -98,8 +104,17 @@ class LocalMetadataReader {
             return await _readFlac(raf, length);
           case '.m4a':
           case '.mp4':
-          case '.aac':
             return await _readMp4(raf, length);
+          case '.aac':
+            // 有的 .aac 其实是 MP4 容器；读不到 mvhd 时长再按 ADTS 帧数算。
+            final mp4 = await _readMp4(raf, length);
+            if (mp4.durationMs != null) return mp4;
+            final adtsMs = await _readAdtsDuration(raf, length);
+            if (adtsMs == null) return mp4;
+            return LocalAudioMetadata(
+              durationMs: adtsMs,
+              durationSeconds: adtsMs ~/ 1000,
+            );
           case '.wav':
             return await _readWav(raf, length);
           case '.ogg':
@@ -222,6 +237,7 @@ class LocalMetadataReader {
       album: album,
       year: year,
       durationSeconds: durationMs == null ? null : durationMs ~/ 1000,
+      durationMs: durationMs,
       artwork: artwork,
       lyrics: lyrics,
       genre: genre,
@@ -277,100 +293,6 @@ class LocalMetadataReader {
       return null;
     }
     return null;
-  }
-
-  /// 读取 MP3 音频流的真实码率（kbps），播放页显示本地歌曲音质用。
-  ///
-  /// 有 Xing/Info 头时按其中的音频字节数 / 总时长算平均码率——VBR 文件的
-  /// 首帧码率不代表整首；没有 Xing/Info 说明是 CBR，首帧码率就是真实码率。
-  static Future<int?> readMp3Bitrate(String filePath) async {
-    try {
-      final file = File(filePath);
-      if (!await file.exists()) return null;
-      final raf = await file.open(mode: FileMode.read);
-      try {
-        final fileLength = await raf.length();
-        await raf.setPosition(0);
-        final id3 = await raf.read(10);
-        var audioStart = 0;
-        if (id3.length == 10 &&
-            id3[0] == 0x49 &&
-            id3[1] == 0x44 &&
-            id3[2] == 0x33) {
-          audioStart = 10 + _synchSafeToInt(id3, 6);
-          // ID3v2.4 的 footer 也占 10 字节。
-          if ((id3[5] & 0x10) != 0) audioStart += 10;
-        }
-        if (audioStart >= fileLength) return null;
-        await raf.setPosition(audioStart);
-        final readLength = fileLength - audioStart > 65536
-            ? 65536
-            : fileLength - audioStart;
-        final buffer = await raf.read(readLength);
-        final audioBytes = fileLength - audioStart;
-        for (var i = 0; i + 4 <= buffer.length; i++) {
-          if (buffer[i] != 0xFF || (buffer[i + 1] & 0xE0) != 0xE0) continue;
-          final frame = _parseMpegFrameHeader(buffer, i);
-          if (frame == null) continue;
-          final xingKbps = _mp3XingBitrate(
-            buffer,
-            i,
-            frame.version,
-            frame.channelMode,
-            frame.samplesPerFrame,
-            frame.sampleRate,
-            audioBytes,
-          );
-          if (xingKbps != null) return xingKbps;
-          return frame.bitrate > 0 ? (frame.bitrate / 1000).round() : null;
-        }
-        return null;
-      } finally {
-        await raf.close();
-      }
-    } catch (e) {
-      debugPrint('[LocalMetadata] 读取 MP3 码率失败 $filePath: $e');
-      return null;
-    }
-  }
-
-  /// 从 Xing / Info 头算平均码率（kbps）；没有该头或信息不全时返回 null。
-  static int? _mp3XingBitrate(
-    Uint8List buffer,
-    int frameOffset,
-    int version,
-    int channelMode,
-    int samplesPerFrame,
-    int sampleRate,
-    int audioBytes,
-  ) {
-    final sideInfo = version == 1
-        ? (channelMode == 3 ? 17 : 32)
-        : (channelMode == 3 ? 9 : 17);
-    final xingOffset = frameOffset + 4 + sideInfo;
-    if (xingOffset + 12 > buffer.length) return null;
-    final tag = String.fromCharCodes(
-      buffer.sublist(xingOffset, xingOffset + 4),
-    );
-    if (tag != 'Xing' && tag != 'Info') return null;
-    final flags = _be32(buffer, xingOffset + 4);
-    var offset = xingOffset + 8;
-    int? frames;
-    int? bytes;
-    if ((flags & 0x01) != 0) {
-      if (offset + 4 > buffer.length) return null;
-      frames = _be32(buffer, offset);
-      offset += 4;
-    }
-    if ((flags & 0x02) != 0) {
-      if (offset + 4 > buffer.length) return null;
-      bytes = _be32(buffer, offset);
-    }
-    if (frames == null || frames <= 0 || sampleRate <= 0) return null;
-    final durationMs = frames * samplesPerFrame * 1000 ~/ sampleRate;
-    if (durationMs <= 0) return null;
-    final kbps = ((bytes ?? audioBytes) * 8 / durationMs).round();
-    return kbps > 0 ? kbps : null;
   }
 
   /// 解析 MPEG 帧头，返回码率（bps）/采样率/每帧采样数等信息。
@@ -555,7 +477,7 @@ class LocalMetadataReader {
     String? comment;
     int? year;
     Uint8List? artwork;
-    int? durationSeconds;
+    int? durationMs;
 
     var offset = 4;
     var isLast = false;
@@ -582,7 +504,7 @@ class LocalMetadataReader {
               (info[16] << 8) |
               info[17];
           if (sampleRate > 0 && totalSamples > 0) {
-            durationSeconds = (totalSamples / sampleRate).round();
+            durationMs = totalSamples * 1000 ~/ sampleRate;
           }
         }
       } else if (type == 4) {
@@ -617,7 +539,8 @@ class LocalMetadataReader {
       artist: artist,
       album: album,
       year: year,
-      durationSeconds: durationSeconds,
+      durationSeconds: durationMs == null ? null : durationMs ~/ 1000,
+      durationMs: durationMs,
       artwork: artwork,
       lyrics: lyrics,
       genre: genre,
@@ -667,7 +590,7 @@ class LocalMetadataReader {
     String? genre;
     String? comment;
     Uint8List? artwork;
-    int? durationSeconds;
+    int? durationMs;
 
     // 遍历 moov 的子块
     var pos = 0;
@@ -677,7 +600,7 @@ class LocalMetadataReader {
       if (size < 8 || pos + size > moov.length) break;
       if (type == 'mvhd') {
         final data = moov.sublist(pos + 8, pos + size);
-        durationSeconds = _parseMvhdDuration(data);
+        durationMs = _parseMvhdDurationMs(data);
       } else if (type == 'udta') {
         final data = moov.sublist(pos + 8, pos + size);
         final parsed = _parseMp4Udta(data);
@@ -698,7 +621,8 @@ class LocalMetadataReader {
       artist: artist,
       album: album,
       year: year,
-      durationSeconds: durationSeconds,
+      durationSeconds: durationMs == null ? null : durationMs ~/ 1000,
+      durationMs: durationMs,
       artwork: artwork,
       lyrics: lyrics,
       genre: genre,
@@ -706,7 +630,7 @@ class LocalMetadataReader {
     );
   }
 
-  static int? _parseMvhdDuration(Uint8List data) {
+  static int? _parseMvhdDurationMs(Uint8List data) {
     if (data.length < 20) return null;
     final version = data[0];
     if (version == 1) {
@@ -714,12 +638,12 @@ class LocalMetadataReader {
       final timescale = _be32(data, 20);
       final duration = _be64(data, 24);
       if (timescale <= 0) return null;
-      return (duration / timescale).round();
+      return (duration * 1000 / timescale).round();
     }
     final timescale = _be32(data, 12);
     final duration = _be32(data, 16);
     if (timescale <= 0) return null;
-    return (duration / timescale).round();
+    return (duration * 1000 / timescale).round();
   }
 
   static ({
@@ -886,7 +810,7 @@ class LocalMetadataReader {
     if (riff.length < 12) return const LocalAudioMetadata();
 
     var byteRate = 0;
-    int? durationSeconds;
+    int? durationMs;
     String? title;
     String? artist;
     String? album;
@@ -911,7 +835,7 @@ class LocalMetadataReader {
         }
       } else if (id == 'data') {
         if (byteRate > 0) {
-          durationSeconds = (size * 1000) ~/ byteRate ~/ 1000;
+          durationMs = size * 1000 ~/ byteRate;
         }
       } else if (id == 'LIST') {
         final data = await raf.read(size);
@@ -933,7 +857,8 @@ class LocalMetadataReader {
       artist: artist,
       album: album,
       year: year,
-      durationSeconds: durationSeconds,
+      durationSeconds: durationMs == null ? null : durationMs ~/ 1000,
+      durationMs: durationMs,
       genre: genre,
       comment: comment,
     );
@@ -1067,12 +992,12 @@ class LocalMetadataReader {
       }
     }
 
-    int? durationSeconds;
+    int? durationMs;
     if (sampleRate != null &&
         sampleRate > 0 &&
         lastGranule != null &&
         lastGranule > 0) {
-      durationSeconds = (lastGranule * 1000 ~/ sampleRate) ~/ 1000;
+      durationMs = lastGranule * 1000 ~/ sampleRate;
     }
 
     return LocalAudioMetadata(
@@ -1080,11 +1005,80 @@ class LocalMetadataReader {
       artist: artist,
       album: album,
       year: year,
-      durationSeconds: durationSeconds,
+      durationSeconds: durationMs == null ? null : durationMs ~/ 1000,
+      durationMs: durationMs,
       lyrics: lyrics,
       genre: genre,
       comment: comment,
     );
+  }
+
+  // ==================== AAC (ADTS) ====================
+
+  static const List<int> _adtsSampleRates = [
+    96000,
+    88200,
+    64000,
+    48000,
+    44100,
+    32000,
+    24000,
+    22050,
+    16000,
+    12000,
+    11025,
+    8000,
+    7350,
+  ];
+
+  /// ADTS(AAC) 时长：按帧长逐帧走一遍，帧数 × 1024 / 采样率。
+  ///
+  /// 用缓冲分块读取而不是每帧 seek，整库扫描时也不会太慢。
+  static Future<int?> _readAdtsDuration(
+    RandomAccessFile raf,
+    int fileLength,
+  ) async {
+    var pos = 0;
+    await raf.setPosition(0);
+    final head = await raf.read(10);
+    if (head.length == 10 &&
+        head[0] == 0x49 &&
+        head[1] == 0x44 &&
+        head[2] == 0x33) {
+      pos = 10 + _synchSafeToInt(head, 6);
+      if ((head[5] & 0x10) != 0) pos += 10;
+    }
+
+    const blockSize = 256 * 1024;
+    var frames = 0;
+    int? sampleRate;
+    var buffer = Uint8List(0);
+    var bufferStart = pos;
+    while (pos + 7 <= fileLength) {
+      if (pos + 7 > bufferStart + buffer.length) {
+        bufferStart = pos;
+        await raf.setPosition(pos);
+        final remain = fileLength - pos;
+        buffer = await raf.read(remain < blockSize ? remain : blockSize);
+        if (buffer.length < 7) break;
+      }
+      final i = pos - bufferStart;
+      if (buffer[i] != 0xFF || (buffer[i + 1] & 0xF0) != 0xF0) break;
+      final rateIndex = (buffer[i + 2] >> 2) & 0x0F;
+      if (rateIndex >= _adtsSampleRates.length) return null;
+      final frameLength =
+          ((buffer[i + 3] & 0x03) << 11) |
+          (buffer[i + 4] << 3) |
+          (buffer[i + 5] >> 5);
+      final headerLength = (buffer[i + 1] & 0x01) != 0 ? 7 : 9;
+      if (frameLength < headerLength) break;
+      sampleRate ??= _adtsSampleRates[rateIndex];
+      frames++;
+      pos += frameLength;
+    }
+
+    if (frames <= 0 || sampleRate == null || sampleRate <= 0) return null;
+    return frames * 1024 * 1000 ~/ sampleRate;
   }
 
   // ==================== 公共解析 ====================
