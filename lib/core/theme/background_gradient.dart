@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 /// 背景渐变方向。
@@ -87,9 +89,72 @@ GradientDirection gradientDirectionFromTokens(List<String> tokens) {
   return GradientDirection.topToBottom;
 }
 
-/// 去掉方向标记后的颜色列表。
-List<String> gradientColorTokens(List<String> tokens) =>
-    tokens.where((token) => !token.startsWith('@')).toList(growable: false);
+/// 去掉方向 / 光晕标记后的颜色列表。
+List<String> gradientColorTokens(List<String> tokens) => tokens
+    .where((token) => !token.startsWith('@') && !token.startsWith('~'))
+    .toList(growable: false);
+
+/// 光晕数量的持久化标记：`~3` 表示 3 个光晕。
+String gradientGlowToken(int count) => '~$count';
+
+/// 从颜色列表里取出光晕数量（没有标记 = 0，即不画光晕）。
+int gradientGlowCountFromTokens(List<String> tokens) {
+  for (final token in tokens) {
+    if (!token.startsWith('~')) continue;
+    final count = int.tryParse(token.substring(1));
+    if (count != null) return count.clamp(0, 12);
+  }
+  return 0;
+}
+
+/// 一个背景光晕：位置 / 半径都用相对值，绘制时按容器尺寸换算。
+class BackgroundGlow {
+  const BackgroundGlow({
+    required this.x,
+    required this.y,
+    required this.radius,
+    required this.opacity,
+  });
+
+  /// 圆心横向位置（0~1，相对宽度）。
+  final double x;
+
+  /// 圆心纵向位置（0~1，相对高度）。
+  final double y;
+
+  /// 半径（相对容器短边）。
+  final double radius;
+
+  /// 中心不透明度（越靠边越透明）。
+  final double opacity;
+}
+
+/// 生成一组光晕：位置、半径、亮度都随机。
+///
+/// 随机种子 = 启动种子 ^ 渐变颜色的哈希：
+/// - 同一次启动、同一条渐变 → 布局稳定，不会每帧乱跳；
+/// - 换一条渐变 / 重启应用 → 位置和范围都换一批（就是「每次启动都不同」）。
+List<BackgroundGlow> buildBackgroundGlows({
+  required List<Color> colors,
+  required int count,
+  required int seed,
+}) {
+  if (count <= 0 || colors.isEmpty) return const [];
+  var colorSeed = 0;
+  for (final color in colors) {
+    colorSeed = (colorSeed * 31 + color.toARGB32()) & 0x7fffffff;
+  }
+  final random = math.Random(seed ^ colorSeed);
+  return List<BackgroundGlow>.generate(count, (_) {
+    return BackgroundGlow(
+      x: random.nextDouble(),
+      y: random.nextDouble(),
+      // 半径 0.26~0.68 倍短边：小光点和大面积晕染混在一起才自然。
+      radius: 0.26 + random.nextDouble() * 0.42,
+      opacity: 0.07 + random.nextDouble() * 0.11,
+    );
+  }, growable: false);
+}
 
 /// 主界面背景渐变。
 ///
@@ -106,20 +171,26 @@ class BackgroundGradient {
   /// 渐变方向（可能是 [GradientDirection.random]）。
   final GradientDirection direction;
 
+  /// 叠加几个光晕（0 = 不画）。
+  final int glowCount;
+
   const BackgroundGradient({
     required this.colors,
     required this.mid,
     this.direction = GradientDirection.topToBottom,
+    this.glowCount = 0,
   });
 
   /// 纯色（三个色段相同），用于「只选了一个颜色」或兜底。
   factory BackgroundGradient.solid(
     Color color, {
     GradientDirection direction = GradientDirection.topToBottom,
+    int glowCount = 0,
   }) => BackgroundGradient(
     colors: [color, color, color],
     mid: color,
     direction: direction,
+    glowCount: glowCount,
   );
 
   /// 实际渲染用的方向：`random` 按颜色哈希解析成一个固定方向。
@@ -145,6 +216,7 @@ BackgroundGradient resolveBackgroundGradient({
   required List<Color> picked,
   required Color fallback,
   GradientDirection direction = GradientDirection.topToBottom,
+  int glowCount = 0,
 }) {
   final colors = picked.isEmpty
       ? <Color>[fallback]
@@ -154,6 +226,7 @@ BackgroundGradient resolveBackgroundGradient({
       colors: colors,
       mid: colors[1],
       direction: direction,
+      glowCount: glowCount,
     );
   }
   if (colors.length == 2) {
@@ -162,7 +235,12 @@ BackgroundGradient resolveBackgroundGradient({
       colors: [colors[0], middle, colors[1]],
       mid: middle,
       direction: direction,
+      glowCount: glowCount,
     );
   }
-  return BackgroundGradient.solid(colors[0], direction: direction);
+  return BackgroundGradient.solid(
+    colors[0],
+    direction: direction,
+    glowCount: glowCount,
+  );
 }

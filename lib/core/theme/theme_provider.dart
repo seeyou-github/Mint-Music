@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
@@ -190,6 +191,14 @@ final coverBackgroundEnabledProvider = StateProvider<bool>((ref) => true);
 /// `currentCoverColorProvider` 出结果时把颜色写进来，这里只负责存。
 final coverAccentColorProvider = StateProvider<Color?>((ref) => null);
 
+/// 背景光晕的启动种子。
+///
+/// 每次启动应用换一个随机值，光晕的位置 / 半径因此「每次启动都不同」；
+/// 同一次启动内保持不变，不会每帧乱跳（见 [buildBackgroundGlows]）。
+final backgroundGlowSeedProvider = Provider<int>(
+  (ref) => math.Random().nextInt(1 << 30),
+);
+
 /// 主界面背景渐变（用户在外观设置里选的颜色 → 固定 3 段）。
 ///
 /// 只看设置里的颜色，不订阅 [themeColorsProvider]，不会成环。
@@ -201,7 +210,9 @@ final backgroundGradientProvider = Provider<BackgroundGradient>((ref) {
     final accent = ref.watch(coverAccentColorProvider);
     if (accent != null) {
       final colors = deriveBackgroundGradient(accent, isLight: false);
-      return BackgroundGradient(colors: colors, mid: colors[1]);
+      // 跟随封面时固定叠 3 个光晕（位置 / 半径每次启动随机），
+      // 让主界面不至于是一整片平铺的渐变。
+      return BackgroundGradient(colors: colors, mid: colors[1], glowCount: 3);
     }
   }
   final tokens = ref.watch(
@@ -210,7 +221,7 @@ final backgroundGradientProvider = Provider<BackgroundGradient>((ref) {
         : darkThemeBackgroundColorsProvider,
   );
   final picked = <Color>[];
-  // 列表末尾可能带一个 `@n` 方向标记，解析颜色时跳过它。
+  // 列表末尾可能带 `@n` 方向标记 / `~n` 光晕标记，解析颜色时跳过它们。
   for (final hex in gradientColorTokens(tokens)) {
     final parsed = _parseOptionalColor(hex);
     if (parsed != null) picked.add(parsed);
@@ -221,6 +232,7 @@ final backgroundGradientProvider = Provider<BackgroundGradient>((ref) {
         ? ThemeColors.light.background
         : ThemeColors.dark.background,
     direction: gradientDirectionFromTokens(tokens),
+    glowCount: gradientGlowCountFromTokens(tokens),
   );
 });
 

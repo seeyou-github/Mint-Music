@@ -25,6 +25,7 @@ import '../../radio/application/radio_session.dart';
 import '../domain/models/song.dart';
 import '../../../core/theme/background_derivation.dart';
 import '../../../core/theme/background_gradient.dart';
+import '../../../shared/widgets/background_glow_layer.dart';
 import '../domain/services/cover_color_extractor.dart';
 import '../../library/application/playlist_providers.dart';
 import '../../plugin/application/plugin_providers.dart';
@@ -191,6 +192,7 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
                 mainGradient: followCoverBackground
                     ? ref.watch(backgroundGradientProvider)
                     : null,
+                glowSeed: ref.watch(backgroundGlowSeedProvider),
               ),
             ),
             // 手机横屏左栏是紧凑的「封面 + 控件」，没有留给频谱条的空间，
@@ -1617,11 +1619,15 @@ class _BackgroundLayer extends StatefulWidget {
   /// 的来源。
   final BackgroundGradient? mainGradient;
 
+  /// 背景光晕的启动种子（和主界面用同一个，光晕位置才对得上）。
+  final int glowSeed;
+
   const _BackgroundLayer({
     required this.dominantColor,
     required this.coverUrl,
     required this.mode,
     this.mainGradient,
+    required this.glowSeed,
   });
 
   @override
@@ -1656,17 +1662,28 @@ class _BackgroundLayerState extends State<_BackgroundLayer> {
     // 播放页之间没有任何色差，切换歌曲时两边也是同一条 1s 过渡。
     final mainGradient = widget.mainGradient;
     if (mainGradient != null) {
-      return AnimatedContainer(
-        // 与主界面全局背景层同一条 1s 曲线：切歌时两边同步过渡，不会一快一慢。
-        duration: const Duration(seconds: 1),
-        curve: Curves.easeInOut,
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: mainGradient.begin,
-            end: mainGradient.end,
-            colors: mainGradient.colors,
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          AnimatedContainer(
+            // 与主界面全局背景层同一条 1s 曲线：切歌时两边同步过渡。
+            duration: const Duration(seconds: 1),
+            curve: Curves.easeInOut,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: mainGradient.begin,
+                end: mainGradient.end,
+                colors: mainGradient.colors,
+              ),
+            ),
           ),
-        ),
+          // 光晕和主界面用同一个种子 + 同一组颜色，位置也一致。
+          BackgroundGlowLayer(
+            colors: mainGradient.colors,
+            count: mainGradient.glowCount,
+            seed: widget.glowSeed,
+          ),
+        ],
       );
     }
     final mode = widget.mode;

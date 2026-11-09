@@ -33,6 +33,7 @@ import '../core/backup/sync_timeout.dart';
 import '../core/backup/webdav_service.dart';
 import '../features/library/application/playlist_providers.dart';
 import '../features/settings/data/plugin_repository.dart';
+import '../shared/widgets/background_glow_layer.dart';
 import '../shared/widgets/playlist_sync_indicator.dart';
 import 'app_desktop_shell.dart';
 import 'windows_title_bar.dart';
@@ -414,16 +415,28 @@ class _AppState extends ConsumerState<App> {
               children: [
                 Positioned.fill(
                   child: IgnorePointer(
-                    child: AnimatedContainer(
-                      duration: const Duration(seconds: 1),
-                      curve: Curves.easeInOut,
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: backgroundGradient.begin,
-                          end: backgroundGradient.end,
-                          colors: backgroundGradient.colors,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        AnimatedContainer(
+                          duration: const Duration(seconds: 1),
+                          curve: Curves.easeInOut,
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: backgroundGradient.begin,
+                              end: backgroundGradient.end,
+                              colors: backgroundGradient.colors,
+                            ),
+                          ),
                         ),
-                      ),
+                        // 随机位置 / 半径的光晕（数量由渐变设置决定，
+                        // 跟随封面时固定 3 个），叠在渐变之上。
+                        BackgroundGlowLayer(
+                          colors: backgroundGradient.colors,
+                          count: backgroundGradient.glowCount,
+                          seed: ref.watch(backgroundGlowSeedProvider),
+                        ),
+                      ],
                     ),
                   ),
                 ),

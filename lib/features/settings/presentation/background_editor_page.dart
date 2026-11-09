@@ -12,6 +12,7 @@ import '../../../core/theme/background_derivation.dart';
 import '../../../core/theme/background_gradient.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
+import '../../../shared/widgets/background_glow_layer.dart';
 import '../../../shared/widgets/hsv_color_picker.dart';
 import '../../player/domain/services/cover_color_extractor.dart';
 import '../application/settings_providers.dart';
@@ -61,6 +62,9 @@ class _BackgroundEditorPageState extends ConsumerState<BackgroundEditorPage> {
   /// 渐变方向（默认上下；也有「随机」，见 [GradientDirection]）。
   GradientDirection _direction = GradientDirection.topToBottom;
 
+  /// 背景光晕数量（0 = 不画；位置 / 半径按启动种子随机）。
+  int _glowCount = 0;
+
   /// 正在从图片取色。
   bool _extracting = false;
 
@@ -69,6 +73,7 @@ class _BackgroundEditorPageState extends ConsumerState<BackgroundEditorPage> {
     super.initState();
     _base = _initialBaseColor();
     _direction = gradientDirectionFromTokens(widget.editing ?? const []);
+    _glowCount = gradientGlowCountFromTokens(widget.editing ?? const []);
   }
 
   Color _initialBaseColor() {
@@ -134,11 +139,12 @@ class _BackgroundEditorPageState extends ConsumerState<BackgroundEditorPage> {
   }
 
   Future<void> _save() async {
-    // 颜色后面跟一个 `@n` 方向标记，和自定义渐变列表一起存（旧数据没有它，
-    // 按「上下」处理）。
+    // 颜色后面跟方向 / 光晕标记，和自定义渐变列表一起存（旧数据没有它们，
+    // 按「上下、无光晕」处理）。
     final hexes = [
       for (final color in _derived) _toHex(color),
       gradientDirectionToken(_direction),
+      if (_glowCount > 0) gradientGlowToken(_glowCount),
     ];
     final customProvider = widget.isLight
         ? customBackgroundGradientsLightProvider
@@ -326,6 +332,16 @@ class _BackgroundEditorPageState extends ConsumerState<BackgroundEditorPage> {
                             onChanged: (value) =>
                                 setState(() => _saturation = value),
                           ),
+                          _buildSlider(
+                            colors,
+                            label: '光晕数量',
+                            value: _glowCount.toDouble(),
+                            min: 0,
+                            max: 5,
+                            display: _glowCount == 0 ? '关闭' : '$_glowCount 个',
+                            onChanged: (value) =>
+                                setState(() => _glowCount = value.round()),
+                          ),
                         ],
                       ),
                     ),
@@ -462,58 +478,74 @@ class _BackgroundEditorPageState extends ConsumerState<BackgroundEditorPage> {
           colors: derived,
         ),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Stack(
         children: [
-          // 顶部标题占位条
-          Container(
-            width: 96,
-            height: 14,
-            decoration: BoxDecoration(
-              color: preview.textPrimary.withValues(alpha: 0.75),
-              borderRadius: BorderRadius.circular(4),
+          // 光晕：和主界面同一套随机布局（同种子、同颜色），改数量能直接看到。
+          Positioned.fill(
+            child: BackgroundGlowLayer(
+              colors: derived,
+              count: _glowCount,
+              seed: ref.read(backgroundGlowSeedProvider),
             ),
           ),
-          const SizedBox(height: AppSpacing.md),
-          _previewCard(preview, height: 46),
-          const SizedBox(height: AppSpacing.sm),
-          _previewCard(preview, height: 46),
-          const Spacer(),
-          // 迷你播放栏
-          Container(
-            height: 40,
-            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
-            decoration: BoxDecoration(
-              color: preview.surface,
-              borderRadius: BorderRadius.circular(AppRadius.md),
-              border: Border.all(
-                color: preview.divider.withValues(alpha: 0.6),
-                width: 0.5,
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 顶部标题占位条
+              Container(
+                width: 96,
+                height: 14,
+                decoration: BoxDecoration(
+                  color: preview.textPrimary.withValues(alpha: 0.75),
+                  borderRadius: BorderRadius.circular(4),
+                ),
               ),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  width: 24,
-                  height: 24,
-                  decoration: BoxDecoration(
-                    color: preview.surfaceVariant,
-                    borderRadius: BorderRadius.circular(6),
+              const SizedBox(height: AppSpacing.md),
+              _previewCard(preview, height: 46),
+              const SizedBox(height: AppSpacing.sm),
+              _previewCard(preview, height: 46),
+              const Spacer(),
+              // 迷你播放栏
+              Container(
+                height: 40,
+                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
+                decoration: BoxDecoration(
+                  color: preview.surface,
+                  borderRadius: BorderRadius.circular(AppRadius.md),
+                  border: Border.all(
+                    color: preview.divider.withValues(alpha: 0.6),
+                    width: 0.5,
                   ),
                 ),
-                const SizedBox(width: AppSpacing.sm),
-                Container(
-                  width: 72,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    color: preview.textPrimary.withValues(alpha: 0.5),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 24,
+                      height: 24,
+                      decoration: BoxDecoration(
+                        color: preview.surfaceVariant,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                    ),
+                    const SizedBox(width: AppSpacing.sm),
+                    Container(
+                      width: 72,
+                      height: 8,
+                      decoration: BoxDecoration(
+                        color: preview.textPrimary.withValues(alpha: 0.5),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    ),
+                    const Spacer(),
+                    Icon(
+                      Icons.play_arrow,
+                      size: 18,
+                      color: preview.textSecondary,
+                    ),
+                  ],
                 ),
-                const Spacer(),
-                Icon(Icons.play_arrow, size: 18, color: preview.textSecondary),
-              ],
-            ),
+              ),
+            ],
           ),
         ],
       ),

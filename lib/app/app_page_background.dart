@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/platform/window_chrome.dart';
 import '../core/theme/theme_provider.dart';
+import '../shared/widgets/background_glow_layer.dart';
 import 'windows_title_bar.dart';
 
 /// 二级页面自己的一份「主界面背景」。
@@ -64,17 +65,30 @@ class AppPageBackground extends ConsumerWidget {
           right: 0,
           top: -topInset,
           bottom: 0,
-          child: AnimatedContainer(
-            // 与全局那层同一条曲线：改「背景渐变」时两边一起过渡，不会一快一慢。
-            duration: const Duration(seconds: 1),
-            curve: Curves.easeInOut,
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: gradient.begin,
-                end: gradient.end,
-                colors: gradient.colors,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              AnimatedContainer(
+                // 与全局那层同一条曲线：改「背景渐变」时两边一起过渡，
+                // 不会一快一慢。
+                duration: const Duration(seconds: 1),
+                curve: Curves.easeInOut,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: gradient.begin,
+                    end: gradient.end,
+                    colors: gradient.colors,
+                  ),
+                ),
               ),
-            ),
+              // 二级页背景也要有和主界面同一批光晕，否则滑入 / 滑出时
+              // 会看到「光晕突然没了」。
+              BackgroundGlowLayer(
+                colors: gradient.colors,
+                count: gradient.glowCount,
+                seed: ref.watch(backgroundGlowSeedProvider),
+              ),
+            ],
           ),
         ),
         Positioned.fill(child: child),

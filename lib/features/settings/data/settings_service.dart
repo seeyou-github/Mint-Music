@@ -231,16 +231,16 @@ class SettingsService {
           .map((value) => value.trim())
           .where((value) => value.isNotEmpty)
           .toList(growable: false);
-      // 末尾可能带一个 `@n` 方向标记（见 background_gradient.dart），
-      // 颜色本身是 1~3 个；旧数据没有方向标记，按「上下」处理。
+      // 末尾可能带 `@n` 方向标记 / `~n` 光晕标记（见 background_gradient.dart），
+      // 颜色本身是 1~3 个；旧数据没有标记，按「上下、无光晕」处理。
       final colors = tokens
-          .where((token) => !token.startsWith('@'))
+          .where((token) => !token.startsWith('@') && !token.startsWith('~'))
           .toList(growable: false);
-      final direction = tokens
-          .where((token) => token.startsWith('@'))
+      final extra = tokens
+          .where((token) => token.startsWith('@') || token.startsWith('~'))
           .toList(growable: false);
       if (colors.isEmpty || colors.length > 3) continue;
-      result.add([...colors, ...direction]);
+      result.add([...colors, ...extra]);
     }
     return result;
   }
