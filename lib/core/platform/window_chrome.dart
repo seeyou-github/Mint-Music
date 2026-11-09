@@ -79,11 +79,19 @@ class WindowChrome {
   static const int _swpFrameChanged = 0x0020;
 
   static const int _swMinimize = 6;
-  static const int _swMaximize = 3;
-  static const int _swRestore = 9;
 
   static const int _wmClose = 0x0010;
   static const int _wmNcLButtonDown = 0x00A1;
+
+  // 最大化 / 还原走 WM_SYSCOMMAND，原生侧接住后用 SetWindowPos 直接到位。
+  static const int _wmSysCommand = 0x0112;
+  static const int _scMaximize = 0xF030;
+  static const int _scRestore = 0xF120;
+
+  /// 查询「是否最大化」的自定义消息（原生 `WM_APP + 101`，0x8000 + 101）。
+  ///
+  /// 自定义最大化不经过系统，`IsZoomed` 恒为 false，只能问原生侧。
+  static const int _wmQueryMaximized = 0x8065;
   static const int _htCaption = 2;
 
   /// DWM：深色窗口装饰（Win10 1809+）。去掉标题栏后它只影响边框 / 阴影的颜色。
@@ -254,18 +262,31 @@ class WindowChrome {
   }
 
   /// 最大化 / 还原 切换。
+  ///
+  /// 发 `WM_SYSCOMMAND` 而不是直接 `ShowWindow(SW_MAXIMIZE)`：原生侧接这个
+  /// 消息后用 `SetWindowPos` 一步到位（见 `ToggleCustomMaximize`），绕开
+  /// Win10 无边框窗口那段「先把窗口变回原尺寸再放大」的 DWM 过渡动画。
   static void toggleMaximize() {
     if (!isSupported || _failed) return;
     final hwnd = _windowHandle();
     if (hwnd == 0) return;
-    _showWindow?.call(hwnd, isMaximized ? _swRestore : _swMaximize);
+    final sendMessage = _sendMessage;
+    if (sendMessage == null) return;
+    sendMessage(hwnd, _wmSysCommand, isMaximized ? _scRestore : _scMaximize, 0);
   }
 
   /// 窗口当前是否最大化（用来切换自绘按钮的图标）。
+  ///
+  /// 自定义最大化不经过系统，`IsZoomed` 一直是 false，所以问原生侧
+  /// （`WM_APP + 101` 同时考虑自定义状态和系统最大化）。
   static bool get isMaximized {
     if (!isSupported || _failed) return false;
     final hwnd = _windowHandle();
     if (hwnd == 0) return false;
+    final sendMessage = _sendMessage;
+    if (sendMessage != null) {
+      return sendMessage(hwnd, _wmQueryMaximized, 0, 0) != 0;
+    }
     final isZoomed = _isZoomed;
     if (isZoomed == null) return false;
     return isZoomed(hwnd) != 0;
