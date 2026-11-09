@@ -1851,6 +1851,10 @@ class _AddPluginSheetState extends State<_AddPluginSheet> {
   final _urlController = TextEditingController();
   bool _isLoading = false;
 
+  /// 批量安装进度（`_installTotal` 为 0 表示还没开始选文件）。
+  int _installDone = 0;
+  int _installTotal = 0;
+
   @override
   void dispose() {
     _urlController.dispose();
@@ -1998,13 +2002,14 @@ class _AddPluginSheetState extends State<_AddPluginSheet> {
                 ),
                 const SizedBox(height: AppSpacing.md),
                 Text(
-                  context.tr('选择 .js 插件文件，格式将自动识别'),
+                  context.tr('选择 .js 插件文件（可多选），格式将自动识别'),
                   textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 13, color: colors.textSecondary),
                 ),
                 const SizedBox(height: AppSpacing.xs),
                 Text(
-                  context.tr('支持澜音 / 洛雪 / MusicFree，识别失败时会让你选择类型'),
+                  context.tr('支持澜音 / 洛雪 / MusicFree；批量添加时识别失败的文件会跳过，可再单独添加'),
+                  textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 11, color: colors.textHint),
                 ),
               ],
@@ -2015,8 +2020,22 @@ class _AddPluginSheetState extends State<_AddPluginSheet> {
             width: double.infinity,
             child: ElevatedButton.icon(
               onPressed: _isLoading ? null : _handleFileImport,
-              icon: const Icon(Icons.folder_open, size: 18),
-              label: Text(context.tr('选择文件')),
+              icon: _isLoading && _installTotal > 1
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : const Icon(Icons.folder_open, size: 18),
+              // 批量安装时显示进度，用户能看出是在逐个装而不是卡住。
+              label: Text(
+                _isLoading && _installTotal > 1
+                    ? context.tr('安装中 $_installDone/$_installTotal')
+                    : context.tr('选择文件'),
+              ),
               style: ElevatedButton.styleFrom(
                 backgroundColor: colors.primary,
                 foregroundColor: colors.textOnPrimary,
@@ -2117,29 +2136,77 @@ class _AddPluginSheetState extends State<_AddPluginSheet> {
     );
   }
 
+  /// 选文件（可多选）→ 逐个安装 → 汇总提示。
+  ///
+  /// 批量场景不再为每个"识别不出格式"的文件弹类型选择框：装完统一提示
+  /// 有几个需要单独添加，用户再单个加时才会走选类型的流程。
   Future<void> _handleFileImport() async {
-    setState(() => _isLoading = true);
+    final pluginService = widget.ref.read(pluginServiceProvider);
+    final notifier = widget.ref.read(pluginsProvider.notifier);
+
+    setState(() {
+      _isLoading = true;
+      _installDone = 0;
+      _installTotal = 0;
+    });
+
     try {
-      await widget.ref.read(pluginsProvider.notifier).selectAndAddPlugin();
-      if (mounted) {
-        // 安装成功不再弹提示（插件卡片上就能看到）。
-        Navigator.pop(context);
-      }
-    } on PluginTypeUnknownException catch (e) {
-      // 自动识别失败：弹框让用户选类型，选完续装（不用重选文件）。
-      final type = mounted ? await _promptPluginType() : null;
-      if (type == null) return;
-      try {
-        await e.resume(type);
-        if (mounted) Navigator.pop(context);
-      } catch (err) {
-        _showInstallError(err);
-      }
+      final paths = await pluginService.pickPluginFiles();
+      if (!mounted) return;
+      if (paths.isEmpty) return; // 用户取消选择
+
+      setState(() => _installTotal = paths.length);
+
+      final result = await notifier.addPluginsFromFiles(
+        paths,
+        onProgress: (done, total) {
+          if (mounted) setState(() => _installDone = done);
+        },
+      );
+      if (!mounted) return;
+
+      // pop 之后这个 context 就不能用了，文案和 messenger 都要先取好。
+      final message = _batchResultMessage(result);
+      final hasFailure = result.hasFailure;
+      final messenger = ScaffoldMessenger.of(context);
+      Navigator.pop(context);
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(message),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: hasFailure ? widget.colors.error : null,
+        ),
+      );
     } catch (e) {
       _showInstallError(e);
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _installDone = 0;
+          _installTotal = 0;
+        });
+      }
     }
+  }
+
+  /// 批量安装结果的一句话摘要。
+  String _batchResultMessage(PluginBatchInstallResult result) {
+    final parts = <String>[];
+    if (result.installed.isNotEmpty) {
+      parts.add(context.tr('已安装 ${result.installed.length} 个插件'));
+    }
+    if (result.failed.isNotEmpty) {
+      final first = result.failed.first;
+      parts.add(
+        context.tr('${result.failed.length} 个失败（${first.$1}：${first.$2}）'),
+      );
+    }
+    if (result.unknownType > 0) {
+      parts.add(context.tr('${result.unknownType} 个无法识别格式，请单独添加'));
+    }
+    if (parts.isEmpty) return context.tr('未安装任何插件');
+    return parts.join('；');
   }
 
   Future<void> _pasteFromClipboard() async {

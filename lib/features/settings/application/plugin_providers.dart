@@ -55,6 +55,26 @@ final pluginUpdateResultsProvider = StateProvider<List<PluginUpdateResult>>(
 final pluginScriptUpdateNoticesProvider =
     StateProvider<List<Map<String, dynamic>>>((ref) => []);
 
+/// 批量安装插件的汇总结果。
+class PluginBatchInstallResult {
+  const PluginBatchInstallResult({
+    required this.installed,
+    required this.failed,
+    required this.unknownType,
+  });
+
+  /// 安装成功的插件。
+  final List<PluginInfo> installed;
+
+  /// 安装失败的文件：`(文件名, 失败原因)`。
+  final List<(String, String)> failed;
+
+  /// 自动识别不出格式的文件数量（批量时不弹类型选择，提示用户单独添加）。
+  final int unknownType;
+
+  bool get hasFailure => failed.isNotEmpty || unknownType > 0;
+}
+
 class PluginsNotifier extends AsyncNotifier<List<PluginInfo>> {
   @override
   Future<List<PluginInfo>> build() async {
@@ -70,7 +90,10 @@ class PluginsNotifier extends AsyncNotifier<List<PluginInfo>> {
     return repo.loadPlugins();
   }
 
-  /// 通过文件选择器添加插件；[type] 为 null 时自动识别类型。
+  /// 通过文件选择器添加**一个**插件（多选时只装第一个）。
+  ///
+  /// 界面的「选择文件」按钮现在走 [addPluginsFromFiles] 批量路径，这个单文件
+  /// 入口保留给需要「识别失败 → 用户选类型 → 续装」的调用方。
   ///
   /// 识别失败抛出 [PluginTypeUnknownException]；用户在界面选好类型后调
   /// `resume` 续装，这里把 resume 包了一层，续装成功同样会刷新插件列表。
@@ -127,6 +150,59 @@ class PluginsNotifier extends AsyncNotifier<List<PluginInfo>> {
         // 最新的插件列表，这里无需再刷。
       }
     });
+  }
+
+  /// 批量安装选中的插件文件。
+  ///
+  /// 逐个安装，单个文件失败不影响后面的文件：
+  /// - 自动识别不出格式 → 计入 [PluginBatchInstallResult.unknownType]，
+  ///   不在这里弹类型选择框（批量场景弹 N 个框会把人烦死），提示用户单独添加；
+  /// - 其它异常 → 记进 failed，附原因。
+  ///
+  /// [onProgress] 每装完一个文件回调一次 `(已完成, 总数)`，用于界面显示进度。
+  Future<PluginBatchInstallResult> addPluginsFromFiles(
+    List<String> paths, {
+    void Function(int done, int total)? onProgress,
+  }) async {
+    final pluginService = ref.read(pluginServiceProvider);
+    final installed = <PluginInfo>[];
+    final failed = <(String, String)>[];
+    var unknownType = 0;
+
+    for (var i = 0; i < paths.length; i++) {
+      final path = paths[i];
+      final name = _fileNameOf(path);
+      try {
+        installed.add(await pluginService.addPluginFromFile(path));
+      } on PluginTypeUnknownException {
+        unknownType++;
+      } catch (error) {
+        failed.add((name, _installErrorText(error)));
+      }
+      onProgress?.call(i + 1, paths.length);
+    }
+
+    // 全部装完只刷新一次：安装过程中每装一个就重建插件列表会反复重排，
+    // 也避免和「装完自动刷新」的逻辑撞在一起。
+    if (installed.isNotEmpty) _afterPluginInstalled();
+
+    return PluginBatchInstallResult(
+      installed: installed,
+      failed: failed,
+      unknownType: unknownType,
+    );
+  }
+
+  static String _fileNameOf(String path) {
+    final segments = path.split(RegExp(r'[\\/]'));
+    return segments.isEmpty ? path : segments.last;
+  }
+
+  static String _installErrorText(Object error) {
+    final text = error.toString();
+    return text.startsWith('Exception: ')
+        ? text.substring('Exception: '.length)
+        : text;
   }
 
   Future<void> uninstallPlugin(String id) async {

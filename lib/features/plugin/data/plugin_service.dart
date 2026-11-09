@@ -269,33 +269,50 @@ class PluginService {
     }
   }
 
-  /// 通过文件选择器添加插件。
+  /// 选择插件文件，支持**多选**。用户取消时返回空列表。
+  ///
+  /// 这里只负责「选」，安装交给 [addPluginFromFile] 逐个做：批量安装时调用方
+  /// 可以按文件更新进度，某个文件装失败也不会影响后面的文件。
+  Future<List<String>> pickPluginFiles({String? type}) async {
+    final result = await FilePicker.platform.pickFiles(
+      dialogTitle: type == null
+          ? '请选择 js 插件文件（可多选，自动识别格式）'
+          : '请选择你的 ${pluginTypeLabel(type)} js插件（可多选）',
+      type: FileType.custom,
+      allowedExtensions: ['js'],
+      allowMultiple: true,
+    );
+
+    if (result == null) return const [];
+    return [
+      for (final file in result.files)
+        if (file.path != null && file.path!.isNotEmpty) file.path!,
+    ];
+  }
+
+  /// 从本地文件安装一个插件（不弹选择框）；[type] 为空时自动识别格式。
+  ///
+  /// 识别不出格式时抛 [PluginTypeUnknownException]，调用方可以让用户选类型后
+  /// `resume` 续装（不用重新选文件）；批量安装时把它当作该文件失败即可。
+  Future<PluginInfo> addPluginFromFile(String path, {String? type}) async {
+    final file = File(path);
+    final fileName = file.uri.pathSegments.last;
+    final pluginCode = await file.readAsString();
+    return _installFromCode(pluginCode, fileName, type: type);
+  }
+
+  /// 通过文件选择器添加**一个**插件（选到多个时只装第一个）。
   ///
   /// [type] 为 null 时自动识别插件类型（见 [detectPluginType]）；识别失败
   /// 抛 [PluginTypeUnknownException]，由界面让用户选择后续装。
+  /// 批量安装请直接用 [pickPluginFiles] + [addPluginFromFile]。
   Future<PluginInfo> selectAndAddPlugin({String? type}) async {
-    final result = await FilePicker.platform.pickFiles(
-      dialogTitle: type == null
-          ? '请选择 js 插件文件（自动识别格式）'
-          : '请选择你的 ${pluginTypeLabel(type)} js插件',
-      type: FileType.custom,
-      allowedExtensions: ['js'],
-    );
-
-    if (result == null || result.files.isEmpty) {
+    final paths = await pickPluginFiles(type: type);
+    if (paths.isEmpty) {
       throw Exception('未选择文件');
     }
-
-    final filePath = result.files.single.path;
-    if (filePath == null) {
-      throw Exception('无法获取文件路径');
-    }
-
-    final file = File(filePath);
-    final fileName = file.uri.pathSegments.last;
-    final pluginCode = await file.readAsString();
-
-    return _installFromCode(pluginCode, fileName, type: type);
+    // 单选入口：多选能力由 [pickPluginFiles] + 调用方循环安装提供。
+    return addPluginFromFile(paths.first, type: type);
   }
 
   /// 从 URL 下载并安装插件；[type] 为 null 时自动识别。
