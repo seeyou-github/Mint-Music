@@ -890,6 +890,8 @@ class _LocalPageState extends ConsumerState<LocalPage>
     final songs = folder == null
         ? allSongs
         : allSongs.where((s) => _isInFolder(s, folder)).toList();
+    // 搜索没命中时不能把空结果说成「当前目录为空」：目录里可能还有歌。
+    final searching = ref.watch(localSearchQueryProvider).trim().isNotEmpty;
     // 定位按钮只在当前页显示：下一屏还没切过去，点了也没有可滚动的位置。
     final showLocateBtn =
         primary &&
@@ -902,6 +904,7 @@ class _LocalPageState extends ConsumerState<LocalPage>
         colors,
         songs,
         showLocateBtn,
+        folder: searching ? null : folder,
         controller: primary ? _scrollController : null,
       ),
       loading: () => const Center(child: CircularProgressIndicator()),
@@ -913,10 +916,11 @@ class _LocalPageState extends ConsumerState<LocalPage>
     ThemeColors colors,
     List<Song> songs,
     bool showLocateBtn, {
+    required String? folder,
     ScrollController? controller,
   }) {
     if (songs.isEmpty) {
-      return _buildEmptyState(colors);
+      return _buildEmptyState(colors, folder: folder);
     }
 
     final selecting = _selection.isActive;
@@ -992,7 +996,12 @@ class _LocalPageState extends ConsumerState<LocalPage>
     );
   }
 
-  Widget _buildEmptyState(ThemeColors colors) {
+  /// 空状态。
+  ///
+  /// 选中了某个扫描目录时只是这个目录里没歌（歌曲可能还在别的目录），
+  /// 不该再提示「暂无本地音乐」和扫描按钮，只说明当前目录为空。
+  Widget _buildEmptyState(ThemeColors colors, {String? folder}) {
+    final inFolder = folder != null;
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -1005,44 +1014,49 @@ class _LocalPageState extends ConsumerState<LocalPage>
               borderRadius: BorderRadius.circular(20),
             ),
             child: Icon(
-              Icons.library_music,
+              inFolder ? Icons.folder_open_outlined : Icons.library_music,
               size: 40,
               color: colors.primary.withValues(alpha: 0.5),
             ),
           ),
           const SizedBox(height: AppSpacing.lg),
           Text(
-            context.tr('暂无本地音乐'),
+            context.tr(inFolder ? '当前目录为空' : '暂无本地音乐'),
             style: TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.w500,
               color: colors.textPrimary,
             ),
           ),
-          const SizedBox(height: AppSpacing.sm),
-          Text(
-            context.tr('先添加扫描目录，再扫描其中的音乐'),
-            style: TextStyle(fontSize: 13, color: colors.textSecondary),
-          ),
-          const SizedBox(height: AppSpacing.lg),
-          GestureDetector(
-            onTap: _scanLibrary,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
-              decoration: BoxDecoration(
-                color: colors.primary,
-                borderRadius: BorderRadius.circular(AppRadius.full),
-              ),
-              child: Text(
-                context.tr('扫描本地音乐'),
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: colors.textOnPrimary,
+          if (!inFolder) ...[
+            const SizedBox(height: AppSpacing.sm),
+            Text(
+              context.tr('先添加扫描目录，再扫描其中的音乐'),
+              style: TextStyle(fontSize: 13, color: colors.textSecondary),
+            ),
+            const SizedBox(height: AppSpacing.lg),
+            GestureDetector(
+              onTap: _scanLibrary,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 10,
+                ),
+                decoration: BoxDecoration(
+                  color: colors.primary,
+                  borderRadius: BorderRadius.circular(AppRadius.full),
+                ),
+                child: Text(
+                  context.tr('扫描本地音乐'),
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: colors.textOnPrimary,
+                  ),
                 ),
               ),
             ),
-          ),
+          ],
         ],
       ),
     );
