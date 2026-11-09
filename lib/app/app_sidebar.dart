@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants/app_routes.dart';
 import '../../core/l10n/l10n.dart';
+import '../../core/router/app_router.dart';
+import '../../core/router/current_route_provider.dart';
 import '../../core/theme/theme_provider.dart';
 import '../../core/utils/responsive_layout.dart';
 import '../../features/player/presentation/sidebar_player.dart';
@@ -102,8 +104,13 @@ class AppSidebar extends ConsumerWidget {
     final colors = ref.watch(themeColorsProvider);
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final isExpanded = ResponsiveLayout.isLandscape(context);
+    // 播放详情页是 push 进来的、只盖住右侧内容区：打开时把底部播放器先藏起来
+    // （播放页自己有完整控件），并让整块侧栏可点 —— 点空白处直接关掉播放页。
+    final routePath = ref.watch(currentRoutePathProvider);
+    final playerOpen =
+        routePath == AppRoutes.fullPlayer || routePath == AppRoutes.lyric;
 
-    return Container(
+    final sidebar = Container(
       width: isExpanded
           ? ResponsiveLayout.sidebarWidth
           : ResponsiveLayout.sidebarCollapsedWidth,
@@ -192,13 +199,21 @@ class AppSidebar extends ConsumerWidget {
                       },
                     ),
                   ),
-                  if (isExpanded) const SidebarPlayer(),
+                  if (isExpanded && !playerOpen) const SidebarPlayer(),
                 ],
               ),
             ),
           ],
         ),
       ),
+    );
+    if (!playerOpen) return sidebar;
+    // 播放详情页打开时整块侧栏都可点：点空白处（Logo 区、导航项下面那块）
+    // 直接关掉播放页。导航项自身的 InkWell 会先赢得手势，不受这层影响。
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => appRouter.pop(),
+      child: sidebar,
     );
   }
 }

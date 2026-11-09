@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../core/constants/app_routes.dart';
 import '../core/router/app_router.dart';
+import '../core/router/current_route_provider.dart';
 import '../core/router/navigation_shell_provider.dart';
-import '../core/theme/theme_provider.dart';
 import '../core/utils/responsive_layout.dart';
 import 'app_sidebar.dart';
 
@@ -45,6 +46,16 @@ class _AppDesktopShellState extends ConsumerState<AppDesktopShell> {
     return AppSidebar.indexForLocation(configuration.uri.path);
   }
 
+  /// 当前是否停在播放详情页（`/player/full` 或歌词页）。
+  ///
+  /// 播放页是 `push` 进来的（ImperativeRouteMatch），
+  /// `currentConfiguration.uri` 只反映 `go()` 级的位置、不会变成播放页路径，
+  /// 所以必须用 [currentPageUri] 取匹配栈顶。
+  bool _isPlayerPage() {
+    final path = currentPageUri(appRouter).path;
+    return path == AppRoutes.fullPlayer || path == AppRoutes.lyric;
+  }
+
   void _handleLocationChanged() {
     final index = _resolveIndex();
     if (index == null || index == _activeIndex) return;
@@ -60,6 +71,11 @@ class _AppDesktopShellState extends ConsumerState<AppDesktopShell> {
   }
 
   void _handleSelect(int index) {
+    // 播放详情页盖在内容区上：先把它关掉再切分类，否则切完还停在播放页上，
+    // 侧栏播放器也会一直被藏着。
+    if (_isPlayerPage()) {
+      appRouter.pop();
+    }
     final route = appNavItems[index].route;
     final currentPath = appRouter.routerDelegate.currentConfiguration.uri.path;
     // 导航壳（StatefulNavigationShell）负责切换分支：
@@ -88,7 +104,6 @@ class _AppDesktopShellState extends ConsumerState<AppDesktopShell> {
 
   @override
   Widget build(BuildContext context) {
-    final colors = ref.watch(themeColorsProvider);
     final showSidebar = ResponsiveLayout.shouldShowSidebar(context);
 
     // 保持树结构稳定（Row + Expanded 始终存在），
