@@ -313,15 +313,26 @@ Win32Window::MessageHandler(HWND hwnd,
         break;
       }
       auto params = reinterpret_cast<NCCALCSIZE_PARAMS*>(lparam);
-      if (::IsZoomed(hwnd)) {
-        // 窗口矩形已经由 WM_GETMINMAXINFO 限制到工作区，但系统在这里给的
-        // 建议矩形仍会向外扩一圈边框（约 8px）。客户区直接对齐工作区正好
-        // 把这一圈抵消掉：窗口矩形与客户区完全重合，内容不会被屏幕边缘裁。
+      // 最大化时窗口矩形已经由 WM_GETMINMAXINFO 限制到工作区，但系统在这里
+      // 给的建议矩形仍会向外扩一圈边框（约 8px），要裁到工作区才不会让内容
+      // 被屏幕边缘切掉。
+      //
+      // 关键是**求交集，而不是直接赋成工作区**：最大化 / 还原的过渡帧里窗口
+      // 矩形还在动画中间、比工作区小，直接赋值会把客户区瞬间拉到最终尺寸，
+      // Flutter 视图跟着放大又缩小，看起来就是「窗口抖动、快速增大减小」。
+      // 求交集时过渡帧原样不动，只有真正超出工作区的帧才被裁。
+      //
+      // 最小化时（IsIconic）客户区会被系统缩成一百多像素，这时更不能动它。
+      if (::IsZoomed(hwnd) && !::IsIconic(hwnd)) {
         MONITORINFO monitor_info{};
         monitor_info.cbSize = sizeof(monitor_info);
         if (::GetMonitorInfo(::MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST),
                              &monitor_info)) {
-          params->rgrc[0] = monitor_info.rcWork;
+          RECT clipped{};
+          if (::IntersectRect(&clipped, &params->rgrc[0],
+                              &monitor_info.rcWork)) {
+            params->rgrc[0] = clipped;
+          }
         }
       }
       return 0;
@@ -422,6 +433,14 @@ Win32Window::MessageHandler(HWND hwnd,
       return 0;
     }
     case WM_SIZE: {
+      // 最小化时客户区会被系统缩成一百多像素（实测 197×33）。这时绝不能把
+      // Flutter 视图也跟着 MoveWindow 过去：视图会被压成一条，最小化动画里
+      // 看到的就是「内容被快速压扁」，恢复时又猛地放大，来回一次就是抖动。
+      // 视图保持原尺寸，等真正恢复（SIZE_RESTORED / SIZE_MAXIMIZED）再按新的
+      // 客户区调整。
+      if (wparam == SIZE_MINIMIZED) {
+        return 0;
+      }
       RECT rect = GetClientArea();
       if (child_content_ != nullptr) {
         // Size and position the child window.
