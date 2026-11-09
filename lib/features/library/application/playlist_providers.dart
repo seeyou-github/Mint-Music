@@ -68,6 +68,8 @@ class PlaylistsNotifier extends AsyncNotifier<List<Playlist>> {
   /// 之后从收藏播放时按优先音源 / 会话手动音源 / 回退链解析，与平台歌曲
   /// 的行为完全一致。
   Song _songForStorage(Song song) {
+    // 本地歌曲的 sourceUrl 就是文件路径：清掉后从收藏里再也放不出来。
+    if (song.isLocal) return song;
     if (song.sourceUrl == null &&
         song.sourceHeaders == null &&
         song.sourceQuality == null) {

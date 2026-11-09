@@ -17,6 +17,7 @@ import '../../shared/services/cover_fetcher.dart';
 import '../../features/plugin/application/music_source_manager.dart';
 import '../../features/plugin/domain/plugin_types.dart';
 import '../../features/plugin/application/plugin_providers.dart';
+import 'music_cover_image.dart';
 import 'song_index_width.dart';
 import 'source_name_tag.dart';
 import 'song_action_sheet.dart';
@@ -251,7 +252,22 @@ class SongListItem extends ConsumerWidget {
   Widget _buildCover(ThemeColors colors, WidgetRef ref) {
     final coverUrl = song.coverUrl;
     final hasCoverUrl = coverUrl != null && coverUrl.isNotEmpty;
-    if ((song.source == null || song.source == 'local') && !hasCoverUrl) {
+    // 本地歌曲的封面不在线上市，而是扫描时写进封面缓存 / 内嵌在音频文件里：
+    // 直接交给 MusicCoverImage，按 songId + filePath 从本地取。
+    if (song.isLocal) {
+      return MusicCoverImage(
+        url: hasCoverUrl ? coverUrl : null,
+        songId: song.id,
+        filePath: song.filePath,
+        mediaStoreId: song.mediaStoreId,
+        width: 44,
+        height: 44,
+        borderRadius: BorderRadius.circular(AppRadius.sm),
+        placeholder: _buildCoverPlaceholder(colors),
+        errorWidget: _buildCoverPlaceholder(colors),
+      );
+    }
+    if (song.source == null && !hasCoverUrl) {
       return _buildCoverPlaceholder(colors);
     }
 
@@ -651,6 +667,8 @@ class SongListItem extends ConsumerWidget {
   }
 
   String? _getHighestQuality() {
+    // 本地文件的码率是读文件算出来的，不是平台的音质档位，列表里不显示标签。
+    if (song.isLocal) return null;
     if (supportedQualities != null && supportedQualities!.isNotEmpty) {
       return supportedQualities!.last;
     }

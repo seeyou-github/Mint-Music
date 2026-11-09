@@ -1345,6 +1345,11 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     try {
       Song currentSongToPlay = song;
       String? urlToPlay = song.sourceUrl;
+      // 旧的收藏数据里本地歌曲的 sourceUrl 被清过（历史 bug），文件路径才是
+      // 唯一可靠的地址，这里回退到 filePath。
+      if (isLocal && (urlToPlay == null || urlToPlay.isEmpty)) {
+        urlToPlay = song.filePath;
+      }
       var resolvedUrlCandidates = <PluginMusicUrlResult>[];
       // 实际生效的音质：服务器降级 / 阶梯切换后会变，末尾写进 song.sourceQuality，
       // 否则下次比 `song.sourceQuality != quality` 时会误判成「音质变过」而反复重解析。

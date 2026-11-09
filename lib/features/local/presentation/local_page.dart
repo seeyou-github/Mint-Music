@@ -850,13 +850,11 @@ class _LocalPageState extends ConsumerState<LocalPage>
               onChanged: (value) {
                 ref.read(localSearchQueryProvider.notifier).state = value;
               },
-              decoration: InputDecoration(
-                hintText: context.tr('搜索本地歌曲/歌手/专辑'),
+              decoration: const InputDecoration(
                 border: InputBorder.none,
                 filled: false,
                 isDense: true,
                 contentPadding: EdgeInsets.zero,
-                hintStyle: TextStyle(color: colors.textSecondary, fontSize: 14),
               ),
               style: TextStyle(color: colors.textPrimary, fontSize: 14),
             ),

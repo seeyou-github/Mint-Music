@@ -101,6 +101,12 @@ final localQualityLabelProvider = FutureProvider.autoDispose
       return LocalQualityReader.readLabel(filePath);
     });
 
+/// 本地歌曲「更多」菜单里的「信息」行（音质 + 扩展名，如 `320K - Mp3`）。
+final localTrackInfoProvider = FutureProvider.autoDispose
+    .family<LocalTrackInfo?, String>((ref, filePath) {
+      return LocalQualityReader.readInfo(filePath);
+    });
+
 final batchMatchProgressProvider = StateProvider<BatchMatchProgress>((ref) {
   return const BatchMatchProgress();
 });

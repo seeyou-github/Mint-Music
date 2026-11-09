@@ -164,6 +164,20 @@ void main() {
     expect(await LocalQualityReader.readLabel(ape.path), 'HiRes');
   });
 
+  test('readInfo 给出「音质 - 扩展名」', () async {
+    final mp3 = await write('song.mp3', mp3Frames(10));
+    expect(
+      (await LocalQualityReader.readInfo(mp3.path))?.description,
+      '128K - Mp3',
+    );
+
+    final flac = await write('song.flac', flacFile(24, 96000));
+    expect(
+      (await LocalQualityReader.readInfo(flac.path))?.description,
+      'Flac24bit - Flac',
+    );
+  });
+
   test('文件不存在时返回 null', () async {
     final missing = '${dir.path}${Platform.pathSeparator}nope.mp3';
     expect(await LocalQualityReader.readLabel(missing), isNull);

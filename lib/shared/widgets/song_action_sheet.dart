@@ -16,6 +16,7 @@ import '../../features/discover/application/search_providers.dart';
 import '../../features/library/application/playlist_providers.dart';
 import '../../features/library/domain/models/playlist.dart';
 import '../../features/library/domain/models/recently_played.dart';
+import '../../features/local/application/local_providers.dart';
 import '../../features/blacklist/application/blacklist_providers.dart';
 import '../../features/player/application/desktop_lyric_sync.dart';
 import '../../features/player/application/playback_context.dart';
@@ -673,6 +674,14 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
     final song = widget.song;
     final album = _albumName;
     final sourceRow = includeSource ? _buildSourceRow(colors) : null;
+    final filePath = song.filePath;
+    // 本地歌曲补一行「音质 - 扩展名」（如 `320K - Mp3`），放在专辑下方。
+    final localInfo = song.isLocal && filePath != null && filePath.isNotEmpty
+        ? ref
+              .watch(localTrackInfoProvider(filePath))
+              .valueOrNull
+              ?.description
+        : null;
     return Column(
       children: [
         _buildMetaRow(
@@ -694,6 +703,12 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
             label: context.tr('专辑'),
             value: '《$album》',
             onTap: _openAlbum,
+          ),
+        if (localInfo != null)
+          _buildMetaRow(
+            colors,
+            label: context.tr('信息'),
+            value: localInfo,
           ),
         ?sourceRow,
       ],
