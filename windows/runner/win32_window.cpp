@@ -30,6 +30,33 @@ constexpr const wchar_t kGetPreferredBrightnessRegValue[] = L"AppsUseLightTheme"
 // The number of Win32Window objects that currently exist.
 static int g_active_window_count = 0;
 
+/// 窗口类的启动背景画刷。
+///
+/// WM_NCCALCSIZE 会在四边留 8px 给系统做缩放边框，这圈在 DWM 接管之前
+/// 是由窗口类画刷绘制的。以前 `hbrBackground = 0`，系统就用默认白色，
+/// 启动后窗口四周一圈白边；最小化 / 最大化触发重算后才消失。
+/// PiliPlus 用 `g_startup_background_brush` 解决了同样的问题。
+static HBRUSH g_startup_background_brush = nullptr;
+
+HBRUSH EnsureStartupBackgroundBrush() {
+  if (g_startup_background_brush != nullptr) {
+    return g_startup_background_brush;
+  }
+  DWORD light_mode = 1;
+  DWORD light_mode_size = sizeof(light_mode);
+  const bool dark =
+      ::RegGetValue(HKEY_CURRENT_USER, kGetPreferredBrightnessRegKey,
+                    kGetPreferredBrightnessRegValue, RRF_RT_REG_DWORD, nullptr,
+                    &light_mode, &light_mode_size) == ERROR_SUCCESS &&
+      light_mode == 0;
+  // 与默认背景渐变的边缘色一致，那一圈边框不会显得突兀。
+  const COLORREF color =
+      dark ? RGB(41, 41, 52)       // #292934
+           : RGB(182, 182, 182);  // #B6B6B6
+  g_startup_background_brush = ::CreateSolidBrush(color);
+  return g_startup_background_brush;
+}
+
 using EnableNonClientDpiScaling = BOOL __stdcall(HWND hwnd);
 
 // Scale helper to convert logical scaler values to physical using passed in
@@ -234,7 +261,7 @@ const wchar_t* WindowClassRegistrar::GetWindowClass() {
     window_class.hInstance = GetModuleHandle(nullptr);
     window_class.hIcon =
         LoadIcon(window_class.hInstance, MAKEINTRESOURCE(IDI_APP_ICON));
-    window_class.hbrBackground = 0;
+    window_class.hbrBackground = EnsureStartupBackgroundBrush();
     window_class.lpszMenuName = nullptr;
     window_class.lpfnWndProc = Win32Window::WndProc;
     RegisterClass(&window_class);
@@ -288,7 +315,16 @@ bool Win32Window::Create(const std::wstring& title,
 }
 
 bool Win32Window::Show() {
-  return ShowWindow(window_handle_, SW_SHOWNORMAL);
+  const bool shown = ShowWindow(window_handle_, SW_SHOWNORMAL);
+  // 窗口可见之后再让 DWM 接管一次边框：SetChildContent 里那次发生在窗口
+  // 显示之前，系统可能已经按默认画好了非客户区。这里重算一次，避免要等
+  // 用户第一次最小化 / 最大化，白边才消失。
+  MARGINS margins = {0, 0, 0, 0};
+  ::DwmExtendFrameIntoClientArea(window_handle_, &margins);
+  ::SetWindowPos(window_handle_, nullptr, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE |
+                     SWP_FRAMECHANGED);
+  return shown;
 }
 
 // static
