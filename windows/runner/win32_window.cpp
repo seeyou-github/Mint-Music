@@ -475,19 +475,6 @@ Win32Window::MessageHandler(HWND hwnd,
       return 0;
     }
 
-    case WM_SYSCOMMAND: {
-      // 自绘标题栏窗口的最大化 / 还原自己做（见 ToggleCustomMaximize）：
-      // 交给系统会播一段 DWM 过渡动画，在无边框窗口上表现为「窗口先变回
-      // 原尺寸再放大」，也就是用户看到的抖动。
-      const UINT command = static_cast<UINT>(wparam) & 0xFFF0;
-      if (HasCustomTitleBar(hwnd) &&
-          (command == SC_MAXIMIZE || command == SC_RESTORE)) {
-        ToggleCustomMaximize(command == SC_MAXIMIZE);
-        return 0;
-      }
-      break;
-    }
-
     case WM_APP + 101: {
       // 给 Dart 侧查「现在是不是最大化」：自定义最大化时 IsZoomed 是 false。
       return (custom_maximized_ || ::IsZoomed(hwnd)) ? 1 : 0;
@@ -568,6 +555,18 @@ void Win32Window::SaveWindowSize() {
     return;
   }
   WindowState::SaveSize(last_normal_size_);
+}
+
+bool Win32Window::HandleMaximizeSysCommand(UINT command) {
+  const HWND hwnd = window_handle_;
+  if (hwnd == nullptr || !HasCustomTitleBar(hwnd)) {
+    return false;
+  }
+  if (command != SC_MAXIMIZE && command != SC_RESTORE) {
+    return false;
+  }
+  ToggleCustomMaximize(command == SC_MAXIMIZE);
+  return true;
 }
 
 void Win32Window::ToggleCustomMaximize(bool maximize) {

@@ -386,6 +386,22 @@ LRESULT
 FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               WPARAM const wparam,
                               LPARAM const lparam) noexcept {
+  // 自绘标题栏窗口的最大化 / 还原必须抢在 Flutter 引擎之前处理：
+  // HandleTopLevelWindowProc 一旦消费了 WM_SYSCOMMAND，消息就到不了
+  // Win32Window::MessageHandler，系统会按默认方式 ShowWindow(SW_MAXIMIZE)，
+  // 播那段「窗口先移走、再回到原位、最后才放大」的 DWM 过渡动画
+  // —— 也就是用户看到的窗口抖动。
+  if (message == WM_SYSCOMMAND &&
+      HandleMaximizeSysCommand(static_cast<UINT>(wparam) & 0xFFF0)) {
+    return 0;
+  }
+
+  // Dart 侧查询最大化状态（自定义最大化时 IsZoomed 恒为 false），同样不让
+  // 引擎有机会吞掉。
+  if (message == WM_APP + 101) {
+    return Win32Window::MessageHandler(hwnd, message, wparam, lparam);
+  }
+
   // 退出前先把窗口尺寸落盘，下次启动按上次的尺寸恢复。
   //
   // 之后交给 Flutter 引擎处理 WM_CLOSE：引擎会向 Dart 发送

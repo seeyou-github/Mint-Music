@@ -49,6 +49,14 @@ class Win32Window {
   // window properties. Returns nullptr if the window has been destroyed.
   HWND GetHandle();
 
+  /// 自绘标题栏窗口的「最大化 / 还原」命令处理。
+  ///
+  /// 必须由 [FlutterWindow] 在把消息交给 Flutter 引擎**之前**调用：引擎
+  /// `HandleTopLevelWindowProc` 一旦返回处理结果，消息就不会再走到
+  /// `Win32Window::MessageHandler`，放在后面等于没拦到。
+  /// 返回 true 表示这条 WM_SYSCOMMAND 已经处理完，调用方应直接返回 0。
+  bool HandleMaximizeSysCommand(UINT command);
+
   // If true, closing this window will quit the application.
   void SetQuitOnClose(bool quit_on_close);
 
