@@ -68,14 +68,15 @@ class MinePage extends ConsumerWidget {
                     ],
                   ),
                 ),
-                // 应用版本号放在标题栏右侧
+                // 应用版本号（Windows 上是编译时间）放在标题栏右侧，颜色跟随
+                // 「设置 → 外观设置 → 字体颜色」。
                 versionAsync.when(
                   data: (version) => Text(
-                    'v$version',
+                    version,
                     style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w500,
-                      color: colors.primary,
+                      color: colors.textPrimary,
                     ),
                   ),
                   loading: () => const SizedBox.shrink(),

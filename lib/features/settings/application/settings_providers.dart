@@ -1,4 +1,6 @@
 import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -519,7 +521,41 @@ final fullScreenBackgroundModeProvider = Provider<FullScreenBackgroundMode>(
 );
 
 // -- app version (loaded once) --
+/// 应用版本号：Windows 上显示「编译时间」，格式 `年.月日.时分`（如 `2026.1109.0512`）。
+///
+/// 直接读可执行文件的修改时间 —— 就是这次链接完成的时间，所以每次编译后运行
+/// 看到的都是最新值，不需要构建脚本去改代码或 pubspec。读不到（或非 Windows）
+/// 时回退到 [AppConstants.appVersion]。
 final appVersionProvider = FutureProvider<String>((ref) async {
+  if (Platform.isWindows) {
+    try {
+      final exe = File(Platform.resolvedExecutable);
+      final dir = exe.parent.path;
+      // 取 exe 与 Dart 产物里「最后被写入」的那个时间：
+      // - release 构建的 Dart 代码在 data/app.so；
+      // - debug 构建在 data/flutter_assets/kernel_blob.bin；
+      // - 增量构建只改了 Dart 时 C++ 不会重新链接，exe 的修改时间不会更新，
+      //   只看 exe 会一直停在旧时间，所以这几个都要看。
+      final candidates = <File>[
+        File('$dir/data/app.so'),
+        File('$dir/data/flutter_assets/kernel_blob.bin'),
+        exe,
+      ];
+      DateTime? latest;
+      for (final file in candidates) {
+        if (!file.existsSync()) continue;
+        final modified = file.statSync().modified;
+        if (latest == null || modified.isAfter(latest)) latest = modified;
+      }
+      if (latest != null) {
+        String two(int value) => value.toString().padLeft(2, '0');
+        return '${latest.year}.${two(latest.month)}${two(latest.day)}.'
+            '${two(latest.hour)}${two(latest.minute)}';
+      }
+    } catch (_) {
+      // 读不到文件信息就退回静态版本号。
+    }
+  }
   return AppConstants.appVersion;
 });
 

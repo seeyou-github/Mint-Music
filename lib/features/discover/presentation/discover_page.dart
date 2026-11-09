@@ -829,12 +829,12 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
               alignment: Alignment.center,
               child: currentSource != null
                   ? ColorFiltered(
-                      // 亮度压到 20%（降低 80%）：音源图标都是饱和实心色块，
-                      // 原亮度在深色顶栏上太抢眼，压暗后只作「当前音源」的暗示。
+                      // 亮度压到 80%（降低 20%）：音源图标都是饱和实心色块，
+                      // 顶栏上略压暗一点，不抢标题和搜索框的注意力。
                       colorFilter: const ColorFilter.matrix(<double>[
-                        0.2, 0, 0, 0, 0, //
-                        0, 0.2, 0, 0, 0, //
-                        0, 0, 0.2, 0, 0, //
+                        0.8, 0, 0, 0, 0, //
+                        0, 0.8, 0, 0, 0, //
+                        0, 0, 0.8, 0, 0, //
                         0, 0, 0, 1, 0, //
                       ]),
                       child: _buildSourceIcon(
