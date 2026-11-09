@@ -21,21 +21,24 @@ const String defaultThemeFontColor = '#D9C8B1';
 const String defaultLightFontColor = '#000000';
 const String defaultLightSecondaryFontColor = '#111111';
 
-/// 浅色 / 深色模式「背景颜色」的默认值（与 [ThemeColors] 的默认背景一致）。
-const String defaultLightBackgroundColor = '#DCD7C9';
-const String defaultDarkBackgroundColor = '#212128';
+/// 浅色 / 深色模式「背景颜色」的默认值（内置渐变的第一个色）。
+const String defaultLightBackgroundColor = '#B6B6B6';
+const String defaultDarkBackgroundColor = '#2F2F36';
 
 /// 默认「背景渐变」：就是外观设置里内置渐变的**第一个**
-/// （深色「深空灰」#212128 → #121216，浅色「暖米」#DCD7C9 → #F3F1EC）。
+/// （深色「深空灰」#2F2F36 → #1D1D21 → #0B0B0C，
+/// 浅色「中灰」#B6B6B6 → #A7A7A7 → #979797）。
 ///
 /// 新装软件默认选中它；设置面板里第一个内置渐变的色值必须与这里保持一致。
 const List<String> defaultLightBackgroundGradient = [
   defaultLightBackgroundColor,
-  '#F3F1EC',
+  '#A7A7A7',
+  '#979797',
 ];
 const List<String> defaultDarkBackgroundGradient = [
   defaultDarkBackgroundColor,
-  '#121216',
+  '#1D1D21',
+  '#0B0B0C',
 ];
 
 /// 深色模式「字体颜色」：主文字颜色（十六进制），为空表示使用主题默认色。
