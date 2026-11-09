@@ -2145,6 +2145,9 @@ class _AddPluginSheetState extends State<_AddPluginSheet> {
   /// 批量场景不再为每个"识别不出格式"的文件弹类型选择框：装完统一提示
   /// 有几个需要单独添加，用户再单个加时才会走选类型的流程。
   Future<void> _handleFileImport() async {
+    // 安装期间用户可能点左侧分类，弹层会被关掉（见 AppDesktopShell 的
+    // `_handleSelect`）。先留住 messenger，装完照样能把结果提示出来。
+    final messenger = ScaffoldMessenger.of(context);
     final pluginService = widget.ref.read(pluginServiceProvider);
     final notifier = widget.ref.read(pluginsProvider.notifier);
 
@@ -2167,7 +2170,17 @@ class _AddPluginSheetState extends State<_AddPluginSheet> {
           if (mounted) setState(() => _installDone = done);
         },
       );
-      if (!mounted) return;
+
+      if (!mounted) {
+        // 弹层已经被关掉（用户切走了分类），结果仍然要告诉他。
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(_batchResultMessage(result)),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+        return;
+      }
 
       _finishBatchInstall(result);
     } catch (e) {
@@ -2201,21 +2214,22 @@ class _AddPluginSheetState extends State<_AddPluginSheet> {
   }
 
   /// 批量安装结果的一句话摘要。
+  ///
+  /// 用全局 [tr] 而不是 `context.tr`：弹层被关掉之后 context 已经失效，
+  /// 但结果还是要能提示。
   String _batchResultMessage(PluginBatchInstallResult result) {
     final parts = <String>[];
     if (result.installed.isNotEmpty) {
-      parts.add(context.tr('已安装 ${result.installed.length} 个插件'));
+      parts.add(tr('已安装 ${result.installed.length} 个插件'));
     }
     if (result.failed.isNotEmpty) {
       final first = result.failed.first;
-      parts.add(
-        context.tr('${result.failed.length} 个失败（${first.$1}：${first.$2}）'),
-      );
+      parts.add(tr('${result.failed.length} 个失败（${first.$1}：${first.$2}）'));
     }
     if (result.unknownType > 0) {
-      parts.add(context.tr('${result.unknownType} 个无法识别格式，请单独添加'));
+      parts.add(tr('${result.unknownType} 个无法识别格式，请单独添加'));
     }
-    if (parts.isEmpty) return context.tr('未安装任何插件');
+    if (parts.isEmpty) return tr('未安装任何插件');
     return parts.join('；');
   }
 

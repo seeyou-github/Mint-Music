@@ -72,6 +72,14 @@ class _AppDesktopShellState extends ConsumerState<AppDesktopShell> {
   }
 
   void _handleSelect(int index) {
+    // 先关掉盖在内容区上的弹层（底部弹层 / 对话框）：它们挂在根 navigator
+    // 上、不属于任何分类分支，不关的话分类切了也被它们盖着，看起来就是
+    // 「点了侧栏没反应」——安装插件时点侧栏就是这个现象（高亮变了、页面没变）。
+    // 只处理 [PopupRoute]，普通页面（PageRoute）交给下面的 go / goBranch。
+    appRouter.routerDelegate.navigatorKey.currentState?.popUntil(
+      (route) => route is! PopupRoute,
+    );
+
     final route = appNavItems[index].route;
     final shell = ref.read(navigationShellProvider);
 
