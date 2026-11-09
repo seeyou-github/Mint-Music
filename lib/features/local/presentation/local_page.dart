@@ -1852,7 +1852,8 @@ class _LocalSongItem extends ConsumerWidget {
                               softWrap: false,
                               style: TextStyle(
                                 fontSize: 13,
-                                color: colors.textHint,
+                                // 序号用「第二字体颜色」：浅色主题下 textHint 太淡。
+                                color: colors.textSecondary,
                                 fontWeight: FontWeight.w500,
                               ),
                             )),
@@ -1919,7 +1920,10 @@ class _LocalSongItem extends ConsumerWidget {
                     const SizedBox(height: 2),
                     Text(
                       song.artist,
-                      style: TextStyle(fontSize: 12, color: colors.textHint),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: colors.textSecondary,
+                      ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -1929,7 +1933,7 @@ class _LocalSongItem extends ConsumerWidget {
               if (song.duration > 0)
                 Text(
                   song.displayDuration,
-                  style: TextStyle(fontSize: 12, color: colors.textHint),
+                  style: TextStyle(fontSize: 12, color: colors.textSecondary),
                 ),
               // 多选模式下隐藏「更多」按钮，避免与选择手势冲突
               if (!selectionMode) ...[
@@ -1948,7 +1952,7 @@ class _LocalSongItem extends ConsumerWidget {
                     child: Icon(
                       Icons.more_vert,
                       size: 18,
-                      color: colors.textHint,
+                      color: colors.textSecondary,
                     ),
                   ),
                 ),

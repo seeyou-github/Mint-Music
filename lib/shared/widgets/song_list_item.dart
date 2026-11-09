@@ -239,7 +239,8 @@ class SongListItem extends ConsumerWidget {
               softWrap: false,
               style: TextStyle(
                 fontSize: 13,
-                color: colors.textHint,
+                // 序号用「第二字体颜色」：textHint 在浅色主题下几乎糊在背景里。
+                color: colors.textSecondary,
                 fontWeight: FontWeight.w500,
               ),
               textAlign: TextAlign.left,
@@ -630,7 +631,7 @@ class SongListItem extends ConsumerWidget {
       width: _menuButtonWidth,
       height: _menuButtonHeight,
       child: IconButton(
-        icon: Icon(Icons.more_vert, size: 20, color: colors.textHint),
+        icon: Icon(Icons.more_vert, size: 20, color: colors.textSecondary),
         onPressed: onMenuTap ?? () => SongActionSheet.show(context, song: song),
         padding: EdgeInsets.zero,
         style: IconButton.styleFrom(
