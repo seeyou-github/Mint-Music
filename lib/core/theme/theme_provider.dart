@@ -15,31 +15,37 @@ final themeModeProvider = StateProvider<ThemeMode>((ref) => ThemeMode.system);
 
 final themePrimaryColorProvider = StateProvider<String>((ref) => '#1DB954');
 
-/// 深色模式「字体颜色」的默认值（暖调米黄色）。
-const String defaultThemeFontColor = '#D9C8B1';
+/// 深色模式「字体颜色」的默认值（暖调黄）。
+const String defaultThemeFontColor = '#DACB77';
 
 /// 浅色模式「字体颜色」「第二字体颜色」的默认值。
 const String defaultLightFontColor = '#000000';
-const String defaultLightSecondaryFontColor = '#111111';
+const String defaultLightSecondaryFontColor = '#3A3933';
+
+/// 深色模式「第二字体颜色」的默认值（中灰，比正文暗一档）。
+const String defaultDarkSecondaryFontColor = '#9D9D9D';
 
 /// 浅色 / 深色模式「背景颜色」的默认值（内置渐变的第一个色）。
 const String defaultLightBackgroundColor = '#B6B6B6';
-const String defaultDarkBackgroundColor = '#2F2F36';
+const String defaultDarkBackgroundColor = '#292934';
 
 /// 默认「背景渐变」：就是外观设置里内置渐变的**第一个**
-/// （深色「深空灰」#2F2F36 → #1D1D21 → #0B0B0C，
+/// （深色「深空灰」#292934 → #1F1F27 → #15151A，
 /// 浅色「中灰」#B6B6B6 → #A7A7A7 → #979797）。
 ///
 /// 新装软件默认选中它；设置面板里第一个内置渐变的色值必须与这里保持一致。
+/// 末尾的 `~5` 是「5 个背景光晕」标记（见 background_gradient.dart）。
 const List<String> defaultLightBackgroundGradient = [
   defaultLightBackgroundColor,
   '#A7A7A7',
   '#979797',
+  '~5',
 ];
 const List<String> defaultDarkBackgroundGradient = [
   defaultDarkBackgroundColor,
-  '#1D1D21',
-  '#0B0B0C',
+  '#1F1F27',
+  '#15151A',
+  '~5',
 ];
 
 /// 深色模式「字体颜色」：主文字颜色（十六进制），为空表示使用主题默认色。
@@ -53,7 +59,9 @@ final lightThemeFontColorProvider = StateProvider<String>(
 );
 
 /// 深色模式「第二字体颜色」：次级文字颜色（十六进制），为空表示使用主题默认色。
-final darkThemeSecondaryFontColorProvider = StateProvider<String>((ref) => '');
+final darkThemeSecondaryFontColorProvider = StateProvider<String>(
+  (ref) => defaultDarkSecondaryFontColor,
+);
 
 /// 浅色模式「第二字体颜色」：次级文字颜色（十六进制），为空表示使用主题默认色。
 final lightThemeSecondaryFontColorProvider = StateProvider<String>(

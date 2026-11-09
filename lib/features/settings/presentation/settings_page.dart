@@ -849,25 +849,27 @@ const List<(String, String)> _presetColors = [
 ///
 /// 第一项就是默认选中的那一套（见 [defaultLightBackgroundGradient]），
 /// 必须保持一致；其余是常用的浅色三段组合。
+/// 末尾的 `~5` 是「5 个背景光晕」标记（见 background_gradient.dart）。
 const List<(List<String>, String)> _lightGradientPresets = [
-  (['#B6B6B6', '#A7A7A7', '#979797'], '中灰'),
-  (['#C7C3BC', '#B5B0A7', '#A39D92'], '暖灰'),
-  (['#CDD1C4', '#BFC5B4', '#B1B9A4'], '浅绿'),
-  (['#C4CDD4', '#AFBCC5', '#9AABB6'], '雾蓝'),
-  (['#CECBDC', '#B9B5CE', '#A49FC0'], '淡紫'),
-  (['#C5B5CE', '#B39DBF', '#A185B0'], '藕紫'),
+  (['#B6B6B6', '#A7A7A7', '#979797', '~5'], '中灰'),
+  (['#C7C3BC', '#B5B0A7', '#A39D92', '~5'], '暖灰'),
+  (['#CDD1C4', '#BFC5B4', '#B1B9A4', '~5'], '浅绿'),
+  (['#C4CDD4', '#AFBCC5', '#9AABB6', '~5'], '雾蓝'),
+  (['#CECBDC', '#B9B5CE', '#A49FC0', '~5'], '淡紫'),
+  (['#C5B5CE', '#B39DBF', '#A185B0', '~5'], '藕紫'),
 ];
 
 /// 深色模式「背景渐变」的内置组合（颜色列表 + 名称）。
 ///
 /// 同样第一项是默认值（[defaultDarkBackgroundGradient]）。
+/// 末尾的 `~5` 是「5 个背景光晕」标记（见 background_gradient.dart）。
 const List<(List<String>, String)> _darkGradientPresets = [
-  (['#2F2F36', '#1D1D21', '#0B0B0C'], '深空灰'),
-  (['#373737', '#242424', '#111111'], '中性灰'),
-  (['#343939', '#222525', '#101111'], '青灰'),
-  (['#3F4349', '#2C2F33', '#191B1D'], '蓝灰'),
-  (['#4A4854', '#34333B', '#1E1E22'], '紫灰'),
-  (['#3F4550', '#30343D', '#21242A'], '深蓝'),
+  (['#292934', '#1F1F27', '#15151A', '~5'], '深空灰'),
+  (['#252727', '#0E0F0F', '#000000', '~5'], '中性灰'),
+  (['#1D222A', '#14171C', '#0A0C0F', '~5'], '深蓝'),
+  (['#2D2C2F', '#1B1A1C', '#090809', '~5'], '深灰'),
+  (['#242229', '#141317', '#040405', '~5'], '紫灰'),
+  (['#1E2121', '#131515', '#080909', '~5'], '青灰'),
 ];
 
 /// 合并内置颜色与用户自定义颜色（按色值去重，内置颜色优先）。
@@ -1272,7 +1274,9 @@ class _AppearanceContent extends ConsumerWidget {
           emptyColor: isLight
               ? ThemeColors.light.textSecondary
               : ThemeColors.dark.textSecondary,
-          resetValue: isLight ? defaultLightSecondaryFontColor : '',
+          resetValue: isLight
+              ? defaultLightSecondaryFontColor
+              : defaultDarkSecondaryFontColor,
           currentProvider: isLight
               ? lightThemeSecondaryFontColorProvider
               : darkThemeSecondaryFontColorProvider,

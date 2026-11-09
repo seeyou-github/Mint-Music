@@ -67,11 +67,11 @@ class SettingsService {
   Future<void> setThemeSecondaryFontColorLight(String v) =>
       _prefs.setString(_secondaryFontColorLightKey, v);
 
-  /// 深色模式「第二字体颜色」：为空表示使用主题默认色。
+  /// 深色模式「第二字体颜色」：默认使用 [defaultDarkSecondaryFontColor]。
   String getThemeSecondaryFontColorDark() =>
       _prefs.getString(_secondaryFontColorDarkKey) ??
       _prefs.getString(_legacySecondaryFontColorKey) ??
-      '';
+      defaultDarkSecondaryFontColor;
 
   Future<void> setThemeSecondaryFontColorDark(String v) =>
       _prefs.setString(_secondaryFontColorDarkKey, v);
