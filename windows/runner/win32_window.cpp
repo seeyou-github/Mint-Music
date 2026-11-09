@@ -38,14 +38,56 @@ int Scale(int source, double scale_factor) {
   return static_cast<int>(source * scale_factor);
 }
 
-// 窗口是否处于「自绘标题栏」模式（Dart 侧的 WindowChrome 会把 WS_CAPTION
-// 去掉，把最顶上那条窗口栏交给 Flutter 画）。
+// 本项目的窗口栏始终由 Flutter 自绘（WindowsTitleBar）。
 //
-// 下面几处（WM_NCCALCSIZE / WM_NCHITTEST / Flutter 视图的边缘让位）只在去掉
-// WS_CAPTION 之后才改变默认行为，所以直接用样式位判断，不需要 Dart 再单独
-// 通知原生一次；Dart 侧一旦把标题栏改回系统样式，这里也立刻退回默认处理。
-bool HasCustomTitleBar(HWND window) {
-  return (::GetWindowLongPtr(window, GWL_STYLE) & WS_CAPTION) == 0;
+// 注意：**保留 WS_CAPTION**（创建时就是 WS_OVERLAPPEDWINDOW），只靠
+// WM_NCCALCSIZE 把系统标题栏压到 0/1px、并用 DwmExtendFrameIntoClientArea
+// 让 DWM 接管边框。这样 DWM 仍把窗口当「有边框窗口」做最大化 / 最小化动画，
+// 不会出现无边框窗口那种「先移到左上角、回弹、再放大」的中间帧。
+// 所以这里不能用样式位判断，本项目恒为自绘模式。
+bool HasCustomTitleBar(HWND /*window*/) {
+  return true;
+}
+
+/// 最大化时把客户区向外扩一圈，抵消系统给最大化窗口加的 8px 边框，
+/// 让内容正好铺满工作区（照搬 window_manager 的 adjustNCCALCSIZE）。
+void AdjustNcCalcSize(NCCALCSIZE_PARAMS* params) {
+  LONG left = 8;
+  LONG top = 8;
+  // 用 rgrc[0] 找显示器，而不是 MonitorFromWindow：窗口从最小化恢复时
+  // 可能还没落到正确的显示器上（window_manager issue #489）。
+  HMONITOR monitor = ::MonitorFromRect(&params->rgrc[0],
+                                       MONITOR_DEFAULTTONEAREST);
+  if (monitor != nullptr) {
+    MONITORINFO info{};
+    info.cbSize = sizeof(info);
+    if (::GetMonitorInfo(monitor, &info)) {
+      left = params->rgrc[0].left - info.rcWork.left;
+      top = params->rgrc[0].top - info.rcWork.top;
+    }
+  }
+  params->rgrc[0].left -= left;
+  params->rgrc[0].top -= top;
+  params->rgrc[0].right += left;
+  params->rgrc[0].bottom += top;
+}
+
+/// 系统是否为 Win11（build >= 22000）。
+///
+/// 参考实现里这个函数名与返回值是反的（Win10 返回 true），但**实际效果**是
+/// Win10 客户区完全铺满（top += 0）、Win11 留 1px。这里按相同效果写清楚：
+/// Win10 上留 0 才不会有顶部白线，Win11 留 1px 由 DWM 按主题色绘制。
+bool ShouldKeepTopBorder() {
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4996)  // GetVersion 已废弃，但这里只需要 build 号
+#endif
+  DWORD version = ::GetVersion();
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
+  if (version >= 0x80000000) return false;
+  return static_cast<DWORD>(HIWORD(version)) >= 22000;
 }
 
 /// 自绘标题栏模式下窗口边缘的可缩放区域（逻辑像素）。
@@ -275,65 +317,26 @@ Win32Window::MessageHandler(HWND hwnd,
                             WPARAM const wparam,
                             LPARAM const lparam) noexcept {
   switch (message) {
-    case WM_GETMINMAXINFO: {
-      // 自绘标题栏窗口（去掉 WS_CAPTION、保留 WS_THICKFRAME）最大化时，系统
-      // 会把窗口矩形铺满整块显示器（实测 1920×1080 屏上是 (-8,-8)-(1928,1088)），
-      // 连带把任务栏那一条也盖进窗口里。而下面 WM_NCCALCSIZE 又把客户区对齐
-      // 到工作区，多出来的那条就变成「没人绘制的非客户区」——窗口类没设背景
-      // 画刷，DWM 直接呈现成纯黑，和深色任务栏一个颜色，看上去像任务栏还在，
-      // 实际已经点不动了（任务栏在右侧时尤其明显，左边也会露出黑边）。
-      //
-      // 把最大化的尺寸 / 位置直接限制到显示器工作区，窗口矩形就不会越过
-      // 任务栏；任务栏在上下左右哪个方向都适用，多显示器按窗口所在屏计算。
-      MINMAXINFO* min_max_info = reinterpret_cast<MINMAXINFO*>(lparam);
-      MONITORINFO monitor_info{};
-      monitor_info.cbSize = sizeof(monitor_info);
-      if (::GetMonitorInfo(
-              ::MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST),
-              &monitor_info)) {
-        min_max_info->ptMaxSize.x =
-            monitor_info.rcWork.right - monitor_info.rcWork.left;
-        min_max_info->ptMaxSize.y =
-            monitor_info.rcWork.bottom - monitor_info.rcWork.top;
-        // ptMaxPosition 是相对本显示器左上角的偏移，副屏上同样成立。
-        min_max_info->ptMaxPosition.x =
-            monitor_info.rcWork.left - monitor_info.rcMonitor.left;
-        min_max_info->ptMaxPosition.y =
-            monitor_info.rcWork.top - monitor_info.rcMonitor.top;
-      }
-      return 0;
-    }
-
     case WM_NCCALCSIZE: {
-      // 自绘标题栏模式下不要任何非客户区：留着的话 WS_THICKFRAME 的缩放边框
-      // 会占掉窗口顶部几个像素，而那一条既没有人绘制（窗口类没设背景画刷，
-      // Flutter 的视图只覆盖客户区），看起来就是标题栏上方的一条黑线。
-      // 返回 0 表示「客户区 = 整个窗口」。
+      // 完全照搬 window_manager 的 TitleBarStyle.hidden（PiliPlus 用的方案）：
+      // 保留 WS_CAPTION，只把系统标题栏压到 0/1px，四边留 8px 给系统做
+      // 缩放命中；最大化时把边界扩到工作区，内容才不会被屏幕边缘切掉。
+      // 这样 DWM 仍按「有边框窗口」做最大化 / 最小化动画，中间帧自然。
       if (wparam != TRUE || !HasCustomTitleBar(hwnd)) {
         break;
       }
       auto params = reinterpret_cast<NCCALCSIZE_PARAMS*>(lparam);
-      // 最大化时窗口矩形已经由 WM_GETMINMAXINFO 限制到工作区，但系统在这里
-      // 给的建议矩形仍会向外扩一圈边框（约 8px），要裁到工作区才不会让内容
-      // 被屏幕边缘切掉。
-      //
-      // 关键是**求交集，而不是直接赋成工作区**：最大化 / 还原的过渡帧里窗口
-      // 矩形还在动画中间、比工作区小，直接赋值会把客户区瞬间拉到最终尺寸，
-      // Flutter 视图跟着放大又缩小，看起来就是「窗口抖动、快速增大减小」。
-      // 求交集时过渡帧原样不动，只有真正超出工作区的帧才被裁。
-      //
-      // 最小化时（IsIconic）客户区会被系统缩成一百多像素，这时更不能动它。
       if (::IsZoomed(hwnd) && !::IsIconic(hwnd)) {
-        MONITORINFO monitor_info{};
-        monitor_info.cbSize = sizeof(monitor_info);
-        if (::GetMonitorInfo(::MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST),
-                             &monitor_info)) {
-          RECT clipped{};
-          if (::IntersectRect(&clipped, &params->rgrc[0],
-                              &monitor_info.rcWork)) {
-            params->rgrc[0] = clipped;
-          }
-        }
+        AdjustNcCalcSize(params);
+      } else {
+        // Win10 留 0（否则顶部会出现 1px 白线）；Win11 留 1px 由 DWM
+        // 按主题色绘制，配合 setDarkFrame 不会突兀。
+        params->rgrc[0].top += ShouldKeepTopBorder() ? 1 : 0;
+        // 下面三行是系统缩放边框，去掉后窗口就没法拖边缘缩放了
+        // （window_manager issue #483）。DWM 接管后这圈是透明的。
+        params->rgrc[0].right -= 8;
+        params->rgrc[0].bottom -= 8;
+        params->rgrc[0].left += 8;
       }
       return 0;
     }
@@ -525,6 +528,17 @@ void Win32Window::SetChildContent(HWND content) {
       g_hooked_child = content;
     }
   }
+
+  // 保留 WS_CAPTION 的前提下隐藏系统标题栏：让 DWM 接管并绘制那圈边框，
+  // 再触发 SWP_FRAMECHANGED 按新的 WM_NCCALCSIZE 重算客户区。
+  // 对应 window_manager 的 SetTitleBarStyle(hidden)，也是 PiliPlus 的做法。
+  // 不这么做的话，零非客户区会由窗口类画刷（这里是 nullptr）绘制，顶部
+  // 出现黑/白线；做了之后 DWM 按主题色画，深色模式下看不见。
+  MARGINS margins = {0, 0, 0, 0};
+  ::DwmExtendFrameIntoClientArea(window_handle_, &margins);
+  ::SetWindowPos(window_handle_, nullptr, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE |
+                     SWP_FRAMECHANGED);
 
   SetFocus(child_content_);
 }

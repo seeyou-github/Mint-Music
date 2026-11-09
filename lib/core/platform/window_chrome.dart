@@ -42,17 +42,22 @@ typedef _DwmSetWindowAttributeDart = int Function(int, int, Pointer<Void>, int);
 ///
 /// 这里只做窗口层面的脏活，画界面的是 `lib/app/windows_title_bar.dart`：
 ///
-/// - [enableCustomTitleBar]：去掉 `WS_CAPTION`，但**保留** `WS_THICKFRAME`
-///   （边框可拖动缩放）、`WS_SYSMENU` / `WS_MINIMIZEBOX` / `WS_MAXIMIZEBOX`
-///   （Alt+F4、任务栏右键菜单、Aero Snap 都照常），客户端区域顶到窗口最上边；
+/// - [enableCustomTitleBar]：**保留** `WS_CAPTION`（以及 `WS_THICKFRAME`、
+///   `WS_SYSMENU` / `WS_MINIMIZEBOX` / `WS_MAXIMIZEBOX`，让 Alt+F4、任务栏
+///   菜单、Aero Snap 都照常），只触发 `SWP_FRAMECHANGED`；
 ///   配合原生侧 `windows/runner/win32_window.cpp`：
-///   - `WM_GETMINMAXINFO`：把最大化尺寸限制到显示器工作区，否则无标题栏窗口
-///     最大化会铺满整块屏幕、盖住任务栏；
-///   - `WM_NCCALCSIZE`：客户区铺满整个窗口，否则 `WS_THICKFRAME` 的缩放边框
-///     会在标题栏上方留一条没人绘制的黑边；
+///   - `WM_NCCALCSIZE`：把系统标题栏压到 0/1px、四边留 8px 缩放边框，
+///     最大化时把客户区扩到工作区（照搬 window_manager 的 hidden 方案）；
+///   - `DwmExtendFrameIntoClientArea`：让 DWM 接管并绘制那圈边框，避免
+///     零非客户区由空画刷绘制出黑/白线；
 ///   - `WM_NCHITTEST` + Flutter 视图的边缘让位：把边角缩放区域还给系统；
 ///   - `WM_NCACTIVATE` / `WM_NCPAINT`：窗口失焦 / 重新获得焦点时，系统会按默认
 ///     样式把非客户区整块重画回来（四周冒出一圈老式 Windows 边框），必须拦掉；
+///
+///   注意：**不能删 `WS_CAPTION`**。删了之后 DWM 把窗口当无边框窗口做
+///   最大化 / 最小化动画，会出现「先移到左上角 → 回弹 → 再最大化」的中间帧
+///   （窗口抖动）。PiliPlus / window_manager 的 `TitleBarStyle.hidden` 同样
+///   保留样式位，动画正常。
 /// - [startDrag] / [minimize] / [toggleMaximize] / [close]：给自绘按钮和
 ///   拖动区域用；
 /// - [setDarkFrame]：深色背景时把窗口边框压暗，别在深色界面外面留一圈亮边。
@@ -64,7 +69,6 @@ class WindowChrome {
 
   // 窗口样式位（winuser.h）。
   static const int _gwlStyle = -16;
-  static const int _wsCaption = 0x00C00000;
   static const int _wsThickFrame = 0x00040000;
   static const int _wsSysMenu = 0x00080000;
   static const int _wsMinimizeBox = 0x00020000;
@@ -118,9 +122,17 @@ class WindowChrome {
   /// 老样子，不会出现「两个标题栏」。
   static bool get hasCustomTitleBar => _customTitleBarEnabled;
 
-  /// 去掉系统标题栏，把「最顶上的窗口栏」交给 Flutter 自绘。
+  /// 启用「自绘标题栏」模式（窗口栏由 Flutter 画）。
   ///
-  /// 只在 Windows 上生效；重复调用是安全的（样式已经改过就直接返回）。
+  /// **保留 `WS_CAPTION`**：窗口创建时就是 `WS_OVERLAPPEDWINDOW`，这里只补齐
+  /// 需要的样式位、触发 `SWP_FRAMECHANGED`，绝不再把 `WS_CAPTION` 去掉。
+  /// 隐藏系统标题栏交给原生侧（`WM_NCCALCSIZE` 把标题栏压到 0/1px +
+  /// `DwmExtendFrameIntoClientArea` 让 DWM 接管边框）。
+  ///
+  /// 原因：删掉 `WS_CAPTION` 会让 DWM 把窗口当「无边框窗口」做最大化/最小化
+  /// 动画，出现「先移到左上角 → 回弹到原位置 → 再最大化」的中间帧
+  /// （即窗口抖动）。PiliPlus / window_manager 的 `TitleBarStyle.hidden`
+  /// 就是这样保留样式位的，最大化动画正常。
   static void enableCustomTitleBar() {
     if (!isSupported || _failed) return;
     _ensureBindings();
@@ -129,24 +141,18 @@ class WindowChrome {
 
     final getWindowLong = _getWindowLong;
     final setWindowLong = _setWindowLong;
-    if (getWindowLong == null || setWindowLong == null) return;
-
-    // 样式是 32 位值，先截断成无符号再算，避免 Dart 大整数带来的高位噪声。
-    final style = getWindowLong(hwnd, _gwlStyle) & 0xFFFFFFFF;
-    final newStyle =
-        (style & ~_wsCaption) |
-        _wsThickFrame |
-        _wsSysMenu |
-        _wsMinimizeBox |
-        _wsMaximizeBox;
-    if (newStyle == style) {
-      // 已经是无标题栏形态（重复调用）。
-      _customTitleBarEnabled = true;
-      return;
+    if (getWindowLong != null && setWindowLong != null) {
+      // 样式是 32 位值，先截断成无符号再算，避免 Dart 大整数带来的高位噪声。
+      final style = getWindowLong(hwnd, _gwlStyle) & 0xFFFFFFFF;
+      // 只补位、不删位：WS_CAPTION 必须留着。
+      final newStyle =
+          style | _wsThickFrame | _wsSysMenu | _wsMinimizeBox | _wsMaximizeBox;
+      if (newStyle != style) {
+        setWindowLong(hwnd, _gwlStyle, newStyle);
+      }
     }
 
-    setWindowLong(hwnd, _gwlStyle, newStyle);
-    // SWP_FRAMECHANGED 让系统按新样式重算非客户区，客户端区域随即顶到最上边。
+    // 让系统按新的 WM_NCCALCSIZE 重算客户区（原生侧已做一次，这里重复无妨）。
     _setWindowPos?.call(
       hwnd,
       0,
