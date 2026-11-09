@@ -1505,65 +1505,111 @@ class _LocalPageState extends ConsumerState<LocalPage>
                           ),
                         )
                       else
-                        ...dirs.map(
-                          (d) => Padding(
+                        ConstrainedBox(
+                          constraints: BoxConstraints(
+                            maxHeight:
+                                MediaQuery.of(context).size.height * 0.45,
+                          ),
+                          child: ReorderableListView.builder(
+                            shrinkWrap: true,
                             padding: const EdgeInsets.symmetric(
                               horizontal: AppSpacing.lg,
-                              vertical: AppSpacing.xs,
                             ),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: AppSpacing.md,
-                                vertical: AppSpacing.sm,
-                              ),
-                              decoration: BoxDecoration(
-                                color: colors.surfaceVariant,
-                                borderRadius: BorderRadius.circular(
-                                  AppRadius.md,
+                            buildDefaultDragHandles: false,
+                            itemCount: dirs.length,
+                            onReorder: (oldIndex, newIndex) {
+                              if (newIndex > oldIndex) newIndex -= 1;
+                              final item = dirs.removeAt(oldIndex);
+                              dirs.insert(newIndex, item);
+                              setModalState(() {});
+                              // 顺序即扫描顺序，拖完立即持久化，避免不点确认
+                              // 直接关闭弹窗后丢失。
+                              unawaited(
+                                ref
+                                    .read(localMusicNotifierProvider.notifier)
+                                    .setDirectories(dirs),
+                              );
+                            },
+                            itemBuilder: (context, index) {
+                              final d = dirs[index];
+                              return Padding(
+                                key: ValueKey(d),
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: AppSpacing.xs,
                                 ),
-                              ),
-                              child: Row(
-                                children: [
-                                  Icon(
-                                    Icons.folder,
-                                    size: 18,
-                                    color: colors.textSecondary,
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: AppSpacing.sm,
+                                    vertical: AppSpacing.sm,
                                   ),
-                                  const SizedBox(width: AppSpacing.sm),
-                                  Expanded(
-                                    child: Text(
-                                      d,
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        color: colors.textPrimary,
+                                  decoration: BoxDecoration(
+                                    color: colors.surfaceVariant,
+                                    borderRadius: BorderRadius.circular(
+                                      AppRadius.md,
+                                    ),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      ReorderableDragStartListener(
+                                        index: index,
+                                        child: Padding(
+                                          padding: const EdgeInsets.all(
+                                            AppSpacing.xs,
+                                          ),
+                                          child: Icon(
+                                            Icons.drag_handle,
+                                            size: 18,
+                                            color: colors.textHint,
+                                          ),
+                                        ),
                                       ),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
+                                      Icon(
+                                        Icons.folder,
+                                        size: 18,
+                                        color: colors.textSecondary,
+                                      ),
+                                      const SizedBox(width: AppSpacing.sm),
+                                      Expanded(
+                                        child: Text(
+                                          d,
+                                          style: TextStyle(
+                                            fontSize: 13,
+                                            color: colors.textPrimary,
+                                          ),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                      GestureDetector(
+                                        onTap: () {
+                                          dirs.remove(d);
+                                          setModalState(() {});
+                                          // 立即持久化，避免不点确认直接关闭弹窗后丢失
+                                          unawaited(
+                                            ref
+                                                .read(
+                                                  localMusicNotifierProvider
+                                                      .notifier,
+                                                )
+                                                .setDirectories(dirs),
+                                          );
+                                        },
+                                        child: Padding(
+                                          padding: const EdgeInsets.all(
+                                            AppSpacing.xs,
+                                          ),
+                                          child: Icon(
+                                            Icons.close,
+                                            size: 16,
+                                            color: colors.textHint,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
                                   ),
-                                  GestureDetector(
-                                    onTap: () {
-                                      dirs.remove(d);
-                                      setModalState(() {});
-                                      // 立即持久化，避免不点确认直接关闭弹窗后丢失
-                                      unawaited(
-                                        ref
-                                            .read(
-                                              localMusicNotifierProvider
-                                                  .notifier,
-                                            )
-                                            .setDirectories(dirs),
-                                      );
-                                    },
-                                    child: Icon(
-                                      Icons.close,
-                                      size: 16,
-                                      color: colors.textHint,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
+                                ),
+                              );
+                            },
                           ),
                         ),
                       const SizedBox(height: AppSpacing.lg),
