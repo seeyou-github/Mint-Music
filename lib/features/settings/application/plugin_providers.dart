@@ -5,6 +5,7 @@ import '../domain/models/plugin_info.dart';
 import '../../discover/application/hot_board_providers.dart';
 import '../../plugin/application/plugin_providers.dart';
 import '../../plugin/data/plugin_service.dart' show PluginTypeUnknownException;
+import '../../plugin/domain/plugin_subscription.dart';
 
 export '../../plugin/application/plugin_providers.dart'
     show
@@ -110,6 +111,62 @@ class PluginsNotifier extends AsyncNotifier<List<PluginInfo>> {
         return plugin;
       });
     }
+  }
+
+  /// 用已经下载好的代码安装插件（URL 添加走这条路）。
+  ///
+  /// 识别失败同样可以 `resume` 续装（用户在界面上选类型后不用重新下载）。
+  Future<PluginInfo> addPluginFromCode(String code, {String? sourceUrl}) async {
+    final pluginService = ref.read(pluginServiceProvider);
+    try {
+      final plugin = await pluginService.addPluginFromCode(
+        code,
+        sourceUrl: sourceUrl,
+      );
+      _afterPluginInstalled();
+      return plugin;
+    } on PluginTypeUnknownException catch (e) {
+      throw PluginTypeUnknownException((chosen) async {
+        final plugin = await e.resume(chosen);
+        _afterPluginInstalled();
+        return plugin;
+      });
+    }
+  }
+
+  /// 安装一份**订阅清单**（清单里每一项是一个插件 js 地址）。
+  ///
+  /// 与批量选文件同一套规则：单个失败不影响后续，识别不出格式只计数，
+  /// 全部装完只刷新一次插件列表。
+  Future<PluginBatchInstallResult> installPluginSubscription(
+    List<PluginSubscriptionEntry> entries, {
+    void Function(int done, int total)? onProgress,
+  }) async {
+    final pluginService = ref.read(pluginServiceProvider);
+    final installed = <PluginInfo>[];
+    final failed = <(String, String)>[];
+    var unknownType = 0;
+
+    for (var i = 0; i < entries.length; i++) {
+      final entry = entries[i];
+      final label = entry.name.isEmpty ? entry.url : entry.name;
+      try {
+        installed.add(await pluginService.downloadAndAddPlugin(entry.url));
+      } on PluginTypeUnknownException {
+        unknownType++;
+      } catch (error) {
+        failed.add((label, _installErrorText(error)));
+      }
+      onProgress?.call(i + 1, entries.length);
+    }
+
+    if (installed.isNotEmpty) _afterPluginInstalled();
+
+    return PluginBatchInstallResult(
+      installed: installed,
+      failed: failed,
+      unknownType: unknownType,
+    );
   }
 
   /// 从 URL 下载并安装插件；[type] 为 null 时自动识别类型。

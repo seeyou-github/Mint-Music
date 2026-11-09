@@ -18,6 +18,7 @@ import '../data/source_health_store.dart';
 import '../../../shared/utils/ico_converter.dart';
 import '../domain/source_id_mapping.dart';
 import '../domain/source_login_state.dart';
+import '../domain/plugin_subscription.dart';
 import '../../settings/domain/models/plugin_info.dart';
 
 /// 无法自动识别插件类型。
@@ -315,13 +316,55 @@ class PluginService {
     return addPluginFromFile(paths.first, type: type);
   }
 
-  /// 从 URL 下载并安装插件；[type] 为 null 时自动识别。
-  Future<PluginInfo> downloadAndAddPlugin(String url, {String? type}) async {
-    // Normalize URL (e.g., convert GitHub blob URLs to raw URLs)
-    url = _normalizePluginUrl(url);
+  /// 下载一个插件地址，判断它是「单个插件」还是「订阅清单」。
+  ///
+  /// 只请求一次：清单直接返回条目、插件直接返回代码，避免再下一遍。
+  /// 清单形如 `{"plugins":[{"name","url","version"}]}`（见
+  /// [parsePluginSubscription]）。
+  Future<PluginDownloadTarget> resolveDownloadTarget(String url) async {
+    final normalized = _normalizePluginUrl(url);
+    final raw = await _downloadRawText(normalized);
 
+    final entries = parsePluginSubscription(raw);
+    if (entries != null) {
+      return PluginDownloadTarget.subscription(entries);
+    }
+
+    final code = _extractPluginCode(raw);
+    if (code.trim().isEmpty) {
+      throw Exception('下载的文件内容为空');
+    }
+    return PluginDownloadTarget.single(code: code, url: normalized);
+  }
+
+  /// 用已经下载好的代码安装插件（[sourceUrl] 只用于记录更新地址）。
+  Future<PluginInfo> addPluginFromCode(
+    String code, {
+    String? type,
+    String? sourceUrl,
+  }) {
+    final fileName = 'downloaded_${DateTime.now().millisecondsSinceEpoch}.js';
+    return _installFromCode(code, fileName, type: type, sourceUrl: sourceUrl);
+  }
+
+  /// 从 URL 下载并安装**一个**插件；[type] 为 null 时自动识别。
+  ///
+  /// 贴的是订阅清单时直接报错引导：批量安装由
+  /// `PluginsNotifier.installPluginSubscription` 负责。
+  Future<PluginInfo> downloadAndAddPlugin(String url, {String? type}) async {
+    final target = await resolveDownloadTarget(url);
+    if (target.isSubscription) {
+      throw Exception(
+        '这是插件订阅清单（含 ${target.pluginEntries.length} 个插件），'
+        '请在「添加插件 → 链接」里粘贴该地址，会自动批量安装',
+      );
+    }
+    return addPluginFromCode(target.code!, type: type, sourceUrl: target.url);
+  }
+
+  /// 下载文本内容（插件 js 或订阅清单 json），统一超时与错误文案。
+  Future<String> _downloadRawText(String url) async {
     final dio = Dio();
-    String pluginCode;
     try {
       // Use ResponseType.bytes to guarantee raw bytes — Dio with
       // ResponseType.plain may still parse JSON bodies, which breaks
@@ -346,7 +389,7 @@ class PluginService {
         throw Exception('下载失败: HTTP ${response.statusCode}');
       }
 
-      pluginCode = _decodeResponseBody(response.data);
+      return _stripBom(_decodeRawText(response.data));
     } on DioException catch (e) {
       if (e.type == DioExceptionType.connectionTimeout ||
           e.type == DioExceptionType.sendTimeout ||
@@ -358,18 +401,6 @@ class PluginService {
       }
       throw Exception('下载失败: ${e.message}');
     }
-
-    // Strip UTF-8 BOM if present
-    if (pluginCode.startsWith('\uFEFF')) {
-      pluginCode = pluginCode.substring(1);
-    }
-
-    if (pluginCode.trim().isEmpty) {
-      throw Exception('下载的文件内容为空');
-    }
-
-    final fileName = 'downloaded_${DateTime.now().millisecondsSinceEpoch}.js';
-    return _installFromCode(pluginCode, fileName, type: type, sourceUrl: url);
   }
 
   /// 校验 + 转换 + 安装一段插件代码。
@@ -424,16 +455,27 @@ class PluginService {
   /// 1. If the bytes decode to raw JS code, return it directly.
   /// 2. If they look like JSON, parse and try to extract the JS content
   ///    from common wrapper patterns.
-  String _decodeResponseBody(dynamic data) {
-    // data should be List<int> from ResponseType.bytes
-    if (data is! List<int>) {
-      return data.toString();
-    }
-    final text = utf8.decode(data, allowMalformed: true);
+  /// 响应体 → 原始文本。只做 utf8 解码，**不做** JSON 提取：订阅清单要拿
+  /// 原文去 [parsePluginSubscription] 判断，提前拆 JSON 会把清单当成插件代码。
+  String _decodeRawText(dynamic data) {
+    if (data is! List<int>) return data.toString();
+    return utf8.decode(data, allowMalformed: true);
+  }
+
+  /// 去掉 UTF-8 BOM。
+  String _stripBom(String text) =>
+      text.startsWith('\uFEFF') ? text.substring(1) : text;
+
+  /// 从下载到的文本里取出插件代码。
+  ///
+  /// 本身就是 js 就原样返回；是「单个插件的 JSON 包装」（`{"script": "..."}`
+  /// 这类）就从里面捞代码。订阅清单在 [resolveDownloadTarget] 里已经提前
+  /// 拦掉，不会走到这里。
+  String _extractPluginCode(String text) {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return '';
 
-    // If it starts with /\* or looks like JS, return as-is
+    // 看起来就是 js：原样返回，省一次 jsonDecode。
     if (trimmed.startsWith('/*') ||
         trimmed.startsWith('//') ||
         trimmed.startsWith('function') ||
@@ -446,13 +488,11 @@ class PluginService {
       return text;
     }
 
-    // Try to extract JS from JSON wrapper
     try {
       final json = jsonDecode(trimmed);
       return _extractScriptFromJson(json);
     } catch (_) {
-      // Not JSON — return raw text as-is (may be JS that doesn't
-      // start with a common prefix)
+      // 不是 JSON（或不是我们能解析的包裹）：当普通文本返回。
       return text;
     }
   }

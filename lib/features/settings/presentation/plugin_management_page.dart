@@ -2100,7 +2100,9 @@ class _AddPluginSheetState extends State<_AddPluginSheet> {
           ),
           const SizedBox(height: AppSpacing.sm),
           Text(
-            context.tr('支持 HTTP/HTTPS 链接和 GitHub 仓库链接，将自动下载并校验插件格式'),
+            context.tr(
+              '支持 HTTP/HTTPS 链接、GitHub 仓库链接和 MusicFree 插件清单，将自动下载并校验插件格式',
+            ),
             style: TextStyle(fontSize: 11, color: colors.textHint),
           ),
           const SizedBox(height: AppSpacing.md),
@@ -2119,7 +2121,9 @@ class _AddPluginSheetState extends State<_AddPluginSheet> {
                     )
                   : const Icon(Icons.cloud_download, size: 18),
               label: Text(
-                _isLoading ? context.tr('下载中...') : context.tr('下载并安装'),
+                _isLoading && _installTotal > 1
+                    ? context.tr('安装中 $_installDone/$_installTotal')
+                    : (_isLoading ? context.tr('下载中...') : context.tr('下载并安装')),
               ),
               style: ElevatedButton.styleFrom(
                 backgroundColor: colors.primary,
@@ -2165,18 +2169,7 @@ class _AddPluginSheetState extends State<_AddPluginSheet> {
       );
       if (!mounted) return;
 
-      // pop 之后这个 context 就不能用了，文案和 messenger 都要先取好。
-      final message = _batchResultMessage(result);
-      final hasFailure = result.hasFailure;
-      final messenger = ScaffoldMessenger.of(context);
-      Navigator.pop(context);
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text(message),
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: hasFailure ? widget.colors.error : null,
-        ),
-      );
+      _finishBatchInstall(result);
     } catch (e) {
       _showInstallError(e);
     } finally {
@@ -2188,6 +2181,23 @@ class _AddPluginSheetState extends State<_AddPluginSheet> {
         });
       }
     }
+  }
+
+  /// 批量 / 订阅安装完成：关掉弹层并弹出汇总提示。
+  ///
+  /// pop 之后 context 就不能用了，文案和 messenger 都要先取好。
+  void _finishBatchInstall(PluginBatchInstallResult result) {
+    final message = _batchResultMessage(result);
+    final hasFailure = result.hasFailure;
+    final messenger = ScaffoldMessenger.of(context);
+    Navigator.pop(context);
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(message),
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: hasFailure ? widget.colors.error : null,
+      ),
+    );
   }
 
   /// 批量安装结果的一句话摘要。
@@ -2246,10 +2256,39 @@ class _AddPluginSheetState extends State<_AddPluginSheet> {
       return;
     }
 
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _installDone = 0;
+      _installTotal = 0;
+    });
+
+    final pluginService = widget.ref.read(pluginServiceProvider);
+    final notifier = widget.ref.read(pluginsProvider.notifier);
     try {
-      await widget.ref.read(pluginsProvider.notifier).downloadAndAddPlugin(url);
+      // 先下一次，由内容决定是「单个插件」还是「订阅清单」（形如
+      // {"plugins":[{"name","url"}]}，里面不是插件代码，直接装会报格式校验失败）。
+      final target = await pluginService.resolveDownloadTarget(url);
+      if (!mounted) return;
+
+      if (target.isSubscription) {
+        final entries = target.pluginEntries;
+        setState(() => _installTotal = entries.length);
+        final result = await notifier.installPluginSubscription(
+          entries,
+          onProgress: (done, total) {
+            if (mounted) setState(() => _installDone = done);
+          },
+        );
+        if (!mounted) return;
+        _finishBatchInstall(result);
+        return;
+      }
+
+      // 单个插件：沿用原路径，识别失败时仍可让用户选类型后续装。
+      setState(() => _installTotal = 1);
+      await notifier.addPluginFromCode(target.code!, sourceUrl: target.url);
       if (mounted) {
+        setState(() => _installDone = 1);
         // 安装成功不再弹提示（插件卡片上就能看到）。
         Navigator.pop(context);
       }
@@ -2266,7 +2305,13 @@ class _AddPluginSheetState extends State<_AddPluginSheet> {
     } catch (e) {
       _showInstallError(e);
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _installDone = 0;
+          _installTotal = 0;
+        });
+      }
     }
   }
 
