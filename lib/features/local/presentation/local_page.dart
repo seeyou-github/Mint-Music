@@ -605,7 +605,8 @@ class _LocalPageState extends ConsumerState<LocalPage>
               ),
               child: Text(
                 context.tr('${songs.length} 首'),
-                style: TextStyle(fontSize: 12, color: colors.textHint),
+                // 用第二字体颜色：textHint 在浅色主题下太淡。
+                style: TextStyle(fontSize: 12, color: colors.textSecondary),
               ),
             ),
           ],
@@ -855,7 +856,7 @@ class _LocalPageState extends ConsumerState<LocalPage>
                 filled: false,
                 isDense: true,
                 contentPadding: EdgeInsets.zero,
-                hintStyle: TextStyle(color: colors.textHint, fontSize: 14),
+                hintStyle: TextStyle(color: colors.textSecondary, fontSize: 14),
               ),
               style: TextStyle(color: colors.textPrimary, fontSize: 14),
             ),
@@ -1021,7 +1022,7 @@ class _LocalPageState extends ConsumerState<LocalPage>
           const SizedBox(height: AppSpacing.sm),
           Text(
             context.tr('先添加扫描目录，再扫描其中的音乐'),
-            style: TextStyle(fontSize: 13, color: colors.textHint),
+            style: TextStyle(fontSize: 13, color: colors.textSecondary),
           ),
           const SizedBox(height: AppSpacing.lg),
           GestureDetector(

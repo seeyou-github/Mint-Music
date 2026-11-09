@@ -651,7 +651,9 @@ class SettingGroup extends StatelessWidget {
             const SizedBox(height: 4),
             Text(
               context.tr(subtitle!),
-              style: TextStyle(fontSize: 12, color: colors.textHint),
+              // 说明文字统一用第二字体颜色（外观设置里可调），
+              // textHint 在浅色主题下太淡、几乎看不清。
+              style: TextStyle(fontSize: 12, color: colors.textSecondary),
             ),
           ],
           const SizedBox(height: AppSpacing.md),
@@ -699,7 +701,10 @@ class SettingRow extends StatelessWidget {
                   if (subtitle != null)
                     Text(
                       context.tr(subtitle!),
-                      style: TextStyle(fontSize: 12, color: colors.textHint),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: colors.textSecondary,
+                      ),
                     ),
                 ],
               ),
@@ -1148,7 +1153,7 @@ class _AppearanceContent extends ConsumerWidget {
             children: [
               Text(
                 context.tr(themeName),
-                style: TextStyle(fontSize: 13, color: colors.textHint),
+                style: TextStyle(fontSize: 13, color: colors.textSecondary),
               ),
               const SizedBox(width: 4),
               Icon(Icons.chevron_right, size: 18, color: colors.textHint),
@@ -1272,7 +1277,7 @@ class _AppearanceContent extends ConsumerWidget {
             children: [
               Text(
                 context.tr(fontName),
-                style: TextStyle(fontSize: 13, color: colors.textHint),
+                style: TextStyle(fontSize: 13, color: colors.textSecondary),
               ),
               const SizedBox(width: 4),
               Icon(Icons.chevron_right, size: 18, color: colors.textHint),
@@ -2041,7 +2046,10 @@ class _AppearanceContent extends ConsumerWidget {
                     const SizedBox(height: AppSpacing.sm),
                     Text(
                       context.tr('导入字体文件（可多选），选择其中之一作为应用字体'),
-                      style: TextStyle(fontSize: 12, color: colors.textHint),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: colors.textSecondary,
+                      ),
                     ),
                     const SizedBox(height: AppSpacing.md),
                     // 内置字体（随安装包提供，无需导入）
@@ -2167,7 +2175,7 @@ class _AppearanceContent extends ConsumerWidget {
       ),
       subtitle: Text(
         subtitle,
-        style: TextStyle(fontSize: 11, color: colors.textHint),
+        style: TextStyle(fontSize: 11, color: colors.textSecondary),
       ),
       trailing: onDelete == null
           ? null
@@ -2328,7 +2336,10 @@ class _SettingSlider extends StatelessWidget {
                     if (subtitle != null)
                       Text(
                         context.tr(subtitle!),
-                        style: TextStyle(fontSize: 12, color: colors.textHint),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: colors.textSecondary,
+                        ),
                       ),
                   ],
                 ),
@@ -2793,7 +2804,7 @@ class _PlaybackContent extends ConsumerWidget {
             children: [
               Text(
                 '$downloadTimeout 秒',
-                style: TextStyle(fontSize: 13, color: colors.textHint),
+                style: TextStyle(fontSize: 13, color: colors.textSecondary),
               ),
               const SizedBox(width: 4),
               Icon(Icons.chevron_right, size: 18, color: colors.textHint),

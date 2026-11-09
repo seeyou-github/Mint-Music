@@ -308,7 +308,9 @@ class SongListItem extends ConsumerWidget {
             Expanded(
               child: Text(
                 song.artist,
-                style: TextStyle(fontSize: 12, color: colors.textHint),
+                // 歌手名属于「次要但必须看清」的文字：用第二字体颜色，
+                // textHint 在浅色主题下几乎糊在背景里。
+                style: TextStyle(fontSize: 12, color: colors.textSecondary),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
@@ -604,7 +606,7 @@ class SongListItem extends ConsumerWidget {
       padding: EdgeInsets.symmetric(horizontal: padded ? AppSpacing.sm : 0),
       child: Text(
         song.displayDuration,
-        style: TextStyle(fontSize: 12, color: colors.textHint),
+        style: TextStyle(fontSize: 12, color: colors.textSecondary),
       ),
     );
   }

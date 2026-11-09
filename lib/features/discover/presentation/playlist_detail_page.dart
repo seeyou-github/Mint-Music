@@ -599,7 +599,10 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
                       const SizedBox(width: AppSpacing.sm),
                       Text(
                         context.tr('${playlist.songCount}首歌曲'),
-                        style: TextStyle(fontSize: 11, color: colors.textHint),
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: colors.textSecondary,
+                        ),
                       ),
                     ],
                   ),

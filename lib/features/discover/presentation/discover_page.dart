@@ -891,7 +891,8 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
                 context.tr('搜索音乐、歌手...'),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: TextStyle(color: colors.textHint, fontSize: 14),
+                // 占位文字用第二字体颜色：textHint 在浅色主题下几乎看不见。
+                style: TextStyle(color: colors.textSecondary, fontSize: 14),
               ),
             ),
           ],
@@ -1941,7 +1942,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
                   const SizedBox(height: 2),
                   Text(
                     context.tr('${playlist.songCount}首歌曲'),
-                    style: TextStyle(fontSize: 11, color: colors.textHint),
+                    style: TextStyle(fontSize: 11, color: colors.textSecondary),
                   ),
                 ],
               ),

@@ -323,7 +323,7 @@ class LibraryPage extends ConsumerWidget {
                   const SizedBox(height: 2),
                   Text(
                     context.tr('${playlist.songCount}首歌曲'),
-                    style: TextStyle(fontSize: 11, color: colors.textHint),
+                    style: TextStyle(fontSize: 11, color: colors.textSecondary),
                   ),
                   const SizedBox(height: AppSpacing.sm),
                   Row(
@@ -352,14 +352,14 @@ class LibraryPage extends ConsumerWidget {
                       _PlaylistAction(
                         icon: Icons.edit,
                         label: context.tr('编辑'),
-                        color: colors.textHint,
+                        color: colors.textSecondary,
                         onTap: () =>
                             _showEditDialog(context, colors, ref, playlist),
                       ),
                       _PlaylistAction(
                         icon: Icons.delete,
                         label: context.tr('删除'),
-                        color: colors.textHint,
+                        color: colors.textSecondary,
                         onTap: () =>
                             _confirmDelete(context, colors, ref, playlist),
                       ),

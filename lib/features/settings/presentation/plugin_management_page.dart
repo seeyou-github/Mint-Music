@@ -752,11 +752,7 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
         children: [
           Row(
             children: [
-              Icon(
-                Icons.play_circle_outline,
-                size: 16,
-                color: colors.textHint,
-              ),
+              Icon(Icons.play_circle_outline, size: 16, color: colors.textHint),
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
@@ -882,11 +878,7 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
             index: index,
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-              child: Icon(
-                Icons.drag_handle,
-                size: 16,
-                color: colors.textHint,
-              ),
+              child: Icon(Icons.drag_handle, size: 16, color: colors.textHint),
             ),
           ),
         ],
@@ -1153,7 +1145,10 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
                       const SizedBox(height: 2),
                       Text(
                         '${plugin.author} · v${plugin.version}',
-                        style: TextStyle(fontSize: 12, color: colors.textHint),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: colors.textSecondary,
+                        ),
                       ),
                     ],
                   ),
@@ -1248,7 +1243,7 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
                     ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 11, color: colors.textHint),
+                    style: TextStyle(fontSize: 11, color: colors.textSecondary),
                   ),
                 ),
                 // 每个插件都提供「更新」：已经检测到新版本时直接弹更新框，
@@ -2318,9 +2313,7 @@ class _PluginCredentialSectionState
     if (!mounted) return;
     setState(() {
       values.forEach((key, value) {
-        _controllers
-                .putIfAbsent(key, () => TextEditingController())
-                .text =
+        _controllers.putIfAbsent(key, () => TextEditingController()).text =
             value;
       });
       _loading = false;
@@ -2364,9 +2357,7 @@ class _PluginCredentialSectionState
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            values.isEmpty
-                ? context.tr('已清空凭据')
-                : context.tr('凭据已保存，并已重新注入插件'),
+            values.isEmpty ? context.tr('已清空凭据') : context.tr('凭据已保存，并已重新注入插件'),
           ),
           behavior: SnackBarBehavior.floating,
         ),
@@ -2497,10 +2488,7 @@ class _PluginCredentialSectionState
                   labelStyle: TextStyle(fontSize: 12, color: colors.textHint),
                   helperText: spec.hint,
                   helperMaxLines: 2,
-                  helperStyle: TextStyle(
-                    fontSize: 10,
-                    color: colors.textHint,
-                  ),
+                  helperStyle: TextStyle(fontSize: 10, color: colors.textHint),
                   border: const OutlineInputBorder(),
                 ),
               ),
@@ -2566,7 +2554,11 @@ class _ExpandableDescriptionState extends State<_ExpandableDescription> {
   /// （设置里可以换全局字体，直接写 TextStyle 量出来的行数会和显示不一致）。
   TextStyle _styleOf(BuildContext context) =>
       DefaultTextStyle.of(context).style.merge(
-        TextStyle(fontSize: 12, height: 1.35, color: widget.colors.textHint),
+        TextStyle(
+          fontSize: 12,
+          height: 1.35,
+          color: widget.colors.textSecondary,
+        ),
       );
 
   /// 折叠状态下是否会被截断（只有被截断才需要展开按钮）。

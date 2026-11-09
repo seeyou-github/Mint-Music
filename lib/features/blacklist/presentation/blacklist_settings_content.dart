@@ -57,7 +57,7 @@ class _BlacklistSettingsContentState
               decoration: InputDecoration(
                 isDense: true,
                 hintText: context.tr('搜索黑名单'),
-                hintStyle: TextStyle(fontSize: 14, color: colors.textHint),
+                hintStyle: TextStyle(fontSize: 14, color: colors.textSecondary),
                 prefixIcon: Icon(
                   Icons.search,
                   size: 18,
@@ -262,7 +262,7 @@ class _BlacklistSettingsContentState
       child: Center(
         child: Text(
           text,
-          style: TextStyle(fontSize: 13, color: colors.textHint),
+          style: TextStyle(fontSize: 13, color: colors.textSecondary),
         ),
       ),
     );

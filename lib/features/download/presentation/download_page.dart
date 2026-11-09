@@ -228,7 +228,9 @@ class DownloadPage extends ConsumerWidget {
     bool disabled,
   ) {
     return Opacity(
-      opacity: disabled ? 0.45 : 1,
+      // 没有下载任务时按钮确实不可点，但 45% 会把「清除」压得几乎看不见
+      // （浅色主题下尤其明显），这里只淡一档，仍能读出文字。
+      opacity: disabled ? 0.65 : 1,
       child: GestureDetector(
         onTap: disabled ? null : () => _confirmClear(context, ref, colors),
         child: Container(
@@ -307,7 +309,7 @@ class DownloadPage extends ConsumerWidget {
           const SizedBox(height: AppSpacing.md),
           Text(
             context.tr('暂无下载任务'),
-            style: TextStyle(fontSize: 14, color: colors.textHint),
+            style: TextStyle(fontSize: 14, color: colors.textSecondary),
           ),
         ],
       ),
