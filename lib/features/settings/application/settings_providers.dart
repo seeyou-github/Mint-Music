@@ -525,12 +525,13 @@ final fullScreenBackgroundModeProvider = Provider<FullScreenBackgroundMode>(
 /// 应用版本号：Windows 上显示「编译时间」，格式 `年.月日.时分`（如 `2026.1110.0106`）。
 ///
 /// 取值顺序：
-/// 1. **exe 的版本资源**（`FileVersion`）：构建时由 `tool/win_build_stamp.dart`
-///    按北京时间写进 `Runner.rc`，解压、拷贝、改名都不会变，是判断「这个 exe
-///    是哪次编译出来的」最可靠的来源；
-/// 2. 读不到时退回产物（exe / `app.so` / `kernel_blob.bin`）的修改时间，并
-///    **统一换算成北京时间**再显示 —— CI 在 UTC 上构建、zip 解压时按本地时间
-///    解释，直接用本地时间会偏 8 小时；
+/// 1. **exe 的版本资源**（`FileVersion`）：构建时由 CMake 生成的
+///    `build_stamp.h`（北京时间，见 `tool/win_build_stamp.dart`）写进
+///    `Runner.rc`，解压、拷贝、改名都不会变，是判断「这个 exe 是哪次编译
+///    出来的」最可靠的来源；
+/// 2. 读不到时退回产物（exe / `app.so` / `kernel_blob.bin`）的修改时间，
+///    直接显示（与属性页一致：zip 解压会整体偏 8 小时，这里无法可靠还原，
+///    只作兜底）；
 /// 3. 都不行（或非 Windows）才用 [AppConstants.appVersion]。
 final appVersionProvider = FutureProvider<String>((ref) async {
   if (Platform.isWindows) {
@@ -559,12 +560,13 @@ final appVersionProvider = FutureProvider<String>((ref) async {
         if (latest == null || modified.isAfter(latest)) latest = modified;
       }
       if (latest != null) {
-        // 文件时间是「本机时区」的时刻，先归一成 UTC 再加 8 小时，得到的是
-        // 北京时间，和构建机 / 运行机所在时区无关。
-        final beijing = latest.toUtc().add(const Duration(hours: 8));
+        // 兜底值：直接用文件时间，和资源管理器属性页看到的保持一致。
+        // zip 解压会把时间戳整体偏 8 小时（打包机按 UTC 记录、解压按本地时间
+        // 解释），这里没法可靠还原，所以**真实来源始终是 exe 的版本资源**，
+        // 只有它读不到（旧版 exe / 手工替换）时才会显示这个。
         String two(int value) => value.toString().padLeft(2, '0');
-        return '${beijing.year}.${two(beijing.month)}${two(beijing.day)}.'
-            '${two(beijing.hour)}${two(beijing.minute)}';
+        return '${latest.year}.${two(latest.month)}${two(latest.day)}.'
+            '${two(latest.hour)}${two(latest.minute)}';
       }
     } catch (_) {
       // 读不到文件信息就退回静态版本号。
