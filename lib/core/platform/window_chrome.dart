@@ -55,7 +55,9 @@ typedef _DwmSetWindowAttributeDart = int Function(int, int, Pointer<Void>, int);
 ///     样式把非客户区整块重画回来（四周冒出一圈老式 Windows 边框），必须拦掉；
 /// - [startDrag] / [minimize] / [toggleMaximize] / [close]：给自绘按钮和
 ///   拖动区域用；
-/// - [setDarkFrame]：深色背景时把窗口边框压暗，别在深色界面外面留一圈亮边。
+/// - [setDarkFrame]：深色背景时把窗口边框压暗，别在深色界面外面留一圈亮边；
+/// - [disableTransitions]：关掉最大化 / 还原的 DWM 过渡动画。无边框窗口做这个
+///   动画时缩放的是整块界面位图，中间帧比例对不上，看起来就是界面抖动。
 ///
 /// 所有调用失败都静默忽略（拿不到句柄、找不到函数都只是「不生效」），
 /// 保证不影响窗口本身。
@@ -142,6 +144,7 @@ class WindowChrome {
     if (newStyle == style) {
       // 已经是无标题栏形态（重复调用）。
       _customTitleBarEnabled = true;
+      disableTransitions();
       return;
     }
 
@@ -161,6 +164,47 @@ class WindowChrome {
           _swpFrameChanged,
     );
     _customTitleBarEnabled = true;
+    // 无边框窗口的最大化 / 还原动画会把整块客户区位图缩放平移，看起来像
+    // 界面在抖，直接关掉（见 [disableTransitions]）。
+    disableTransitions();
+  }
+
+  /// `DWMWA_TRANSITIONS_FORCEDISABLED`：关掉窗口过渡动画。
+  static const int _attrTransitionsForceDisabled = 3;
+
+  /// 关掉最大化 / 还原 / 最小化的 DWM 过渡动画。
+  ///
+  /// 有标题栏的窗口做最大化动画时，DWM 缩放的是「边框 + 标题栏 + 客户区
+  /// 位图」，客户区占的比例小、内容也是旧的，所以看不出问题。
+  ///
+  /// 去掉 `WS_CAPTION` 之后客户区铺满整个窗口，DWM 缩放的就变成了**整块界面
+  /// 位图**：它把「已经按最终尺寸 1827×1080 重排好的新内容」缩到旧窗口大小、
+  /// 再平滑放大回去。中间那些帧里内容比例和窗口比例对不上，视觉上就是
+  /// 界面控件先碎一下、左右错位、快速放大缩小，最后才「啪」地到位 —— 也就是
+  /// 用户看到的「最大化 / 最小化过程中抖动」。
+  ///
+  /// 这里把过渡动画关掉：最大化 / 还原瞬间完成，不再有中间帧。
+  /// 老系统（Win7 之前）不支持这个属性，调用失败只当作没生效。
+  static void disableTransitions() {
+    if (!isSupported || _failed) return;
+    _ensureBindings();
+    final hwnd = _windowHandle();
+    if (hwnd == 0) return;
+    final setWindowAttribute = _setWindowAttribute;
+    if (setWindowAttribute == null) return;
+
+    final buffer = calloc<Int32>();
+    try {
+      buffer.value = 1;
+      setWindowAttribute(
+        hwnd,
+        _attrTransitionsForceDisabled,
+        buffer.cast<Void>(),
+        sizeOf<Int32>(),
+      );
+    } finally {
+      calloc.free(buffer);
+    }
   }
 
   /// 窗口边框 / 阴影跟随深浅色（[dark] 为 true 时用深色边框）。
