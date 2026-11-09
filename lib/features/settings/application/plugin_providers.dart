@@ -106,13 +106,21 @@ class PluginsNotifier extends AsyncNotifier<List<PluginInfo>> {
   }
 
   void _afterPluginInstalled() {
-    // 安装完成后刷新音源与插件列表：pluginInitializedProvider 重建会重新
-    // 初始化**全部**插件引擎（每个都要建 JS 引擎并评估适配器 + 插件代码），
-    // 全在 UI 主线程上。立即刷新会和添加插件弹框的关闭动画撞在一起导致
-    // 掉帧，等动画播完再刷新。
+    // 安装时 `selectAndAddPlugin` 已经把新插件加载好并注册给了 PluginService
+    // （音源、图标、元数据都写完了），这里**不需要**再让
+    // `pluginInitializedProvider` 重建一次：那一轮会把所有插件的 JS 引擎
+    // 先 dispose 再重建，QuickJS 是同步 FFI、全在 UI 主线程上跑，连着装两个
+    // 插件时会明显卡住界面；两轮撞一起还会互相释放对方的引擎，插件加载停在
+    // 半路，发现页就一直取不到音源、点不动。
+    //
+    // 只刷新「插件列表 + 音源列表」就够了：新插件的音源默认启用（persist 的
+    // 关闭记录里没有它），列表重新读一遍即可。
     Future.delayed(const Duration(milliseconds: 350), () {
       try {
-        ref.invalidate(pluginInitializedProvider);
+        // 新音源出现后，之前按旧音源集合缓存的歌单 / 搜索结果直接丢弃。
+        ref.read(musicSourceManagerProvider).clearAllCaches();
+        ref.invalidate(pluginSourceStateProvider);
+        ref.invalidate(pluginSupportedSourcesProvider);
         ref.invalidateSelf();
       } catch (_) {
         // notifier 已被其它操作重建（如连续安装）：新实例会自行读取

@@ -129,6 +129,18 @@ class PluginService {
   final Map<String, String> _pluginTypes = {};
   List<String> _pluginOrder = [];
 
+  /// 正在跑的那一轮插件初始化（并发调用共用同一个 Future）。
+  Future<void>? _initializing;
+
+  /// 初始化进行中又有新的初始化请求（例如连续安装两个插件）。
+  ///
+  /// 不并发跑第二轮：`initializePlugins` 开头会 `_unloadAllPlugins()`，两轮
+  /// 撞在一起时后一轮会把前一轮正在用的 JS 引擎 dispose 掉，插件加载到一半
+  /// 就卡死，`pluginInitializedProvider` 永远是 loading，界面（发现页）跟着
+  /// 一直取不到音源、点不动。这里改成排队，等这一轮走完再用最新插件列表跑
+  /// 一轮。
+  bool _reinitializeQueued = false;
+
   /// 登录态发生变化时广播（插件加载后的自动检测、用户点「检测登录态」）。
   ///
   /// UI 靠它触发重建——登录态存在宿主里，不是 Riverpod 状态。
@@ -609,6 +621,9 @@ class PluginService {
 
       final pluginId = DateTime.now().millisecondsSinceEpoch.toRadixString(16);
       _pluginTypes[pluginId] = type;
+      // 新插件追加到顺序表末尾：`enabledPlugins` 按它排，不追加的话新装的
+      // 插件这一轮只能靠兜底排到最后，音源列表顺序会和重启后不一致。
+      if (!_pluginOrder.contains(pluginId)) _pluginOrder.add(pluginId);
       final safeName = pluginName.replaceAll(RegExp(r'[^\w\d-]'), '_');
       final pluginsDir = await _getPluginsDir();
       final destPath = '$pluginsDir/${pluginId}_$safeName';
@@ -678,7 +693,28 @@ class PluginService {
     }
   }
 
-  Future<void> initializePlugins() async {
+  /// 初始化（或重新初始化）全部插件。
+  ///
+  /// 同一时刻只允许一轮在跑：调用进来时若已经有一轮在进行，只登记一次
+  /// 「需要再来一轮」，等当前这一轮结束后再完整重跑，读到的是最新插件列表。
+  Future<void> initializePlugins() {
+    final running = _initializing;
+    if (running != null) {
+      _reinitializeQueued = true;
+      return running;
+    }
+    final future = _initializePluginsOnce();
+    _initializing = future;
+    return future.whenComplete(() async {
+      if (identical(_initializing, future)) _initializing = null;
+      if (_reinitializeQueued) {
+        _reinitializeQueued = false;
+        await initializePlugins();
+      }
+    });
+  }
+
+  Future<void> _initializePluginsOnce() async {
     final plugins = await _normalizeEnabledPlugins(await loadPlugins());
     _pluginOrder = plugins.map((plugin) => plugin.id).toList();
     _pluginTypes
@@ -825,10 +861,7 @@ class PluginService {
     return match?.group(1)?.trim();
   }
 
-  bool _sameSourceDeclarations(
-    List<PluginSource> a,
-    List<PluginSource> b,
-  ) {
+  bool _sameSourceDeclarations(List<PluginSource> a, List<PluginSource> b) {
     if (a.length != b.length) return false;
     for (var i = 0; i < a.length; i++) {
       final left = a[i];
