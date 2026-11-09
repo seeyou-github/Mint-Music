@@ -44,18 +44,17 @@ typedef _DwmSetWindowAttributeDart = int Function(int, int, Pointer<Void>, int);
 ///   `WS_SYSMENU` / `WS_MINIMIZEBOX` / `WS_MAXIMIZEBOX`，让 Alt+F4、任务栏
 ///   菜单、Aero Snap 都照常），只触发 `SWP_FRAMECHANGED`；
 ///   配合原生侧 `windows/runner/win32_window.cpp`：
-///   - `WM_NCCALCSIZE`：把系统标题栏压到 0/1px、四边留 8px 缩放边框，
-///     最大化时把客户区扩到工作区（照搬 window_manager 的 hidden 方案）；
-///   - `DwmExtendFrameIntoClientArea`：让 DWM 接管并绘制那圈边框，避免
-///     零非客户区由空画刷绘制出黑/白线；
+///   - `WM_NCCALCSIZE`：客户区 = 整个窗口，最大化时扩到工作区
+///     （照搬 window_manager 的 `is_frameless_` 分支）；不留非客户区，
+///     所以不会出现那圈没人绘制的 8px 白边；
+///   - `DwmExtendFrameIntoClientArea`：配合上面的客户区规则去掉系统边框，
+///     窗口阴影保留；
+///   - `WM_ERASEBKGND`：用应用底色填满客户区，启动空窗 / 过渡期不闪白；
 ///   - `WM_NCHITTEST` + Flutter 视图的边缘让位：把边角缩放区域还给系统；
-///   - `WM_NCACTIVATE` / `WM_NCPAINT`：窗口失焦 / 重新获得焦点时，系统会按默认
-///     样式把非客户区整块重画回来（四周冒出一圈老式 Windows 边框），必须拦掉；
 ///
 ///   注意：**不能删 `WS_CAPTION`**。删了之后 DWM 把窗口当无边框窗口做
 ///   最大化 / 最小化动画，会出现「先移到左上角 → 回弹 → 再最大化」的中间帧
-///   （窗口抖动）。PiliPlus / window_manager 的 `TitleBarStyle.hidden` 同样
-///   保留样式位，动画正常。
+///   （窗口抖动）。window_manager 同样保留样式位，只让客户区铺满整窗。
 /// - [startDrag] / [minimize] / [toggleMaximize] / [close]：给自绘按钮和
 ///   拖动区域用；
 /// - [setDarkFrame]：深色背景时把窗口边框压暗，别在深色界面外面留一圈亮边。
@@ -130,13 +129,12 @@ class WindowChrome {
   ///
   /// **保留 `WS_CAPTION`**：窗口创建时就是 `WS_OVERLAPPEDWINDOW`，这里只补齐
   /// 需要的样式位、触发 `SWP_FRAMECHANGED`，绝不再把 `WS_CAPTION` 去掉。
-  /// 隐藏系统标题栏交给原生侧（`WM_NCCALCSIZE` 把标题栏压到 0/1px +
-  /// `DwmExtendFrameIntoClientArea` 让 DWM 接管边框）。
+  /// 隐藏系统标题栏交给原生侧（`WM_NCCALCSIZE` 让客户区铺满整窗 +
+  /// `DwmExtendFrameIntoClientArea` 去掉系统边框）。
   ///
   /// 原因：删掉 `WS_CAPTION` 会让 DWM 把窗口当「无边框窗口」做最大化/最小化
   /// 动画，出现「先移到左上角 → 回弹到原位置 → 再最大化」的中间帧
-  /// （即窗口抖动）。PiliPlus / window_manager 的 `TitleBarStyle.hidden`
-  /// 就是这样保留样式位的，最大化动画正常。
+  /// （即窗口抖动）。window_manager 也是这样保留样式位的，最大化动画正常。
   static void enableCustomTitleBar() {
     if (!isSupported || _failed) return;
     _ensureBindings();

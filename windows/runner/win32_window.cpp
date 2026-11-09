@@ -30,12 +30,11 @@ constexpr const wchar_t kGetPreferredBrightnessRegValue[] = L"AppsUseLightTheme"
 // The number of Win32Window objects that currently exist.
 static int g_active_window_count = 0;
 
-/// 窗口类的启动背景画刷。
+/// 窗口背景画刷：启动空窗期 / 最大化过渡时父窗口露出的区域用它填充。
 ///
-/// WM_NCCALCSIZE 会在四边留 8px 给系统做缩放边框，这圈在 DWM 接管之前
-/// 是由窗口类画刷绘制的。以前 `hbrBackground = 0`，系统就用默认白色，
-/// 启动后窗口四周一圈白边；最小化 / 最大化触发重算后才消失。
-/// PiliPlus 用 `g_startup_background_brush` 解决了同样的问题。
+/// 以前 `hbrBackground = 0`，系统用默认白色，窗口四周或空窗时会闪白。
+/// PiliPlus 用 `g_startup_background_brush` + `WM_ERASEBKGND` 解决，
+/// 这里同样在 `WM_ERASEBKGND` 里用它填满客户区。
 static HBRUSH g_startup_background_brush = nullptr;
 
 HBRUSH EnsureStartupBackgroundBrush() {
@@ -67,10 +66,12 @@ int Scale(int source, double scale_factor) {
 
 // 本项目的窗口栏始终由 Flutter 自绘（WindowsTitleBar）。
 //
-// 注意：**保留 WS_CAPTION**（创建时就是 WS_OVERLAPPEDWINDOW），只靠
-// WM_NCCALCSIZE 把系统标题栏压到 0/1px、并用 DwmExtendFrameIntoClientArea
-// 让 DWM 接管边框。这样 DWM 仍把窗口当「有边框窗口」做最大化 / 最小化动画，
-// 不会出现无边框窗口那种「先移到左上角、回弹、再放大」的中间帧。
+// 注意：**保留 WS_CAPTION**（创建时就是 WS_OVERLAPPEDWINDOW），同时让
+// WM_NCCALCSIZE 返回「客户区 = 整个窗口」，再配合
+// DwmExtendFrameIntoClientArea 去掉系统边框。这样 DWM 仍把窗口当
+// 「有边框窗口」做最大化 / 最小化动画，不会出现无边框窗口那种
+// 「先移到左上角、回弹、再放大」的中间帧；又不会留下非客户区边框
+// （window_manager 的 is_frameless_ 分支就是这么做的）。
 // 所以这里不能用样式位判断，本项目恒为自绘模式。
 bool HasCustomTitleBar(HWND /*window*/) {
   return true;
@@ -97,24 +98,6 @@ void AdjustNcCalcSize(NCCALCSIZE_PARAMS* params) {
   params->rgrc[0].top -= top;
   params->rgrc[0].right += left;
   params->rgrc[0].bottom += top;
-}
-
-/// 系统是否为 Win11（build >= 22000）。
-///
-/// 参考实现里这个函数名与返回值是反的（Win10 返回 true），但**实际效果**是
-/// Win10 客户区完全铺满（top += 0）、Win11 留 1px。这里按相同效果写清楚：
-/// Win10 上留 0 才不会有顶部白线，Win11 留 1px 由 DWM 按主题色绘制。
-bool ShouldKeepTopBorder() {
-#ifdef _MSC_VER
-#pragma warning(push)
-#pragma warning(disable : 4996)  // GetVersion 已废弃，但这里只需要 build 号
-#endif
-  DWORD version = ::GetVersion();
-#ifdef _MSC_VER
-#pragma warning(pop)
-#endif
-  if (version >= 0x80000000) return false;
-  return static_cast<DWORD>(HIWORD(version)) >= 22000;
 }
 
 /// 自绘标题栏模式下窗口边缘的可缩放区域（逻辑像素）。
@@ -316,9 +299,9 @@ bool Win32Window::Create(const std::wstring& title,
 
 bool Win32Window::Show() {
   const bool shown = ShowWindow(window_handle_, SW_SHOWNORMAL);
-  // 窗口可见之后再让 DWM 接管一次边框：SetChildContent 里那次发生在窗口
-  // 显示之前，系统可能已经按默认画好了非客户区。这里重算一次，避免要等
-  // 用户第一次最小化 / 最大化，白边才消失。
+  // 窗口可见之后再触发一次 FRAMECHANGED：SetChildContent 里那次发生在窗口
+  // 显示之前，系统可能已经按默认样式画过一遍非客户区。这里重算一次，保证
+  // 首帧显示时就没有系统边框。
   MARGINS margins = {0, 0, 0, 0};
   ::DwmExtendFrameIntoClientArea(window_handle_, &margins);
   ::SetWindowPos(window_handle_, nullptr, 0, 0, 0, 0,
@@ -354,25 +337,20 @@ Win32Window::MessageHandler(HWND hwnd,
                             LPARAM const lparam) noexcept {
   switch (message) {
     case WM_NCCALCSIZE: {
-      // 完全照搬 window_manager 的 TitleBarStyle.hidden（PiliPlus 用的方案）：
-      // 保留 WS_CAPTION，只把系统标题栏压到 0/1px，四边留 8px 给系统做
-      // 缩放命中；最大化时把边界扩到工作区，内容才不会被屏幕边缘切掉。
-      // 这样 DWM 仍按「有边框窗口」做最大化 / 最小化动画，中间帧自然。
+      // 照搬 window_manager 的 is_frameless_ 分支：客户区 = 整个窗口，
+      // 不留非客户区。之前照抄的 TitleBarStyle.hidden 分支会在左/右/下
+      // 留 8px 非客户区给系统缩放命中；这圈没有任何一方负责绘制时就是
+      // 一圈白边（WM_NCPAINT 被拦掉，DWM 也不会替应用画），要等最大化
+      // 把客户区扩到工作区、环宽变 0 才消失。
+      //
+      // 本项目已经在客户区里自己还了缩放命中（ChildContentProc 的
+      // HTTRANSPARENT + 父窗口 WM_NCHITTEST），不需要这圈非客户区。
       if (wparam != TRUE || !HasCustomTitleBar(hwnd)) {
         break;
       }
-      auto params = reinterpret_cast<NCCALCSIZE_PARAMS*>(lparam);
       if (::IsZoomed(hwnd) && !::IsIconic(hwnd)) {
-        AdjustNcCalcSize(params);
-      } else {
-        // Win10 留 0（否则顶部会出现 1px 白线）；Win11 留 1px 由 DWM
-        // 按主题色绘制，配合 setDarkFrame 不会突兀。
-        params->rgrc[0].top += ShouldKeepTopBorder() ? 1 : 0;
-        // 下面三行是系统缩放边框，去掉后窗口就没法拖边缘缩放了
-        // （window_manager issue #483）。DWM 接管后这圈是透明的。
-        params->rgrc[0].right -= 8;
-        params->rgrc[0].bottom -= 8;
-        params->rgrc[0].left += 8;
+        // 最大化时把边界扩到工作区，内容才不会被屏幕边缘切掉。
+        AdjustNcCalcSize(reinterpret_cast<NCCALCSIZE_PARAMS*>(lparam));
       }
       return 0;
     }
@@ -430,27 +408,16 @@ Win32Window::MessageHandler(HWND hwnd,
       break;
     }
 
-    case WM_NCACTIVATE: {
-      // 自绘标题栏模式下必须拦下来：窗口的激活状态一变（失焦 / 重新获得焦点，
-      // 或点了自绘标题栏触发 WM_NCLBUTTONDOWN），DefWindowProc 就会按系统默认
-      // 样式把非客户区整块重画回来 —— 表现为窗口四周突然冒出一圈老式 Windows
-      // 边框，连系统标题栏一起。
-      //
-      // 只拦 WM_NCPAINT 不够（实测它走的是另一条重绘路径），必须在这里直接
-      // 返回，不让 DefWindowProc 有机会去画。
-      if (HasCustomTitleBar(hwnd)) {
-        return TRUE;
+    case WM_ERASEBKGND: {
+      // 客户区铺满整窗之后，父窗口背景就是应用底色：启动空窗期、最大化 /
+      // 还原过渡时露出的部分都用这个画刷填，避免闪白（PiliPlus 同款做法）。
+      HBRUSH brush = EnsureStartupBackgroundBrush();
+      RECT rect{};
+      if (brush == nullptr || !::GetClientRect(hwnd, &rect)) {
+        break;
       }
-      break;
-    }
-
-    case WM_NCPAINT: {
-      // 自绘标题栏模式下没有非客户区，画什么都没有意义；交回 DefWindowProc
-      // 反而会按默认样式把边框画出来。
-      if (HasCustomTitleBar(hwnd)) {
-        return 0;
-      }
-      break;
+      ::FillRect(reinterpret_cast<HDC>(wparam), &rect, brush);
+      return 1;
     }
 
     case WM_DESTROY:
@@ -565,11 +532,10 @@ void Win32Window::SetChildContent(HWND content) {
     }
   }
 
-  // 保留 WS_CAPTION 的前提下隐藏系统标题栏：让 DWM 接管并绘制那圈边框，
-  // 再触发 SWP_FRAMECHANGED 按新的 WM_NCCALCSIZE 重算客户区。
-  // 对应 window_manager 的 SetTitleBarStyle(hidden)，也是 PiliPlus 的做法。
-  // 不这么做的话，零非客户区会由窗口类画刷（这里是 nullptr）绘制，顶部
-  // 出现黑/白线；做了之后 DWM 按主题色画，深色模式下看不见。
+  // 保留 WS_CAPTION 的前提下去掉系统边框：DwmExtendFrameIntoClientArea
+  // 配合上面的 WM_NCCALCSIZE（客户区 = 整个窗口）把边框收掉，再触发
+  // SWP_FRAMECHANGED 让系统按新规则重算客户区。对应 window_manager 的
+  // setAsFrameless()，也是 PiliPlus 的做法。
   MARGINS margins = {0, 0, 0, 0};
   ::DwmExtendFrameIntoClientArea(window_handle_, &margins);
   ::SetWindowPos(window_handle_, nullptr, 0, 0, 0, 0,
