@@ -1277,6 +1277,8 @@ class _LocalPlaylistDetailPageState
                       maxIndex: _sortedSongs.length,
                       isPlaying: isPlaying,
                       showPlayedTag: true,
+                      // 收藏的第三方歌单 / 专辑 / 作者不提供取消收藏入口。
+                      showFavoriteHeart: playlist.showsFavoriteHeart,
                       selectionMode: selecting,
                       selected: _selection.isSelected(song.id),
                       onSelectionToggle: (s) => _selection.toggle(s.id),

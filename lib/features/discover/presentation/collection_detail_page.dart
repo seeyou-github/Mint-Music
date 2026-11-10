@@ -706,6 +706,8 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
                 ),
                 isPlaying: currentSongId == song.id,
                 showPlayedTag: true,
+                // 专辑 / 作者是远端内容，列表里不显示收藏红心。
+                showFavoriteHeart: false,
                 onPlayTap: () async {
                   PlaybackContext.instance.set(
                     _isArtist

@@ -27,6 +27,21 @@ extension FavoritePlaylistX on Playlist {
     return null;
   }
 
+  /// 是否是用户自己创建 / 导入的歌单。
+  ///
+  /// 「我的收藏」、收藏的专辑 / 作者、收藏的远端歌单都不算。
+  bool get isUserCreated {
+    if (id == '__favorites__') return false;
+    if (favoriteType != null) return false;
+    return meta['discoverId'] == null;
+  }
+
+  /// 歌曲列表里是否显示收藏红心。
+  ///
+  /// 只有自己的内容（「我的收藏」、自建歌单）提供取消收藏入口；
+  /// 收藏的第三方歌单 / 专辑 / 作者是远端内容，列表中不显示红心。
+  bool get showsFavoriteHeart => id == '__favorites__' || isUserCreated;
+
   /// 去掉「专辑：」「作者：」前缀后的展示名称。
   String get displayName {
     for (final prefix in const ['专辑：', '作者：']) {

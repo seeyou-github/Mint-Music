@@ -763,6 +763,8 @@ class _ArtistUpdatePageState extends ConsumerState<ArtistUpdatePage> {
           index: index,
           maxIndex: page.songs.length,
           showPlayedTag: true,
+          // 收藏作者的更新列表属于远端内容，不显示收藏红心。
+          showFavoriteHeart: false,
           trailingBadge: isNew ? _buildNewTag(colors) : null,
           onPlayTap: () => _playSong(page, index),
           onMenuTap: () => SongActionSheet.show(

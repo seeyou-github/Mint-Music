@@ -57,6 +57,16 @@ final playlistsProvider =
       PlaylistsNotifier.new,
     );
 
+/// 「我的收藏」里的歌曲 id 集合：歌曲列表项据此显示收藏红心。
+final favoriteSongIdsProvider = Provider<Set<String>>((ref) {
+  final playlists = ref.watch(playlistsProvider).valueOrNull;
+  if (playlists == null) return const {};
+  final favorites = playlists
+      .where((playlist) => playlist.id == '__favorites__')
+      .firstOrNull;
+  return {for (final song in favorites?.songs ?? const <Song>[]) song.id};
+});
+
 class PlaylistsNotifier extends AsyncNotifier<List<Playlist>> {
   @override
   Future<List<Playlist>> build() async {

@@ -9,6 +9,7 @@ import '../../core/theme/app_spacing.dart';
 import '../../core/theme/theme_provider.dart';
 import '../../features/blacklist/application/blacklist_providers.dart';
 import '../../features/discover/presentation/song_parts_navigation.dart';
+import '../../features/library/application/playlist_providers.dart';
 import '../../features/player/application/play_progress_providers.dart';
 import '../../features/player/domain/models/song.dart';
 import '../../features/settings/application/settings_providers.dart';
@@ -55,6 +56,13 @@ class SongListItem extends ConsumerWidget {
   /// 只在搜索、歌单、专辑 / 作者、榜单等浏览类列表里打开；
   /// 下载管理等列表不需要这个标记。
   final bool showPlayedTag;
+
+  /// 是否在「已听 / 时长」左侧显示收藏红心。
+  ///
+  /// 红心只在歌曲已被收藏时出现，点击直接取消收藏；收藏的第三方歌单 /
+  /// 专辑 / 作者详情页会关掉它，避免从别人的内容里改自己的收藏。
+  final bool showFavoriteHeart;
+
   final VoidCallback? onTap;
   final VoidCallback? onPlayTap;
   final VoidCallback? onMenuTap;
@@ -97,6 +105,7 @@ class SongListItem extends ConsumerWidget {
     this.showDuration = true,
     this.showMenuButton = true,
     this.showPlayedTag = false,
+    this.showFavoriteHeart = true,
     this.onTap,
     this.onPlayTap,
     this.onMenuTap,
@@ -478,6 +487,9 @@ class SongListItem extends ConsumerWidget {
     final playedTag = showPlayedTag && !selectionMode
         ? _buildPlayedTag(colors, context, ref, compact: !narrow)
         : null;
+    final heart = showFavoriteHeart && !selectionMode
+        ? _buildFavoriteHeart(context, ref)
+        : null;
     final vipTag = _buildVipTag(colors, compact: !narrow);
     final partsTag = _buildPartsTag(colors, compact: !narrow);
     final duration = showDuration && !selectionMode
@@ -505,7 +517,7 @@ class SongListItem extends ConsumerWidget {
               ],
               Row(
                 mainAxisSize: MainAxisSize.min,
-                children: [playedTag, ?vipTag],
+                children: [?heart, playedTag, ?vipTag],
               ),
             ],
           ),
@@ -518,6 +530,7 @@ class SongListItem extends ConsumerWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         ?trailingBadge,
+        ?heart,
         ?playedTag,
         ?vipTag,
         ?partsTag,
@@ -558,6 +571,39 @@ class SongListItem extends ConsumerWidget {
             fontWeight: done ? FontWeight.w600 : FontWeight.w500,
             color: colors.primary,
           ),
+        ),
+      ),
+    );
+  }
+
+  /// 收藏红心：只在当前歌曲已收藏时出现，点击直接取消收藏。
+  ///
+  /// 用 select 只订阅「这一首是否在收藏里」，其它歌曲增删不会重建本行。
+  Widget? _buildFavoriteHeart(BuildContext context, WidgetRef ref) {
+    final favorited = ref.watch(
+      favoriteSongIdsProvider.select((ids) => ids.contains(song.id)),
+    );
+    if (!favorited) return null;
+    return Padding(
+      // 紧贴「已听 / 时长」左侧，但在窄屏两行布局里也要和下面的标签对齐。
+      padding: const EdgeInsets.only(right: AppSpacing.xs),
+      child: GestureDetector(
+        // 只负责取消收藏：吃掉点击，避免冒泡到整行的「播放」手势。
+        onTap: () {
+          ref
+              .read(playlistsProvider.notifier)
+              .removeSongFromPlaylist('__favorites__', song.id);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(context.tr('已取消收藏')),
+              duration: const Duration(seconds: 1),
+            ),
+          );
+        },
+        behavior: HitTestBehavior.opaque,
+        child: const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 2, vertical: 4),
+          child: Icon(Icons.favorite, size: 14, color: Colors.red),
         ),
       ),
     );

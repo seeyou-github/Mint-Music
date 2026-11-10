@@ -282,6 +282,16 @@ class LibraryPage extends ConsumerWidget {
                             ? const Color(0xFFB07CFF)
                             : const Color(0xFFD9B44A),
                       ),
+                    )
+                  else if (playlist.isUserCreated)
+                    // 用户自建歌单（不是「我的收藏」，也不是收藏来的内容）。
+                    Positioned(
+                      top: 6,
+                      right: 6,
+                      child: CoverBadge(
+                        label: context.tr('自建'),
+                        color: colors.primary,
+                      ),
                     ),
                 ],
               ),
