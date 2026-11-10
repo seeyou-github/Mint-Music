@@ -871,7 +871,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
   /// 比实心音源圆标小一圈才对得上。
   static const double _searchIconSize = 20;
 
-  /// 搜索框（Windows / 桌面）：圆角胶囊 + 放大镜 + 占位文字，点击进搜索页。
+  /// 搜索框（Windows / 桌面）：圆角胶囊 + 放大镜，点击进搜索页。
   ///
   /// Android 顶部横向空间不够摆它，那里用圆形图标按钮（见 [_buildHeader]）。
   Widget _buildSearchBar(BuildContext context, ThemeColors colors) {
@@ -883,19 +883,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
         // 与顶栏按钮统一：底色 + 轻阴影，不画描边。
         decoration: floatingButtonDecoration(colors),
         child: Row(
-          children: [
-            Icon(Icons.search, size: 18, color: colors.textHint),
-            const SizedBox(width: AppSpacing.sm),
-            Expanded(
-              child: Text(
-                context.tr('搜索音乐、歌手...'),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                // 占位文字用第二字体颜色：textHint 在浅色主题下几乎看不见。
-                style: TextStyle(color: colors.textSecondary, fontSize: 14),
-              ),
-            ),
-          ],
+          children: [Icon(Icons.search, size: 18, color: colors.textHint)],
         ),
       ),
     );
