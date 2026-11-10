@@ -205,6 +205,16 @@ class SettingsService {
   Future<void> setCoverGlowAnimation(bool v) =>
       _prefs.setBool(_coverGlowAnimationKey, v);
 
+  // -- 歌曲列表不显示封面 --
+  static const _songListHideCoverKey = 'song_list_hide_cover';
+
+  /// 歌曲列表是否不显示封面（默认关闭）。
+  ///
+  /// 打开后列表不再加载封面，避免纯文字列表也去请求网络图片。
+  bool getSongListHideCover() => _prefs.getBool(_songListHideCoverKey) ?? false;
+  Future<void> setSongListHideCover(bool v) =>
+      _prefs.setBool(_songListHideCoverKey, v);
+
   // -- 自定义背景渐变（「背景渐变 → 新增颜色」保存的三色渐变） --
   static const _backgroundGradientsLightKey = 'background_gradients_light';
   static const _backgroundGradientsDarkKey = 'background_gradients_dark';

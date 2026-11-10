@@ -5,6 +5,7 @@ import 'dart:async';
 
 import '../../../../core/l10n/l10n.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/theme/theme_provider.dart';
 import '../../../../core/utils/scroll_locate.dart';
 import '../../../../shared/widgets/music_cover_image.dart';
 import '../../../../shared/widgets/song_index_width.dart';
@@ -168,6 +169,8 @@ class _PlayQueueSheetContentState
     final blacklist = ref.watch(blacklistProvider);
     final queue = playbackState.queue;
     final currentIndex = playbackState.currentIndex;
+    // 设置里关掉封面后队列行也不显示封面，同时不再加载封面图片。
+    final hideCover = ref.watch(songListHideCoverProvider);
     return Container(
       decoration: BoxDecoration(
         color: AppColors.surface,
@@ -256,7 +259,7 @@ class _PlayQueueSheetContentState
                           return ListTile(
                             enabled: !blocked,
                             leading: SizedBox(
-                              width: indexWidth + 4 + 44,
+                              width: indexWidth + (hideCover ? 0 : 4 + 44),
                               child: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
@@ -283,33 +286,35 @@ class _PlayQueueSheetContentState
                                             ),
                                           ),
                                   ),
-                                  const SizedBox(width: 4),
-                                  // 封面：内嵌封面歌曲通过 MediaStore 提取
-                                  Container(
-                                    width: 44,
-                                    height: 44,
-                                    decoration: BoxDecoration(
-                                      borderRadius: BorderRadius.circular(8),
-                                      color: AppColors.surfaceVariant,
-                                    ),
-                                    child: ClipRRect(
-                                      borderRadius: BorderRadius.circular(8),
-                                      child: MusicCoverImage(
-                                        url: queueSong.coverUrl,
-                                        songId: queueSong.id,
-                                        filePath: queueSong.filePath,
-                                        mediaStoreId: queueSong.mediaStoreId,
-                                        fit: BoxFit.cover,
-                                        errorWidget: Icon(
-                                          Icons.music_note,
-                                          size: 20,
-                                          color: isCurrent
-                                              ? AppColors.primary
-                                              : AppColors.textHint,
+                                  if (!hideCover) ...[
+                                    const SizedBox(width: 4),
+                                    // 封面：内嵌封面歌曲通过 MediaStore 提取
+                                    Container(
+                                      width: 44,
+                                      height: 44,
+                                      decoration: BoxDecoration(
+                                        borderRadius: BorderRadius.circular(8),
+                                        color: AppColors.surfaceVariant,
+                                      ),
+                                      child: ClipRRect(
+                                        borderRadius: BorderRadius.circular(8),
+                                        child: MusicCoverImage(
+                                          url: queueSong.coverUrl,
+                                          songId: queueSong.id,
+                                          filePath: queueSong.filePath,
+                                          mediaStoreId: queueSong.mediaStoreId,
+                                          fit: BoxFit.cover,
+                                          errorWidget: Icon(
+                                            Icons.music_note,
+                                            size: 20,
+                                            color: isCurrent
+                                                ? AppColors.primary
+                                                : AppColors.textHint,
+                                          ),
                                         ),
                                       ),
                                     ),
-                                  ),
+                                  ],
                                 ],
                               ),
                             ),

@@ -199,6 +199,12 @@ final coverBackgroundEnabledProvider = StateProvider<bool>((ref) => true);
 /// 暂停播放或关闭开关时停在当前位置，不会跳回初始布局。
 final coverGlowAnimationEnabledProvider = StateProvider<bool>((ref) => false);
 
+/// 「歌曲列表不显示封面」开关（默认关闭）。
+///
+/// 打开后各处的歌曲列表不再构建封面控件，也就不会触发封面网络请求；
+/// 本地音乐页的本地歌曲列表、播放详情页以及播放栏 / 侧栏不受影响。
+final songListHideCoverProvider = StateProvider<bool>((ref) => false);
+
 /// 当前封面主色。
 ///
 /// core 层不该直接依赖播放器的取色器（那是 features 层），所以由 app 层在

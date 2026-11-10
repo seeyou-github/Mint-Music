@@ -660,6 +660,8 @@ final settingsInitProvider = FutureProvider<void>((ref) async {
       .getCoverBackground();
   ref.read(coverGlowAnimationEnabledProvider.notifier).state = svc
       .getCoverGlowAnimation();
+  ref.read(songListHideCoverProvider.notifier).state = svc
+      .getSongListHideCover();
   ref.read(customBackgroundGradientsLightProvider.notifier).state = svc
       .getCustomBackgroundGradientsLight();
   ref.read(customBackgroundGradientsDarkProvider.notifier).state = svc

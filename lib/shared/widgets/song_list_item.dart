@@ -135,6 +135,8 @@ class SongListItem extends ConsumerWidget {
         MediaQuery.orientationOf(context) == Orientation.portrait ||
         MediaQuery.sizeOf(context).width < 520;
     final blocked = ref.watch(blacklistProvider).isBlocked(song);
+    // 设置里关掉封面后不构建封面控件，也就不再触发封面加载。
+    final hideCover = ref.watch(songListHideCoverProvider);
     // 行尾是不是「更多」按钮（自定义 trailing / 多选 / 关掉菜单时都不是）。
     final hasMenuButton = trailing == null && showMenuButton && !selectionMode;
     final effectiveTap = selectionMode
@@ -182,7 +184,7 @@ class SongListItem extends ConsumerWidget {
                     selectionMode
                         ? _buildCheckbox(colors, indexColumnWidth(context))
                         : _buildIndex(colors, indexColumnWidth(context)),
-                  if (showCover) ...[
+                  if (showCover && !hideCover) ...[
                     const SizedBox(width: AppSpacing.sm),
                     _buildCover(colors, ref),
                   ],

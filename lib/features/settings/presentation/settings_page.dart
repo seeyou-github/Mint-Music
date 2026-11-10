@@ -1123,6 +1123,8 @@ class _AppearanceContent extends ConsumerWidget {
     final coverBackground = ref.watch(coverBackgroundEnabledProvider);
     // 「播放歌曲时动态光晕」开关（默认关闭）。
     final glowAnimation = ref.watch(coverGlowAnimationEnabledProvider);
+    // 「歌曲列表不显示封面」开关（默认关闭）。
+    final songListHideCover = ref.watch(songListHideCoverProvider);
 
     /// 背景渐变行：右侧是当前渐变的预览条，点开可以配置 1~3 个颜色。
     Widget buildBackgroundGradientRow() {
@@ -1329,6 +1331,25 @@ class _AppearanceContent extends ConsumerWidget {
           ),
           colors: colors,
           onTap: () => _showAppFontSheet(context, colors),
+        ),
+        SettingDivider(colors: colors),
+        // 纯文字列表更清爽：关掉后列表不再加载封面，只有本地音乐页例外。
+        SettingRow(
+          icon: Icons.hide_image_outlined,
+          title: '歌曲列表不显示封面',
+          subtitle: '除本地音乐页外，歌曲列表不再加载封面图片',
+          trailing: Switch(
+            value: songListHideCover,
+            onChanged: (v) => _persistBool(
+              context,
+              songListHideCoverProvider,
+              v,
+              (s) => s.setSongListHideCover(v),
+            ),
+            activeTrackColor: colors.primary.withValues(alpha: 0.3),
+            activeThumbColor: colors.primary,
+          ),
+          colors: colors,
         ),
       ],
     );

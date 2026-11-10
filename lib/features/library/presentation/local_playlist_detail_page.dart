@@ -1131,6 +1131,7 @@ class _LocalPlaylistDetailPageState
       );
     }
 
+    final hideCover = ref.watch(songListHideCoverProvider);
     return ReorderableListView.builder(
       // 预留迷你播放器高度（56px + 底部 20px 间距），保证最后一首歌曲
       // 能滚动到迷你播放器上方而不被遮挡。
@@ -1162,16 +1163,18 @@ class _LocalPlaylistDetailPageState
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(Icons.drag_handle, size: 20, color: colors.textHint),
-              const SizedBox(width: AppSpacing.xs),
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: colors.surfaceVariant,
-                  borderRadius: BorderRadius.circular(AppRadius.sm),
+              if (!hideCover) ...[
+                const SizedBox(width: AppSpacing.xs),
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: colors.surfaceVariant,
+                    borderRadius: BorderRadius.circular(AppRadius.sm),
+                  ),
+                  child: _buildSongCover(colors, song),
                 ),
-                child: _buildSongCover(colors, song),
-              ),
+              ],
             ],
           ),
           title: Text(

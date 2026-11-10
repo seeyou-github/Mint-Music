@@ -579,6 +579,7 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
 
   /// 候选歌曲：横向卡片，选中项用主色描边。
   Widget _buildResults(ThemeColors colors) {
+    final hideCover = ref.watch(songListHideCoverProvider);
     if (_searching && _results.isEmpty) {
       return const SizedBox(height: 12);
     }
@@ -623,25 +624,27 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
                 ),
                 child: Row(
                   children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(AppRadius.sm),
-                      child: SizedBox(
-                        width: 40,
-                        height: 40,
-                        child: MusicCoverImage(
-                          url: song.coverUrl,
-                          songId: song.id,
-                          mediaStoreId: song.mediaStoreId,
-                          fit: BoxFit.cover,
-                          errorWidget: Icon(
-                            Icons.music_note,
-                            size: 18,
-                            color: colors.textHint,
+                    if (!hideCover) ...[
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(AppRadius.sm),
+                        child: SizedBox(
+                          width: 40,
+                          height: 40,
+                          child: MusicCoverImage(
+                            url: song.coverUrl,
+                            songId: song.id,
+                            mediaStoreId: song.mediaStoreId,
+                            fit: BoxFit.cover,
+                            errorWidget: Icon(
+                              Icons.music_note,
+                              size: 18,
+                              color: colors.textHint,
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                    const SizedBox(width: AppSpacing.sm),
+                      const SizedBox(width: AppSpacing.sm),
+                    ],
                     Expanded(
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
