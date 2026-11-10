@@ -13,6 +13,7 @@ import '../../../core/platform/app_paths.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
+import '../application/appearance_providers.dart';
 import '../application/settings_providers.dart';
 import '../data/settings_service.dart';
 import 'settings_page.dart';
@@ -54,6 +55,9 @@ class _BlurBackgroundPageState extends ConsumerState<BlurBackgroundPage> {
       if (!mounted) return;
       ref.read(blurBackgroundImageNameProvider.notifier).state = name;
       ref.invalidate(blurBackgroundImagePathProvider);
+      // 文件名可能没变（只是换了一张同扩展名的图），路径相同不会触发重新
+      // 取色，这里显式让「照片主色」也重算一遍。
+      ref.invalidate(blurBackgroundTintProvider);
       await _persist((svc) => svc.setBlurBackgroundImage(name));
     } catch (e) {
       debugPrint('[BlurBackground] 选择背景图失败: $e');
@@ -74,6 +78,7 @@ class _BlurBackgroundPageState extends ConsumerState<BlurBackgroundPage> {
     if (!mounted) return;
     ref.read(blurBackgroundImageNameProvider.notifier).state = '';
     ref.invalidate(blurBackgroundImagePathProvider);
+    ref.invalidate(blurBackgroundTintProvider);
     await _persist((svc) => svc.setBlurBackgroundImage(''));
   }
 

@@ -25,6 +25,7 @@ import '../features/player/domain/services/cover_color_extractor.dart';
 import '../features/player/platform/desktop_lyric_overlay.dart';
 import '../features/player/presentation/desktop_lyric_window.dart';
 import '../features/plugin/application/plugin_providers.dart';
+import '../features/settings/application/appearance_providers.dart';
 import '../features/settings/application/font_providers.dart';
 import '../features/settings/application/plugin_providers.dart';
 import '../features/settings/application/settings_providers.dart';
@@ -173,6 +174,18 @@ class _AppState extends ConsumerState<App> {
     });
   }
 
+  /// 把高斯模糊背景图的主色同步给 core 层：控件底色跟着照片的色调走，
+  /// 中性灰压在彩色照片上会像「贴上去的」。
+  void _syncBlurTint() {
+    final tint = ref.read(blurBackgroundTintProvider).valueOrNull;
+    if (ref.read(backgroundBlurTintProvider) == tint) return;
+    // build 期间不能直接改 provider，推到下一帧。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      ref.read(backgroundBlurTintProvider.notifier).state = tint;
+    });
+  }
+
   /// 让通知卡片的底色跟随当前封面（取色算法与播放页背景一致）。
   ///
   /// 直接对「这一刻的当前歌曲」取色，不走 currentCoverColorProvider：切歌瞬间
@@ -285,6 +298,13 @@ class _AppState extends ConsumerState<App> {
       _syncCoverAccent();
     });
     _syncCoverAccent();
+
+    // 高斯模糊背景图的主色：同样由 features 层算好，这里转交给 core，
+    // 控件底色（侧栏、卡片、按钮、搜索框…）据它派生。
+    ref.listen(blurBackgroundTintProvider, (previous, next) {
+      _syncBlurTint();
+    });
+    _syncBlurTint();
 
     // 同步全局语言,供非 widget 场景(如歌词控制器)使用
     currentLocale = appLocale;

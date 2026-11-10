@@ -17,6 +17,7 @@ import '../../local/application/local_providers.dart';
 import '../../player/application/play_progress_providers.dart';
 import '../../player/application/playback_controller.dart';
 import '../../radio/application/radio_providers.dart';
+import 'appearance_providers.dart';
 import 'font_providers.dart';
 import 'plugin_providers.dart';
 import 'settings_providers.dart';
@@ -79,6 +80,7 @@ Future<bool> applyRestoredBackup(
   // 否则主界面还是还原前那张图（或者干脆还是渐变）。
   try {
     container.invalidate(blurBackgroundImagePathProvider);
+    container.invalidate(blurBackgroundTintProvider);
     final backdrop =
         await container.read(blurBackgroundImagePathProvider.future);
     if (backdrop != null) {

@@ -235,6 +235,18 @@ final backgroundGlowSeedProvider = Provider<int>(
 /// 只看设置里的颜色，不订阅 [themeColorsProvider]，不会成环。
 final backgroundGradientProvider = Provider<BackgroundGradient>((ref) {
   final isLight = ref.watch(isLightThemeActiveProvider);
+  // 高斯模糊模式：背景是照片，控件底色（侧栏 / 卡片 / 按钮 / 搜索框…）
+  // 要跟着照片的色调走，否则中性灰压在彩色照片上像「贴上去的」。这里回一条
+  // 「照片主色派生出来的暗色渐变」，[themeColorsProvider] 拿它的中间色去
+  // 派生 surface（比背景亮一档），界面就是「颜色轻微变化 + 略亮一点」。
+  if (ref.watch(backgroundModeProvider) == BackgroundMode.blur) {
+    final tint = ref.watch(backgroundBlurTintProvider);
+    if (tint != null) {
+      final colors = deriveBackgroundGradient(tint, isLight: isLight);
+      return BackgroundGradient(colors: colors, mid: colors[1], glowCount: 0);
+    }
+    // 还没取到色（图刚选 / 正在算）时继续走下面的用户渐变，界面不会闪。
+  }
   // 「跟随封面变色」只在深色主题生效：拿到封面主色就直接走派生算法，
   // 和播放详情页 / 歌词页背景是同一个函数，两处观感一致。
   if (!isLight && ref.watch(coverBackgroundEnabledProvider)) {
@@ -286,18 +298,9 @@ final detailHeaderSurfaceProvider = Provider<Color>((ref) {
 /// 派生（侧栏、卡片、搜索框、底栏等所有控件），文字颜色保持用户设置不变，
 /// 因此浅色主题仍是黑字、深色主题仍是浅字，对比度不会失控。
 ///
-/// 高斯模糊背景例外：背景是一张照片，控件底色再跟着「跟封面变色的渐变」
-/// 走就会和照片各说各话（照片是蓝的、卡片是暖棕的，很脏），统一改用主题
-/// 自带的中性背景色派生。
+/// 高斯模糊模式下这里的「背景渐变」是照片主色派生的那条（见
+/// [backgroundGradientProvider]），所以控件同样跟着照片色调走。
 final themeColorsProvider = Provider<ThemeColors>((ref) {
   final base = ref.watch(baseThemeColorsProvider);
-  // 只有「高斯模糊 + 已经选了图片」时才用中性底色：没选图时背景其实退回
-  // 渐变，控件仍然该跟渐变同色调。
-  final useBlurBackdrop =
-      ref.watch(backgroundModeProvider) == BackgroundMode.blur &&
-      ref.watch(blurBackgroundImageNameProvider).trim().isNotEmpty;
-  final mid = useBlurBackdrop
-      ? base.background
-      : ref.watch(backgroundGradientProvider).mid;
-  return base.copyWithBackground(mid);
+  return base.copyWithBackground(ref.watch(backgroundGradientProvider).mid);
 });

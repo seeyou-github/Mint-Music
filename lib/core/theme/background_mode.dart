@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/painting.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 
@@ -58,3 +59,12 @@ final blurBackgroundImagePathProvider = FutureProvider<String?>((ref) async {
     return null;
   }
 });
+
+/// 高斯模糊背景图的「基调色」：压暗后的照片主色。
+///
+/// core 层不依赖取色器（那是 features 层），所以由 app 层算好后写进来。
+/// 控件底色（侧栏、卡片、按钮、搜索框…）据此派生：
+///   - 不跟照片同色调的话，中性灰的控件压在彩色照片上像「贴上去的」；
+///   - 直接拿照片原色又太亮，白字看不清，所以取的是压暗过的基色，
+///     再由 [ThemeColors.copyWithBackground] 往上提一档亮度。
+final backgroundBlurTintProvider = StateProvider<Color?>((ref) => null);
