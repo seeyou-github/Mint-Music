@@ -1564,9 +1564,11 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           vertical: AppSpacing.xs,
         ),
         decoration: isActive
-            ? BoxDecoration(
-                color: colors.primary,
-                borderRadius: BorderRadius.circular(AppRadius.full),
+            // 激活态与侧栏「发现」一致：底色把主题色调暗一档，文字用主题色。
+            ? activeChipDecoration(
+                colors,
+                radius: AppRadius.full,
+                withBorder: true,
               )
             : floatingSurfaceDecoration(
                 colors,
@@ -1578,7 +1580,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           style: TextStyle(
             fontSize: 13,
             fontWeight: FontWeight.w600,
-            color: isActive ? colors.textOnPrimary : colors.textSecondary,
+            color: isActive ? colors.primary : colors.textSecondary,
           ),
         ),
       ),

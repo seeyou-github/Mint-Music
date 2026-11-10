@@ -11,6 +11,7 @@ import 'package:go_router/go_router.dart';
 import '../../../core/constants/app_routes.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
+import '../../../core/theme/app_surface.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../../../core/utils/scroll_locate.dart';
@@ -712,7 +713,7 @@ class _LocalPlaylistDetailPageState
     );
   }
 
-  /// 更多操作：与原来的排序按钮同款（主色圆角胶囊）。
+  /// 更多操作：与「播放全部 / 随机播放」同一款胶囊（侧栏「发现」激活样式）。
   Widget _buildMoreButton(ThemeColors colors, Playlist playlist) {
     return PopupMenuButton<String>(
       tooltip: context.tr('更多'),
@@ -773,11 +774,13 @@ class _LocalPlaylistDetailPageState
       ],
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: colors.primary,
-          borderRadius: BorderRadius.circular(AppRadius.full),
+        // 同「播放全部 / 随机播放」：侧栏「发现」那套激活样式。
+        decoration: activeChipDecoration(
+          colors,
+          radius: AppRadius.full,
+          withBorder: true,
         ),
-        child: Icon(Icons.more_horiz, size: 14, color: colors.textOnPrimary),
+        child: Icon(Icons.more_horiz, size: 14, color: colors.primary),
       ),
     );
   }
@@ -1090,18 +1093,20 @@ class _LocalPlaylistDetailPageState
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: colors.primary,
-          borderRadius: BorderRadius.circular(AppRadius.full),
+        // 与侧栏「发现」的激活态一致：底色把主题色调暗一档，文字 / 图标用主题色。
+        decoration: activeChipDecoration(
+          colors,
+          radius: AppRadius.full,
+          withBorder: true,
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 14, color: colors.textOnPrimary),
+            Icon(icon, size: 14, color: colors.primary),
             const SizedBox(width: 3),
             Text(
               label,
-              style: TextStyle(fontSize: 11, color: colors.textOnPrimary),
+              style: TextStyle(fontSize: 11, color: colors.primary),
             ),
           ],
         ),

@@ -3143,18 +3143,25 @@ class _HotBoardPickerSheetState extends ConsumerState<_HotBoardPickerSheet> {
           horizontal: AppSpacing.lg,
           vertical: 6,
         ),
-        decoration: BoxDecoration(
-          color: selected ? colors.primary : Colors.transparent,
-          borderRadius: BorderRadius.circular(AppRadius.full),
-          border: Border.all(color: selected ? colors.primary : colors.divider),
-        ),
+        decoration: selected
+            // 与侧栏「发现」的激活态一致：底色把主题色调暗一档，文字用主题色。
+            ? activeChipDecoration(
+                colors,
+                radius: AppRadius.full,
+                withBorder: true,
+              )
+            : BoxDecoration(
+                color: Colors.transparent,
+                borderRadius: BorderRadius.circular(AppRadius.full),
+                border: Border.all(color: colors.divider),
+              ),
         child: Text(
           source.name,
           maxLines: 1,
           style: TextStyle(
             fontSize: 13,
             fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
-            color: selected ? colors.textOnPrimary : colors.textSecondary,
+            color: selected ? colors.primary : colors.textSecondary,
           ),
         ),
       ),

@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
+import '../../../core/theme/app_surface.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../../../core/utils/scroll_locate.dart';
@@ -696,18 +697,20 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
           horizontal: AppSpacing.md,
           vertical: AppSpacing.xs,
         ),
-        decoration: BoxDecoration(
-          color: colors.primary,
-          borderRadius: BorderRadius.circular(AppRadius.full),
+        // 与侧栏「发现」的激活态一致：底色把主题色调暗一档，文字 / 图标用主题色。
+        decoration: activeChipDecoration(
+          colors,
+          radius: AppRadius.full,
+          withBorder: true,
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 16, color: colors.textOnPrimary),
+            Icon(icon, size: 16, color: colors.primary),
             const SizedBox(width: AppSpacing.xs),
             Text(
               label,
-              style: TextStyle(fontSize: 12, color: colors.textOnPrimary),
+              style: TextStyle(fontSize: 12, color: colors.primary),
             ),
           ],
         ),

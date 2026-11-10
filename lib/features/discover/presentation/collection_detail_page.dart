@@ -620,7 +620,8 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
     bool primary = false,
     bool loading = false,
   }) {
-    final color = primary ? colors.textOnPrimary : colors.textPrimary;
+    // 「播放全部」与侧栏「发现」的激活态一致：底色把主题色调暗一档，文字用主题色。
+    final color = primary ? colors.primary : colors.textPrimary;
     return GestureDetector(
       onTap: loading ? null : onTap,
       child: Container(
@@ -629,9 +630,10 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
           vertical: 6,
         ),
         decoration: primary
-            ? BoxDecoration(
-                color: colors.primary,
-                borderRadius: BorderRadius.circular(AppRadius.full),
+            ? activeChipDecoration(
+                colors,
+                radius: AppRadius.full,
+                withBorder: true,
               )
             : floatingSurfaceDecoration(
                 colors,
