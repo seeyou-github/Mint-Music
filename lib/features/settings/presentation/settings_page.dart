@@ -9,6 +9,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/constants/app_constants.dart';
+import '../../../core/constants/app_routes.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/platform/app_paths.dart';
 import '../../../core/platform/download_paths.dart';
@@ -26,8 +27,6 @@ import '../../../shared/services/cache_paths.dart';
 import '../../../shared/widgets/hsv_color_picker.dart';
 import '../application/font_providers.dart';
 import '../application/settings_providers.dart';
-import 'background_editor_page.dart';
-import 'blur_background_page.dart';
 import '../data/settings_service.dart';
 import '../../plugin/application/plugin_providers.dart';
 import '../../player/application/desktop_lyric_controller.dart';
@@ -1382,12 +1381,10 @@ class _AppearanceContent extends ConsumerWidget {
               ],
             ),
             colors: colors,
-            onTap: () => Navigator.of(context, rootNavigator: true).push<void>(
-              MaterialPageRoute(
-                fullscreenDialog: true,
-                builder: (_) => const BlurBackgroundPage(),
-              ),
-            ),
+            // 走路由而不是 Navigator.push：侧栏 / 底部导航切换分类时，
+            // 路由上的页面会被一起关掉；直接 push 出来的页面 go_router 不
+            // 知道，切换分类后会一直压在内容区上面（表现为「点导航没反应」）。
+            onTap: () => unawaited(context.push(AppRoutes.blurBackground)),
           )
         else
           buildBackgroundGradientRow(),
@@ -1612,18 +1609,19 @@ class _AppearanceContent extends ConsumerWidget {
     List<String>? editing,
     int? editingIndex,
   }) {
-    final navigator = Navigator.of(context, rootNavigator: true);
-    navigator.pop();
+    // 先收起「背景渐变」面板，再打开全屏编辑页。
+    //
+    // 走路由而不是 Navigator.push：切换侧栏 / 底部导航分类时，路由上的页面
+    // 会被一起关掉；直接 push 的页面 go_router 不知道，会一直压在内容区上面。
+    Navigator.of(context, rootNavigator: true).pop();
     unawaited(
-      navigator.push<bool>(
-        MaterialPageRoute(
-          fullscreenDialog: true,
-          builder: (_) => BackgroundEditorPage(
-            isLight: isLight,
-            editing: editing,
-            editingIndex: editingIndex,
-          ),
-        ),
+      context.push(
+        AppRoutes.backgroundEditor,
+        extra: {
+          'isLight': isLight,
+          'editing': editing,
+          'editingIndex': editingIndex,
+        },
       ),
     );
   }

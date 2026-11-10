@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../app/app_page_background.dart';
@@ -177,7 +178,7 @@ class _BackgroundEditorPageState extends ConsumerState<BackgroundEditorPage> {
       // 写盘失败也不拦着用户：内存里的设置已经生效，下次启动最多回到旧值。
     }
     if (!mounted) return;
-    Navigator.pop(context, true);
+    context.pop(true);
   }
 
   @override
@@ -373,7 +374,7 @@ class _BackgroundEditorPageState extends ConsumerState<BackgroundEditorPage> {
       child: Row(
         children: [
           IconButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => context.pop(),
             icon: Icon(Icons.close, color: colors.textPrimary),
             tooltip: context.tr('取消'),
             visualDensity: VisualDensity.compact,

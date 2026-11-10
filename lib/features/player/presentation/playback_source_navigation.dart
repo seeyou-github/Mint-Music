@@ -266,7 +266,9 @@ int _branchOf(String path) {
       path == AppRoutes.download ||
       path == AppRoutes.pluginManagement ||
       path == AppRoutes.recentlyPlayed ||
-      path == AppRoutes.recognize) {
+      path == AppRoutes.recognize ||
+      path == AppRoutes.backgroundEditor ||
+      path == AppRoutes.blurBackground) {
     return 3;
   }
   // /discover、/playlist/:id、/collection、/search 都在「发现」分类下。

@@ -21,6 +21,8 @@ import '../../features/settings/presentation/plugin_management_page.dart';
 import '../../features/local/presentation/local_page.dart';
 import '../../features/mine/presentation/mine_page.dart';
 import '../../features/download/presentation/download_page.dart';
+import '../../features/settings/presentation/background_editor_page.dart';
+import '../../features/settings/presentation/blur_background_page.dart';
 import '../../features/settings/presentation/settings_page.dart';
 import '../../features/player/presentation/full_player_page.dart';
 import '../../features/player/presentation/lyric_page.dart';
@@ -52,6 +54,23 @@ Widget _slideTransition(
       end: Offset.zero,
     ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOutCubic)),
     child: AppPageBackground(child: child),
+  );
+}
+
+/// 页面自己已经带 [AppPageBackground] 时用的转场：只做位移，不再套第二层
+/// 背景（高斯模糊模式下会多画一整屏模糊，纯浪费）。
+Widget _slideTransitionBare(
+  BuildContext context,
+  Animation<double> animation,
+  Animation<double> secondaryAnimation,
+  Widget child,
+) {
+  return SlideTransition(
+    position: Tween<Offset>(
+      begin: const Offset(1, 0),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOutCubic)),
+    child: child,
   );
 }
 
@@ -247,6 +266,40 @@ final appRouter = GoRouter(
           transitionDuration: const Duration(milliseconds: 220),
           reverseTransitionDuration: const Duration(milliseconds: 180),
           transitionsBuilder: _slideTransition,
+        );
+      },
+    ),
+    GoRoute(
+      path: AppRoutes.blurBackground,
+      pageBuilder: (context, state) => CustomTransitionPage(
+        key: state.pageKey,
+        child: const BlurBackgroundPage(),
+        transitionDuration: const Duration(milliseconds: 220),
+        reverseTransitionDuration: const Duration(milliseconds: 180),
+        transitionsBuilder: _slideTransitionBare,
+      ),
+    ),
+    GoRoute(
+      path: AppRoutes.backgroundEditor,
+      // extra 用 Map 传参：record 的运行时类型会随实参静态类型变化，
+      // 直接 as 成固定 record 类型容易在真机上抛类型转换异常。
+      pageBuilder: (context, state) {
+        final args = state.extra is Map
+            ? state.extra as Map
+            : const <String, dynamic>{};
+        final isLight = args['isLight'] as bool? ?? true;
+        final editing = (args['editing'] as List?)?.cast<String>();
+        final editingIndex = args['editingIndex'] as int?;
+        return CustomTransitionPage(
+          key: state.pageKey,
+          child: BackgroundEditorPage(
+            isLight: isLight,
+            editing: editing,
+            editingIndex: editingIndex,
+          ),
+          transitionDuration: const Duration(milliseconds: 220),
+          reverseTransitionDuration: const Duration(milliseconds: 180),
+          transitionsBuilder: _slideTransitionBare,
         );
       },
     ),

@@ -18,6 +18,8 @@ abstract class AppRoutes {
   static const String tagEditor = '/tag-editor';
   static const String quickMatch = '/quick-match';
   static const String pluginManagement = '/plugin-management';
+  static const String backgroundEditor = '/background-editor';
+  static const String blurBackground = '/background-blur';
   static const String fullPlayer = '/player/full';
   static const String lyric = '/player/lyric';
 }

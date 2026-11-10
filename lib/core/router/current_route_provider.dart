@@ -44,6 +44,8 @@ const miniPlayerHiddenRoutes = <String>{
   AppRoutes.pluginManagement,
   AppRoutes.recentlyPlayed,
   AppRoutes.recognize,
+  AppRoutes.backgroundEditor,
+  AppRoutes.blurBackground,
 };
 
 /// 当前页面是否要求隐藏迷你播放器。

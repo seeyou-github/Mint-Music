@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 
@@ -272,7 +273,7 @@ class _BlurBackgroundPageState extends ConsumerState<BlurBackgroundPage> {
       child: Row(
         children: [
           IconButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => context.pop(),
             icon: Icon(Icons.close, color: colors.textPrimary),
             tooltip: context.tr('完成'),
             visualDensity: VisualDensity.compact,

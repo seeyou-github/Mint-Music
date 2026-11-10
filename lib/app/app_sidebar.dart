@@ -120,6 +120,8 @@ class AppSidebar extends ConsumerWidget {
     '/plugin-management': 3, // 我的：插件管理
     '/recently-played': 3, // 我的：最近播放
     '/recognize': 3, // 我的：听歌识曲
+    AppRoutes.backgroundEditor: 3, // 我的：背景渐变编辑
+    AppRoutes.blurBackground: 3, // 我的：高斯模糊背景图
   };
 
   @override
