@@ -16,15 +16,15 @@ import '../shared/widgets/music_cover_image.dart';
 /// 全局那层背景（`MaterialApp.builder`）和二级页面自己那份背景都用它，
 /// 两边必须完全一致，否则页面滑入 / 滑出时会看出「背景在跳」。
 class AppBackgroundLayer extends ConsumerWidget {
-  const AppBackgroundLayer({super.key, required this.glowAnimated});
-
-  /// 光晕是否跟着播放缓慢漂移（调用方已经按「开关 + 正在播放」算好）。
-  final bool glowAnimated;
+  const AppBackgroundLayer({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     if (ref.watch(backgroundModeProvider) == BackgroundMode.blur) {
       final path = ref.watch(blurBackgroundImagePathProvider).valueOrNull;
+      // 模糊程度 / 亮度就是「设置 → 外观设置 → 高斯模糊背景图」里那两个滑条
+      // （没动过时是默认值 30 / 0.85）。封面糊化背景也用这两个值，用户在设置里
+      // 调完能直接看到主界面跟着变。
       final sigma = ref.watch(blurBackgroundSigmaProvider);
       final brightness = ref.watch(blurBackgroundBrightnessProvider);
       // 浅色主题下正文是深色，照片太暗就看不清字，额外盖一层白纱。
@@ -33,7 +33,7 @@ class AppBackgroundLayer extends ConsumerWidget {
       // 没有图时退回渐变：主界面不能空着。
       final Widget fallback;
       if (path == null) {
-        fallback = _GradientBackground(glowAnimated: glowAnimated);
+        fallback = const _GradientBackground();
       } else {
         fallback = _BlurBackground(
           baseColor: const Color(0xFF101012),
@@ -72,15 +72,13 @@ class AppBackgroundLayer extends ConsumerWidget {
       }
       return fallback;
     }
-    return _GradientBackground(glowAnimated: glowAnimated);
+    return const _GradientBackground();
   }
 }
 
 /// 背景渐变那套：渐变 + 光晕 + 抖动噪点（原来的全局背景就是这个）。
 class _GradientBackground extends ConsumerWidget {
-  const _GradientBackground({required this.glowAnimated});
-
-  final bool glowAnimated;
+  const _GradientBackground();
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -104,7 +102,6 @@ class _GradientBackground extends ConsumerWidget {
           colors: gradient.colors,
           count: gradient.glowCount,
           seed: ref.watch(backgroundGlowSeedProvider),
-          animated: glowAnimated,
         ),
         // 打散渐变 / 光晕在 8 位色深下的色带。
         const BackgroundDitherLayer(),
@@ -175,10 +172,12 @@ class _CoverBlurBackground extends StatelessWidget {
 }
 
 /// 解码宽度：模糊会把细节全抹平，按屏幕宽度解一张大图纯属浪费内存。
-const int _kBlurDecodeWidth = 1080;
+/// 800 已经够铺满手机屏（再细的细节都被 blur 抹掉了），比 1080 省约 45%。
+const int _kBlurDecodeWidth = 800;
 
-/// 封面本来就不大（常见 500~1000），糊化后再降一档，省一半内存。
-const int _kCoverDecodeWidth = 720;
+/// 封面本来就不大（常见 500~1000），糊化后再降一档：512 只有 720 的一半内存，
+/// 糊出来肉眼没有区别。
+const int _kCoverDecodeWidth = 512;
 
 /// 高斯模糊背景：图片 → 模糊 → 叠亮度 → 噪点。
 class _BlurBackground extends StatelessWidget {

@@ -103,9 +103,7 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
                             ? FontWeight.w600
                             : FontWeight.w400,
                         // 激活的分类名称用主题色（与侧栏「发现」一致）。
-                        color: selected
-                            ? colors.primary
-                            : colors.textSecondary,
+                        color: selected ? colors.primary : colors.textSecondary,
                       ),
                     ),
                   ),
@@ -246,11 +244,7 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
           fit: StackFit.expand,
           children: [
             if (currentSong != null)
-              _RadioCardBackground(
-                song: currentSong,
-                isPlaying: isPlaying,
-                fallbackColor: background,
-              )
+              _RadioCardBackground(song: currentSong, fallbackColor: background)
             else
               Container(
                 decoration: BoxDecoration(color: background),
@@ -350,7 +344,6 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
             if (currentSong != null)
               _RadioCardBackground(
                 song: currentSong,
-                isPlaying: isPlaying,
                 fallbackColor: colors.surfaceVariant,
               )
             else
@@ -688,64 +681,21 @@ Color _scrimColorFor(Color textColor) {
   return lightText ? Colors.black : Colors.white;
 }
 
-/// 电台卡片正在播放时的背景：当前歌曲封面 + 高斯模糊 + 黑色半透明遮罩 +
-/// 缓慢漂移的柔光光斑（播放时带轻微呼吸）。
-class _RadioCardBackground extends StatefulWidget {
-  const _RadioCardBackground({
-    required this.song,
-    required this.isPlaying,
-    required this.fallbackColor,
-  });
+/// 电台卡片正在播放时的背景：当前歌曲封面 + 高斯模糊 + 黑色半透明遮罩。
+///
+/// 这里只做一次静态栅格化（模糊层在 RepaintBoundary 里），不再有漂移光斑 /
+/// 呼吸动画——那套每帧重绘整张卡片背景，列表里同时有多个播放标记时开销不小。
+class _RadioCardBackground extends StatelessWidget {
+  const _RadioCardBackground({required this.song, required this.fallbackColor});
 
   final Song song;
-  final bool isPlaying;
 
   /// 封面加载失败 / 没有封面时垫在下面的底色。
   final Color fallbackColor;
 
   @override
-  State<_RadioCardBackground> createState() => _RadioCardBackgroundState();
-}
-
-class _RadioCardBackgroundState extends State<_RadioCardBackground>
-    with SingleTickerProviderStateMixin {
-  /// 光斑完整走一圈的时长：刻意放慢，避免看起来像在「闪」。
-  late final AnimationController _controller = AnimationController(
-    vsync: this,
-    duration: const Duration(seconds: 16),
-  );
-
-  @override
-  void initState() {
-    super.initState();
-    _syncTicker();
-  }
-
-  @override
-  void didUpdateWidget(covariant _RadioCardBackground oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.isPlaying != widget.isPlaying) _syncTicker();
-  }
-
-  /// 暂停时停住光斑与呼吸，恢复播放后从当前相位继续。
-  void _syncTicker() {
-    if (widget.isPlaying) {
-      if (!_controller.isAnimating) _controller.repeat();
-    } else {
-      _controller.stop();
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final song = widget.song;
-    final placeholder = ColoredBox(color: widget.fallbackColor);
+    final placeholder = ColoredBox(color: fallbackColor);
     return ClipRect(
       child: Stack(
         fit: StackFit.expand,
@@ -773,66 +723,9 @@ class _RadioCardBackgroundState extends State<_RadioCardBackground>
           ),
           // 压暗封面，让名称、播放标志和菜单按钮保持可读。
           ColoredBox(color: Colors.black.withValues(alpha: 0.42)),
-          AnimatedBuilder(
-            animation: _controller,
-            builder: (context, _) => RepaintBoundary(
-              child: CustomPaint(
-                painter: _AmbientGlowPainter(
-                  progress: _controller.value,
-                  breathing: widget.isPlaying,
-                ),
-              ),
-            ),
-          ),
         ],
       ),
     );
-  }
-}
-
-/// 卡片背景上的氛围光斑：两团柔光沿不同轨迹缓慢漂移，
-/// 播放时叠一层轻微的亮度 / 半径呼吸。
-class _AmbientGlowPainter extends CustomPainter {
-  const _AmbientGlowPainter({required this.progress, required this.breathing});
-
-  /// 0–1 的循环进度。
-  final double progress;
-
-  /// 是否随播放做呼吸变化（暂停时保持静止）。
-  final bool breathing;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (size.isEmpty) return;
-    final base = size.shortestSide;
-    final breath = breathing
-        ? 0.88 + 0.12 * math.sin(progress * 4 * math.pi)
-        : 1.0;
-    final first = Offset(
-      size.width * (0.30 + 0.14 * math.sin(progress * 2 * math.pi)),
-      size.height * (0.32 + 0.12 * math.cos(progress * 2 * math.pi)),
-    );
-    final second = Offset(
-      size.width * (0.72 + 0.12 * math.cos(progress * 2 * math.pi)),
-      size.height * (0.70 + 0.10 * math.sin(progress * 2 * math.pi)),
-    );
-    _drawGlow(canvas, first, base * 0.78 * breath, 0.18 * breath);
-    _drawGlow(canvas, second, base * 0.60 * breath, 0.12 * breath);
-  }
-
-  void _drawGlow(Canvas canvas, Offset center, double radius, double alpha) {
-    final color = Colors.white.withValues(alpha: alpha);
-    final paint = Paint()
-      ..shader = RadialGradient(
-        colors: [color, color.withValues(alpha: 0)],
-      ).createShader(Rect.fromCircle(center: center, radius: radius));
-    canvas.drawCircle(center, radius, paint);
-  }
-
-  @override
-  bool shouldRepaint(covariant _AmbientGlowPainter oldDelegate) {
-    return oldDelegate.progress != progress ||
-        oldDelegate.breathing != breathing;
   }
 }
 

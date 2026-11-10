@@ -4,8 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/platform/window_chrome.dart';
-import '../core/theme/theme_provider.dart';
-import '../features/player/application/playback_controller.dart';
 import 'app_background_layer.dart';
 import 'windows_title_bar.dart';
 
@@ -40,12 +38,6 @@ class AppPageBackground extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // 与窗口那层背景保持同一套动画开关：播放中且开启动态光晕时才移动。
-    final glowAnimated =
-        ref.watch(coverGlowAnimationEnabledProvider) &&
-        ref.watch(
-          playbackControllerProvider.select((state) => state.isPlaying),
-        );
     // 页面区域相对窗口顶部下移了多少（只有 Windows 自绘标题栏时非 0）。
     final topInset = Platform.isWindows && WindowChrome.hasCustomTitleBar
         ? WindowsTitleBar.height
@@ -73,7 +65,7 @@ class AppPageBackground extends ConsumerWidget {
           bottom: 0,
           // 和全局那层是同一个组件：渐变 / 光晕 / 高斯模糊图都跟着「背景颜色
           // 模式」走，二级页滑入滑出不会看出背景不一样。
-          child: AppBackgroundLayer(glowAnimated: glowAnimated),
+          child: const AppBackgroundLayer(),
         ),
         Positioned.fill(child: child),
       ],

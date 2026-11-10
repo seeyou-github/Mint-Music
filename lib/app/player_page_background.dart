@@ -34,9 +34,7 @@ class PlayerPageBackground extends ConsumerWidget {
       child: Stack(
         fit: StackFit.expand,
         children: [
-          // 光晕不做漂移动画：主界面那层的动画是各自独立计时的，两页之间
-          // 本来也对不上相位，这里跟着动只会让这一整页每帧重绘。
-          const AppBackgroundLayer(glowAnimated: false),
+          const AppBackgroundLayer(),
           if (dim > 0) ColoredBox(color: Colors.black.withValues(alpha: dim)),
           // 下沿再压一层：托住播放控制 / 歌词，和背景的暗角呼应。
           const DecoratedBox(

@@ -1127,8 +1127,6 @@ class _AppearanceContent extends ConsumerWidget {
 
     // 「主界面跟随封面变色」开关（仅深色主题）。
     final coverBackground = ref.watch(coverBackgroundEnabledProvider);
-    // 「播放歌曲时动态光晕」开关（默认关闭）。
-    final glowAnimation = ref.watch(coverGlowAnimationEnabledProvider);
     // 背景颜色模式：背景渐变 / 高斯模糊（默认）；模糊模式还要知道有没有选图。
     final backgroundMode = ref.watch(backgroundModeProvider);
     final backgroundModeLabel = backgroundMode == BackgroundMode.blur
@@ -1325,8 +1323,8 @@ class _AppearanceContent extends ConsumerWidget {
       ],
     );
 
-    // 「背景颜色」单独一张卡片：背景相关设置（模式、渐变 / 模糊图、跟随封面、
-    // 动态光晕）都放这里，基础外观只留主题与字体。
+    // 「背景颜色」单独一张卡片：背景相关设置（模式、渐变 / 模糊图、跟随封面）
+    // 都放这里，基础外观只留主题与字体。
     final backgroundColorGroup = SettingGroup(
       title: '背景颜色',
       colors: colors,
@@ -1401,7 +1399,8 @@ class _AppearanceContent extends ConsumerWidget {
           icon: Icons.auto_awesome,
           title: '主界面跟随封面变色',
           subtitle: backgroundMode == BackgroundMode.blur
-              ? '播放歌曲时，主界面背景用当前歌曲的封面做高斯模糊'
+              // 模糊程度 / 亮度沿用「高斯模糊背景图」页里的两个滑条。
+              ? '播放歌曲时，主界面背景用当前歌曲封面做高斯模糊（模糊程度 / 亮度沿用上面设置）'
               : '主界面背景按当前歌曲的封面色调变化',
           trailing: Switch(
             // 浅色主题下这个开关不生效：直接禁用（自动灰掉），也不显示为开启。
@@ -1419,28 +1418,6 @@ class _AppearanceContent extends ConsumerWidget {
           ),
           colors: colors,
         ),
-        // 光晕只存在于渐变背景上，模糊模式没有光晕可动。
-        if (backgroundMode == BackgroundMode.gradient) ...[
-          SettingDivider(colors: colors),
-          // 播放时让主界面背景的光晕缓慢漂移 + 呼吸；暂停后停在当前位置。
-          SettingRow(
-            icon: Icons.blur_on,
-            title: '播放歌曲时动态光晕',
-            subtitle: '主界面背景的光晕缓慢移动，并随播放轻微呼吸',
-            trailing: Switch(
-              value: glowAnimation,
-              onChanged: (v) => _persistBool(
-                context,
-                coverGlowAnimationEnabledProvider,
-                v,
-                (s) => s.setCoverGlowAnimation(v),
-              ),
-              activeTrackColor: colors.primary.withValues(alpha: 0.3),
-              activeThumbColor: colors.primary,
-            ),
-            colors: colors,
-          ),
-        ],
       ],
     );
 

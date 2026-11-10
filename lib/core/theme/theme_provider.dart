@@ -204,12 +204,6 @@ final baseThemeColorsProvider = Provider<ThemeColors>((ref) {
 /// 完全相同（见 [deriveBackgroundGradient]）；浅色主题下忽略这个开关。
 final coverBackgroundEnabledProvider = StateProvider<bool>((ref) => true);
 
-/// 「播放歌曲时动态光晕」开关（默认关闭）。
-///
-/// 打开后，主界面背景里的光晕会在有歌曲播放时缓慢漂移并做轻微呼吸；
-/// 暂停播放或关闭开关时停在当前位置，不会跳回初始布局。
-final coverGlowAnimationEnabledProvider = StateProvider<bool>((ref) => false);
-
 /// 高斯模糊模式下，背景是否改成「当前播放歌曲的封面糊化」。
 ///
 /// 条件：背景颜色模式 = 高斯模糊 + 「主界面跟随封面变色」打开。与渐变模式

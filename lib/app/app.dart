@@ -285,12 +285,6 @@ class _AppState extends ConsumerState<App> {
     final appFontFamily = ref.watch(appFontSelectedProvider);
     // 当前是否为浅色外观：状态栏图标的明暗跟着它走。
     final isLightActive = ref.watch(isLightThemeActiveProvider);
-    // 「播放歌曲时动态光晕」：开关打开且歌曲正在播放时，光晕才缓慢漂移 + 呼吸。
-    final glowAnimated =
-        ref.watch(coverGlowAnimationEnabledProvider) &&
-        ref.watch(
-          playbackControllerProvider.select((state) => state.isPlaying),
-        );
     // 「主界面跟随封面变色」要用的主色：core 层只负责存颜色，取色在
     // features 层（currentCoverColorProvider），所以在这里同步过去。
     // 监听负责切歌，[_syncCoverAccent] 负责首帧（监听不回溯已有结果）。
@@ -438,7 +432,7 @@ class _AppState extends ConsumerState<App> {
               children: [
                 Positioned.fill(
                   child: IgnorePointer(
-                    child: AppBackgroundLayer(glowAnimated: glowAnimated),
+                    child: const AppBackgroundLayer(),
                   ),
                 ),
                 body,

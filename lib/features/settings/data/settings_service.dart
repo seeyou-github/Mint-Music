@@ -209,15 +209,6 @@ class SettingsService {
   Future<void> setCoverBackground(bool v) =>
       _prefs.setBool(_coverBackgroundKey, v);
 
-  // -- 播放歌曲时动态光晕 --
-  static const _coverGlowAnimationKey = 'cover_glow_animation';
-
-  /// 播放歌曲时主界面背景光晕是否缓慢运动 + 呼吸（默认关闭）。
-  bool getCoverGlowAnimation() =>
-      _prefs.getBool(_coverGlowAnimationKey) ?? false;
-  Future<void> setCoverGlowAnimation(bool v) =>
-      _prefs.setBool(_coverGlowAnimationKey, v);
-
   // -- 背景颜色模式：背景渐变 / 高斯模糊（默认高斯模糊） --
   static const _backgroundModeKey = 'background_mode';
   static const _blurImageKey = 'blur_background_image';
