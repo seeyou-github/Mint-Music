@@ -2053,23 +2053,50 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
     return groups;
   }
 
-  /// 按「当前音源有没有热榜」决定榜单分类：有选「热榜」，没有选「所有」。
+  /// 按「有没有热榜数据」决定榜单分类：有选「热榜」，没有选「所有」。
   ///
   /// * 进入榜单页 / 切换音源后都会调用（切换音源时不记住上一次的选中的分类）；
-  /// * 判断只看 [hotBoardSourceIdsProvider]——它由热榜配置算出来（只有音源 /
-  ///   名称 / 封面，体积很小），切换音源时立刻就有结果，不用等榜单歌曲；
-  /// * 用户在**当前音源**下手动点过分类（[_leaderboardCategoryPicked]）就不动，
-  ///   这样在没有热榜时点「热榜」去新增数据不会被弹回「所有」。
+  /// * 热榜跨音源聚合，只要有任意一个可用音源配过热榜就选「热榜」，
+  ///   不再跟着主页当前音源走；
+  /// * 用户在手动点过分类（[_leaderboardCategoryPicked]）就不动，这样在没有
+  ///   热榜时点「热榜」去新增数据不会被弹回「所有」。
   void _applyLeaderboardDefault() {
     if (!mounted) return;
     if (_leaderboardCategoryPicked) return;
-    final sourceId = ref.read(discoverSourceIdProvider);
-    final hasHot = ref.read(hotBoardSourceIdsProvider).contains(sourceId);
+    final hasHot = _hasVisibleHotBoards();
     final category = hasHot
         ? _LeaderboardCategory.hot
         : _LeaderboardCategory.all;
     if (category == _leaderboardCategory) return;
     setState(() => _leaderboardCategory = category);
+  }
+
+  /// 当前是否有可展示的热榜（插件被卸载 / 关闭后，它带来的热榜不再计数）。
+  ///
+  /// 插件还没初始化完时不能据此隐藏任何配置，否则启动瞬间热榜会被误判为空。
+  bool _hasVisibleHotBoards() {
+    final boards = ref.read(hotBoardsProvider).valueOrNull;
+    if (boards == null) {
+      return ref.read(hotBoardSourceIdsProvider).isNotEmpty;
+    }
+    if (boards.isEmpty) return false;
+    if (!ref.read(pluginInitializedProvider).hasValue) return true;
+    final enabled = {
+      for (final source in ref.read(pluginSupportedSourcesProvider)) source.id,
+    };
+    return boards.any((board) => enabled.contains(board.source));
+  }
+
+  /// 当前启用音源的热榜；插件还没初始化完时先原样展示。
+  List<HotBoard> _visibleHotBoards(List<HotBoard> boards) {
+    if (!ref.read(pluginInitializedProvider).hasValue) return boards;
+    final enabled = {
+      for (final source in ref.read(pluginSupportedSourcesProvider)) source.id,
+    };
+    return [
+      for (final board in boards)
+        if (enabled.contains(board.source)) board,
+    ];
   }
 
   void _selectLeaderboardCategory(_LeaderboardCategory category) {
@@ -2080,13 +2107,12 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
     if (category == _LeaderboardCategory.hot) _refreshHotBoards();
   }
 
-  /// 进入「热榜」时补齐内存里还没有的歌曲。
+  /// 进入「热榜」时补齐内存里还没有的歌曲（所有音源一起）。
   ///
-  /// 每个音源在一次运行里只取一次网络：内存里已有歌曲的榜单会被跳过
+  /// 每个榜单在一次运行里只取一次网络：内存里已有歌曲的榜单会被跳过
   /// （见 `HotBoardsNotifier.refreshSongs`），所以来回切分类 / 切页面不会反复请求。
   void _refreshHotBoards() {
-    final sourceId = ref.read(discoverSourceIdProvider);
-    unawaited(ref.read(hotBoardsProvider.notifier).refreshSongs(sourceId));
+    unawaited(ref.read(hotBoardsProvider.notifier).refreshSongs());
   }
 
   /// 当前停在「热榜」分类时才刷新（进榜单页 / 切音源时调用）。
@@ -2129,9 +2155,15 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
   }
 
   /// 「热榜」分类：没有数据时给出引导，有数据时逐个展示榜单 TOP 10。
+  ///
+  /// 热榜跨音源聚合：不跟随主页当前音源，但插件被卸载 / 关闭后，它带来的
+  /// 榜单不再显示（配置仍保留，重新启用插件后会再出现）。
   Widget _buildHotBoardTab(ThemeColors colors) {
+    // 音源开关变化要重建这里，才能及时隐藏 / 恢复对应热榜。
+    ref.watch(pluginInitializedProvider);
+    ref.watch(pluginSupportedSourcesProvider);
     return ref
-        .watch(currentHotBoardsProvider)
+        .watch(hotBoardsProvider)
         .when(
           loading: () => const Center(child: CircularProgressIndicator()),
           error: (_, _) => Center(
@@ -2152,7 +2184,8 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
               ],
             ),
           ),
-          data: (boards) {
+          data: (all) {
+            final boards = _visibleHotBoards(all);
             // 没有配置过榜单才算「空」；歌曲是实时的，可能还在取 / 取失败，
             // 那种情况交给卡片自己显示加载中 / 重试，不能当成「没有热榜」。
             if (boards.isEmpty) return _buildHotBoardEmpty(colors);
@@ -2172,10 +2205,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
             color: colors.textHint,
           ),
           const SizedBox(height: AppSpacing.md),
-          Text(
-            context.tr('当前音源还没有热榜数据'),
-            style: TextStyle(color: colors.textHint),
-          ),
+          Text(context.tr('还没有热榜数据'), style: TextStyle(color: colors.textHint)),
           const SizedBox(height: AppSpacing.xs),
           Text(
             context.tr('点击右上角 + 选择要展示的榜单'),
@@ -2247,6 +2277,9 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
   Widget _buildHotBoardCard(ThemeColors colors, HotBoard board) {
     final favorited = _isHotBoardFavorited(board);
     final favoriting = _favoritingHotBoards.contains(board.id);
+    final sourceName = ref
+        .read(musicSourceManagerProvider)
+        .sourceDisplayName(board.source);
     return Container(
       decoration: floatingSurfaceDecoration(
         colors,
@@ -2323,6 +2356,8 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
                     ],
                   ),
                 ),
+                const SizedBox(width: AppSpacing.sm),
+                _buildSourceNameTag(colors, sourceName),
               ],
             ),
           ),
@@ -2333,6 +2368,35 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
               _buildHotSongItem(colors, board, i),
           _buildHotBoardFooter(colors, board),
         ],
+      ),
+    );
+  }
+
+  /// 榜单卡片右上角的音源名称标签。
+  ///
+  /// 固定宽度 = 5 个中文字符（字号 13，与歌曲名同字号）；名称超出时直接
+  /// 裁掉，不加省略号。完整名称放在 Tooltip 里。
+  Widget _buildSourceNameTag(ThemeColors colors, String name) {
+    return Tooltip(
+      message: name,
+      child: Container(
+        width: 69,
+        height: 22,
+        padding: const EdgeInsets.symmetric(horizontal: 2),
+        alignment: Alignment.centerLeft,
+        decoration: BoxDecoration(
+          color: colors.surfaceVariant,
+          borderRadius: BorderRadius.circular(AppRadius.xs),
+        ),
+        child: ClipRect(
+          child: Text(
+            name,
+            maxLines: 1,
+            softWrap: false,
+            overflow: TextOverflow.clip,
+            style: TextStyle(fontSize: 13, color: colors.textSecondary),
+          ),
+        ),
       ),
     );
   }
@@ -2638,29 +2702,23 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
     setState(() => _addingHotBoard = true);
     final colors = ref.read(themeColorsProvider);
     try {
-      final sourceId = ref.read(discoverSourceIdProvider);
-      final leaderboards = await ref.read(leaderboardsProvider.future);
-      if (!mounted) return;
-      // 只提供当前使用音源自己的榜单。
-      final candidates = [
-        for (final board in leaderboards)
-          if (board.source == sourceId) board,
-      ];
-      if (candidates.isEmpty) {
-        _showMessage(context.tr('当前音源暂无榜单数据'));
+      // 所有已启用的音源都可以选：弹框里用 tab 切换音源，榜单按 tab 拉取。
+      final allSources = ref.read(switchableSourcesProvider);
+      if (allSources.isEmpty) {
+        _showMessage(context.tr('暂无可用音源'));
         return;
       }
-      await _showHotBoardPicker(colors, candidates, sourceId);
+      final currentId = ref.read(discoverSourceIdProvider);
+      final sources = [
+        for (final source in allSources)
+          if (source.id == currentId) source,
+        for (final source in allSources)
+          if (source.id != currentId) source,
+      ];
+      await _showHotBoardPicker(colors, sources, sources.first.id);
       if (!mounted) return;
       setState(() => _leaderboardCategory = _LeaderboardCategory.hot);
-    } catch (e) {
-      if (mounted) {
-        _showMessage(
-          context.tr(
-            '获取榜单歌曲失败：${e.toString().replaceFirst('Exception: ', '')}',
-          ),
-        );
-      }
+      _refreshHotBoards();
     } finally {
       if (mounted) setState(() => _addingHotBoard = false);
     }
@@ -2668,8 +2726,8 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
 
   Future<void> _showHotBoardPicker(
     ThemeColors colors,
-    List<Leaderboard> boards,
-    String sourceId,
+    List<SourceInfo> sources,
+    String initialSourceId,
   ) {
     final sheetHeight = MediaQuery.sizeOf(context).height * 0.72;
     return showModalBottomSheet<void>(
@@ -2686,8 +2744,8 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
       ),
       builder: (_) => _HotBoardPickerSheet(
         colors: colors,
-        sourceId: sourceId,
-        boards: boards,
+        sources: sources,
+        initialSourceId: initialSourceId,
         height: sheetHeight,
         onAdd: _addPickedHotBoard,
       ),
@@ -2932,20 +2990,20 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
   }
 }
 
-/// 「新增热榜数据」弹框：已添加的榜单置顶，可拖动排序 / 删除；
-/// 下方是当前音源还能添加的榜单，新增的榜单追加在已添加列表末尾。
+/// 「新增热榜数据」弹框：顶部按音源分 tab，已添加的榜单置顶、可拖动排序 /
+/// 删除，下方是该音源还能添加的榜单（新增的追加在已添加列表末尾）。
 class _HotBoardPickerSheet extends ConsumerStatefulWidget {
   const _HotBoardPickerSheet({
     required this.colors,
-    required this.sourceId,
-    required this.boards,
+    required this.sources,
+    required this.initialSourceId,
     required this.height,
     required this.onAdd,
   });
 
   final ThemeColors colors;
-  final String sourceId;
-  final List<Leaderboard> boards;
+  final List<SourceInfo> sources;
+  final String initialSourceId;
   final double height;
   final Future<void> Function(Leaderboard board) onAdd;
 
@@ -2956,6 +3014,7 @@ class _HotBoardPickerSheet extends ConsumerStatefulWidget {
 
 class _HotBoardPickerSheetState extends ConsumerState<_HotBoardPickerSheet> {
   String? _addingId;
+  late String _sourceId = widget.initialSourceId;
 
   Future<void> _add(Leaderboard board) async {
     if (_addingId != null) return;
@@ -2970,18 +3029,10 @@ class _HotBoardPickerSheetState extends ConsumerState<_HotBoardPickerSheet> {
   @override
   Widget build(BuildContext context) {
     final colors = widget.colors;
-    final added = [
-      for (final board
-          in ref.watch(hotBoardsProvider).valueOrNull ?? const <HotBoard>[])
-        if (board.source == widget.sourceId) board,
-    ];
-    final addedIds = {for (final board in added) board.id};
-    final available = [
-      for (final board in widget.boards)
-        if (!addedIds.contains(board.id)) board,
-    ];
-    final pickerGroups = _pickerGroupsOf(available);
-    final ungrouped = _ungroupedOf(available);
+    final sourceId = widget.sources.any((source) => source.id == _sourceId)
+        ? _sourceId
+        : widget.sources.first.id;
+    final boardsAsync = ref.watch(leaderboardsForSourceProvider(sourceId));
     return SizedBox(
       height: widget.height,
       child: Column(
@@ -3013,72 +3064,174 @@ class _HotBoardPickerSheetState extends ConsumerState<_HotBoardPickerSheet> {
               ],
             ),
           ),
+          _buildSourceTabs(colors, sourceId),
           Divider(height: 1, color: colors.divider.withValues(alpha: 0.4)),
           Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.only(bottom: AppSpacing.lg),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  if (added.isNotEmpty) ...[
-                    _sectionLabel('已添加', '按住右侧图标拖动排序'),
-                    ReorderableListView.builder(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      buildDefaultDragHandles: false,
-                      padding: EdgeInsets.zero,
-                      itemCount: added.length,
-                      onReorder: (oldIndex, newIndex) => ref
-                          .read(hotBoardsProvider.notifier)
-                          .reorderForSource(
-                            widget.sourceId,
-                            oldIndex,
-                            newIndex,
-                          ),
-                      itemBuilder: (context, index) {
-                        final board = added[index];
-                        return _AddedHotBoardTile(
-                          key: ValueKey('${board.source}:${board.id}'),
-                          colors: colors,
-                          board: board,
-                          index: index,
-                          onDelete: () => ref
-                              .read(hotBoardsProvider.notifier)
-                              .remove(board),
-                        );
-                      },
+            child: boardsAsync.when(
+              loading: () => const Center(child: CircularProgressIndicator()),
+              error: (_, _) => Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      context.tr('榜单数据加载失败'),
+                      style: TextStyle(color: colors.textHint),
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    TextButton(
+                      onPressed: () => ref.invalidate(
+                        leaderboardsForSourceProvider(sourceId),
+                      ),
+                      child: Text(context.tr('重试')),
                     ),
                   ],
-                  _sectionLabel('添加榜单', null),
-                  if (available.isEmpty)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: AppSpacing.lg,
-                        vertical: AppSpacing.md,
-                      ),
-                      child: Text(
-                        context.tr('当前音源的榜单都已添加'),
-                        style: TextStyle(fontSize: 12, color: colors.textHint),
-                      ),
-                    )
-                  else if (pickerGroups.length < 2)
-                    for (final board in available) _availableTile(board)
-                  else ...[
-                    // 榜单按分类分节展示（与发现页的分类 chips 同一套数据）
-                    for (final group in pickerGroups) ...[
-                      _pickerGroupLabel(group),
-                      for (final board in available)
-                        if (board.group == group) _availableTile(board),
-                    ],
-                    if (ungrouped.isNotEmpty) ...[
-                      _pickerGroupLabel(context.tr('其他')),
-                      for (final board in ungrouped) _availableTile(board),
-                    ],
-                  ],
-                ],
+                ),
               ),
+              data: (boards) => _buildBoardList(colors, sourceId, boards),
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  /// 音源切换 tab：横向滚动，当前音源高亮。
+  Widget _buildSourceTabs(ThemeColors colors, String sourceId) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.lg,
+        0,
+        AppSpacing.lg,
+        AppSpacing.md,
+      ),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            for (var i = 0; i < widget.sources.length; i++) ...[
+              if (i > 0) const SizedBox(width: AppSpacing.sm),
+              _buildSourceTab(
+                colors,
+                widget.sources[i],
+                selected: widget.sources[i].id == sourceId,
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSourceTab(
+    ThemeColors colors,
+    SourceInfo source, {
+    required bool selected,
+  }) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(AppRadius.full),
+      onTap: selected
+          ? null
+          : () => setState(() {
+              _sourceId = source.id;
+              _addingId = null;
+            }),
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.lg,
+          vertical: 6,
+        ),
+        decoration: BoxDecoration(
+          color: selected ? colors.primary : Colors.transparent,
+          borderRadius: BorderRadius.circular(AppRadius.full),
+          border: Border.all(color: selected ? colors.primary : colors.divider),
+        ),
+        child: Text(
+          source.name,
+          maxLines: 1,
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+            color: selected ? colors.textOnPrimary : colors.textSecondary,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBoardList(
+    ThemeColors colors,
+    String sourceId,
+    List<Leaderboard> boards,
+  ) {
+    final added = [
+      for (final board
+          in ref.watch(hotBoardsProvider).valueOrNull ?? const <HotBoard>[])
+        if (board.source == sourceId) board,
+    ];
+    final addedIds = {for (final board in added) board.id};
+    final available = [
+      for (final board in boards)
+        if (!addedIds.contains(board.id)) board,
+    ];
+    final pickerGroups = _pickerGroupsOf(available);
+    final ungrouped = _ungroupedOf(available);
+    return SingleChildScrollView(
+      padding: const EdgeInsets.only(bottom: AppSpacing.lg),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (added.isNotEmpty) ...[
+            _sectionLabel('已添加', '按住右侧图标拖动排序'),
+            ReorderableListView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              buildDefaultDragHandles: false,
+              padding: EdgeInsets.zero,
+              itemCount: added.length,
+              onReorder: (oldIndex, newIndex) => ref
+                  .read(hotBoardsProvider.notifier)
+                  .reorderForSource(sourceId, oldIndex, newIndex),
+              itemBuilder: (context, index) {
+                final board = added[index];
+                return _AddedHotBoardTile(
+                  key: ValueKey('${board.source}:${board.id}'),
+                  colors: colors,
+                  board: board,
+                  index: index,
+                  onDelete: () =>
+                      ref.read(hotBoardsProvider.notifier).remove(board),
+                );
+              },
+            ),
+          ],
+          _sectionLabel('添加榜单', null),
+          if (available.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.lg,
+                vertical: AppSpacing.md,
+              ),
+              child: Text(
+                boards.isEmpty
+                    ? context.tr('该音源暂无榜单数据')
+                    : context.tr('当前音源的榜单都已添加'),
+                style: TextStyle(fontSize: 12, color: colors.textHint),
+              ),
+            )
+          else if (pickerGroups.length < 2)
+            for (final board in available) _availableTile(board)
+          else ...[
+            // 榜单按分类分节展示（与发现页的分类 chips 同一套数据）
+            for (final group in pickerGroups) ...[
+              _pickerGroupLabel(group),
+              for (final board in available)
+                if (board.group == group) _availableTile(board),
+            ],
+            if (ungrouped.isNotEmpty) ...[
+              _pickerGroupLabel(context.tr('其他')),
+              for (final board in ungrouped) _availableTile(board),
+            ],
+          ],
         ],
       ),
     );

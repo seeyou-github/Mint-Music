@@ -9,7 +9,7 @@ import 'discover_providers.dart';
 
 final hotBoardStoreProvider = Provider<HotBoardStore>((ref) => HotBoardStore());
 
-/// 用户添加的全部热榜**配置**（跨音源保存，展示时按当前音源过滤）。
+/// 用户添加的全部热榜**配置**（跨音源聚合展示，不随主页音源切换）。
 ///
 /// state 里带 `songs`，但那是内存缓存：落盘只写配置，歌曲每次进「热榜」时
 /// 用 [HotBoardsNotifier.refreshSongs] 重新拉。
@@ -18,22 +18,9 @@ final hotBoardsProvider =
       HotBoardsNotifier.new,
     );
 
-/// 当前音源的热榜：主页切换音源时，热榜内容跟着切换。
-final currentHotBoardsProvider = Provider<AsyncValue<List<HotBoard>>>((ref) {
-  final sourceId = ref.watch(discoverSourceIdProvider);
-  return ref
-      .watch(hotBoardsProvider)
-      .whenData(
-        (boards) => [
-          for (final board in boards)
-            if (board.source == sourceId) board,
-        ],
-      );
-});
-
 /// 「哪些音源有用户新增的热榜」标志位（音源 id 集合），**同步**可读。
 ///
-/// 榜单默认分类只看它，所以切换音源时立刻就能判断，不必等热榜数据。
+/// 榜单默认分类只看它，热榜配置加载完成前也能立刻判断。
 /// 现在配置本身就在 settings.json 里、体积很小（只有音源 / 名称 / 封面），
 /// 直接从配置算即可，不再单独存一份标志位。
 final hotBoardSourceIdsProvider = Provider<Set<String>>((ref) {
@@ -107,35 +94,35 @@ class HotBoardsNotifier extends AsyncNotifier<List<HotBoard>> {
 
   /// 插件被卸载 / 删除：它带来的榜单配置一起删掉（settings.json 里不再保留）。
   ///
-  /// 榜单 `source` 是 `平台id@插件id`（例如 `wy@1a19ca50dfa`），插件卸载后
-  /// 这个音源不可能再出现，留着只会让热榜列表里多出一堆打不开的榜单。
-  /// 用户重装插件后需要重新添加榜单。
+  /// 榜单 `source` 是 `平台id@插件id`（例如 `wy@1a19ca50dfa`）；同一个插件
+  /// 存在重复音源时后缀还会带序号（`wy@1a19ca50dfa2`），所以按「后缀是插件
+  /// id + 可选数字」匹配。插件卸载后这些音源不可能再出现，留着只会让热榜
+  /// 列表里多出一堆打不开的榜单。用户重装插件后需要重新添加榜单。
   Future<void> removeForPlugin(String pluginId) async {
-    final suffix = '@$pluginId';
+    if (pluginId.isEmpty) return;
+    final suffix = RegExp('@${RegExp.escape(pluginId)}\\d*\$');
     final boards = [...await future];
     final kept = [
       for (final board in boards)
-        if (board.source != pluginId && !board.source.endsWith(suffix)) board,
+        if (board.source != pluginId && !suffix.hasMatch(board.source)) board,
     ];
     if (kept.length == boards.length) return;
     await _update(kept);
   }
 
-  /// 拉取某个音源下**还没有歌曲**的榜单（进入「热榜」时调用）。
+  /// 拉取**还没有歌曲**的热榜（进入「热榜」时调用）。
   ///
+  /// 热榜跨音源聚合展示，这里会把所有音源里缺歌曲的榜单一起补齐。
   /// 只改内存里的 state，不写 settings.json、也不进数据库。
   ///
-  /// 每个音源在一次运行里只取一次网络：内存里已经有歌曲的榜单直接跳过，
+  /// 每个榜单在一次运行里只取一次网络：内存里已经有歌曲的榜单直接跳过，
   /// 正在取（[HotBoard.songsLoading]）的也跳过，避免反复点「热榜」时重复请求；
   /// 取失败（歌曲为空）的榜单下次进来会再试一次。
-  Future<void> refreshSongs(String sourceId) async {
+  Future<void> refreshSongs() async {
     final boards = [...await future];
     final targets = [
       for (final board in boards)
-        if (board.source == sourceId &&
-            board.songs.isEmpty &&
-            !board.songsLoading)
-          board,
+        if (board.songs.isEmpty && !board.songsLoading) board,
     ];
     if (targets.isEmpty) return;
     // 先把要取的标成「加载中」：卡片各自转圈，而不是一片空白。

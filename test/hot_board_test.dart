@@ -195,7 +195,7 @@ void main() {
       expect(store.boards.length, 2);
     });
 
-    test('不同音源的热榜互不影响，切换音源时展示对应数据', () async {
+    test('跨音源聚合：不同音源的榜单同时展示，切换音源不影响列表', () async {
       final store = _FakeStore();
       final container = _container(store);
       await container.read(hotBoardsProvider.future);
@@ -203,23 +203,16 @@ void main() {
       await notifier.add(_board('wy-rank', 'wy'));
       await notifier.add(_board('tx-rank', 'tx'));
 
-      expect(
-        container
-            .read(currentHotBoardsProvider)
-            .valueOrNull!
-            .map((item) => item.id),
-        ['wy-rank'],
-      );
+      List<String> ids() => container
+          .read(hotBoardsProvider)
+          .valueOrNull!
+          .map((item) => item.id)
+          .toList();
+
+      expect(ids(), ['wy-rank', 'tx-rank']);
+
       container.read(discoverSourceIdProvider.notifier).state = 'tx';
-      expect(
-        container
-            .read(currentHotBoardsProvider)
-            .valueOrNull!
-            .map((item) => item.id),
-        ['tx-rank'],
-        reason: '热榜数据与音源绑定',
-      );
-      expect(container.read(hotBoardsProvider).valueOrNull!.length, 2);
+      expect(ids(), ['wy-rank', 'tx-rank'], reason: '热榜数据不跟随主页音源');
     });
 
     test('拖动排序只调整当前音源内的顺序', () async {
@@ -236,8 +229,9 @@ void main() {
       await notifier.reorderForSource('wy', 0, 3);
       expect(
         container
-            .read(currentHotBoardsProvider)
+            .read(hotBoardsProvider)
             .valueOrNull!
+            .where((item) => item.source == 'wy')
             .map((item) => item.id),
         ['wy-b', 'wy-c', 'wy-a'],
       );
@@ -268,6 +262,29 @@ void main() {
         ['b'],
       );
       expect(store.boards.map((item) => item.id), ['b']);
+    });
+
+    test('卸载插件时删掉该插件音源的榜单，同前缀的其他插件保留', () async {
+      final store = _FakeStore();
+      final container = _container(store);
+      await container.read(hotBoardsProvider.future);
+      final notifier = container.read(hotBoardsProvider.notifier);
+      await notifier.add(_board('wy-app', 'wy'));
+      await notifier.add(_board('wy-abc', 'wy@abc'));
+      await notifier.add(_board('wy-abc2', 'wy@abc2'));
+      await notifier.add(_board('wy-abcd', 'wy@abcd'));
+
+      await notifier.removeForPlugin('abc');
+      expect(
+        container.read(hotBoardsProvider).valueOrNull!.map((item) => item.id),
+        ['wy-app', 'wy-abcd'],
+        reason: '同前缀的 @abcd 不能误删',
+      );
+      expect(store.boards.map((item) => item.id), ['wy-app', 'wy-abcd']);
+
+      final savesAfterRemove = store.saveCount;
+      await notifier.removeForPlugin('abc');
+      expect(store.saveCount, savesAfterRemove, reason: '没有可删的榜单时不重复写入');
     });
   });
 }

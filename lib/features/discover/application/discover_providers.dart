@@ -363,6 +363,16 @@ final leaderboardsProvider = FutureProvider<List<Leaderboard>>((ref) async {
   return repo.getLeaderboards(sourceId: sourceId);
 });
 
+/// 指定音源的榜单列表（「新增热榜数据」里按音源分 tab 用）。
+///
+/// [leaderboardsProvider] 跟着主页当前音源走，弹框要同时看多个音源，
+/// 所以单独按音源缓存一份。
+final leaderboardsForSourceProvider =
+    FutureProvider.family<List<Leaderboard>, String>((ref, sourceId) async {
+      final repo = ref.watch(discoverRepositoryProvider);
+      return repo.getLeaderboards(sourceId: sourceId);
+    });
+
 enum DiscoverTab { playlists, leaderboards, radio }
 
 final discoverTabProvider = StateProvider<DiscoverTab>(
