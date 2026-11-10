@@ -522,6 +522,19 @@ final fullScreenBackgroundModeProvider = Provider<FullScreenBackgroundMode>(
   (ref) => FullScreenBackgroundMode.theme,
 );
 
+/// 播放详情页 / 歌词页**实际**用的背景。
+///
+/// 「设置 → 外观设置 → 背景颜色模式」选的是高斯模糊时，这两页也跟着用
+/// 「封面糊化铺满 + 暗色遮罩」（[FullScreenBackgroundMode.cover]，参考
+/// Linthra 的播放页），这样主界面是模糊背景、点进播放页却变回渐变的情况就
+/// 不会出现；选背景渐变时仍按 [fullScreenBackgroundModeProvider] 的固定值。
+final playerBackgroundModeProvider = Provider<FullScreenBackgroundMode>((ref) {
+  if (ref.watch(backgroundModeProvider) == BackgroundMode.blur) {
+    return FullScreenBackgroundMode.cover;
+  }
+  return ref.watch(fullScreenBackgroundModeProvider);
+});
+
 // -- app version (loaded once) --
 /// 应用版本号：Android 显示固定的版本 id；Windows 显示「编译时间」，
 /// 格式 `年.月日.时分`（如 `2026.1110.0106`）。

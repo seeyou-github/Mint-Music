@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -160,7 +161,7 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
     final isPlaying = ref.watch(
       playbackControllerProvider.select((s) => s.isPlaying),
     );
-    final bgMode = ref.watch(fullScreenBackgroundModeProvider);
+    final bgMode = ref.watch(playerBackgroundModeProvider);
     final audioVisualizer = ref.watch(audioVisualizerEnabledProvider);
     final coverColorAsync = ref.watch(currentCoverColorProvider);
     // 「主界面跟随封面变色」开启时（仅深色），播放页直接用主界面那条渐变：
@@ -186,6 +187,7 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
               child: _BackgroundLayer(
                 dominantColor: dominantColor,
                 coverUrl: song?.coverUrl,
+                song: song,
                 mode: bgMode,
                 // 跟随封面时直接用主界面那条渐变（颜色 + 方向同源），
                 // 否则仍按封面色自己派生。
@@ -830,7 +832,7 @@ class _PlayerCoverPage extends ConsumerWidget {
     // 订阅歌曲身份：封面地址 / 歌词补齐后要换图。
     ref.watch(currentSongIdentityProvider);
     final song = ref.read(playbackControllerProvider).currentSong;
-    final bgMode = ref.watch(fullScreenBackgroundModeProvider);
+    final bgMode = ref.watch(playerBackgroundModeProvider);
     final coverColorAsync = ref.watch(currentCoverColorProvider);
     final dominantColor = coverColorAsync.whenOrNull(
       data: (result) => result?.dominantColor,
@@ -1614,6 +1616,10 @@ class _PlayerControls extends ConsumerWidget {
 class _BackgroundLayer extends StatefulWidget {
   final Color? dominantColor;
   final String? coverUrl;
+
+  /// 当前歌曲：本地歌的封面常常只有内嵌图（`coverUrl` 为空），
+  /// 把它一起交给 [MusicCoverImage] 才能糊出背景，不然本地歌只能看到纯色。
+  final Song? song;
   final FullScreenBackgroundMode mode;
 
   /// 「主界面跟随封面变色」开启时传入主界面那条渐变。
@@ -1629,6 +1635,7 @@ class _BackgroundLayer extends StatefulWidget {
   const _BackgroundLayer({
     required this.dominantColor,
     required this.coverUrl,
+    this.song,
     required this.mode,
     this.mainGradient,
     required this.glowSeed,
@@ -1662,10 +1669,30 @@ class _BackgroundLayerState extends State<_BackgroundLayer> {
   Widget build(BuildContext context) => _buildLayer(context);
 
   Widget _buildLayer(BuildContext context) {
+    final mode = widget.mode;
+    final dominantColor = _displayedDominantColor;
+    final coverUrl = widget.coverUrl;
+    final coverSong = widget.song;
+    // 有在线封面、或者是能取到本地封面的本地歌，才铺「封面糊化」背景。
+    final hasCover =
+        (coverUrl != null && coverUrl.isNotEmpty) ||
+        (coverSong?.isLocal ?? false) ||
+        (coverSong?.mediaStoreId != null);
+    // 高斯模糊模式（背景颜色模式 = 高斯模糊）下背景就该是封面本身，
+    // 不能再退回「跟随封面变色」那条渐变。
+    final useCoverBackground =
+        mode == FullScreenBackgroundMode.cover && hasCover;
+    // 该铺封面背景却拿不到封面时，退回「跟随主题」那条渐变，
+    // 别让播放页只剩一片黑。
+    final effectiveMode =
+        mode == FullScreenBackgroundMode.cover && !hasCover
+        ? FullScreenBackgroundMode.theme
+        : mode;
+
     // 跟随封面变色时把主界面那条渐变原样铺上来：颜色、方向都同源，侧栏和
     // 播放页之间没有任何色差，切换歌曲时两边也是同一条 1s 过渡。
     final mainGradient = widget.mainGradient;
-    if (mainGradient != null) {
+    if (mainGradient != null && !useCoverBackground) {
       return Stack(
         fit: StackFit.expand,
         children: [
@@ -1690,8 +1717,6 @@ class _BackgroundLayerState extends State<_BackgroundLayer> {
         ],
       );
     }
-    final mode = widget.mode;
-    final dominantColor = _displayedDominantColor;
     // 与「设置 → 外观设置 → 背景渐变」共用同一条派生算法
     // （deriveBackgroundGradient）：只取封面色相、饱和度封顶、亮度压到
     // 暗色区间，这里取默认派生的首（0.17）尾（0.08）两段。
@@ -1701,7 +1726,7 @@ class _BackgroundLayerState extends State<_BackgroundLayer> {
     return Stack(
       children: [
         Container(color: const Color(0xFF09090B)),
-        if (derived != null && mode == FullScreenBackgroundMode.theme)
+        if (derived != null && effectiveMode == FullScreenBackgroundMode.theme)
           AnimatedContainer(
             duration: const Duration(milliseconds: 600),
             decoration: BoxDecoration(
@@ -1712,21 +1737,37 @@ class _BackgroundLayerState extends State<_BackgroundLayer> {
               ),
             ),
           ),
-        if (widget.coverUrl != null &&
-            widget.coverUrl!.isNotEmpty &&
-            mode == FullScreenBackgroundMode.cover)
+        if (useCoverBackground)
           Stack(
             children: [
               Positioned.fill(
-                child: MusicCoverImage(
-                  url: widget.coverUrl,
-                  fit: BoxFit.cover,
-                  width: double.infinity,
-                  height: double.infinity,
-                  cacheWidth: 512,
-                  cacheHeight: 512,
-                  filterQuality: FilterQuality.low,
+                // 封面糊化后铺满：模糊会把细节抹掉，按 512 解码就够，别解大图。
+                // 放大一点把模糊后发虚的边推到屏幕外（与歌词页同款处理）。
+                child: ImageFiltered(
+                  imageFilter: ui.ImageFilter.blur(sigmaX: 40, sigmaY: 40),
+                  child: Transform.scale(
+                    scale: 1.06,
+                    child: MusicCoverImage(
+                      url: (coverUrl != null && coverUrl.isNotEmpty)
+                          ? coverUrl
+                          : null,
+                      songId: coverSong?.id,
+                      filePath: coverSong?.filePath,
+                      mediaStoreId: coverSong?.mediaStoreId,
+                      fit: BoxFit.cover,
+                      width: double.infinity,
+                      height: double.infinity,
+                      cacheWidth: 512,
+                      cacheHeight: 512,
+                      filterQuality: FilterQuality.low,
+                      errorWidget: const SizedBox.shrink(),
+                    ),
+                  ),
                 ),
+              ),
+              // 压暗：整体压到能看清白字，再让下沿更暗，托住控制区。
+              Positioned.fill(
+                child: Container(color: Colors.black.withValues(alpha: 0.6)),
               ),
               Positioned.fill(
                 child: Container(
@@ -1735,9 +1776,9 @@ class _BackgroundLayerState extends State<_BackgroundLayer> {
                       begin: Alignment.topCenter,
                       end: Alignment.bottomCenter,
                       colors: [
-                        Colors.black.withValues(alpha: 0.7),
-                        Colors.black.withValues(alpha: 0.8),
-                        Colors.black.withValues(alpha: 0.9),
+                        Colors.black.withValues(alpha: 0.10),
+                        Colors.black.withValues(alpha: 0.20),
+                        Colors.black.withValues(alpha: 0.60),
                       ],
                     ),
                   ),
@@ -1745,8 +1786,9 @@ class _BackgroundLayerState extends State<_BackgroundLayer> {
               ),
             ],
           ),
-        if (mode == FullScreenBackgroundMode.dark ||
-            (dominantColor == null && mode == FullScreenBackgroundMode.theme))
+        if (effectiveMode == FullScreenBackgroundMode.dark ||
+            (dominantColor == null &&
+                effectiveMode == FullScreenBackgroundMode.theme))
           Container(
             decoration: const BoxDecoration(
               gradient: LinearGradient(

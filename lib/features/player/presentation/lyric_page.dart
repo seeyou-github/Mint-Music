@@ -158,7 +158,7 @@ class _LyricPageState extends ConsumerState<LyricPage> {
     final song = ref.read(playbackControllerProvider).currentSong;
     final controller = ref.read(playbackControllerProvider.notifier);
     final lyricState = ref.watch(lyricControllerProvider);
-    final bgMode = ref.watch(fullScreenBackgroundModeProvider);
+    final bgMode = ref.watch(playerBackgroundModeProvider);
     final bgAnimation = ref.watch(appearanceBgAnimationProvider);
 
     final showTranslation = ref.watch(lyricShowTranslationProvider);
@@ -213,6 +213,7 @@ class _LyricPageState extends ConsumerState<LyricPage> {
                   child: _LyricBackgroundLayer(
                     dominantColor: _dominantColor,
                     coverUrl: song?.coverUrl,
+                    song: song,
                     mode: bgMode,
                     animate: bgAnimation,
                   ),
@@ -796,12 +797,17 @@ class _LyricControls extends ConsumerWidget {
 class _LyricBackgroundLayer extends StatefulWidget {
   final Color? dominantColor;
   final String? coverUrl;
+
+  /// 当前歌曲：本地歌常常只有内嵌封面（`coverUrl` 为空），交给
+  /// [MusicCoverImage] 才能糊出背景。
+  final Song? song;
   final FullScreenBackgroundMode mode;
   final bool animate;
 
   const _LyricBackgroundLayer({
     required this.dominantColor,
     required this.coverUrl,
+    this.song,
     required this.mode,
     required this.animate,
   });
@@ -867,10 +873,21 @@ class _LyricBackgroundLayerState extends State<_LyricBackgroundLayer>
     final dominantColor = widget.dominantColor;
     final coverUrl = widget.coverUrl;
     final mode = widget.mode;
+    // 有在线封面、或者是能取到本地封面的本地歌，才铺「封面糊化」背景。
+    final hasCover =
+        (coverUrl != null && coverUrl.isNotEmpty) ||
+        (widget.song?.isLocal ?? false) ||
+        (widget.song?.mediaStoreId != null);
+    // 该铺封面背景却拿不到封面时，退回「跟随主题」那条渐变。
+    final effectiveMode =
+        mode == FullScreenBackgroundMode.cover && !hasCover
+        ? FullScreenBackgroundMode.theme
+        : mode;
     return Stack(
       children: [
         Container(color: const Color(0xFF09090B)),
-        if (dominantColor != null && mode == FullScreenBackgroundMode.theme)
+        if (dominantColor != null &&
+            effectiveMode == FullScreenBackgroundMode.theme)
           AnimatedContainer(
             duration: widget.animate
                 ? const Duration(seconds: 1)
@@ -888,9 +905,7 @@ class _LyricBackgroundLayerState extends State<_LyricBackgroundLayer>
               ),
             ),
           ),
-        if (coverUrl != null &&
-            coverUrl!.isNotEmpty &&
-            mode == FullScreenBackgroundMode.cover)
+        if (hasCover && effectiveMode == FullScreenBackgroundMode.cover)
           Stack(
             children: [
               Positioned.fill(
@@ -905,7 +920,12 @@ class _LyricBackgroundLayerState extends State<_LyricBackgroundLayer>
                             sigmaY: 40,
                           ),
                           child: MusicCoverImage(
-                            url: coverUrl,
+                            url: (coverUrl != null && coverUrl.isNotEmpty)
+                                ? coverUrl
+                                : null,
+                            songId: widget.song?.id,
+                            filePath: widget.song?.filePath,
+                            mediaStoreId: widget.song?.mediaStoreId,
                             fit: BoxFit.cover,
                             width: double.infinity,
                             height: double.infinity,
@@ -922,7 +942,12 @@ class _LyricBackgroundLayerState extends State<_LyricBackgroundLayer>
                           sigmaY: 40,
                         ),
                         child: MusicCoverImage(
-                          url: coverUrl,
+                          url: (coverUrl != null && coverUrl.isNotEmpty)
+                              ? coverUrl
+                              : null,
+                          songId: widget.song?.id,
+                          filePath: widget.song?.filePath,
+                          mediaStoreId: widget.song?.mediaStoreId,
                           fit: BoxFit.cover,
                           width: double.infinity,
                           height: double.infinity,
@@ -953,8 +978,9 @@ class _LyricBackgroundLayerState extends State<_LyricBackgroundLayer>
               ),
             ],
           ),
-        if (mode == FullScreenBackgroundMode.dark ||
-            (dominantColor == null && mode == FullScreenBackgroundMode.theme))
+        if (effectiveMode == FullScreenBackgroundMode.dark ||
+            (dominantColor == null &&
+                effectiveMode == FullScreenBackgroundMode.theme))
           Container(
             decoration: const BoxDecoration(
               gradient: LinearGradient(
