@@ -29,6 +29,45 @@ BoxDecoration activeChipDecoration(
   );
 }
 
+/// 玻璃控件底色：往白里混的比例（越大越亮）。
+const double _blurGlassDarkMix = 0.12;
+const double _blurGlassLightMix = 0.30;
+
+/// 玻璃控件底色的不透明度（越小越透、越能看见照片纹理）。
+/// 深色主题留 45% 给背景纹理；浅色主题底面更亮，留一半。
+const double _blurGlassDarkAlpha = 0.55;
+const double _blurGlassLightAlpha = 0.50;
+
+/// 高斯模糊背景下的「玻璃」控件底色。
+///
+/// 主界面背景是一张真实的照片（`AppBackgroundLayer` 铺满），控件若用不透明
+/// 实心色块，就会把照片整块盖住、看起来像贴上去的硬纸片。这里把「当前背景
+/// 的代表色」做成半透明：叠回照片上时能透出照片的纹理和明暗，同时因为代表
+/// 色本身已按主题压暗 / 提亮过，叠加后与背景保持一档亮度差，白字 / 黑字
+/// 仍然清楚 —— 质感与侧栏「发现」激活项（`primary` 15% 半透明）一致。
+///
+/// [backdrop] 取 `backgroundGradientProvider` 的对应段（模糊模式下是照片 /
+/// 封面主色派生出来的那条渐变）；[step] 让 `surfaceVariant` 比 `surface`
+/// 再亮一档，保持卡片占位、次级块的层次。
+Color blurGlassSurface(
+  Color backdrop, {
+  required bool isLight,
+  double step = 0,
+}) {
+  // 往白里混一点：纯用背景代表色（深色主题下已压到 0.1 附近）叠上去会太暗，
+  // 混过之后控件亮一档，既不刺眼也和背景分得开。
+  final mix = ((isLight ? _blurGlassLightMix : _blurGlassDarkMix) + step).clamp(
+    0.0,
+    0.70,
+  );
+  final tinted = Color.lerp(backdrop, Colors.white, mix)!;
+  // alpha 留给照片的纹理：不是全透明（那样没有对比度），也不是实心
+  // （那样又变回硬色块）。
+  return tinted.withValues(
+    alpha: isLight ? _blurGlassLightAlpha : _blurGlassDarkAlpha,
+  );
+}
+
 /// 卡片 / 按钮 / 设置块统一的「悬浮表面」装饰。
 ///
 /// 主界面背景跟随封面取色后是一整片渐变，控件底色（[ThemeColors.surface]）

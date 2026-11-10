@@ -132,6 +132,38 @@ class ThemeColors {
     );
   }
 
+  /// 只替换控件表面色（高斯模糊背景下的半透明玻璃层）。
+  ///
+  /// 文字颜色、背景代表色、边框色都保持原样：`floatingShadows` /
+  /// `estimateBrightnessForColor` 仍按不透明的 [background] 判断明暗，
+  /// 边框也不会因为跟着变半透明而消失。
+  ThemeColors copyWithSurface({Color? surface, Color? surfaceVariant}) {
+    final newSurface = surface ?? this.surface;
+    return ThemeColors(
+      primary: primary,
+      primaryLight: primaryLight,
+      primaryDark: primaryDark,
+      accent: accent,
+      accentLight: accentLight,
+      background: background,
+      surface: newSurface,
+      surfaceVariant: surfaceVariant ?? this.surfaceVariant,
+      textPrimary: textPrimary,
+      textSecondary: textSecondary,
+      textHint: textHint,
+      textOnPrimary: textOnPrimary,
+      error: error,
+      success: success,
+      warning: warning,
+      divider: divider,
+      disabled: disabled,
+      miniPlayerBackground: newSurface,
+      miniPlayerProgress: miniPlayerProgress,
+      coverShadow: coverShadow,
+      shadow: shadow,
+    );
+  }
+
   static Color _shiftLightness(Color color, double delta) {
     final hsl = HSLColor.fromColor(color);
     return hsl.withLightness((hsl.lightness + delta).clamp(0.0, 1.0)).toColor();

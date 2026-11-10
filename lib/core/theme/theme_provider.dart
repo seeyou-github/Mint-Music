@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'background_gradient.dart';
 import 'background_derivation.dart';
 import 'background_mode.dart';
+import 'app_surface.dart';
 import 'theme_colors.dart';
 
 export 'background_mode.dart';
@@ -289,16 +290,39 @@ final backgroundGradientProvider = Provider<BackgroundGradient>((ref) {
   );
 });
 
+/// 主界面是否正在用「照片 / 封面糊化」当背景。
+///
+/// 只有这时控件才需要切成半透明玻璃层：背景渐变模式、或者模糊模式但没选图
+/// 也没封面（实际退回渐变）时，控件仍用原来的不透明派生色。
+final blurGlassEnabledProvider = Provider<bool>((ref) {
+  if (ref.watch(backgroundModeProvider) != BackgroundMode.blur) return false;
+  // 用户选的模糊图：取到主色就说明这张照片正在铺在屏幕上。
+  if (ref.watch(backgroundBlurTintProvider) != null) return true;
+  // 「跟随封面」开着时，背景换成当前歌曲封面糊化。
+  return ref.watch(coverBlurBackdropEnabledProvider) &&
+      ref.watch(coverAccentColorProvider) != null;
+});
+
 /// 详情页顶栏（悬浮面板）的底色。
 ///
 /// 取背景渐变**顶部**的颜色（也就是顶栏身后那一块的实际颜色）走一遍
 /// [ThemeColors.copyWithBackground]，再取它的 `surface`：与卡片用的是同一套
 /// 「只比背景亮一点点」的派生幅度，所以不管深浅主题、不管用户配了什么渐变，
 /// 面板总比身后的背景略亮一档，配合细边框 + 阴影就是「浮在页面上」的效果。
+///
+/// 高斯模糊模式下改用 [blurGlassSurface]，和卡片、按钮是同一种半透明质感。
 final detailHeaderSurfaceProvider = Provider<Color>((ref) {
   final base = ref.watch(baseThemeColorsProvider);
   final gradient = ref.watch(backgroundGradientProvider);
-  return base.copyWithBackground(gradient.colors.first).surface;
+  final backdrop = gradient.colors.first;
+  if (ref.watch(blurGlassEnabledProvider)) {
+    return blurGlassSurface(
+      backdrop,
+      isLight: ref.watch(isLightThemeActiveProvider),
+      step: 0.06,
+    );
+  }
+  return base.copyWithBackground(backdrop).surface;
 });
 
 /// 界面实际使用的主题色。
@@ -309,8 +333,16 @@ final detailHeaderSurfaceProvider = Provider<Color>((ref) {
 /// 因此浅色主题仍是黑字、深色主题仍是浅字，对比度不会失控。
 ///
 /// 高斯模糊模式下这里的「背景渐变」是照片主色派生的那条（见
-/// [backgroundGradientProvider]），所以控件同样跟着照片色调走。
+/// [backgroundGradientProvider]），控件色调跟着照片走；并且会再换成半透明
+/// 玻璃层，让照片的纹理透出来，而不是用一块实心色把照片盖住。
 final themeColorsProvider = Provider<ThemeColors>((ref) {
   final base = ref.watch(baseThemeColorsProvider);
-  return base.copyWithBackground(ref.watch(backgroundGradientProvider).mid);
+  final mid = ref.watch(backgroundGradientProvider).mid;
+  final derived = base.copyWithBackground(mid);
+  if (!ref.watch(blurGlassEnabledProvider)) return derived;
+  final isLight = ref.watch(isLightThemeActiveProvider);
+  return derived.copyWithSurface(
+    surface: blurGlassSurface(mid, isLight: isLight),
+    surfaceVariant: blurGlassSurface(mid, isLight: isLight, step: 0.10),
+  );
 });
