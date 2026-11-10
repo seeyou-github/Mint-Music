@@ -160,20 +160,16 @@ class _AppState extends ConsumerState<App> {
   /// 「主界面跟随封面变色」只在这份颜色非空时生效；颜色没算好 / 没有封面时
   /// 什么都不做，背景会退回用户选的渐变。
   void _syncCoverAccent() {
-    final result = ref.read(currentCoverColorProvider).valueOrNull;
-    final color = result?.dominantColor;
+    final color = ref
+        .read(currentCoverColorProvider)
+        .valueOrNull
+        ?.dominantColor;
     if (color == null) return;
-    final seed = result?.seed ?? 0;
-    if (ref.read(coverAccentColorProvider) == color &&
-        ref.read(coverAccentSeedProvider) == seed) {
-      return;
-    }
+    if (ref.read(coverAccentColorProvider) == color) return;
     // build 期间不能直接改 provider，推到下一帧。
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       ref.read(coverAccentColorProvider.notifier).state = color;
-      // 种子决定背景的亮度 / 落差 / 光晕数：同一首歌固定，不同歌各不相同。
-      ref.read(coverAccentSeedProvider.notifier).state = seed;
     });
   }
 
