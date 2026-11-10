@@ -1121,6 +1121,8 @@ class _AppearanceContent extends ConsumerWidget {
 
     // 「主界面跟随封面变色」开关（仅深色主题）。
     final coverBackground = ref.watch(coverBackgroundEnabledProvider);
+    // 「播放歌曲时动态光晕」开关（默认关闭）。
+    final glowAnimation = ref.watch(coverGlowAnimationEnabledProvider);
 
     /// 背景渐变行：右侧是当前渐变的预览条，点开可以配置 1~3 个颜色。
     Widget buildBackgroundGradientRow() {
@@ -1242,6 +1244,25 @@ class _AppearanceContent extends ConsumerWidget {
                     v,
                     (s) => s.setCoverBackground(v),
                   ),
+            activeTrackColor: colors.primary.withValues(alpha: 0.3),
+            activeThumbColor: colors.primary,
+          ),
+          colors: colors,
+        ),
+        SettingDivider(colors: colors),
+        // 播放时让主界面背景的光晕缓慢漂移 + 呼吸；暂停后停在当前位置。
+        SettingRow(
+          icon: Icons.blur_on,
+          title: '播放歌曲时动态光晕',
+          subtitle: '主界面背景的光晕缓慢移动，并随播放轻微呼吸',
+          trailing: Switch(
+            value: glowAnimation,
+            onChanged: (v) => _persistBool(
+              context,
+              coverGlowAnimationEnabledProvider,
+              v,
+              (s) => s.setCoverGlowAnimation(v),
+            ),
             activeTrackColor: colors.primary.withValues(alpha: 0.3),
             activeThumbColor: colors.primary,
           ),

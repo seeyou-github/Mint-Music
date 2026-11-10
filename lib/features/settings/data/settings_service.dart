@@ -196,6 +196,15 @@ class SettingsService {
   Future<void> setCoverBackground(bool v) =>
       _prefs.setBool(_coverBackgroundKey, v);
 
+  // -- 播放歌曲时动态光晕 --
+  static const _coverGlowAnimationKey = 'cover_glow_animation';
+
+  /// 播放歌曲时主界面背景光晕是否缓慢运动 + 呼吸（默认关闭）。
+  bool getCoverGlowAnimation() =>
+      _prefs.getBool(_coverGlowAnimationKey) ?? false;
+  Future<void> setCoverGlowAnimation(bool v) =>
+      _prefs.setBool(_coverGlowAnimationKey, v);
+
   // -- 自定义背景渐变（「背景渐变 → 新增颜色」保存的三色渐变） --
   static const _backgroundGradientsLightKey = 'background_gradients_light';
   static const _backgroundGradientsDarkKey = 'background_gradients_dark';

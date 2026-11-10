@@ -275,6 +275,12 @@ class _AppState extends ConsumerState<App> {
     // 主界面背景渐变（外观设置里选的颜色）：放在 build 顶层订阅，
     // MaterialApp.builder 里只取值，避免在嵌套 builder 回调里 ref.watch。
     final backgroundGradient = ref.watch(backgroundGradientProvider);
+    // 「播放歌曲时动态光晕」：开关打开且歌曲正在播放时，光晕才缓慢漂移 + 呼吸。
+    final glowAnimated =
+        ref.watch(coverGlowAnimationEnabledProvider) &&
+        ref.watch(
+          playbackControllerProvider.select((state) => state.isPlaying),
+        );
     // 「主界面跟随封面变色」要用的主色：core 层只负责存颜色，取色在
     // features 层（currentCoverColorProvider），所以在这里同步过去。
     // 监听负责切歌，[_syncCoverAccent] 负责首帧（监听不回溯已有结果）。
@@ -435,6 +441,7 @@ class _AppState extends ConsumerState<App> {
                           colors: backgroundGradient.colors,
                           count: backgroundGradient.glowCount,
                           seed: ref.watch(backgroundGlowSeedProvider),
+                          animated: glowAnimated,
                         ),
                       ],
                     ),

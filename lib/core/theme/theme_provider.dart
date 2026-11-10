@@ -193,6 +193,12 @@ final baseThemeColorsProvider = Provider<ThemeColors>((ref) {
 /// 完全相同（见 [deriveBackgroundGradient]）；浅色主题下忽略这个开关。
 final coverBackgroundEnabledProvider = StateProvider<bool>((ref) => true);
 
+/// 「播放歌曲时动态光晕」开关（默认关闭）。
+///
+/// 打开后，主界面背景里的光晕会在有歌曲播放时缓慢漂移并做轻微呼吸；
+/// 暂停播放或关闭开关时停在当前位置，不会跳回初始布局。
+final coverGlowAnimationEnabledProvider = StateProvider<bool>((ref) => false);
+
 /// 当前封面主色。
 ///
 /// core 层不该直接依赖播放器的取色器（那是 features 层），所以由 app 层在
