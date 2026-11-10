@@ -57,6 +57,11 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
     _userController.dispose();
     _passwordController.dispose();
     _deviceController.dispose();
+    // 页面在还原过程中被关掉（用户切走）时，persist 的进度条不会自己消失，
+    // 这里补一刀，免得它一直挂在底部。
+    try {
+      _messenger?.clearSnackBars();
+    } catch (_) {}
     super.dispose();
   }
 
@@ -344,15 +349,24 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
 
   // ---------------------------------------------------------------- 辅助 UI
 
-  ScaffoldFeatureController<SnackBar, SnackBarClosedReason>?
-  _progressController;
+  /// 最近一次显示进度用的 messenger：关闭进度 / 页面销毁时要靠它清队列。
+  ScaffoldMessengerState? _messenger;
 
   /// 显示一个不会自动消失的进度提示（上传 / 下载过程中用）。
   void _showProgress(String message) {
     if (!mounted) return;
     final colors = ref.read(themeColorsProvider);
-    _closeProgress();
-    _progressController = ScaffoldMessenger.of(context).showSnackBar(
+    final messenger = ScaffoldMessenger.of(context);
+    _messenger = messenger;
+    // 先清掉所有旧提示再显示新的。
+    //
+    // 这些进度条是 `persist: true`（不会自己消失），而 showSnackBar 是排队
+    // 显示的：之前只 close 自己手里那个，前面几条还在队列里没来得及显示，
+    // 等最后一条关掉后它们又会顶上来，于是「还原已完成，底部还挂着一句
+    // 正在应用还原的电台 / 黑名单 / 本地目录…」。clearSnackBars 能连队列
+    // 一起清干净。
+    messenger.clearSnackBars();
+    messenger.showSnackBar(
       SnackBar(
         // 一直显示，直到任务结束主动关闭。
         persist: true,
@@ -379,8 +393,14 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
 
   /// 关闭进度提示。
   void _closeProgress() {
-    _progressController?.close();
-    _progressController = null;
+    // 同样用 clearSnackBars：队列里剩下的旧进度条一并清掉，不会留下一条
+    // persist 的提示永远停在底部。
+    final messenger = _messenger;
+    if (messenger != null) {
+      try {
+        messenger.clearSnackBars();
+      } catch (_) {}
+    }
   }
 
   /// 还原后的热应用：设置 / 字体 / 歌单 / 进度立即生效，插件重新加载。
