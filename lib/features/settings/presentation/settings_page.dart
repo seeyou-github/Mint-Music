@@ -833,7 +833,10 @@ GradientDirection _gradientPreviewDirection(
 }
 
 /// 外观设置里「主题色 / 字体颜色 / 第二字体颜色」的内置颜色。
+///
+/// 第一个是默认主题色（[defaultThemePrimaryColor] 暖金），必须保持一致。
 const List<(String, String)> _presetColors = [
+  (defaultThemePrimaryColor, '暖金'),
   ('#1DB954', 'Spotify 绿'),
   ('#6366F1', '靛蓝'),
   ('#3B82F6', '天蓝'),

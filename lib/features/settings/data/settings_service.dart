@@ -16,8 +16,21 @@ class SettingsService {
   // -- theme --
   String getThemeMode() => _prefs.getString('theme_mode') ?? 'system';
   Future<void> setThemeMode(String v) => _prefs.setString('theme_mode', v);
-  String getThemePrimaryColor() =>
-      _prefs.getString('theme_primary_color') ?? '#1DB954';
+  /// 旧版本的内置默认主题色（Spotify 绿）。
+  static const String _legacyDefaultPrimaryColor = '#1DB954';
+
+  /// 主题色：没保存过用默认的暖金。
+  ///
+  /// 早期版本的默认是 Spotify 绿，没改过主题色的用户（配置里还是这个值）
+  /// 跟着新默认换成暖金；自己选过的颜色不受影响。
+  String getThemePrimaryColor() {
+    final saved = _prefs.getString('theme_primary_color');
+    if (saved == null) return defaultThemePrimaryColor;
+    if (saved.trim().toUpperCase() == _legacyDefaultPrimaryColor) {
+      return defaultThemePrimaryColor;
+    }
+    return saved;
+  }
   Future<void> setThemePrimaryColor(String v) =>
       _prefs.setString('theme_primary_color', v);
 

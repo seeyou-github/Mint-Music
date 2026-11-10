@@ -13,7 +13,15 @@ export 'theme_colors.dart';
 /// 应用主题模式：浅色 / 深色 / 跟随系统。
 final themeModeProvider = StateProvider<ThemeMode>((ref) => ThemeMode.system);
 
-final themePrimaryColorProvider = StateProvider<String>((ref) => '#1DB954');
+/// 「主题色」的默认值（暖金）。
+///
+/// 外观设置里内置颜色的**第一个**就是它，新装 / 没保存过主题色时用的也是
+/// 它；改这里要同步设置存储（`SettingsService.getThemePrimaryColor`）的兜底值。
+const String defaultThemePrimaryColor = '#DBB580';
+
+final themePrimaryColorProvider = StateProvider<String>(
+  (ref) => defaultThemePrimaryColor,
+);
 
 /// 深色模式「字体颜色」的默认值（低饱和的米灰黄）。
 const String defaultThemeFontColor = '#C4BEA4';
@@ -129,7 +137,8 @@ Color _parseThemeColor(String hex) {
     final code = hex.replaceFirst('#', '');
     return Color(int.parse('FF$code', radix: 16));
   } catch (_) {
-    return const Color(0xFF1DB954);
+    // 配置里是非法色值时回落到默认主题色（暖金）。
+    return const Color(0xFFDBB580);
   }
 }
 
