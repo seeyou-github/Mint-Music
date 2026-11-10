@@ -210,6 +210,18 @@ final coverBackgroundEnabledProvider = StateProvider<bool>((ref) => true);
 /// 暂停播放或关闭开关时停在当前位置，不会跳回初始布局。
 final coverGlowAnimationEnabledProvider = StateProvider<bool>((ref) => false);
 
+/// 高斯模糊模式下，背景是否改成「当前播放歌曲的封面糊化」。
+///
+/// 条件：背景颜色模式 = 高斯模糊 + 「主界面跟随封面变色」打开。与渐变模式
+/// 同一口径，这个开关在浅色主题下不生效（浅色背景得够亮，封面色压不住）。
+///
+/// 关掉开关 / 没在播放时返回 false，背景回到用户自己选的那张模糊图。
+final coverBlurBackdropEnabledProvider = Provider<bool>((ref) {
+  return ref.watch(backgroundModeProvider) == BackgroundMode.blur &&
+      ref.watch(coverBackgroundEnabledProvider) &&
+      !ref.watch(isLightThemeActiveProvider);
+});
+
 /// 「歌曲列表不显示封面」开关（默认关闭）。
 ///
 /// 打开后各处的歌曲列表不再构建封面控件，也就不会触发封面网络请求；
@@ -240,7 +252,11 @@ final backgroundGradientProvider = Provider<BackgroundGradient>((ref) {
   // 「照片主色派生出来的暗色渐变」，[themeColorsProvider] 拿它的中间色去
   // 派生 surface（比背景亮一档），界面就是「颜色轻微变化 + 略亮一点」。
   if (ref.watch(backgroundModeProvider) == BackgroundMode.blur) {
-    final tint = ref.watch(backgroundBlurTintProvider);
+    // 用「当前歌曲封面糊化」当背景时，控件底色得跟着这首歌的封面色走，
+    // 否则照片是新的、卡片还是上一张图的色调。
+    final tint = ref.watch(coverBlurBackdropEnabledProvider)
+        ? ref.watch(coverAccentColorProvider)
+        : ref.watch(backgroundBlurTintProvider);
     if (tint != null) {
       final colors = deriveBackgroundGradient(tint, isLight: isLight);
       return BackgroundGradient(colors: colors, mid: colors[1], glowCount: 0);
