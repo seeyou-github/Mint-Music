@@ -112,20 +112,32 @@ void main() {
         await notifier.ready.timeout(const Duration(seconds: 5));
 
         // 没有记录 → 从头播。
-        expect(notifier.resumePositionFor('missing', durationMs: 300000), Duration.zero);
+        expect(
+          notifier.resumePositionFor('missing', durationMs: 300000),
+          Duration.zero,
+        );
 
         // 几乎没有进展（不足 3 秒）→ 从头播。
         notifier.record(songId: 'tiny', positionMs: 2000, durationMs: 300000);
-        expect(notifier.resumePositionFor('tiny', durationMs: 300000), Duration.zero);
+        expect(
+          notifier.resumePositionFor('tiny', durationMs: 300000),
+          Duration.zero,
+        );
 
         // 完整听完（100%）→ 从头播，进度条也归 0。
         notifier.record(songId: 'done', positionMs: 300000, durationMs: 300000);
         expect(notifier.state['done'], closeTo(1.0, 0.0001));
-        expect(notifier.resumePositionFor('done', durationMs: 300000), Duration.zero);
+        expect(
+          notifier.resumePositionFor('done', durationMs: 300000),
+          Duration.zero,
+        );
 
         // 停在 99%（离结尾只剩几秒）→ 也从头播，避免一点就到末尾。
         notifier.record(songId: 'near', positionMs: 297000, durationMs: 300000);
-        expect(notifier.resumePositionFor('near', durationMs: 300000), Duration.zero);
+        expect(
+          notifier.resumePositionFor('near', durationMs: 300000),
+          Duration.zero,
+        );
 
         // 时长未知（元数据没有时长）→ 无从折算，从头播。
         expect(notifier.resumePositionFor('s1', durationMs: 0), Duration.zero);
@@ -138,6 +150,48 @@ void main() {
         } catch (_) {}
       }
     });
+  });
+
+  test('还原备份后 reload 以数据库为准（旧进度不残留）', () async {
+    final dir = Directory.systemTemp.createTempSync('mintmusic_reload_test');
+    AppPaths.debugRootOverride = dir.path;
+    try {
+      final store = PlayProgressStore();
+      final notifier = PlayedProgressNotifier(store);
+      await notifier.ready.timeout(const Duration(seconds: 5));
+
+      notifier.record(songId: 'old', positionMs: 50000, durationMs: 100000);
+      await store.flush();
+      expect(notifier.state['old'], closeTo(0.5, 0.0001));
+
+      // 模拟还原：备份快照整体覆盖数据库。
+      await PlayProgressStore.importSnapshot({
+        'progress': [
+          {
+            'songId': 'restored',
+            'ratio': 0.8,
+            'positionMs': 80000,
+            'durationMs': 100000,
+          },
+        ],
+      });
+      await notifier.reload();
+
+      // 还原是整体覆盖：内存里还原前的进度不能再被合并回来。
+      expect(notifier.state.keys, ['restored']);
+      expect(notifier.state['restored'], closeTo(0.8, 0.0001));
+      expect(
+        notifier.resumePositionFor('restored', durationMs: 100000),
+        const Duration(milliseconds: 80000),
+      );
+
+      notifier.dispose();
+    } finally {
+      AppPaths.debugRootOverride = null;
+      try {
+        dir.deleteSync(recursive: true);
+      } catch (_) {}
+    }
   });
 
   test('播放进度写入临时库并能读回', () async {

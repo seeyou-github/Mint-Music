@@ -54,6 +54,22 @@ class PlayedProgressNotifier extends StateNotifier<Map<String, double>> {
     }
   }
 
+  /// 还原备份后重新读一遍（备份里的已听进度直接覆盖了数据库）。
+  ///
+  /// 不复用 [_restore] 的合并逻辑：还原是整体覆盖，内存里的旧进度不该再
+  /// 留下来和新数据比大小。
+  Future<void> reload() async {
+    try {
+      final stored = await _store.loadAll();
+      if (!mounted) return;
+      state = {
+        for (final entry in stored.entries) entry.key: entry.value.ratio,
+      };
+    } catch (e) {
+      debugPrint('[PlayProgress] 重新读取已播放进度失败: $e');
+    }
+  }
+
   /// 记录一次播放位置。
   void record({
     required String songId,
@@ -96,9 +112,7 @@ class PlayedProgressNotifier extends StateNotifier<Map<String, double>> {
     if (ratio == null || ratio <= 0) return Duration.zero;
     // 听完 / 接近听完 → 从 0 开始。
     if (ratio >= 0.98) return Duration.zero;
-    final position = Duration(
-      milliseconds: (ratio * durationMs).round(),
-    );
+    final position = Duration(milliseconds: (ratio * durationMs).round());
     if (position < const Duration(seconds: 3)) return Duration.zero;
     return position;
   }

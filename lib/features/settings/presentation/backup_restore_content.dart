@@ -15,6 +15,7 @@ import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../shared/widgets/playlist_sync_button.dart';
 import '../../library/application/playlist_providers.dart';
+import '../application/backup_restore_apply.dart';
 import '../application/settings_providers.dart';
 import '../data/settings_service.dart';
 import 'settings_page.dart';
@@ -141,6 +142,8 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
 
   Future<void> _restoreFromFile() async {
     if (_busy) return;
+    // 先用掉 context：后面有文件对话框 / 确认框等异步等待，再取容器就晚了。
+    final container = ProviderScope.containerOf(context);
     try {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.any,
@@ -159,9 +162,14 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
       }
       if (!await _confirmRestore()) return;
       setState(() => _busy = true);
+      _showProgress(tr('正在还原备份...'));
+      await stopPlaybackForRestore(container);
       await BackupService.restoreBackup(bytes);
-      _toast(tr('还原完成，请重启应用'));
+      await _applyRestoredBackup(container);
+      _closeProgress();
+      _toast(tr('还原完成，已重新加载音源'));
     } catch (e) {
+      _closeProgress();
       _toast(tr('还原失败：$e'), error: true);
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -256,6 +264,8 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
       return;
     }
     if (_busy) return;
+    // 同 [_restoreFromFile]：后面有一串异步等待，先取好容器。
+    final container = ProviderScope.containerOf(context);
     _restoreAttempt += 1;
     setState(() => _busy = true);
     _showProgress(tr('正在读取 WebDAV 备份列表...'));
@@ -303,9 +313,11 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
           cancelToken: downloadOp.cancelToken,
         ).downloadBackup(picked.path),
       );
+      await stopPlaybackForRestore(container);
       await BackupService.restoreBackup(bytes);
+      await _applyRestoredBackup(container);
       _closeProgress();
-      _toast(tr('还原完成，请重启应用'));
+      _toast(tr('还原完成，已重新加载音源'));
     } catch (e) {
       _closeProgress();
       if (!mounted) return;
@@ -337,6 +349,7 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
 
   /// 显示一个不会自动消失的进度提示（上传 / 下载过程中用）。
   void _showProgress(String message) {
+    if (!mounted) return;
     final colors = ref.read(themeColorsProvider);
     _closeProgress();
     _progressController = ScaffoldMessenger.of(context).showSnackBar(
@@ -368,6 +381,20 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
   void _closeProgress() {
     _progressController?.close();
     _progressController = null;
+  }
+
+  /// 还原后的热应用：设置 / 字体 / 歌单 / 进度立即生效，插件重新加载。
+  Future<void> _applyRestoredBackup(ProviderContainer container) async {
+    await applyRestoredBackup(
+      container,
+      onProgress: (message) {
+        if (!mounted) return;
+        _showProgress(tr(message));
+      },
+    );
+    // 还原出的 WebDAV 配置可能和输入框里的不一样，同步一次，免得之后
+    // 随手改一个字段又把旧值写回去。
+    if (mounted) _loadConfig();
   }
 
   Future<bool> _showRetryDialog(String message) async {

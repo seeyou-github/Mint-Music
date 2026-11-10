@@ -161,6 +161,17 @@ class AppFontManager {
     }
   }
 
+  /// 还原备份后重新加载：字体清单与当前选择都可能已经变了。
+  ///
+  /// [load] 是一次性守卫，这里把状态清空后重读一遍；已注册进引擎的旧字体
+  /// 无法撤销，但不影响新清单的使用。
+  Future<void> reload() async {
+    _fonts.clear();
+    _selectedFamily = null;
+    _loaded = false;
+    await load();
+  }
+
   /// 导入字体文件（可多选），返回成功导入的字体。
   Future<List<AppFont>> importFonts(List<String> paths) async {
     final result = <AppFont>[];
