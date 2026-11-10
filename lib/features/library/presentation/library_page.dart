@@ -14,6 +14,7 @@ import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../../../shared/widgets/cover_badge.dart';
 import '../../../shared/widgets/music_cover_image.dart';
+import '../../../shared/widgets/playlist_manager.dart';
 import '../../../shared/widgets/playlist_sync_button.dart';
 import '../application/playlist_providers.dart';
 import '../../player/application/playback_context.dart';
@@ -77,7 +78,7 @@ class LibraryPage extends ConsumerWidget {
         padding: padding,
         child: Row(
           children: [
-            _buildCreateButton(context, colors, ref),
+            _buildCreateButton(context, colors),
             const Spacer(),
             _buildImportButton(context, colors, ref),
             const SizedBox(width: AppSpacing.sm),
@@ -120,7 +121,7 @@ class LibraryPage extends ConsumerWidget {
             ),
           ),
           const SizedBox(width: AppSpacing.md),
-          _buildCreateButton(context, colors, ref),
+          _buildCreateButton(context, colors),
           const SizedBox(width: AppSpacing.sm),
           _buildImportButton(context, colors, ref),
           const SizedBox(width: AppSpacing.sm),
@@ -130,16 +131,12 @@ class LibraryPage extends ConsumerWidget {
     );
   }
 
-  Widget _buildCreateButton(
-    BuildContext context,
-    ThemeColors colors,
-    WidgetRef ref,
-  ) {
+  Widget _buildCreateButton(BuildContext context, ThemeColors colors) {
     return _buildHeaderIconButton(
       colors,
       Icons.add,
       context.tr('新建歌单'),
-      () => _showCreateDialog(context, colors, ref),
+      () => showCreatePlaylistDialog(context),
     );
   }
 
@@ -438,87 +435,6 @@ class LibraryPage extends ConsumerWidget {
 
     return Center(
       child: Icon(Icons.music_note, size: 40, color: colors.textHint),
-    );
-  }
-
-  void _showCreateDialog(
-    BuildContext context,
-    ThemeColors colors,
-    WidgetRef ref,
-  ) {
-    final controller = TextEditingController();
-    final descController = TextEditingController();
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: colors.surface,
-        title: Text(
-          context.tr('新建歌单'),
-          style: TextStyle(color: colors.textPrimary),
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: controller,
-              autofocus: true,
-              decoration: InputDecoration(
-                hintText: context.tr('歌单名称'),
-                hintStyle: TextStyle(color: colors.textHint),
-                enabledBorder: UnderlineInputBorder(
-                  borderSide: BorderSide(color: colors.divider),
-                ),
-                focusedBorder: UnderlineInputBorder(
-                  borderSide: BorderSide(color: colors.primary),
-                ),
-              ),
-              style: TextStyle(color: colors.textPrimary),
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            TextField(
-              controller: descController,
-              decoration: InputDecoration(
-                hintText: context.tr('歌单描述（可选）'),
-                hintStyle: TextStyle(color: colors.textHint),
-                enabledBorder: UnderlineInputBorder(
-                  borderSide: BorderSide(color: colors.divider),
-                ),
-                focusedBorder: UnderlineInputBorder(
-                  borderSide: BorderSide(color: colors.primary),
-                ),
-              ),
-              style: TextStyle(color: colors.textPrimary),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text(
-              context.tr('取消'),
-              style: TextStyle(color: colors.textHint),
-            ),
-          ),
-          TextButton(
-            onPressed: () {
-              final name = controller.text.trim();
-              if (name.isNotEmpty) {
-                ref
-                    .read(playlistsProvider.notifier)
-                    .createPlaylist(
-                      name,
-                      description: descController.text.trim(),
-                    );
-                Navigator.pop(ctx);
-              }
-            },
-            child: Text(
-              context.tr('创建'),
-              style: TextStyle(color: colors.primary),
-            ),
-          ),
-        ],
-      ),
     );
   }
 
