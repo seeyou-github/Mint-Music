@@ -218,6 +218,36 @@ class SettingsService {
   Future<void> setCoverGlowAnimation(bool v) =>
       _prefs.setBool(_coverGlowAnimationKey, v);
 
+  // -- 背景颜色模式：背景渐变 / 高斯模糊（默认高斯模糊） --
+  static const _backgroundModeKey = 'background_mode';
+  static const _blurImageKey = 'blur_background_image';
+  static const _blurSigmaKey = 'blur_background_sigma';
+  static const _blurBrightnessKey = 'blur_background_brightness';
+
+  /// 背景颜色模式（`gradient` / `blur`）。
+  BackgroundMode getBackgroundMode() =>
+      BackgroundMode.fromId(_prefs.getString(_backgroundModeKey));
+  Future<void> setBackgroundMode(BackgroundMode mode) =>
+      _prefs.setString(_backgroundModeKey, mode.id);
+
+  /// 高斯模糊背景图的文件名（存在设置目录下）。
+  String getBlurBackgroundImage() =>
+      _prefs.getString(_blurImageKey) ?? '';
+  Future<void> setBlurBackgroundImage(String name) =>
+      _prefs.setString(_blurImageKey, name);
+
+  /// 模糊程度（高斯 sigma）。
+  double getBlurBackgroundSigma() =>
+      _prefs.getDouble(_blurSigmaKey) ?? 30;
+  Future<void> setBlurBackgroundSigma(double v) =>
+      _prefs.setDouble(_blurSigmaKey, v);
+
+  /// 背景图亮度（1 = 原图）。
+  double getBlurBackgroundBrightness() =>
+      _prefs.getDouble(_blurBrightnessKey) ?? 0.85;
+  Future<void> setBlurBackgroundBrightness(double v) =>
+      _prefs.setDouble(_blurBrightnessKey, v);
+
   // -- 歌曲列表不显示封面 --
   static const _songListHideCoverKey = 'song_list_hide_cover';
 

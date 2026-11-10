@@ -1,10 +1,13 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/painting.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/theme/app_font_manager.dart';
 import '../../../core/theme/app_typography.dart';
+import '../../../core/theme/theme_provider.dart';
 import '../../../shared/services/app_image_cache.dart';
 import '../../../shared/services/cache_paths.dart';
 import '../../blacklist/application/blacklist_providers.dart';
@@ -69,6 +72,20 @@ Future<bool> applyRestoredBackup(
     await container.read(settingsInitProvider.future);
   } catch (e) {
     debugPrint('[BackupRestore] 重新读取设置失败: $e');
+  }
+
+  // 高斯模糊背景图是设置目录里的一个文件：还原后它可能刚出现，也可能被换成
+  // 了另一张（文件名相同）。这里重新解析路径，并按路径清掉旧的解码缓存，
+  // 否则主界面还是还原前那张图（或者干脆还是渐变）。
+  try {
+    container.invalidate(blurBackgroundImagePathProvider);
+    final backdrop =
+        await container.read(blurBackgroundImagePathProvider.future);
+    if (backdrop != null) {
+      await FileImage(File(backdrop)).evict();
+    }
+  } catch (e) {
+    debugPrint('[BackupRestore] 刷新模糊背景图失败: $e');
   }
 
   // 缓存目录 / 上限可能也变了：重新配置，并按新上限清一次。

@@ -6,8 +6,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'background_gradient.dart';
 import 'background_derivation.dart';
+import 'background_mode.dart';
 import 'theme_colors.dart';
 
+export 'background_mode.dart';
 export 'theme_colors.dart';
 
 /// 应用主题模式：浅色 / 深色 / 跟随系统。
@@ -316,7 +318,19 @@ final detailHeaderSurfaceProvider = Provider<Color>((ref) {
 /// `surfaceVariant` / `divider` / `miniPlayerBackground` 跟着背景同一色调
 /// 派生（侧栏、卡片、搜索框、底栏等所有控件），文字颜色保持用户设置不变，
 /// 因此浅色主题仍是黑字、深色主题仍是浅字，对比度不会失控。
+///
+/// 高斯模糊背景例外：背景是一张照片，控件底色再跟着「跟封面变色的渐变」
+/// 走就会和照片各说各话（照片是蓝的、卡片是暖棕的，很脏），统一改用主题
+/// 自带的中性背景色派生。
 final themeColorsProvider = Provider<ThemeColors>((ref) {
   final base = ref.watch(baseThemeColorsProvider);
-  return base.copyWithBackground(ref.watch(backgroundGradientProvider).mid);
+  // 只有「高斯模糊 + 已经选了图片」时才用中性底色：没选图时背景其实退回
+  // 渐变，控件仍然该跟渐变同色调。
+  final useBlurBackdrop =
+      ref.watch(backgroundModeProvider) == BackgroundMode.blur &&
+      ref.watch(blurBackgroundImageNameProvider).trim().isNotEmpty;
+  final mid = useBlurBackdrop
+      ? base.background
+      : ref.watch(backgroundGradientProvider).mid;
+  return base.copyWithBackground(mid);
 });

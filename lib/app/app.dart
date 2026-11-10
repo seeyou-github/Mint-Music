@@ -33,9 +33,8 @@ import '../core/backup/sync_timeout.dart';
 import '../core/backup/webdav_service.dart';
 import '../features/library/application/playlist_providers.dart';
 import '../features/settings/data/plugin_repository.dart';
-import '../shared/widgets/background_dither_layer.dart';
-import '../shared/widgets/background_glow_layer.dart';
 import '../shared/widgets/playlist_sync_indicator.dart';
+import 'app_background_layer.dart';
 import 'app_desktop_shell.dart';
 import 'windows_title_bar.dart';
 
@@ -277,9 +276,6 @@ class _AppState extends ConsumerState<App> {
     final appFontFamily = ref.watch(appFontSelectedProvider);
     // 当前是否为浅色外观：状态栏图标的明暗跟着它走。
     final isLightActive = ref.watch(isLightThemeActiveProvider);
-    // 主界面背景渐变（外观设置里选的颜色）：放在 build 顶层订阅，
-    // MaterialApp.builder 里只取值，避免在嵌套 builder 回调里 ref.watch。
-    final backgroundGradient = ref.watch(backgroundGradientProvider);
     // 「播放歌曲时动态光晕」：开关打开且歌曲正在播放时，光晕才缓慢漂移 + 呼吸。
     final glowAnimated =
         ref.watch(coverGlowAnimationEnabledProvider) &&
@@ -418,40 +414,15 @@ class _AppState extends ConsumerState<App> {
                     ],
                   )
                 : content;
-            // 整个主界面的背景层：用户在「外观设置 → 背景渐变」里选的颜色
-            // （1~3 个，这里固定展开成 3 段）。各页面 Scaffold 都是透明的，
-            // 这层才能透出来；1 秒渐变让切换颜色 / 主题时不跳色。
+            // 整个主界面的背景层：按「外观设置 → 背景颜色模式」画背景渐变
+            // （+ 光晕）或用户选的图片的高斯模糊版本。各页面 Scaffold 都是
+            // 透明的，这层才能透出来。
             final decoratedBody = Stack(
               fit: StackFit.passthrough,
               children: [
                 Positioned.fill(
                   child: IgnorePointer(
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        AnimatedContainer(
-                          duration: const Duration(seconds: 1),
-                          curve: Curves.easeInOut,
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              begin: backgroundGradient.begin,
-                              end: backgroundGradient.end,
-                              colors: backgroundGradient.colors,
-                            ),
-                          ),
-                        ),
-                        // 随机位置 / 半径的光晕（数量由渐变设置决定，
-                        // 跟随封面时固定 3 个），叠在渐变之上。
-                        BackgroundGlowLayer(
-                          colors: backgroundGradient.colors,
-                          count: backgroundGradient.glowCount,
-                          seed: ref.watch(backgroundGlowSeedProvider),
-                          animated: glowAnimated,
-                        ),
-                        // 打散渐变 / 光晕在 8 位色深下的色带。
-                        const BackgroundDitherLayer(),
-                      ],
-                    ),
+                    child: AppBackgroundLayer(glowAnimated: glowAnimated),
                   ),
                 ),
                 body,

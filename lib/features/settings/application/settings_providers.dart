@@ -660,6 +660,14 @@ final settingsInitProvider = FutureProvider<void>((ref) async {
       .getCoverBackground();
   ref.read(coverGlowAnimationEnabledProvider.notifier).state = svc
       .getCoverGlowAnimation();
+  // 背景颜色模式：背景渐变 / 高斯模糊（默认），以及模糊图相关的三项。
+  ref.read(backgroundModeProvider.notifier).state = svc.getBackgroundMode();
+  ref.read(blurBackgroundImageNameProvider.notifier).state = svc
+      .getBlurBackgroundImage();
+  ref.read(blurBackgroundSigmaProvider.notifier).state = svc
+      .getBlurBackgroundSigma();
+  ref.read(blurBackgroundBrightnessProvider.notifier).state = svc
+      .getBlurBackgroundBrightness();
   ref.read(songListHideCoverProvider.notifier).state = svc
       .getSongListHideCover();
   ref.read(customBackgroundGradientsLightProvider.notifier).state = svc

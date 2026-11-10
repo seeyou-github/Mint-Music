@@ -27,6 +27,7 @@ import '../../../shared/widgets/hsv_color_picker.dart';
 import '../application/font_providers.dart';
 import '../application/settings_providers.dart';
 import 'background_editor_page.dart';
+import 'blur_background_page.dart';
 import '../data/settings_service.dart';
 import '../../plugin/application/plugin_providers.dart';
 import '../../player/application/desktop_lyric_controller.dart';
@@ -1126,6 +1127,13 @@ class _AppearanceContent extends ConsumerWidget {
     final coverBackground = ref.watch(coverBackgroundEnabledProvider);
     // 「播放歌曲时动态光晕」开关（默认关闭）。
     final glowAnimation = ref.watch(coverGlowAnimationEnabledProvider);
+    // 背景颜色模式：背景渐变 / 高斯模糊（默认）；模糊模式还要知道有没有选图。
+    final backgroundMode = ref.watch(backgroundModeProvider);
+    final backgroundModeLabel = backgroundMode == BackgroundMode.blur
+        ? '高斯模糊'
+        : '背景渐变';
+    final hasBlurImage =
+        ref.watch(blurBackgroundImagePathProvider).valueOrNull != null;
     // 「歌曲列表不显示封面」开关（默认关闭）。
     final songListHideCover = ref.watch(songListHideCoverProvider);
 
@@ -1232,47 +1240,109 @@ class _AppearanceContent extends ConsumerWidget {
           ),
         ),
         SettingDivider(colors: colors),
-        buildBackgroundGradientRow(),
-        SettingDivider(colors: colors),
-        // 仅深色主题生效：浅色主题下背景必须够亮，跟封面色会看不清文字。
+        // 背景颜色模式：背景渐变 / 高斯模糊（默认高斯模糊）。
         SettingRow(
-          icon: Icons.auto_awesome,
-          title: '主界面跟随封面变色',
-          trailing: Switch(
-            // 浅色主题下这个开关不生效：直接禁用（自动灰掉），也不显示为开启。
-            value: isLight ? false : coverBackground,
-            onChanged: isLight
-                ? null
-                : (v) => _persistBool(
-                    context,
-                    coverBackgroundEnabledProvider,
-                    v,
-                    (s) => s.setCoverBackground(v),
-                  ),
-            activeTrackColor: colors.primary.withValues(alpha: 0.3),
-            activeThumbColor: colors.primary,
+          icon: Icons.wallpaper,
+          title: '背景颜色模式',
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                context.tr(backgroundModeLabel),
+                style: TextStyle(fontSize: 13, color: colors.textSecondary),
+              ),
+              const SizedBox(width: 4),
+              Icon(Icons.chevron_right, size: 18, color: colors.textHint),
+            ],
           ),
           colors: colors,
+          onTap: () => _showBottomPicker(
+            context,
+            colors,
+            '背景颜色模式',
+            const ['背景渐变', '高斯模糊'],
+            backgroundModeLabel,
+            (v) {
+              final container = ProviderScope.containerOf(context);
+              final mode = v == '背景渐变'
+                  ? BackgroundMode.gradient
+                  : BackgroundMode.blur;
+              container.read(backgroundModeProvider.notifier).state = mode;
+              unawaited(
+                _doPersist(container, (s) => s.setBackgroundMode(mode)),
+              );
+            },
+          ),
         ),
         SettingDivider(colors: colors),
-        // 播放时让主界面背景的光晕缓慢漂移 + 呼吸；暂停后停在当前位置。
-        SettingRow(
-          icon: Icons.blur_on,
-          title: '播放歌曲时动态光晕',
-          subtitle: '主界面背景的光晕缓慢移动，并随播放轻微呼吸',
-          trailing: Switch(
-            value: glowAnimation,
-            onChanged: (v) => _persistBool(
-              context,
-              coverGlowAnimationEnabledProvider,
-              v,
-              (s) => s.setCoverGlowAnimation(v),
+        if (backgroundMode == BackgroundMode.blur)
+          // 高斯模糊模式：只有「选图 + 模糊程度 / 亮度」这一项。
+          SettingRow(
+            icon: Icons.image_outlined,
+            title: '高斯模糊背景图',
+            subtitle: '选一张图铺满主界面，可调模糊程度与亮度；未选择时沿用背景渐变',
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  context.tr(hasBlurImage ? '已选择' : '未选择'),
+                  style: TextStyle(fontSize: 13, color: colors.textSecondary),
+                ),
+                const SizedBox(width: 4),
+                Icon(Icons.chevron_right, size: 18, color: colors.textHint),
+              ],
             ),
-            activeTrackColor: colors.primary.withValues(alpha: 0.3),
-            activeThumbColor: colors.primary,
+            colors: colors,
+            onTap: () => Navigator.of(context, rootNavigator: true).push<void>(
+              MaterialPageRoute(
+                fullscreenDialog: true,
+                builder: (_) => const BlurBackgroundPage(),
+              ),
+            ),
+          )
+        else ...[
+          buildBackgroundGradientRow(),
+          SettingDivider(colors: colors),
+          // 仅深色主题生效：浅色主题下背景必须够亮，跟封面色会看不清文字。
+          SettingRow(
+            icon: Icons.auto_awesome,
+            title: '主界面跟随封面变色',
+            trailing: Switch(
+              // 浅色主题下这个开关不生效：直接禁用（自动灰掉），也不显示为开启。
+              value: isLight ? false : coverBackground,
+              onChanged: isLight
+                  ? null
+                  : (v) => _persistBool(
+                      context,
+                      coverBackgroundEnabledProvider,
+                      v,
+                      (s) => s.setCoverBackground(v),
+                    ),
+              activeTrackColor: colors.primary.withValues(alpha: 0.3),
+              activeThumbColor: colors.primary,
+            ),
+            colors: colors,
           ),
-          colors: colors,
-        ),
+          SettingDivider(colors: colors),
+          // 播放时让主界面背景的光晕缓慢漂移 + 呼吸；暂停后停在当前位置。
+          SettingRow(
+            icon: Icons.blur_on,
+            title: '播放歌曲时动态光晕',
+            subtitle: '主界面背景的光晕缓慢移动，并随播放轻微呼吸',
+            trailing: Switch(
+              value: glowAnimation,
+              onChanged: (v) => _persistBool(
+                context,
+                coverGlowAnimationEnabledProvider,
+                v,
+                (s) => s.setCoverGlowAnimation(v),
+              ),
+              activeTrackColor: colors.primary.withValues(alpha: 0.3),
+              activeThumbColor: colors.primary,
+            ),
+            colors: colors,
+          ),
+        ],
         SettingDivider(colors: colors),
         buildColorRow(
           icon: Icons.text_fields,

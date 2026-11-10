@@ -6,8 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/platform/window_chrome.dart';
 import '../core/theme/theme_provider.dart';
 import '../features/player/application/playback_controller.dart';
-import '../shared/widgets/background_dither_layer.dart';
-import '../shared/widgets/background_glow_layer.dart';
+import 'app_background_layer.dart';
 import 'windows_title_bar.dart';
 
 /// 二级页面自己的一份「主界面背景」。
@@ -41,7 +40,6 @@ class AppPageBackground extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final gradient = ref.watch(backgroundGradientProvider);
     // 与窗口那层背景保持同一套动画开关：播放中且开启动态光晕时才移动。
     final glowAnimated =
         ref.watch(coverGlowAnimationEnabledProvider) &&
@@ -73,34 +71,9 @@ class AppPageBackground extends ConsumerWidget {
           right: 0,
           top: -topInset,
           bottom: 0,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              AnimatedContainer(
-                // 与全局那层同一条曲线：改「背景渐变」时两边一起过渡，
-                // 不会一快一慢。
-                duration: const Duration(seconds: 1),
-                curve: Curves.easeInOut,
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: gradient.begin,
-                    end: gradient.end,
-                    colors: gradient.colors,
-                  ),
-                ),
-              ),
-              // 二级页背景也要有和主界面同一批光晕，否则滑入 / 滑出时
-              // 会看到「光晕突然没了」。
-              BackgroundGlowLayer(
-                colors: gradient.colors,
-                count: gradient.glowCount,
-                seed: ref.watch(backgroundGlowSeedProvider),
-                animated: glowAnimated,
-              ),
-              // 打散渐变 / 光晕在 8 位色深下的色带。
-              const BackgroundDitherLayer(),
-            ],
-          ),
+          // 和全局那层是同一个组件：渐变 / 光晕 / 高斯模糊图都跟着「背景颜色
+          // 模式」走，二级页滑入滑出不会看出背景不一样。
+          child: AppBackgroundLayer(glowAnimated: glowAnimated),
         ),
         Positioned.fill(child: child),
       ],
