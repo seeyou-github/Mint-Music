@@ -34,7 +34,10 @@ class _BlurBackgroundPageState extends ConsumerState<BlurBackgroundPage> {
   /// 正在挑图（防止连点弹出两个文件选择器）。
   bool _picking = false;
 
-  /// 设置目录里背景图的文件名前缀：`background_blur.png` / `.jpg` …
+  /// 设置目录里背景图的文件名前缀：`background_blur_<时间戳>.jpg` …
+  ///
+  /// 老版本用的是固定名 `background_blur.jpg`，同样以这个前缀开头，选新图时
+  /// 会被一起清掉。
   static const String _fileStem = 'background_blur';
 
   Future<void> _pickImage() async {
@@ -46,17 +49,25 @@ class _BlurBackgroundPageState extends ConsumerState<BlurBackgroundPage> {
       if (sourcePath == null) return;
       final dir = await AppPaths.settingsDirectory();
       final ext = p.extension(sourcePath).toLowerCase();
-      final name = '$_fileStem${ext.isEmpty ? '.png' : ext}';
+      // 文件名带时间戳，**不能**沿用固定名：Flutter 的图片缓存是按
+      // `FileImage(路径)` 做 key 的，同名覆盖文件后组件拿到的还是上一张
+      // 的解码结果（甚至更早那张），表现为「选了 C 却显示 A」。
+      final name =
+          '${_fileStem}_${DateTime.now().microsecondsSinceEpoch}'
+          '${ext.isEmpty ? '.png' : ext}';
       final target = File(p.join(dir.path, name));
-      // 先删掉以前选的（扩展名可能不同），再写新图：配置目录里只留当前这张。
-      await _deleteStoredImages(keep: name);
+      // 先写新图，再删旧图：万一选的就是设置目录里那张（自己拷进来的），
+      // 反过来的顺序会把源文件先删掉导致复制失败。
       await File(sourcePath).copy(target.path);
+      // 配置目录里只留当前这张。
+      final removed = await _deleteStoredImages(keep: name);
+      await _evict(removed);
 
       if (!mounted) return;
       ref.read(blurBackgroundImageNameProvider.notifier).state = name;
       ref.invalidate(blurBackgroundImagePathProvider);
-      // 文件名可能没变（只是换了一张同扩展名的图），路径相同不会触发重新
-      // 取色，这里显式让「照片主色」也重算一遍。
+      // 主色也要重算：它按路径缓存，虽然新名字已经是新路径，但这里显式失效
+      // 一次，避免「图换了、控件底色还是上一张」的时序问题。
       ref.invalidate(blurBackgroundTintProvider);
       await _persist((svc) => svc.setBlurBackgroundImage(name));
     } catch (e) {
@@ -74,7 +85,8 @@ class _BlurBackgroundPageState extends ConsumerState<BlurBackgroundPage> {
   }
 
   Future<void> _removeImage() async {
-    await _deleteStoredImages(keep: '');
+    final removed = await _deleteStoredImages(keep: '');
+    await _evict(removed);
     if (!mounted) return;
     ref.read(blurBackgroundImageNameProvider.notifier).state = '';
     ref.invalidate(blurBackgroundImagePathProvider);
@@ -82,28 +94,43 @@ class _BlurBackgroundPageState extends ConsumerState<BlurBackgroundPage> {
     await _persist((svc) => svc.setBlurBackgroundImage(''));
   }
 
-  /// 删掉设置目录里所有 `background_blur.*`，[keep] 指定的那个除外。
-  Future<void> _deleteStoredImages({required String keep}) async {
+  /// 删掉设置目录里所有 `background_blur*`，[keep] 指定的那个除外。
+  ///
+  /// 返回被删掉的文件路径，调用方拿去清图片缓存。
+  Future<List<String>> _deleteStoredImages({required String keep}) async {
+    final removed = <String>[];
     try {
       final dir = await AppPaths.settingsDirectory();
-      if (!await dir.exists()) return;
+      if (!await dir.exists()) return removed;
       await for (final entity in dir.list(followLinks: false)) {
         if (entity is! File) continue;
         final name = p.basename(entity.path);
-        if (!name.startsWith('$_fileStem.')) continue;
+        if (!name.startsWith(_fileStem)) continue;
         if (name == keep) continue;
         try {
           await entity.delete();
+          removed.add(entity.path);
         } catch (_) {}
       }
     } catch (e) {
       debugPrint('[BlurBackground] 清理旧背景图失败: $e');
     }
+    return removed;
   }
 
-  Future<void> _persist(
-    Future<void> Function(SettingsService svc) save,
-  ) async {
+  /// 把已经删掉的旧图的解码结果从图片缓存里踢出去。
+  ///
+  /// 换图后文件名变了、缓存 key 也就不一样，旧的那张不会再被用到；不清的话
+  /// 内存里会一直挂着几张 1080 宽的位图（而且越换越多）。
+  Future<void> _evict(Iterable<String> paths) async {
+    for (final path in paths) {
+      try {
+        await FileImage(File(path)).evict();
+      } catch (_) {}
+    }
+  }
+
+  Future<void> _persist(Future<void> Function(SettingsService svc) save) async {
     try {
       final svc = await ref.read(settingsServiceProvider.future);
       await save(svc);
@@ -161,7 +188,9 @@ class _BlurBackgroundPageState extends ConsumerState<BlurBackgroundPage> {
                                   color: colors.textSecondary,
                                 ),
                           colors: colors,
-                          onTap: _picking ? null : () => unawaited(_pickImage()),
+                          onTap: _picking
+                              ? null
+                              : () => unawaited(_pickImage()),
                         ),
                         if (imagePath != null) ...[
                           SettingDivider(colors: colors),
@@ -190,11 +219,13 @@ class _BlurBackgroundPageState extends ConsumerState<BlurBackgroundPage> {
                           colors: colors,
                           onChanged: (v) {
                             ref
-                                .read(blurBackgroundSigmaProvider.notifier)
-                                .state = v;
+                                    .read(blurBackgroundSigmaProvider.notifier)
+                                    .state =
+                                v;
                           },
-                          onChangeEnd: (v) =>
-                              unawaited(_persist((s) => s.setBlurBackgroundSigma(v))),
+                          onChangeEnd: (v) => unawaited(
+                            _persist((s) => s.setBlurBackgroundSigma(v)),
+                          ),
                         ),
                         SettingDivider(colors: colors),
                         _BlurSlider(
@@ -208,8 +239,11 @@ class _BlurBackgroundPageState extends ConsumerState<BlurBackgroundPage> {
                           colors: colors,
                           onChanged: (v) {
                             ref
-                                .read(blurBackgroundBrightnessProvider.notifier)
-                                .state = v;
+                                    .read(
+                                      blurBackgroundBrightnessProvider.notifier,
+                                    )
+                                    .state =
+                                v;
                           },
                           onChangeEnd: (v) => unawaited(
                             _persist((s) => s.setBlurBackgroundBrightness(v)),
