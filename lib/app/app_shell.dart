@@ -242,10 +242,7 @@ class _AppShellState extends ConsumerState<AppShell> {
               padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
               child: BottomNavigationBar(
                 currentIndex: widget.navigationShell.currentIndex,
-                onTap: (index) => widget.navigationShell.goBranch(
-                  index,
-                  initialLocation: false,
-                ),
+                onTap: (index) => switchMainTab(widget.navigationShell, index),
                 type: BottomNavigationBarType.fixed,
                 backgroundColor: Colors.transparent,
                 elevation: 0,

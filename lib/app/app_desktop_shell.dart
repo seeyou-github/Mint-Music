@@ -100,9 +100,10 @@ class _AppDesktopShellState extends ConsumerState<AppDesktopShell> {
       return;
     }
 
-    // 3) 普通切换：保留各分支自己的页面栈（切回来时恢复之前打开的二级页）。
+    // 3) 普通切换：发现 / 收藏 / 本地保留各自的页面栈（切回来时恢复之前打开
+    //    的二级页）；进入「我的」时回到一级页面，不恢复设置等二级页面。
     setState(() => _activeIndex = index);
-    shell.goBranch(index, initialLocation: false);
+    switchMainTab(shell, index);
     _ensureBranchSwitched(route);
   }
 

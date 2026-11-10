@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import '../../core/constants/app_routes.dart';
 import '../../core/l10n/l10n.dart';
 import '../../core/router/app_router.dart';
@@ -51,6 +52,22 @@ const List<AppNavItem> appNavItems = [
     route: AppRoutes.mine,
   ),
 ];
+
+/// 「我的」在 [appNavItems] 中的下标。
+final int mineNavIndex = appNavItems.indexWhere(
+  (item) => item.route == AppRoutes.mine,
+);
+
+/// 一级导航切分支（手机底部导航与桌面侧边栏共用）。
+///
+/// 「我的」下的设置、插件管理、最近播放等二级页面是 push 在该分支自己的
+/// 页面栈里的，`goBranch` 默认会把这些页面恢复出来。所以进入「我的」时
+/// 一律回到它的初始页面：从别的分类点进来不会恢复上次打开的二级页面，
+/// 已经在「我的」时重复点击也会退回一级页面。
+/// 发现 / 收藏 / 本地仍然按各自分支的页面栈恢复（歌单详情、榜单详情等）。
+void switchMainTab(StatefulNavigationShell shell, int index) {
+  shell.goBranch(index, initialLocation: index == mineNavIndex);
+}
 
 /// 桌面/平板左侧固定导航栏。
 ///
