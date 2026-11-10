@@ -63,8 +63,8 @@ class MainActivity : AudioServiceActivity() {
                 }
             }
 
-        // 版本号：APK 的 versionName 由 Gradle 在构建时写入编译时间
-        // （见 app/build.gradle.kts），这里读回来给「我的」页面显示。
+        // 版本号：APK 的 versionName 固定为 app/build.gradle.kts 里的
+        // appVersionName（20261111），这里读回来给「我的」页面显示。
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, APP_INFO_CHANNEL)
             .setMethodCallHandler { call, result ->
                 when (call.method) {

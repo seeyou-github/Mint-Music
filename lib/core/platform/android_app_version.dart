@@ -6,9 +6,9 @@ const MethodChannel _channel = MethodChannel('com.mintmusic/app_info');
 
 /// 读取已安装 APK 的 `versionName`。
 ///
-/// versionName 由 Gradle 在构建时写成编译时间（北京时间，格式
-/// `年.月日.时分`，见 `android/app/build.gradle.kts`），所以它代表「这个包
-/// 是哪一次构建出来的」，重装、覆盖安装后依然准确。
+/// versionName 在 `android/app/build.gradle.kts` 里固定写成 `20261111`
+/// （与 versionCode 同一个值），本地构建和 GitHub Actions 打出来的包完全一致，
+/// 不再随编译时间变化；重装、覆盖安装后依然是这个值。
 ///
 /// 非 Android、通道不可用（单元测试等）或读取失败时返回 null，由调用方兜底。
 Future<String?> readAndroidAppVersionName() async {

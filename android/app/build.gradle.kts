@@ -1,7 +1,3 @@
-import java.util.Calendar
-import java.util.Locale
-import java.util.TimeZone
-
 plugins {
     id("com.android.application")
     id("kotlin-android")
@@ -9,29 +5,19 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
-// ── 版本号：APK 的 versionName / versionCode = 构建时间（北京时间） ──────────
+// ── 版本号：固定 20261111 ──────────────────────────────────────────────────
 //
-// 与 Windows 的文件版本规则一致（见 tool/win_build_stamp.dart）：本地构建和
-// GitHub Actions 都通过 Gradle 取当前时间，产物一眼能看出是哪次构建，不再
-// 永远是 pubspec 里的 2.0.0+1。时间固定按 UTC+8 计算，与构建机时区无关。
+// 以前 versionCode / versionName 取「构建时间（北京时间）」，本地编译和
+// GitHub Actions 打出来的包每次都不一样。现在两条流水线共用同一组固定值：
+// 同一个版本号就是同一个包，覆盖安装、比对版本都不再受编译时刻影响。
 //
-// versionName 是显示值（例：2026.1110.0106），运行时由 MainActivity 通过
-// `com.mintmusic/app_info` 通道读回，「我的」页面显示它。
-// versionCode 用「1970 年起的第几天 * 10000 + 时分」，每次构建都单调递增，
-// 同一天多次构建也能直接覆盖安装（远小于 Android 的 21 亿上限）。
-val buildTime = Calendar.getInstance(TimeZone.getTimeZone("Asia/Shanghai"))
-val buildVersionName = String.format(
-    Locale.US,
-    "%04d.%02d%02d.%02d%02d",
-    buildTime.get(Calendar.YEAR),
-    buildTime.get(Calendar.MONTH) + 1,
-    buildTime.get(Calendar.DAY_OF_MONTH),
-    buildTime.get(Calendar.HOUR_OF_DAY),
-    buildTime.get(Calendar.MINUTE),
-)
-val buildVersionCode = (buildTime.timeInMillis / 86_400_000L).toInt() * 10000 +
-    buildTime.get(Calendar.HOUR_OF_DAY) * 100 +
-    buildTime.get(Calendar.MINUTE)
+// versionCode 是整数 id（20261111，远小于 Android 的 21 亿上限）；
+// versionName 是显示值，运行时由 MainActivity 通过 `com.mintmusic/app_info`
+// 通道读回，「我的」页面显示它。
+//
+// 发新版想改号时，直接改下面这两个值即可。
+val appVersionCode = 20261111
+val appVersionName = "20261111"
 
 android {
     namespace = "com.kingmc.mintmusic.mintmusic"
@@ -51,8 +37,8 @@ android {
         applicationId = "com.kingmc.mintmusic.mintmusic"
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
-        versionCode = buildVersionCode
-        versionName = buildVersionName
+        versionCode = appVersionCode
+        versionName = appVersionName
     }
 
     packaging {

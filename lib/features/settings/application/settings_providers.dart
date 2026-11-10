@@ -523,12 +523,12 @@ final fullScreenBackgroundModeProvider = Provider<FullScreenBackgroundMode>(
 );
 
 // -- app version (loaded once) --
-/// 应用版本号：Windows / Android 上显示「编译时间」，格式 `年.月日.时分`
-/// （如 `2026.1110.0106`）。
+/// 应用版本号：Android 显示固定的版本 id；Windows 显示「编译时间」，
+/// 格式 `年.月日.时分`（如 `2026.1110.0106`）。
 ///
-/// * **Android**：读安装包的 `versionName`。Gradle 在每次构建时把当前时间
-///   （北京时间）写进 versionName，见 `android/app/build.gradle.kts`，所以
-///   本地和 GitHub Actions 打出来的包显示的都是各自的构建时间。
+/// * **Android**：读安装包的 `versionName`。Gradle 里固定写成 `20261111`
+///   （见 `android/app/build.gradle.kts`），本地和 GitHub Actions 打出来的
+///   包是同一个版本号，不随编译时间变化。
 /// * **Windows**：
 ///   1. **exe 的版本资源**（`FileVersion`）：构建时由 CMake 生成的
 ///      `build_stamp.h`（北京时间，见 `tool/win_build_stamp.dart`）写进
