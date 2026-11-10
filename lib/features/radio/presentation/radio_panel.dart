@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -8,8 +9,10 @@ import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
+import '../../../shared/widgets/music_cover_image.dart';
 import '../../discover/application/discover_providers.dart';
 import '../../player/application/playback_controller.dart';
+import '../../player/domain/models/song.dart';
 import '../application/radio_providers.dart';
 import '../application/radio_session.dart';
 import 'radio_category_manager_sheet.dart';
@@ -225,6 +228,12 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
     final isPlaying = ref.watch(
       playbackControllerProvider.select((state) => state.isPlaying),
     );
+    // 正在播放随机电台时，卡片背景换成当前歌曲的模糊封面。
+    final currentSong = isCurrent
+        ? ref.watch(
+            playbackControllerProvider.select((state) => state.currentSong),
+          )
+        : null;
     // 底色不用主题色，跟随主界面背景：与歌单详情页顶栏同一取色方式，
     // 取背景渐变顶部色派生，保证卡片始终比身后的背景略亮一档。
     final background = ref.watch(detailHeaderSurfaceProvider);
@@ -235,29 +244,59 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            Container(
-              decoration: BoxDecoration(color: background),
-              child: isCurrent
-                  ? null
-                  : Icon(
-                      Icons.shuffle,
-                      size: 44,
-                      color: colors.textPrimary.withValues(alpha: 0.9),
-                    ),
-            ),
+            if (currentSong != null)
+              _RadioCardBackground(
+                song: currentSong,
+                isPlaying: isPlaying,
+                fallbackColor: background,
+              )
+            else
+              Container(
+                decoration: BoxDecoration(color: background),
+                child: isCurrent
+                    ? null
+                    : Icon(
+                        Icons.shuffle,
+                        size: 44,
+                        color: colors.textPrimary.withValues(alpha: 0.9),
+                      ),
+              ),
             Positioned(
-              left: AppSpacing.sm,
-              right: AppSpacing.sm,
-              bottom: AppSpacing.sm,
-              child: Text(
-                context.tr('随机电台'),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  // 名称跟随「外观设置 → 字体颜色」。
-                  color: colors.textPrimary,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.sm,
+                  12,
+                  AppSpacing.sm,
+                  AppSpacing.sm,
+                ),
+                // 背景变为模糊封面后需要压一层底部渐变，保证名称仍然清晰。
+                decoration: currentSong == null
+                    ? null
+                    : BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            Colors.transparent,
+                            _scrimColorFor(
+                              colors.textPrimary,
+                            ).withValues(alpha: 0.65),
+                          ],
+                        ),
+                      ),
+                child: Text(
+                  context.tr('随机电台'),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    // 名称跟随「外观设置 → 字体颜色」。
+                    color: colors.textPrimary,
+                  ),
                 ),
               ),
             ),
@@ -290,12 +329,16 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
     final isPlaying = ref.watch(
       playbackControllerProvider.select((state) => state.isPlaying),
     );
+    // 正在播放这个电台时，卡片背景换成当前歌曲的模糊封面。
+    final currentSong = isCurrent
+        ? ref.watch(
+            playbackControllerProvider.select((state) => state.currentSong),
+          )
+        : null;
     // 名称跟随「外观设置 → 字体颜色」；蒙层按字色明暗反向取色，保证
     // 浅色主题（黑字）时名称仍然看得清。
     final nameColor = colors.textPrimary;
-    final lightText =
-        ThemeData.estimateBrightnessForColor(nameColor) == Brightness.light;
-    final scrimColor = lightText ? Colors.black : Colors.white;
+    final scrimColor = _scrimColorFor(nameColor);
     return _buildCardFrame(
       colors,
       child: InkWell(
@@ -303,7 +346,14 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            _buildCover(colors, station.displayCover, fallback: Icons.radio),
+            if (currentSong != null)
+              _RadioCardBackground(
+                song: currentSong,
+                isPlaying: isPlaying,
+                fallbackColor: colors.surfaceVariant,
+              )
+            else
+              _buildCover(colors, station.displayCover, fallback: Icons.radio),
             Positioned(
               left: 0,
               right: 0,
@@ -626,6 +676,159 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
         ],
       ),
     );
+  }
+}
+
+/// 卡片底部名称蒙层的颜色：按文字明暗反向取色，深色字配白色蒙层、
+/// 浅色字配黑色蒙层。
+Color _scrimColorFor(Color textColor) {
+  final lightText =
+      ThemeData.estimateBrightnessForColor(textColor) == Brightness.light;
+  return lightText ? Colors.black : Colors.white;
+}
+
+/// 电台卡片正在播放时的背景：当前歌曲封面 + 高斯模糊 + 黑色半透明遮罩 +
+/// 缓慢漂移的柔光光斑（播放时带轻微呼吸）。
+class _RadioCardBackground extends StatefulWidget {
+  const _RadioCardBackground({
+    required this.song,
+    required this.isPlaying,
+    required this.fallbackColor,
+  });
+
+  final Song song;
+  final bool isPlaying;
+
+  /// 封面加载失败 / 没有封面时垫在下面的底色。
+  final Color fallbackColor;
+
+  @override
+  State<_RadioCardBackground> createState() => _RadioCardBackgroundState();
+}
+
+class _RadioCardBackgroundState extends State<_RadioCardBackground>
+    with SingleTickerProviderStateMixin {
+  /// 光斑完整走一圈的时长：刻意放慢，避免看起来像在「闪」。
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(seconds: 16),
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    _syncTicker();
+  }
+
+  @override
+  void didUpdateWidget(covariant _RadioCardBackground oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.isPlaying != widget.isPlaying) _syncTicker();
+  }
+
+  /// 暂停时停住光斑与呼吸，恢复播放后从当前相位继续。
+  void _syncTicker() {
+    if (widget.isPlaying) {
+      if (!_controller.isAnimating) _controller.repeat();
+    } else {
+      _controller.stop();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final song = widget.song;
+    final placeholder = ColoredBox(color: widget.fallbackColor);
+    return ClipRect(
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          // 模糊会把图片边缘吃掉一圈，放大 25% 避免卡片四周透出底色。
+          Transform.scale(
+            scale: 1.25,
+            child: ImageFiltered(
+              imageFilter: ImageFilter.blur(sigmaX: 28, sigmaY: 28),
+              child: MusicCoverImage(
+                key: ValueKey('radio_card_bg_${song.id}'),
+                url: song.coverUrl,
+                songId: song.id,
+                mediaStoreId: song.mediaStoreId,
+                filePath: song.filePath,
+                fit: BoxFit.cover,
+                filterQuality: FilterQuality.low,
+                placeholder: placeholder,
+                errorWidget: placeholder,
+              ),
+            ),
+          ),
+          // 压暗封面，让名称、播放标志和菜单按钮保持可读。
+          ColoredBox(color: Colors.black.withValues(alpha: 0.42)),
+          AnimatedBuilder(
+            animation: _controller,
+            builder: (context, _) => RepaintBoundary(
+              child: CustomPaint(
+                painter: _AmbientGlowPainter(
+                  progress: _controller.value,
+                  breathing: widget.isPlaying,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 卡片背景上的氛围光斑：两团柔光沿不同轨迹缓慢漂移，
+/// 播放时叠一层轻微的亮度 / 半径呼吸。
+class _AmbientGlowPainter extends CustomPainter {
+  const _AmbientGlowPainter({required this.progress, required this.breathing});
+
+  /// 0–1 的循环进度。
+  final double progress;
+
+  /// 是否随播放做呼吸变化（暂停时保持静止）。
+  final bool breathing;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.isEmpty) return;
+    final base = size.shortestSide;
+    final breath = breathing
+        ? 0.88 + 0.12 * math.sin(progress * 4 * math.pi)
+        : 1.0;
+    final first = Offset(
+      size.width * (0.30 + 0.14 * math.sin(progress * 2 * math.pi)),
+      size.height * (0.32 + 0.12 * math.cos(progress * 2 * math.pi)),
+    );
+    final second = Offset(
+      size.width * (0.72 + 0.12 * math.cos(progress * 2 * math.pi)),
+      size.height * (0.70 + 0.10 * math.sin(progress * 2 * math.pi)),
+    );
+    _drawGlow(canvas, first, base * 0.78 * breath, 0.18 * breath);
+    _drawGlow(canvas, second, base * 0.60 * breath, 0.12 * breath);
+  }
+
+  void _drawGlow(Canvas canvas, Offset center, double radius, double alpha) {
+    final color = Colors.white.withValues(alpha: alpha);
+    final paint = Paint()
+      ..shader = RadialGradient(
+        colors: [color, color.withValues(alpha: 0)],
+      ).createShader(Rect.fromCircle(center: center, radius: radius));
+    canvas.drawCircle(center, radius, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _AmbientGlowPainter oldDelegate) {
+    return oldDelegate.progress != progress ||
+        oldDelegate.breathing != breathing;
   }
 }
 
