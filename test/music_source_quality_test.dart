@@ -167,6 +167,23 @@ void main() {
     },
   );
 
+  test(
+    'playback keeps the lower quality the plugin reports with the URL',
+    () async {
+      final host = _Host('kw-reported')
+        ..reply = (_, _) =>
+            const PluginMusicUrlResult(url: _url, quality: '100k');
+
+      final result = await MusicSourceManager(
+        _Service([host]),
+      ).getMusicUrlResult(_song, quality: '128k', allowQualityDowngrade: true);
+
+      expect(result?.url, _url);
+      expect(result?.quality, '100k');
+      expect(host.calls, [('wy', '1', '128k')]);
+    },
+  );
+
   test('download / plugin-test path keeps the requested quality', () async {
     final host = _Host('kw-fallback')
       ..reply = (_, _) => throw Exception('没有 128k mp3 版本，所有接口最高只给到 100k aac');

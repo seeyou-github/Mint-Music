@@ -233,6 +233,14 @@ List<_Case> _cases() => [
       'message': 'success',
       wrapper: {'url': _url, 'quality': '320k'},
     }),
+  // 插件降级后主动回报实际档位（官方_酷我 allowDowngrade 分支返回
+  // { url, quality }），宿主必须记录 100k，而不是沿用请求的 128k。
+  const _Case(
+    'plugin-reported downgrade keeps actual quality',
+    {'url': _url, 'quality': '100k'},
+    requested: '128k',
+    reported: '100k',
+  ),
   const _Case('retain plugin URL error detail', {
     'error': 'HTTP 403: token expired',
   }, error: 'HTTP 403: token expired'),
