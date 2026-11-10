@@ -187,6 +187,45 @@ final RegExp _authOrRateLimitPattern = RegExp(
   caseSensitive: false,
 );
 
+/// 错误里提到的「音源实际能给出的最高档位」（`最高只给到 100k`、`只有 128k`）。
+///
+/// 只认「只给 / 最高 / 仅有 / 只有」这类措辞；`没有 128k mp3 版本` 里的
+/// 128k 不算——那是拿不到的档位。没提到任何可用档位时返回 null。
+String? qualityCeilingFromError(String message) {
+  String? best;
+  var bestRank = 0;
+  for (final match in _availableQualityPattern.allMatches(message)) {
+    final tier = '${match.group(1)}k';
+    final rank = musicQualityRankOf(tier);
+    if (rank <= 0 || rank <= bestRank) continue;
+    best = tier;
+    bestRank = rank;
+  }
+  return best;
+}
+
+/// 「当前档位拿不到地址」之后该换哪一档。
+///
+/// 先降级，已经是最低档（或阶梯里没有更低档）时才升级。但错误里已经
+/// 说明「最高只给到 X」时例外：比 X 高的档位一定拿不到，只能往 X 或更低
+/// 走，没有这样的档位就停。否则会出现「128k 拿不到、却去试 320k」这种
+/// 必然失败又误导用户的升级（插件连 128k 都只给得出 100k，320k 更不可能有）。
+String? qualityStepAfterUnavailableError({
+  required String current,
+  required List<String> ladder,
+  required String error,
+}) {
+  final ceiling = qualityCeilingFromError(error);
+  final ceilingRank = ceiling == null ? 0 : musicQualityRankOf(ceiling);
+  final currentRank = musicQualityRankOf(current);
+  if (ceilingRank > 0 && currentRank > 0 && ceilingRank < currentRank) {
+    final down = qualityStepDown(current, ladder);
+    if (down == null) return null;
+    return musicQualityRankOf(down) <= ceilingRank ? down : null;
+  }
+  return qualityStepDown(current, ladder) ?? qualityStepUp(current, ladder);
+}
+
 /// 阶梯上比 [current] 高一档的音质（取「最接近的更高档」）；没有则返回 null。
 ///
 /// 请求的档位不在阶梯里也能用：例如请求 `flac24bit`、音源只声明了

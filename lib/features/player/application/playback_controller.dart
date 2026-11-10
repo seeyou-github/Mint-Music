@@ -850,9 +850,14 @@ class PlaybackController extends StateNotifier<PlaybackState> {
       // 再换一档只会让用户多等一轮，直接交还给上层报错。
       if (watch.elapsed > _qualityStepBudget) break;
 
-      // 先降级；已经是最低档（或阶梯里没有更低档）时才升级。
-      final next =
-          qualityStepDown(current, ladder) ?? qualityStepUp(current, ladder);
+      // 先降级；已经是最低档（或阶梯里没有更低档）时才升级。错误里已经
+      // 说明「最高只给到 X」时不再往上试：插件连请求的档位都只给得出更低的
+      // X，更高的档位必然也没有。
+      final next = qualityStepAfterUnavailableError(
+        current: current,
+        ladder: ladder,
+        error: _lastResolveError ?? '',
+      );
       if (next == null || tried.contains(musicQualityKey(next))) break;
       if (_currentPlayRequestId != requestId) {
         return (results: const <PluginMusicUrlResult>[], quality: current);

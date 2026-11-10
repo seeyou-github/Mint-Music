@@ -2230,8 +2230,14 @@ class MusicSourceManager {
               excludedUrls: excludedUrls,
               allowQualityDowngrade: allowQualityDowngrade,
             ).timeout(perSourceTimeout);
-          } catch (_) {
+          } catch (retryError) {
             // 重试仍失败：带回原始错误，它包含插件对各接口的完整说明。
+            // 重试失败原因单独打日志：插件不认这个档位（如只声明 128k/320k
+            // 却报「最高只给到 100k」）时，靠它才能看出为什么没换成功。
+            print(
+              '[MusicSourceManager] 播放源 $playbackSourceId 改用 $fallback '
+              '重试仍失败: $retryError',
+            );
             throw error;
           }
         }
@@ -2441,8 +2447,12 @@ class MusicSourceManager {
           fallback,
         );
         return (result: result, requested: fallback);
-      } catch (_) {
+      } catch (retryError) {
         // 重试也失败时保留原始错误：它包含插件对各接口的完整说明。
+        print(
+          '[MusicSourceManager] 改用插件给出的档位 $fallback 重试仍失败: '
+          '$retryError',
+        );
         throw error;
       }
     }

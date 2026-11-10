@@ -73,6 +73,70 @@ void main() {
     });
   });
 
+  group('qualityCeilingFromError', () {
+    test('只认「最高 / 只给」后面的可用档位', () {
+      const message =
+          '酷我音乐：《好心分手》没有 128k mp3 版本，所有接口最高只给到 100k aac。'
+          '请把音质切到对应档位，或换用其它音源。 · HD 渠道(备用主机)：只给了 100k aac';
+      expect(qualityCeilingFromError(message), '100k');
+      expect(qualityCeilingFromError('没有 320k 音质，最高 128k'), '128k');
+      expect(qualityCeilingFromError('没有该音质'), isNull);
+      expect(qualityCeilingFromError('code 503：服务暂时不可用'), isNull);
+    });
+  });
+
+  group('qualityStepAfterUnavailableError', () {
+    test('错误说最高只有 100k 时不再往上升级', () {
+      const message = '酷我音乐：《好心分手》没有 128k mp3 版本，所有接口最高只给到 100k aac。';
+      // 128k 已是最低声明档位：没有更低的可试，也不能升到 320k。
+      expect(
+        qualityStepAfterUnavailableError(
+          current: '128k',
+          ladder: ['128k', '320k', 'flac'],
+          error: message,
+        ),
+        isNull,
+      );
+      // 还有更低的声明档位：只能降级，不能升级。
+      expect(
+        qualityStepAfterUnavailableError(
+          current: '128k',
+          ladder: ['64k', '128k', '320k'],
+          error: message,
+        ),
+        '64k',
+      );
+      // 更低的档位也高于错误里的上限：直接停，别去试一个拿不到的档位。
+      expect(
+        qualityStepAfterUnavailableError(
+          current: '128k',
+          ladder: ['112k', '128k', '320k'],
+          error: message,
+        ),
+        isNull,
+      );
+    });
+
+    test('错误说最高有更高档位时照常升级', () {
+      expect(
+        qualityStepAfterUnavailableError(
+          current: '128k',
+          ladder: ['128k', '320k', 'flac'],
+          error: '没有 128k 音质，最高 320k',
+        ),
+        '320k',
+      );
+      expect(
+        qualityStepAfterUnavailableError(
+          current: '128k',
+          ladder: ['128k', '320k', 'flac'],
+          error: '没有该音质',
+        ),
+        '320k',
+      );
+    });
+  });
+
   group('isNonRetryableResolveError', () {
     test('鉴权 / 限流 / 4xx 不再重试', () {
       for (final message in [
