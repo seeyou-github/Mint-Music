@@ -147,6 +147,18 @@ class RadioNotifier extends Notifier<RadioData> {
     await _persist();
     await RadioCoverCache.remove(removed.coverPath);
   }
+
+  /// 电台拖动排序：电台页（「全部」与各分类）都按这个全局顺序展示。
+  Future<void> reorderStations(int oldIndex, int newIndex) async {
+    final stations = [...state.stations];
+    if (oldIndex < 0 || oldIndex >= stations.length) return;
+    if (newIndex > oldIndex) newIndex -= 1;
+    if (newIndex < 0 || newIndex > stations.length) return;
+    final moved = stations.removeAt(oldIndex);
+    stations.insert(newIndex, moved);
+    state = RadioData(categories: state.categories, stations: stations);
+    await _persist();
+  }
 }
 
 extension RadioDataX on RadioData {

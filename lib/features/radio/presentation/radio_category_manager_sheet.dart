@@ -27,7 +27,8 @@ Future<void> showRadioCategoryManagerSheet(
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(AppRadius.xl)),
     ),
-    builder: (_) => RadioCategoryManagerSheet(colors: colors, onCreated: onCreated),
+    builder: (_) =>
+        RadioCategoryManagerSheet(colors: colors, onCreated: onCreated),
   );
 }
 
@@ -166,6 +167,43 @@ class _RadioCategoryManagerSheetState
     await ref.read(radioProvider.notifier).removeCategory(category.id);
   }
 
+  /// 从分类管理弹框里删除电台（与电台页的删除确认一致）。
+  Future<void> _deleteStation(RadioStation station) async {
+    final colors = widget.colors;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: colors.surface,
+        title: Text(
+          context.tr('删除电台'),
+          style: TextStyle(fontSize: 17, color: colors.textPrimary),
+        ),
+        content: Text(
+          context.tr('确定删除「${station.name}」吗？'),
+          style: TextStyle(fontSize: 14, color: colors.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(
+              context.tr('取消'),
+              style: TextStyle(color: colors.textHint),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(
+              context.tr('删除'),
+              style: TextStyle(color: colors.error),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await ref.read(radioProvider.notifier).removeStation(station.id);
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = widget.colors;
@@ -174,10 +212,11 @@ class _RadioCategoryManagerSheetState
       for (final category in ref.watch(radioProvider).categories)
         if (!category.isAll) category,
     ];
+    final stations = ref.watch(radioProvider).stations;
     return Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
       child: SizedBox(
-        height: MediaQuery.sizeOf(context).height * 0.62,
+        height: MediaQuery.sizeOf(context).height * 0.72,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -201,7 +240,7 @@ class _RadioCategoryManagerSheetState
                   ),
                   const SizedBox(height: AppSpacing.xs),
                   Text(
-                    context.tr('拖动排序；点名称可修改；删除后电台回到「全部」'),
+                    context.tr('分类可拖动排序、点名称改名；电台可拖动排序、删除'),
                     style: TextStyle(fontSize: 12, color: colors.textHint),
                   ),
                 ],
@@ -255,30 +294,101 @@ class _RadioCategoryManagerSheetState
             ),
             Divider(height: 1, color: colors.divider.withValues(alpha: 0.4)),
             Expanded(
-              child: categories.isEmpty
-                  ? Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: AppSpacing.lg,
-                        vertical: AppSpacing.md,
-                      ),
-                      child: Text(
-                        context.tr('还没有自建分类'),
-                        style: TextStyle(fontSize: 12, color: colors.textHint),
-                      ),
-                    )
-                  : ReorderableListView.builder(
-                      padding: const EdgeInsets.only(bottom: AppSpacing.lg),
-                      buildDefaultDragHandles: false,
-                      itemCount: categories.length,
-                      onReorder: (oldIndex, newIndex) => ref
-                          .read(radioProvider.notifier)
-                          .reorderCategories(oldIndex, newIndex),
-                      itemBuilder: (context, index) =>
-                          _categoryRow(categories, index),
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.only(bottom: AppSpacing.lg),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _sectionLabel(
+                      context.tr('已建分类'),
+                      context.tr('拖动排序；点名称可修改'),
                     ),
+                    if (categories.isEmpty)
+                      _emptyHint(context.tr('还没有自建分类'))
+                    else
+                      ReorderableListView.builder(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        padding: EdgeInsets.zero,
+                        buildDefaultDragHandles: false,
+                        itemCount: categories.length,
+                        onReorder: (oldIndex, newIndex) => ref
+                            .read(radioProvider.notifier)
+                            .reorderCategories(oldIndex, newIndex),
+                        itemBuilder: (context, index) =>
+                            _categoryRow(categories, index),
+                      ),
+                    _sectionLabel(
+                      context.tr('已创建的电台'),
+                      context.tr('拖动排序；电台页按此顺序显示'),
+                    ),
+                    if (stations.isEmpty)
+                      _emptyHint(context.tr('还没有创建电台'))
+                    else
+                      ReorderableListView.builder(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        padding: EdgeInsets.zero,
+                        buildDefaultDragHandles: false,
+                        itemCount: stations.length,
+                        onReorder: (oldIndex, newIndex) => ref
+                            .read(radioProvider.notifier)
+                            .reorderStations(oldIndex, newIndex),
+                        itemBuilder: (context, index) =>
+                            _stationRow(stations, index),
+                      ),
+                  ],
+                ),
+              ),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _sectionLabel(String title, String hint) {
+    final colors = widget.colors;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.lg,
+        AppSpacing.md,
+        AppSpacing.lg,
+        AppSpacing.sm,
+      ),
+      child: Row(
+        children: [
+          Text(
+            title,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: colors.textPrimary,
+            ),
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(
+            child: Text(
+              hint,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 11, color: colors.textHint),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _emptyHint(String text) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.lg,
+        vertical: AppSpacing.sm,
+      ),
+      child: Text(
+        text,
+        style: TextStyle(fontSize: 12, color: widget.colors.textHint),
       ),
     );
   }
@@ -332,6 +442,52 @@ class _RadioCategoryManagerSheetState
             tooltip: context.tr('删除'),
             icon: Icon(Icons.delete_outline, size: 18, color: colors.error),
             onPressed: () => _delete(category),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _stationRow(List<RadioStation> stations, int index) {
+    final colors = widget.colors;
+    final station = stations[index];
+    return Container(
+      key: ValueKey('station:${station.id}'),
+      margin: const EdgeInsets.fromLTRB(
+        AppSpacing.lg,
+        0,
+        AppSpacing.lg,
+        AppSpacing.sm,
+      ),
+      padding: const EdgeInsets.fromLTRB(AppSpacing.sm, 2, AppSpacing.xs, 2),
+      decoration: BoxDecoration(
+        color: colors.surfaceVariant,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+      ),
+      child: Row(
+        children: [
+          ReorderableDragStartListener(
+            index: index,
+            child: Padding(
+              padding: const EdgeInsets.all(8),
+              child: Icon(Icons.drag_handle, size: 20, color: colors.textHint),
+            ),
+          ),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              child: Text(
+                station.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 14, color: colors.textPrimary),
+              ),
+            ),
+          ),
+          IconButton(
+            tooltip: context.tr('删除'),
+            icon: Icon(Icons.delete_outline, size: 18, color: colors.error),
+            onPressed: () => _deleteStation(station),
           ),
         ],
       ),

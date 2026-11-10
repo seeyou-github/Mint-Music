@@ -1,11 +1,9 @@
-import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 
-import '../../../core/constants/app_routes.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
@@ -294,6 +292,12 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
     final isPlaying = ref.watch(
       playbackControllerProvider.select((state) => state.isPlaying),
     );
+    // 名称跟随「外观设置 → 字体颜色」；蒙层按字色明暗反向取色，保证
+    // 浅色主题（黑字）时名称仍然看得清。
+    final nameColor = colors.textPrimary;
+    final lightText =
+        ThemeData.estimateBrightnessForColor(nameColor) == Brightness.light;
+    final scrimColor = lightText ? Colors.black : Colors.white;
     return _buildCardFrame(
       colors,
       child: InkWell(
@@ -319,7 +323,7 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
                     end: Alignment.bottomCenter,
                     colors: [
                       Colors.transparent,
-                      Colors.black.withValues(alpha: 0.65),
+                      scrimColor.withValues(alpha: 0.65),
                     ],
                   ),
                 ),
@@ -327,10 +331,10 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
                   station.name,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w600,
-                    color: Colors.white,
+                    color: nameColor,
                   ),
                 ),
               ),
@@ -395,11 +399,16 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
                         ),
                       ],
                     ),
-                    child: Icon(
-                      isPlaying ? Icons.equalizer : Icons.play_arrow,
-                      size: size * 0.58,
-                      color: colors.primary,
-                    ),
+                    child: isPlaying
+                        ? _AnimatedPlayingBars(
+                            size: size * 0.58,
+                            color: colors.primary,
+                          )
+                        : Icon(
+                            Icons.play_arrow,
+                            size: size * 0.58,
+                            color: colors.primary,
+                          ),
                   ),
                 ),
               ),
@@ -584,10 +593,7 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
     setState(() => _startingId = id);
     try {
       await start();
-      if (!mounted) return;
-      // 进入播放详情页（电台模式下部分控制按钮不可用）。
-      // 不 await：等页面关闭才回来的话，这里的「正在启动」状态会一直挂着。
-      unawaited(context.push(AppRoutes.fullPlayer));
+      // 电台开始播放后只显示迷你播放器，不自动打开播放详情页。
     } on RadioException catch (e) {
       if (mounted) await _showError(e.message);
     } catch (e) {
@@ -621,6 +627,69 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// 电台卡片中央的「正在播放」标志：三根高低跳动的音柱。
+class _AnimatedPlayingBars extends StatefulWidget {
+  const _AnimatedPlayingBars({required this.size, required this.color});
+
+  final double size;
+  final Color color;
+
+  @override
+  State<_AnimatedPlayingBars> createState() => _AnimatedPlayingBarsState();
+}
+
+class _AnimatedPlayingBarsState extends State<_AnimatedPlayingBars>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 900),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final barWidth = widget.size * 0.18;
+    final gap = widget.size * 0.12;
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, _) {
+        final t = _controller.value;
+        return SizedBox(
+          width: widget.size,
+          height: widget.size,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              for (var i = 0; i < 3; i++) ...[
+                if (i > 0) SizedBox(width: gap),
+                Container(
+                  width: barWidth,
+                  height:
+                      widget.size *
+                      (0.35 +
+                          0.6 *
+                              (0.5 +
+                                  0.5 * math.sin((t + i / 3) * 2 * math.pi))),
+                  decoration: BoxDecoration(
+                    color: widget.color,
+                    borderRadius: BorderRadius.circular(barWidth / 2),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        );
+      },
     );
   }
 }
