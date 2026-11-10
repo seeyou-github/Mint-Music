@@ -2,6 +2,33 @@ import 'package:flutter/material.dart';
 
 import 'theme_colors.dart';
 
+/// 「当前选中」的标签 / 导航胶囊底色：与侧栏「发现」的激活态一致。
+///
+/// 主题色按 15% 叠在背景上 —— 深色底上看起来就是把主题色调暗一档，
+/// 文字 / 图标统一用主题色本身，比整块实心主题色更收敛。
+const double activeChipAlpha = 0.15;
+
+Color activeChipColor(ThemeColors colors) =>
+    colors.primary.withValues(alpha: activeChipAlpha);
+
+/// 选中胶囊的同色细边：给原本带描边的胶囊（文件夹标签、设置分类）保留
+/// 轮廓，否则只剩一块色块，边会糊在背景里。
+Border activeChipBorder(ThemeColors colors) =>
+    Border.all(color: colors.primary.withValues(alpha: 0.5));
+
+/// 选中胶囊的完整装饰（底色 + 可选细边）。
+BoxDecoration activeChipDecoration(
+  ThemeColors colors, {
+  required double radius,
+  bool withBorder = false,
+}) {
+  return BoxDecoration(
+    color: activeChipColor(colors),
+    borderRadius: BorderRadius.circular(radius),
+    border: withBorder ? activeChipBorder(colors) : null,
+  );
+}
+
 /// 卡片 / 按钮 / 设置块统一的「悬浮表面」装饰。
 ///
 /// 主界面背景跟随封面取色后是一整片渐变，控件底色（[ThemeColors.surface]）

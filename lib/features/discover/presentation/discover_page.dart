@@ -989,9 +989,11 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
           vertical: AppSpacing.sm,
         ),
         decoration: isActive
-            ? BoxDecoration(
-                color: colors.primary,
-                borderRadius: BorderRadius.circular(AppRadius.full),
+            // 激活态与侧栏「发现」一致：底色把主题色调暗一档，文字用主题色。
+            ? activeChipDecoration(
+                colors,
+                radius: AppRadius.full,
+                withBorder: true,
               )
             : floatingSurfaceDecoration(
                 colors,
@@ -1003,8 +1005,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
           style: TextStyle(
             fontSize: 13,
             fontWeight: FontWeight.w600,
-            // 激活的分类名称跟随「外观设置 → 字体颜色」。
-            color: isActive ? colors.textPrimary : colors.textSecondary,
+            color: isActive ? colors.primary : colors.textSecondary,
           ),
         ),
       ),
@@ -1269,8 +1270,8 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
           style: TextStyle(
             fontSize: 13,
             fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
-            // 激活的分类名称跟随「外观设置 → 字体颜色」。
-            color: isActive ? colors.textPrimary : colors.textSecondary,
+            // 激活的分类名称用主题色（与侧栏「发现」一致）。
+            color: isActive ? colors.primary : colors.textSecondary,
           ),
         ),
       ),

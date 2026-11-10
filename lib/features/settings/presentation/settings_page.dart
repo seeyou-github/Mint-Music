@@ -528,7 +528,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage>
                 key: _tabKeys[index],
                 padding: const EdgeInsets.only(right: AppSpacing.sm),
                 child: Material(
-                  color: isActive ? colors.primary : Colors.transparent,
+                  // 选中态与侧栏「发现」一致：底色把主题色调暗一档，文字用主题色。
+                  color: isActive ? activeChipColor(colors) : Colors.transparent,
                   borderRadius: BorderRadius.circular(20),
                   child: InkWell(
                     borderRadius: BorderRadius.circular(20),
@@ -540,9 +541,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage>
                       ),
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(20),
-                        border: Border.all(
-                          color: isActive ? colors.primary : colors.divider,
-                        ),
+                        border: isActive
+                            ? activeChipBorder(colors)
+                            : Border.all(color: colors.divider),
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
@@ -551,7 +552,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage>
                             config.icon,
                             size: 16,
                             color: isActive
-                                ? Colors.white
+                                ? colors.primary
                                 : colors.textSecondary,
                           ),
                           const SizedBox(width: 6),
@@ -562,9 +563,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage>
                               fontWeight: isActive
                                   ? FontWeight.w600
                                   : FontWeight.normal,
-                              // 激活的分类名称跟随「外观设置 → 字体颜色」。
                               color: isActive
-                                  ? colors.textPrimary
+                                  ? colors.primary
                                   : colors.textSecondary,
                             ),
                           ),

@@ -641,13 +641,18 @@ class _LocalPageState extends ConsumerState<LocalPage>
           horizontal: AppSpacing.md,
           vertical: AppSpacing.sm,
         ),
-        decoration: BoxDecoration(
-          color: isSelected ? colors.primary : colors.surface,
-          borderRadius: BorderRadius.circular(AppRadius.full),
-          border: Border.all(
-            color: isSelected ? colors.primary : colors.divider,
-          ),
-        ),
+        decoration: isSelected
+            // 选中态与侧栏「发现」一致：底色把主题色调暗一档，文字用主题色。
+            ? activeChipDecoration(
+                colors,
+                radius: AppRadius.full,
+                withBorder: true,
+              )
+            : BoxDecoration(
+                color: colors.surface,
+                borderRadius: BorderRadius.circular(AppRadius.full),
+                border: Border.all(color: colors.divider),
+              ),
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 180),
           child: Text(
@@ -657,8 +662,7 @@ class _LocalPageState extends ConsumerState<LocalPage>
             style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w500,
-              // 目录名称（含激活项）都跟随「外观设置 → 字体颜色」。
-              color: colors.textPrimary,
+              color: isSelected ? colors.primary : colors.textPrimary,
             ),
           ),
         ),

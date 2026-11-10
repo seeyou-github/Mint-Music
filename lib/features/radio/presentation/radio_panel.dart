@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
+import '../../../core/theme/app_surface.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../../../shared/widgets/music_cover_image.dart';
@@ -90,7 +91,7 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
                     ),
                     decoration: BoxDecoration(
                       color: selected
-                          ? colors.primary.withValues(alpha: 0.15)
+                          ? activeChipColor(colors)
                           : Colors.transparent,
                       borderRadius: BorderRadius.circular(6),
                     ),
@@ -101,9 +102,9 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
                         fontWeight: selected
                             ? FontWeight.w600
                             : FontWeight.w400,
-                        // 激活的分类名称跟随「外观设置 → 字体颜色」。
+                        // 激活的分类名称用主题色（与侧栏「发现」一致）。
                         color: selected
-                            ? colors.textPrimary
+                            ? colors.primary
                             : colors.textSecondary,
                       ),
                     ),
