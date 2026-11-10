@@ -562,8 +562,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage>
                               fontWeight: isActive
                                   ? FontWeight.w600
                                   : FontWeight.normal,
+                              // 激活的分类名称跟随「外观设置 → 字体颜色」。
                               color: isActive
-                                  ? Colors.white
+                                  ? colors.textPrimary
                                   : colors.textSecondary,
                             ),
                           ),

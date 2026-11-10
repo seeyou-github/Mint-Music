@@ -98,7 +98,10 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
                         fontWeight: selected
                             ? FontWeight.w600
                             : FontWeight.w400,
-                        color: selected ? colors.primary : colors.textSecondary,
+                        // 激活的分类名称跟随「外观设置 → 字体颜色」。
+                        color: selected
+                            ? colors.textPrimary
+                            : colors.textSecondary,
                       ),
                     ),
                   ),

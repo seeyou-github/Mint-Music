@@ -657,7 +657,8 @@ class _LocalPageState extends ConsumerState<LocalPage>
             style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w500,
-              color: isSelected ? colors.textOnPrimary : colors.textPrimary,
+              // 目录名称（含激活项）都跟随「外观设置 → 字体颜色」。
+              color: colors.textPrimary,
             ),
           ),
         ),

@@ -1003,7 +1003,8 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
           style: TextStyle(
             fontSize: 13,
             fontWeight: FontWeight.w600,
-            color: isActive ? colors.textOnPrimary : colors.textSecondary,
+            // 激活的分类名称跟随「外观设置 → 字体颜色」。
+            color: isActive ? colors.textPrimary : colors.textSecondary,
           ),
         ),
       ),
@@ -1268,7 +1269,8 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
           style: TextStyle(
             fontSize: 13,
             fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
-            color: isActive ? colors.primary : colors.textSecondary,
+            // 激活的分类名称跟随「外观设置 → 字体颜色」。
+            color: isActive ? colors.textPrimary : colors.textSecondary,
           ),
         ),
       ),
