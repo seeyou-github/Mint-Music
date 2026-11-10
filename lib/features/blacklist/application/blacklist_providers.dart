@@ -141,16 +141,6 @@ class BlacklistNotifier extends Notifier<BlacklistData> {
     await _persist();
   }
 
-  Future<void> updateSongEntry(BlacklistEntry old, BlacklistEntry next) async {
-    if (next.title.trim().isEmpty) return;
-    final songs = [
-      for (final entry in state.songs)
-        if (entry.key == old.key) next else entry,
-    ];
-    state = state.copyWith(songs: songs);
-    await _persist();
-  }
-
   Future<void> removeSongEntry(BlacklistEntry entry) async {
     final songs = state.songs
         .where((e) => e.key != entry.key)
@@ -160,24 +150,38 @@ class BlacklistNotifier extends Notifier<BlacklistData> {
     await _persist();
   }
 
-  Future<void> updateArtist(String old, String next) async {
-    final value = next.trim();
-    if (value.isEmpty) return;
-    final target = blacklistNormalize(old);
-    final artists = [
-      for (final artist in state.artists)
-        if (blacklistNormalize(artist) == target) value else artist,
-    ];
-    state = state.copyWith(artists: artists);
-    await _persist();
-  }
-
   Future<void> removeWhitelistEntry(BlacklistEntry entry) async {
     final whitelist = state.whitelist
         .where((e) => e.key != entry.key)
         .toList(growable: false);
     if (whitelist.length == state.whitelist.length) return;
     state = state.copyWith(whitelist: whitelist);
+    await _persist();
+  }
+
+  /// 导入合并：已有的条目保持不动，只补充导入文件里多出来的部分。
+  Future<void> merge(BlacklistData data) async {
+    final songs = [...state.songs];
+    for (final entry in data.songs) {
+      if (!songs.any((e) => e.key == entry.key)) songs.add(entry);
+    }
+    final artists = [...state.artists];
+    for (final artist in data.artists) {
+      final target = blacklistNormalize(artist);
+      if (target.isEmpty) continue;
+      if (!artists.any((e) => blacklistNormalize(e) == target)) {
+        artists.add(artist);
+      }
+    }
+    final whitelist = [...state.whitelist];
+    for (final entry in data.whitelist) {
+      if (!whitelist.any((e) => e.key == entry.key)) whitelist.add(entry);
+    }
+    state = state.copyWith(
+      songs: songs,
+      artists: artists,
+      whitelist: whitelist,
+    );
     await _persist();
   }
 }
