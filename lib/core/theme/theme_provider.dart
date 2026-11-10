@@ -220,6 +220,13 @@ final songListHideCoverProvider = StateProvider<bool>((ref) => false);
 /// `currentCoverColorProvider` 出结果时把颜色写进来，这里只负责存。
 final coverAccentColorProvider = StateProvider<Color?>((ref) => null);
 
+/// 当前封面取色用的随机种子（跟着 [coverAccentColorProvider] 一起写入）。
+///
+/// 同一个种子保证「同一首歌每次打开背景相同」，同时让不同的歌在亮度、
+/// 渐变幅度、光晕数量上略有差异 —— 否则各种封面派生出来的背景暗度和落差
+/// 几乎一样，看着仍然是一整片。
+final coverAccentSeedProvider = StateProvider<int>((ref) => 0);
+
 /// 背景光晕的启动种子。
 ///
 /// 每次启动应用换一个随机值，光晕的位置 / 半径因此「每次启动都不同」；
@@ -227,6 +234,15 @@ final coverAccentColorProvider = StateProvider<Color?>((ref) => null);
 final backgroundGlowSeedProvider = Provider<int>(
   (ref) => math.Random().nextInt(1 << 30),
 );
+
+/// 「跟随封面」背景可用的渐变方向：上→下 + 两个对角线。
+///
+/// 不用下→上这类方向：亮色跑到底部会和底部播放栏撞在一起，观感别扭。
+const List<GradientDirection> _coverGradientDirections = [
+  GradientDirection.topToBottom,
+  GradientDirection.diagonalDownRight,
+  GradientDirection.diagonalDownLeft,
+];
 
 /// 主界面背景渐变（用户在外观设置里选的颜色 → 固定 3 段）。
 ///
@@ -238,10 +254,27 @@ final backgroundGradientProvider = Provider<BackgroundGradient>((ref) {
   if (!isLight && ref.watch(coverBackgroundEnabledProvider)) {
     final accent = ref.watch(coverAccentColorProvider);
     if (accent != null) {
-      final colors = deriveBackgroundGradient(accent, isLight: false);
-      // 跟随封面时固定叠 3 个光晕（位置 / 半径每次启动随机），
-      // 让主界面不至于是一整片平铺的渐变。
-      return BackgroundGradient(colors: colors, mid: colors[1], glowCount: 3);
+      // 每首歌用自己的种子再微调三项：色相之外，亮度 / 落差 / 光晕数也
+      // 各不相同，切歌时背景才有明显变化。
+      final random = math.Random(ref.watch(coverAccentSeedProvider));
+      final brightness = (random.nextDouble() * 2 - 1) * 0.35;
+      final spread = 0.75 + random.nextDouble() * 0.9;
+      final colors = deriveBackgroundGradient(
+        accent,
+        isLight: false,
+        brightness: brightness,
+        spread: spread,
+      );
+      // 光晕数 2~4：多一个光斑，背景就多一层颜色层次。
+      // 方向也从种子里挑：上→下 / 两个对角线，避免所有歌都朝同一个方向。
+      return BackgroundGradient(
+        colors: colors,
+        mid: colors[1],
+        direction: _coverGradientDirections[random.nextInt(
+          _coverGradientDirections.length,
+        )],
+        glowCount: 2 + random.nextInt(3),
+      );
     }
   }
   final tokens = ref.watch(

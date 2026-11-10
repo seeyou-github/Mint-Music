@@ -36,10 +36,10 @@ const double _kLightLightnessLift = 0.5;
 ///
 /// 不能降太狠：深色背景本来亮度就低，饱和度再压到 0.2 上下，橙 / 红这类
 /// 暖色会一律糊成「棕黑」，看起来所有封面都是同一个棕色系。
-const double _kSaturationDrop = 0.55;
+const double _kSaturationDrop = 0.30;
 
 /// 派生后饱和度的上限：深色背景容得下更多色彩，浅色背景压得更狠。
-const double _kDarkMaxSaturation = 0.42;
+const double _kDarkMaxSaturation = 0.58;
 const double _kLightMaxSaturation = 0.22;
 
 /// 上下落差的基准幅度（spread = 1 时的半差）。

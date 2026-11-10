@@ -18,10 +18,17 @@ class CoverColorResult {
   final Color lightColor;
   final bool useDarkText;
 
+  /// 取色时用的随机种子（见 [CoverColorExtractor.seedOf]）。
+  ///
+  /// 同一首歌固定，主界面背景用它再给「亮度 / 渐变幅度 / 光晕数」一点差异，
+  /// 否则不同封面派生出来的背景暗度几乎一样，看着还是一整片。
+  final int seed;
+
   const CoverColorResult({
     required this.dominantColor,
     required this.lightColor,
     required this.useDarkText,
+    this.seed = 0,
   });
 
   static const CoverColorResult defaultResult = CoverColorResult(
@@ -186,11 +193,12 @@ int _pickAccent(List<int> candidates, int seed) {
   final warm = topHue >= 15 && topHue <= 55;
   final roll = random.nextDouble();
   var index = 0;
-  // 暖色封面（棕 / 橙最容易撞色）：六成概率换到封面上的其它色系。
-  if (candidates.length > 1 && roll > (warm ? 0.40 : 0.75)) index = 1;
-  if (candidates.length > 2 && roll > (warm ? 0.78 : 0.92)) index = 2;
-  // 再抖一点色相（±10°）：同一色系的封面不会得到完全一样的背景。
-  return _shiftHue(candidates[index], (random.nextDouble() * 2 - 1) * 10);
+  // 暖色封面（棕 / 橙最容易撞色）：大半概率换到封面上的其它色系；
+  // 其它封面也留出换色的机会，整体色系才够散。
+  if (candidates.length > 1 && roll > (warm ? 0.30 : 0.55)) index = 1;
+  if (candidates.length > 2 && roll > (warm ? 0.62 : 0.80)) index = 2;
+  // 再抖一点色相（±14°）：同一色系的封面不会得到完全一样的背景。
+  return _shiftHue(candidates[index], (random.nextDouble() * 2 - 1) * 14);
 }
 
 /// 只改色相、保留饱和度与明度。
@@ -259,6 +267,7 @@ class CoverColorExtractor {
         dominantColor: dominantColor,
         lightColor: lightColor,
         useDarkText: useDarkText,
+        seed: seed,
       );
     } catch (e) {
       return CoverColorResult.defaultResult;
