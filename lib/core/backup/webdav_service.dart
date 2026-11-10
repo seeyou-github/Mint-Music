@@ -5,6 +5,8 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart' as dio;
 import 'package:webdav_client/webdav_client.dart' as webdav;
 
+import '../security/local_field_codec.dart';
+
 /// 带可读原因的 WebDAV 异常。
 class WebDavException implements Exception {
   const WebDavException(this.message, {this.statusCode});
@@ -89,19 +91,21 @@ class WebDavConfig {
     );
   }
 
+  /// 地址 / 账号 / 密码编码后写盘：设置文件以及打包进备份包的 settings.json
+  /// 都只包含编码后的值，读回时由 [fromJson] 还原。
   Map<String, dynamic> toJson() => {
-    'url': url,
-    'user': user,
-    'password': password,
+    'url': sealField(url),
+    'user': sealField(user),
+    'password': sealField(password),
     'deviceName': deviceName,
     'playlistSyncEnabled': playlistSyncEnabled,
   };
 
   factory WebDavConfig.fromJson(Map<String, dynamic> json) {
     return WebDavConfig(
-      url: '${json['url'] ?? ''}',
-      user: '${json['user'] ?? ''}',
-      password: '${json['password'] ?? ''}',
+      url: unsealField('${json['url'] ?? ''}'),
+      user: unsealField('${json['user'] ?? ''}'),
+      password: unsealField('${json['password'] ?? ''}'),
       deviceName: '${json['deviceName'] ?? ''}',
       playlistSyncEnabled: json['playlistSyncEnabled'] == true,
     );
