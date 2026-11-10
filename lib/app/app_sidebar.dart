@@ -107,6 +107,7 @@ class AppSidebar extends ConsumerWidget {
   /// 二级页面路径 → 所属的一级分类下标。
   static const Map<String, int> _subRouteOwners = {
     '/playlist': 0, // 发现：歌单 / 榜单详情
+    '/collection': 0, // 发现：合集详情
     '/search': 0, // 发现：搜索
     '/library/playlist': 1, // 歌单：我的歌单详情
     '/settings': 3, // 我的：设置

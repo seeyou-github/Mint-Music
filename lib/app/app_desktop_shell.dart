@@ -96,7 +96,7 @@ class _AppDesktopShellState extends ConsumerState<AppDesktopShell> {
     // 2) 连续点击同一个分类：回到该分类的第一级界面。
     if (index == _activeIndex) {
       shell.goBranch(index, initialLocation: true);
-      _ensureBranchSwitched(route);
+      _ensureBranchSwitched(index, route, toRoot: true);
       return;
     }
 
@@ -104,16 +104,23 @@ class _AppDesktopShellState extends ConsumerState<AppDesktopShell> {
     //    的二级页）；进入「我的」时回到一级页面，不恢复设置等二级页面。
     setState(() => _activeIndex = index);
     switchMainTab(shell, index);
-    _ensureBranchSwitched(route);
+    _ensureBranchSwitched(index, route);
   }
 
   /// 兜底：`goBranch` 偶尔不生效（导航壳实例被重建后，旧实例切不动分支），
   /// 下一帧发现还停在原路径就改用 `go` 强切，保证点侧栏一定有反馈。
-  void _ensureBranchSwitched(String route) {
+  ///
+  /// [toRoot] 表示目标就是该分类的一级页面；普通切换时目标分类可能停在
+  /// 自己的二级页面（歌单详情、榜单、搜索…），只要仍归属该分类就算切换成功，
+  /// 不能强切回列表页，否则会丢掉分支自己的页面栈。
+  void _ensureBranchSwitched(int index, String route, {bool toRoot = false}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final path = appRouter.routerDelegate.currentConfiguration.uri.path;
-      if (path == route || path.startsWith('$route/')) return;
+      final switched = toRoot || index == mineNavIndex
+          ? path == route
+          : AppSidebar.indexForLocation(path) == index;
+      if (switched) return;
       appRouter.go(route);
     });
   }
