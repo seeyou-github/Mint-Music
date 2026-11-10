@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/platform/window_chrome.dart';
 import '../core/theme/theme_provider.dart';
 import '../features/player/application/playback_controller.dart';
+import '../shared/widgets/background_dither_layer.dart';
 import '../shared/widgets/background_glow_layer.dart';
 import 'windows_title_bar.dart';
 
@@ -96,6 +97,8 @@ class AppPageBackground extends ConsumerWidget {
                 seed: ref.watch(backgroundGlowSeedProvider),
                 animated: glowAnimated,
               ),
+              // 打散渐变 / 光晕在 8 位色深下的色带。
+              const BackgroundDitherLayer(),
             ],
           ),
         ),

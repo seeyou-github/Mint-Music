@@ -33,6 +33,7 @@ import '../core/backup/sync_timeout.dart';
 import '../core/backup/webdav_service.dart';
 import '../features/library/application/playlist_providers.dart';
 import '../features/settings/data/plugin_repository.dart';
+import '../shared/widgets/background_dither_layer.dart';
 import '../shared/widgets/background_glow_layer.dart';
 import '../shared/widgets/playlist_sync_indicator.dart';
 import 'app_desktop_shell.dart';
@@ -443,6 +444,8 @@ class _AppState extends ConsumerState<App> {
                           seed: ref.watch(backgroundGlowSeedProvider),
                           animated: glowAnimated,
                         ),
+                        // 打散渐变 / 光晕在 8 位色深下的色带。
+                        const BackgroundDitherLayer(),
                       ],
                     ),
                   ),
