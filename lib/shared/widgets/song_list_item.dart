@@ -581,16 +581,18 @@ class SongListItem extends ConsumerWidget {
   /// 收藏红心：只在当前歌曲已收藏时出现，点击直接取消收藏。
   ///
   /// 用 select 只订阅「这一首是否在收藏里」，其它歌曲增删不会重建本行。
+  /// 取消收藏用 [FavoriteSongs.favoriteIdOf] 返回的 id：本地歌曲在收藏里
+  /// 可能存着旧 id（按文件路径才认得出），用本行 id 会删不掉。
   Widget? _buildFavoriteHeart(WidgetRef ref) {
-    final favorited = ref.watch(
-      favoriteSongIdsProvider.select((ids) => ids.contains(song.id)),
+    final favoriteId = ref.watch(
+      favoriteSongsProvider.select((favorites) => favorites.favoriteIdOf(song)),
     );
-    if (!favorited) return null;
+    if (favoriteId == null) return null;
     return GestureDetector(
       // 只负责取消收藏：吃掉点击，避免冒泡到整行的「播放」手势。
       onTap: () => ref
           .read(playlistsProvider.notifier)
-          .removeSongFromPlaylist('__favorites__', song.id),
+          .removeSongFromPlaylist('__favorites__', favoriteId),
       behavior: HitTestBehavior.opaque,
       child: const Padding(
         padding: EdgeInsets.symmetric(horizontal: 4, vertical: 4),

@@ -57,15 +57,59 @@ final playlistsProvider =
       PlaylistsNotifier.new,
     );
 
-/// 「我的收藏」里的歌曲 id 集合：歌曲列表项据此显示收藏红心。
-final favoriteSongIdsProvider = Provider<Set<String>>((ref) {
+/// 「我的收藏」索引：歌曲列表项据此显示收藏红心。
+final favoriteSongsProvider = Provider<FavoriteSongs>((ref) {
   final playlists = ref.watch(playlistsProvider).valueOrNull;
-  if (playlists == null) return const {};
   final favorites = playlists
-      .where((playlist) => playlist.id == '__favorites__')
+      ?.where((playlist) => playlist.id == '__favorites__')
       .firstOrNull;
-  return {for (final song in favorites?.songs ?? const <Song>[]) song.id};
+  return FavoriteSongs(favorites?.songs ?? const <Song>[]);
 });
+
+/// 「我的收藏」里的歌曲：先按歌曲 id 匹配，本地歌曲再按文件路径兜底。
+///
+/// 本地歌曲的 id 是扫描时按文件路径算出来的 md5，收藏里存的是收藏那一刻的
+/// id。文件改名 / 换存储目录 / 旧版本数据都可能让两边的 id 对不上，只按 id
+/// 判断会出现「明明收藏了，本地页面和最近播放里却没有红心」。所以本地歌曲
+/// 额外用文件路径认一次：只要还是同一个文件，就算已收藏。
+class FavoriteSongs {
+  factory FavoriteSongs(List<Song> songs) {
+    final ids = <String>{};
+    final localPathIds = <String, String>{};
+    for (final song in songs) {
+      ids.add(song.id);
+      if (!song.isLocal) continue;
+      final key = localSongPathKey(song.filePath ?? song.sourceUrl);
+      if (key != null) localPathIds[key] = song.id;
+    }
+    return FavoriteSongs._(ids, localPathIds);
+  }
+
+  const FavoriteSongs._(this._ids, this._localPathIds);
+
+  final Set<String> _ids;
+
+  /// 归一化后的文件路径 → 收藏里那首歌的 id。
+  final Map<String, String> _localPathIds;
+
+  /// 收藏里这首歌的 id：列表项用它判断红心、取消收藏时也用它。
+  ///
+  /// 没收藏返回 null。
+  String? favoriteIdOf(Song song) {
+    if (_ids.contains(song.id)) return song.id;
+    if (!song.isLocal) return null;
+    final key = localSongPathKey(song.filePath ?? song.sourceUrl);
+    return key == null ? null : _localPathIds[key];
+  }
+}
+
+/// 本地歌曲按文件路径比对的键：统一分隔符与大小写（Windows 盘符 / 路径
+/// 大小写不敏感，Android 上也无副作用）。
+String? localSongPathKey(String? path) {
+  final trimmed = path?.trim();
+  if (trimmed == null || trimmed.isEmpty) return null;
+  return trimmed.replaceAll('\\', '/').toLowerCase();
+}
 
 class PlaylistsNotifier extends AsyncNotifier<List<Playlist>> {
   @override

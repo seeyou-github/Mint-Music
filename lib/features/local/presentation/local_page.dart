@@ -1868,6 +1868,12 @@ class _LocalSongItem extends ConsumerWidget {
     );
     final isPlaying = playingId == song.id;
     final blocked = ref.watch(blacklistProvider).isBlocked(song);
+    // 收藏红心：与「我的收藏」/ 自建歌单 / 最近播放等列表保持一致，已收藏的
+    // 本地歌曲同样显示红心（本地歌曲可能按文件路径才认得出收藏，见
+    // [FavoriteSongs.favoriteIdOf]）。
+    final favoriteId = ref.watch(
+      favoriteSongsProvider.select((favorites) => favorites.favoriteIdOf(song)),
+    );
 
     return SizedBox(
       // 固定行高，保证 itemExtent 与实际布局一致
@@ -2015,6 +2021,19 @@ class _LocalSongItem extends ConsumerWidget {
                   ],
                 ),
               ),
+              // 收藏红心：放在时长左侧，与其它歌曲列表的位置一致。
+              if (!selectionMode && favoriteId != null)
+                GestureDetector(
+                  // 只负责取消收藏：吃掉点击，避免冒泡成整行的「播放」。
+                  onTap: () => ref
+                      .read(playlistsProvider.notifier)
+                      .removeSongFromPlaylist('__favorites__', favoriteId),
+                  behavior: HitTestBehavior.opaque,
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                    child: Icon(Icons.favorite, size: 14, color: Colors.red),
+                  ),
+                ),
               if (song.duration > 0)
                 Text(
                   song.displayDuration,
