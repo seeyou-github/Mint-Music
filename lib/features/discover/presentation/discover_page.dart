@@ -3359,7 +3359,6 @@ class _CategorySheetContentState extends State<_CategorySheetContent> {
 
   @override
   Widget build(BuildContext context) {
-    final colors = widget.colors;
     return Scrollbar(
       controller: _scrollController,
       thumbVisibility: true,
@@ -3376,11 +3375,10 @@ class _CategorySheetContentState extends State<_CategorySheetContent> {
             _buildGroupTitle(context, widget.groups[i].name),
             const SizedBox(height: AppSpacing.sm),
             _buildTagWrap(context, widget.groups[i]),
-            if (i != widget.groups.length - 1) ...[
-              const SizedBox(height: AppSpacing.md),
-              Divider(height: 1, color: colors.divider.withValues(alpha: 0.4)),
-              const SizedBox(height: AppSpacing.md),
-            ],
+            // 分组标题本身已带一条贯穿的横线，组与组之间只留间距，
+            // 不再画整宽分割线（否则和标题横线叠成两条）。
+            if (i != widget.groups.length - 1)
+              const SizedBox(height: AppSpacing.xxl),
           ],
         ],
       ),
