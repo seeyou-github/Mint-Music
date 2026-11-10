@@ -262,7 +262,8 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w600,
-                  color: colors.textOnPrimary,
+                  // 名称跟随「外观设置 → 字体颜色」。
+                  color: colors.textPrimary,
                 ),
               ),
             ),
@@ -671,7 +672,8 @@ class _AnimatedPlayingBarsState extends State<_AnimatedPlayingBars>
           height: widget.size,
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.end,
+            // 音柱以中线为轴上下伸缩，整体才会居中；底对齐会贴到圆形底部。
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               for (var i = 0; i < 3; i++) ...[
                 if (i > 0) SizedBox(width: gap),
