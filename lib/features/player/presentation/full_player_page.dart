@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
-import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -12,6 +11,7 @@ import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
+import '../../../app/player_page_background.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../../../shared/widgets/fallback_cover_image.dart';
 import '../../../shared/widgets/source_name_tag.dart';
@@ -25,8 +25,6 @@ import '../application/lyric_controller.dart';
 import '../../radio/application/radio_session.dart';
 import '../domain/models/song.dart';
 import '../../../core/theme/background_derivation.dart';
-import '../../../core/theme/background_gradient.dart';
-import '../../../shared/widgets/background_glow_layer.dart';
 import '../domain/services/cover_color_extractor.dart';
 import '../../library/application/playlist_providers.dart';
 import '../../plugin/application/plugin_providers.dart';
@@ -154,25 +152,12 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
 
   @override
   Widget build(BuildContext context) {
-    ref.watch(currentSongIdentityProvider);
-    final song = ref.read(playbackControllerProvider).currentSong;
     // SafeArea 内 padding 会被消费，底边导航条高度要在它外面取。
     final bottomInset = MediaQuery.paddingOf(context).bottom;
     final isPlaying = ref.watch(
       playbackControllerProvider.select((s) => s.isPlaying),
     );
-    final bgMode = ref.watch(playerBackgroundModeProvider);
     final audioVisualizer = ref.watch(audioVisualizerEnabledProvider);
-    final coverColorAsync = ref.watch(currentCoverColorProvider);
-    // 「主界面跟随封面变色」开启时（仅深色），播放页直接用主界面那条渐变：
-    // 颜色、方向都同源，不再各算一遍，侧栏和播放页之间才有「浑然一体」的观感。
-    final followCoverBackground =
-        !ref.watch(isLightThemeActiveProvider) &&
-        ref.watch(coverBackgroundEnabledProvider);
-
-    final Color? dominantColor = coverColorAsync.whenOrNull(
-      data: (result) => result?.dominantColor,
-    );
 
     return PopScope<void>(
       // 拦截系统返回键，统一走 _beginExit。
@@ -183,20 +168,9 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
       child: Scaffold(
         body: Stack(
           children: [
-            RepaintBoundary(
-              child: _BackgroundLayer(
-                dominantColor: dominantColor,
-                coverUrl: song?.coverUrl,
-                song: song,
-                mode: bgMode,
-                // 跟随封面时直接用主界面那条渐变（颜色 + 方向同源），
-                // 否则仍按封面色自己派生。
-                mainGradient: followCoverBackground
-                    ? ref.watch(backgroundGradientProvider)
-                    : null,
-                glowSeed: ref.watch(backgroundGlowSeedProvider),
-              ),
-            ),
+            // 背景就是主界面那一层（同一个 AppBackgroundLayer）：
+            // 渐变 / 模糊图 / 跟随封面全都同源，点进来只有上面多了层压暗。
+            const PlayerPageBackground(),
             // 手机横屏左栏是紧凑的「封面 + 控件」，没有留给频谱条的空间，
             // 否则它会横跨两栏压在播放控制上。
             if (audioVisualizer && !ResponsiveLayout.isPhoneLandscape(context))
@@ -1609,218 +1583,6 @@ class _PlayerControls extends ConsumerWidget {
       onNext: () => controller.next(),
       onCycleMode: () => controller.cyclePlayMode(),
       onQueue: onQueue,
-    );
-  }
-}
-
-class _BackgroundLayer extends StatefulWidget {
-  final Color? dominantColor;
-  final String? coverUrl;
-
-  /// 当前歌曲：本地歌的封面常常只有内嵌图（`coverUrl` 为空），
-  /// 把它一起交给 [MusicCoverImage] 才能糊出背景，不然本地歌只能看到纯色。
-  final Song? song;
-  final FullScreenBackgroundMode mode;
-
-  /// 「主界面跟随封面变色」开启时传入主界面那条渐变。
-  ///
-  /// 非空时背景完全等于主界面（同一个 provider 的颜色 + 方向），并且不再
-  /// 叠暗色底和顶部光晕 —— 播放页比侧栏暗一档，正是之前「两块背景」割裂感
-  /// 的来源。
-  final BackgroundGradient? mainGradient;
-
-  /// 背景光晕的启动种子（和主界面用同一个，光晕位置才对得上）。
-  final int glowSeed;
-
-  const _BackgroundLayer({
-    required this.dominantColor,
-    required this.coverUrl,
-    this.song,
-    required this.mode,
-    this.mainGradient,
-    required this.glowSeed,
-  });
-
-  @override
-  State<_BackgroundLayer> createState() => _BackgroundLayerState();
-}
-
-class _BackgroundLayerState extends State<_BackgroundLayer> {
-  Color? _displayedDominantColor;
-
-  @override
-  void initState() {
-    super.initState();
-    _displayedDominantColor = widget.dominantColor;
-  }
-
-  @override
-  void didUpdateWidget(covariant _BackgroundLayer oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    // Color extraction is asynchronous. Keep the previous palette while the
-    // next cover's FutureProvider is loading instead of briefly falling back
-    // to the dark background.
-    if (widget.dominantColor != null) {
-      _displayedDominantColor = widget.dominantColor;
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) => _buildLayer(context);
-
-  Widget _buildLayer(BuildContext context) {
-    final mode = widget.mode;
-    final dominantColor = _displayedDominantColor;
-    final coverUrl = widget.coverUrl;
-    final coverSong = widget.song;
-    // 有在线封面、或者是能取到本地封面的本地歌，才铺「封面糊化」背景。
-    final hasCover =
-        (coverUrl != null && coverUrl.isNotEmpty) ||
-        (coverSong?.isLocal ?? false) ||
-        (coverSong?.mediaStoreId != null);
-    // 高斯模糊模式（背景颜色模式 = 高斯模糊）下背景就该是封面本身，
-    // 不能再退回「跟随封面变色」那条渐变。
-    final useCoverBackground =
-        mode == FullScreenBackgroundMode.cover && hasCover;
-    // 该铺封面背景却拿不到封面时，退回「跟随主题」那条渐变，
-    // 别让播放页只剩一片黑。
-    final effectiveMode =
-        mode == FullScreenBackgroundMode.cover && !hasCover
-        ? FullScreenBackgroundMode.theme
-        : mode;
-
-    // 跟随封面变色时把主界面那条渐变原样铺上来：颜色、方向都同源，侧栏和
-    // 播放页之间没有任何色差，切换歌曲时两边也是同一条 1s 过渡。
-    final mainGradient = widget.mainGradient;
-    if (mainGradient != null && !useCoverBackground) {
-      return Stack(
-        fit: StackFit.expand,
-        children: [
-          AnimatedContainer(
-            // 与主界面全局背景层同一条 1s 曲线：切歌时两边同步过渡。
-            duration: const Duration(seconds: 1),
-            curve: Curves.easeInOut,
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: mainGradient.begin,
-                end: mainGradient.end,
-                colors: mainGradient.colors,
-              ),
-            ),
-          ),
-          // 光晕和主界面用同一个种子 + 同一组颜色，位置也一致。
-          BackgroundGlowLayer(
-            colors: mainGradient.colors,
-            count: mainGradient.glowCount,
-            seed: widget.glowSeed,
-          ),
-        ],
-      );
-    }
-    // 与「设置 → 外观设置 → 背景渐变」共用同一条派生算法
-    // （deriveBackgroundGradient）：只取封面色相、饱和度封顶、亮度压到
-    // 暗色区间，这里取默认派生的首（0.17）尾（0.08）两段。
-    final derived = dominantColor == null
-        ? null
-        : deriveBackgroundGradient(dominantColor, isLight: false);
-    return Stack(
-      children: [
-        Container(color: const Color(0xFF09090B)),
-        if (derived != null && effectiveMode == FullScreenBackgroundMode.theme)
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 600),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [derived.first, derived.last],
-              ),
-            ),
-          ),
-        if (useCoverBackground)
-          Stack(
-            children: [
-              Positioned.fill(
-                // 封面糊化后铺满：模糊会把细节抹掉，按 512 解码就够，别解大图。
-                // 放大一点把模糊后发虚的边推到屏幕外（与歌词页同款处理）。
-                child: ImageFiltered(
-                  imageFilter: ui.ImageFilter.blur(sigmaX: 40, sigmaY: 40),
-                  child: Transform.scale(
-                    scale: 1.06,
-                    child: MusicCoverImage(
-                      url: (coverUrl != null && coverUrl.isNotEmpty)
-                          ? coverUrl
-                          : null,
-                      songId: coverSong?.id,
-                      filePath: coverSong?.filePath,
-                      mediaStoreId: coverSong?.mediaStoreId,
-                      fit: BoxFit.cover,
-                      width: double.infinity,
-                      height: double.infinity,
-                      cacheWidth: 512,
-                      cacheHeight: 512,
-                      filterQuality: FilterQuality.low,
-                      errorWidget: const SizedBox.shrink(),
-                    ),
-                  ),
-                ),
-              ),
-              // 压暗：整体压到能看清白字，再让下沿更暗，托住控制区。
-              Positioned.fill(
-                child: Container(color: Colors.black.withValues(alpha: 0.6)),
-              ),
-              Positioned.fill(
-                child: Container(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        Colors.black.withValues(alpha: 0.10),
-                        Colors.black.withValues(alpha: 0.20),
-                        Colors.black.withValues(alpha: 0.60),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        if (effectiveMode == FullScreenBackgroundMode.dark ||
-            (dominantColor == null &&
-                effectiveMode == FullScreenBackgroundMode.theme))
-          Container(
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  Color(0xFF18181B),
-                  Color(0xFF09090B),
-                  Color(0xFF000000),
-                ],
-              ),
-            ),
-          ),
-        Positioned(
-          top: 0,
-          left: 0,
-          right: 0,
-          child: Container(
-            height: MediaQuery.of(context).size.height * 0.6,
-            decoration: BoxDecoration(
-              gradient: RadialGradient(
-                center: Alignment.topCenter,
-                radius: 0.8,
-                colors: [
-                  Colors.white.withValues(alpha: 0.06),
-                  Colors.transparent,
-                ],
-              ),
-            ),
-          ),
-        ),
-      ],
     );
   }
 }

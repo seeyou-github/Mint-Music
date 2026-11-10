@@ -1,28 +1,22 @@
 import 'dart:async';
-import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:cached_network_image/cached_network_image.dart';
-import 'package:palette_generator/palette_generator.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/theme_provider.dart';
-import '../../../shared/services/app_image_cache.dart';
 import '../../../shared/widgets/share_preview_dialog.dart';
-import '../../../shared/widgets/music_cover_image.dart';
 import '../application/playback_controller.dart';
 import '../../radio/application/radio_session.dart';
 import '../application/playback_ui_providers.dart';
 import '../application/lyric_controller.dart';
 import '../domain/models/song.dart';
-import '../../../core/theme/background_derivation.dart';
-import '../domain/services/cover_color_extractor.dart';
 import '../../settings/application/settings_providers.dart';
 import '../../library/application/playlist_providers.dart';
 import '../../library/domain/models/playlist.dart';
 import '../application/root_overlay_tracker.dart';
+import '../../../app/player_page_background.dart';
 import 'widgets/lyric_format_tag.dart';
 import 'widgets/lyric_scroll_view.dart';
 import 'widgets/player_controls.dart';
@@ -37,7 +31,6 @@ class LyricPage extends ConsumerStatefulWidget {
 }
 
 class _LyricPageState extends ConsumerState<LyricPage> {
-  Color? _dominantColor;
   Song? _lastSong;
   bool _isLeaving = false;
   bool _exiting = false;
@@ -52,9 +45,6 @@ class _LyricPageState extends ConsumerState<LyricPage> {
     // 退出时在 _beginExit 中先恢复 edgeToEdge 再 pop：若等到路由完全销毁
     // 才恢复，下层页面会因系统栏突然出现而重排闪烁。
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _loadCoverColor();
-    });
   }
 
   @override
@@ -108,48 +98,6 @@ class _LyricPageState extends ConsumerState<LyricPage> {
     super.dispose();
   }
 
-  Future<void> _loadCoverColor() async {
-    if (_isLeaving) return;
-    final playbackState = ref.read(playbackControllerProvider);
-    final song = playbackState.currentSong;
-    if (song?.coverUrl == null || song!.coverUrl!.isEmpty) {
-      // A source may fill in its cover asynchronously after the song changes.
-      // Keep the previous palette during that short gap so next/previous does
-      // not flash to a black background.
-      return;
-    }
-    try {
-      ImageProvider imageProvider;
-      if (song.coverUrl!.startsWith('http')) {
-        imageProvider = CachedNetworkImageProvider(
-          song.coverUrl!,
-          cacheManager: AppImageCache.manager,
-        );
-      } else {
-        imageProvider = AssetImage(song.coverUrl!);
-      }
-      final paletteGenerator = await PaletteGenerator.fromImageProvider(
-        imageProvider,
-        maximumColorCount: 8,
-        region: Rect.fromCenter(
-          center: const Offset(150, 150),
-          width: 200,
-          height: 200,
-        ),
-      );
-      if (!mounted || _isLeaving) return;
-      final dominant = paletteGenerator.dominantColor;
-      if (dominant != null) {
-        setState(() {
-          _dominantColor = dominant.color;
-        });
-      }
-    } catch (_) {
-      // Keep the previous successful palette if the next cover fails to
-      // decode. The next valid cover update will replace it.
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     // The page shell must not subscribe to the 200ms position stream. The
@@ -158,9 +106,6 @@ class _LyricPageState extends ConsumerState<LyricPage> {
     final song = ref.read(playbackControllerProvider).currentSong;
     final controller = ref.read(playbackControllerProvider.notifier);
     final lyricState = ref.watch(lyricControllerProvider);
-    final bgMode = ref.watch(playerBackgroundModeProvider);
-    final bgAnimation = ref.watch(appearanceBgAnimationProvider);
-
     final showTranslation = ref.watch(lyricShowTranslationProvider);
     final showRoman = ref.watch(lyricShowRomanProvider);
     final enableBlur = ref.watch(lyricEnableBlurProvider);
@@ -172,7 +117,6 @@ class _LyricPageState extends ConsumerState<LyricPage> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || _isLeaving) return;
         ref.read(lyricControllerProvider.notifier).loadLyrics(song);
-        _loadCoverColor();
       });
     }
 
@@ -206,18 +150,10 @@ class _LyricPageState extends ConsumerState<LyricPage> {
             },
             child: Stack(
               children: [
-                // 用 RepaintBoundary 缓存整层背景（含全屏 80px BackdropFilter）。
-                // 路由滑动切换时合成器只需平移缓存的纹理，避免每一帧都重新执行
-                // 全屏高斯模糊导致掉帧/闪烁（全屏播放页无此模糊所以流畅）。
-                RepaintBoundary(
-                  child: _LyricBackgroundLayer(
-                    dominantColor: _dominantColor,
-                    coverUrl: song?.coverUrl,
-                    song: song,
-                    mode: bgMode,
-                    animate: bgAnimation,
-                  ),
-                ),
+                // 背景就是主界面那一层（同一个 AppBackgroundLayer）：
+                // 渐变 / 模糊图 / 跟随封面全都同源，和播放详情页、主界面
+                // 是同一块背景，切页时不会看到「换了一块」。
+                const PlayerPageBackground(),
                 SafeArea(
                   child: Column(
                     children: [
@@ -790,229 +726,6 @@ class _LyricControls extends ConsumerWidget {
       onNext: controller.next,
       onCycleMode: controller.cyclePlayMode,
       onQueue: () {},
-    );
-  }
-}
-
-class _LyricBackgroundLayer extends StatefulWidget {
-  final Color? dominantColor;
-  final String? coverUrl;
-
-  /// 当前歌曲：本地歌常常只有内嵌封面（`coverUrl` 为空），交给
-  /// [MusicCoverImage] 才能糊出背景。
-  final Song? song;
-  final FullScreenBackgroundMode mode;
-  final bool animate;
-
-  const _LyricBackgroundLayer({
-    required this.dominantColor,
-    required this.coverUrl,
-    this.song,
-    required this.mode,
-    required this.animate,
-  });
-
-  @override
-  State<_LyricBackgroundLayer> createState() => _LyricBackgroundLayerState();
-}
-
-class _LyricBackgroundLayerState extends State<_LyricBackgroundLayer>
-    with SingleTickerProviderStateMixin {
-  AnimationController? _controller;
-
-  @override
-  void initState() {
-    super.initState();
-    _syncAnimation();
-  }
-
-  @override
-  void didUpdateWidget(covariant _LyricBackgroundLayer oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.animate != widget.animate ||
-        oldWidget.mode != widget.mode ||
-        oldWidget.coverUrl != widget.coverUrl) {
-      _syncAnimation();
-    }
-  }
-
-  void _syncAnimation() {
-    final shouldAnimate =
-        widget.animate &&
-        widget.mode == FullScreenBackgroundMode.cover &&
-        widget.coverUrl != null &&
-        widget.coverUrl!.isNotEmpty;
-    if (shouldAnimate) {
-      _controller ??= AnimationController(
-        vsync: this,
-        duration: const Duration(seconds: 16),
-      )..repeat(reverse: true);
-    } else {
-      _controller?.dispose();
-      _controller = null;
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller?.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final controller = _controller;
-    if (controller == null) return _buildLayer(context, 0);
-    return AnimatedBuilder(
-      animation: controller,
-      builder: (context, _) => _buildLayer(context, controller.value),
-    );
-  }
-
-  Widget _buildLayer(BuildContext context, double animationValue) {
-    final dominantColor = widget.dominantColor;
-    final coverUrl = widget.coverUrl;
-    final mode = widget.mode;
-    // 有在线封面、或者是能取到本地封面的本地歌，才铺「封面糊化」背景。
-    final hasCover =
-        (coverUrl != null && coverUrl.isNotEmpty) ||
-        (widget.song?.isLocal ?? false) ||
-        (widget.song?.mediaStoreId != null);
-    // 该铺封面背景却拿不到封面时，退回「跟随主题」那条渐变。
-    final effectiveMode =
-        mode == FullScreenBackgroundMode.cover && !hasCover
-        ? FullScreenBackgroundMode.theme
-        : mode;
-    return Stack(
-      children: [
-        Container(color: const Color(0xFF09090B)),
-        if (dominantColor != null &&
-            effectiveMode == FullScreenBackgroundMode.theme)
-          AnimatedContainer(
-            duration: widget.animate
-                ? const Duration(seconds: 1)
-                : Duration.zero,
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                // 与播放详情页 / 设置里的「背景渐变」同一条派生算法，
-                // 取默认派生的首（0.17）尾（0.08）两段。
-                colors: [
-                  deriveBackgroundGradient(dominantColor, isLight: false).first,
-                  deriveBackgroundGradient(dominantColor, isLight: false).last,
-                ],
-              ),
-            ),
-          ),
-        if (hasCover && effectiveMode == FullScreenBackgroundMode.cover)
-          Stack(
-            children: [
-              Positioned.fill(
-                // 使用带内存缓存的 MusicCoverImage（与全屏播放页一致），
-                // 避免每次进入歌词页重复下载/解码封面导致首帧卡顿。
-                child: widget.animate
-                    ? Transform.scale(
-                        scale: 1.0 + animationValue * 0.018,
-                        child: ImageFiltered(
-                          imageFilter: ui.ImageFilter.blur(
-                            sigmaX: 40,
-                            sigmaY: 40,
-                          ),
-                          child: MusicCoverImage(
-                            url: (coverUrl != null && coverUrl.isNotEmpty)
-                                ? coverUrl
-                                : null,
-                            songId: widget.song?.id,
-                            filePath: widget.song?.filePath,
-                            mediaStoreId: widget.song?.mediaStoreId,
-                            fit: BoxFit.cover,
-                            width: double.infinity,
-                            height: double.infinity,
-                            cacheWidth: 512,
-                            cacheHeight: 512,
-                            filterQuality: FilterQuality.low,
-                            errorWidget: const SizedBox(),
-                          ),
-                        ),
-                      )
-                    : ImageFiltered(
-                        imageFilter: ui.ImageFilter.blur(
-                          sigmaX: 40,
-                          sigmaY: 40,
-                        ),
-                        child: MusicCoverImage(
-                          url: (coverUrl != null && coverUrl.isNotEmpty)
-                              ? coverUrl
-                              : null,
-                          songId: widget.song?.id,
-                          filePath: widget.song?.filePath,
-                          mediaStoreId: widget.song?.mediaStoreId,
-                          fit: BoxFit.cover,
-                          width: double.infinity,
-                          height: double.infinity,
-                          cacheWidth: 512,
-                          cacheHeight: 512,
-                          filterQuality: FilterQuality.low,
-                          errorWidget: const SizedBox(),
-                        ),
-                      ),
-              ),
-              Positioned.fill(
-                child: Container(color: Colors.black.withValues(alpha: 0.6)),
-              ),
-              Positioned.fill(
-                child: Container(
-                  decoration: const BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        Color(0x1A000000),
-                        Color(0x33000000),
-                        Color(0x99000000),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        if (effectiveMode == FullScreenBackgroundMode.dark ||
-            (dominantColor == null &&
-                effectiveMode == FullScreenBackgroundMode.theme))
-          Container(
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  Color(0xFF18181B),
-                  Color(0xFF09090B),
-                  Color(0xFF000000),
-                ],
-              ),
-            ),
-          ),
-        Positioned(
-          top: 0,
-          left: 0,
-          right: 0,
-          child: Container(
-            height: MediaQuery.of(context).size.height * 0.6,
-            decoration: BoxDecoration(
-              gradient: RadialGradient(
-                center: Alignment.topCenter,
-                radius: 0.8,
-                colors: [
-                  Colors.white.withValues(alpha: 0.06),
-                  Colors.transparent,
-                ],
-              ),
-            ),
-          ),
-        ),
-      ],
     );
   }
 }
