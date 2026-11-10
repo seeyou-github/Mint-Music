@@ -750,11 +750,14 @@ class _RadioCardBackgroundState extends State<_RadioCardBackground>
       child: Stack(
         fit: StackFit.expand,
         children: [
-          // 模糊会把图片边缘吃掉一圈，放大 25% 避免卡片四周透出底色。
+          // 模糊会把图片边缘吃掉一圈，放大一点避免卡片四周透出底色。
+          //
+          // sigma 14（原来是 28）：28 基本把封面糊成一片纯色，认不出是哪张；
+          // 14 还能看出封面的大色块与轮廓，同时不会抢卡片的文字。
           Transform.scale(
-            scale: 1.25,
+            scale: 1.18,
             child: ImageFiltered(
-              imageFilter: ImageFilter.blur(sigmaX: 28, sigmaY: 28),
+              imageFilter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
               child: MusicCoverImage(
                 key: ValueKey('radio_card_bg_${song.id}'),
                 url: song.coverUrl,
