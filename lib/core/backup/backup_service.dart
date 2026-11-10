@@ -17,14 +17,15 @@ import '../../features/library/data/playlist_store.dart';
 /// 备份 / 还原服务。
 ///
 /// 备份内容（压缩包内）：
-/// - `config/`：应用配置目录（`settings.json`、删除墓碑、导入的字体、
-///   电台 / 自定义歌单封面等）
-/// - `plugin/`：插件脚本目录
-/// - `hotboards.json`：**只有还原老备份时才读**。热榜现在只是 settings.json
-///   里的一小段配置（哪个音源加了哪个榜单），已经随 `config/` 一起打包
+/// - `config/setting/`：设置目录（`settings.json`、`settings.json.bak`、
+///   删除墓碑、导入的字体、电台 / 自定义歌单封面等）
+/// - `config/plugin/`：插件脚本目录
 /// - `playlists.json`：收藏（我的收藏 + 歌单，存在重要库的两张表里）
 /// - `playstats.json`：每首歌的已听进度（同样在重要库里；听歌统计 / 排行
 ///   已移除，老备份里的对应字段还原时忽略）
+///
+/// 两个顶层快照即使为空也照样写进包里，保证备份包的目录结构固定；
+/// 老备份的 `config/*`、`plugin/*` 与 `hotboards.json` 仍然能还原。
 ///
 /// 重要库（Windows：`AppData/config/db/mintmusic.db`）里的数据全部以 JSON 快照的形式单独
 /// 打包，而不是直接拷数据库文件：正在使用的 SQLite 文件还有没合并的 WAL，
@@ -32,7 +33,7 @@ import '../../features/library/data/playlist_store.dart';
 /// 容易把库读坏。
 ///
 /// 还原时：
-/// - 用备份里的 `config` / `plugin` **覆盖**现有目录；
+/// - 用备份里的 `config/setting` / `config/plugin` **覆盖**现有目录；
 /// - 有 `playlists.json` / `playstats.json` 时把它们写回数据库；老备份的收藏
 ///   还在 `config/playlists.json` 里、热榜还在 `hotboards.json` 里，也照样能还原；
 /// - **清空 `temp` 目录**（里面的本地歌曲索引等会失效，下次进入「本地」分类
@@ -40,15 +41,29 @@ import '../../features/library/data/playlist_store.dart';
 class BackupService {
   const BackupService._();
 
-  /// 压缩包内的目录名。
+  /// 压缩包内的配置目录名（下面固定分 `setting` / `plugin` 两个子目录）。
   static const String configDirEntry = 'config';
-  static const String pluginDirEntry = 'plugin';
+
+  /// 压缩包内的设置目录条目（对应 `AppData\config\setting`）。
+  static const String settingDirEntry = '$configDirEntry/setting';
+
+  /// 压缩包内的插件目录条目（对应 `AppData\config\plugin`）。
+  static const String pluginDirEntry = '$configDirEntry/plugin';
+
+  /// 老备份把插件目录放在包根下（`plugin/...`），还原时仍按这个条目读。
+  static const String legacyPluginDirEntry = 'plugin';
+
+  /// 压缩包内配置目录的旧形状：`config/*` 直接就是设置文件。
+  ///
+  /// 现在只用于还原老备份；新备份统一写在 [settingDirEntry] 下。
+  static const String legacyConfigDirEntry = configDirEntry;
 
   /// 压缩包内的热榜条目名（**只用于读老备份**）。
   ///
-  /// 新版本的热榜只是 settings.json 里的一段配置，已经随 `config/` 一起打包，
-  /// 不再单独导出；这个常量只为还原「热榜还在临时库 / 老设置文件的年代」做的
-  /// 备份，读到就把配置写回设置（里面的歌曲会被忽略，进页面会重新拉）。
+  /// 新版本的热榜只是 settings.json 里的一段配置，已经随 `config/setting/`
+  /// 一起打包，不再单独导出；这个常量只为还原「热榜还在临时库 / 老设置文件
+  /// 的年代」做的备份，读到就把配置写回设置（里面的歌曲会被忽略，进页面会
+  /// 重新拉）。
   static const String hotBoardsEntry = 'hotboards.json';
 
   /// 压缩包内的收藏快照条目名。
@@ -79,7 +94,7 @@ class BackupService {
 
   // ---------------------------------------------------------------- 备份
 
-  /// 生成一个备份压缩包（config + plugin 两个目录 + 数据库里的快照）。
+  /// 生成一个备份压缩包（`config/setting` + `config/plugin` + 数据库快照）。
   static Future<Uint8List> createBackup() async {
     // 先把攒在内存里的增量落盘（已听进度是攒批写的）：
     // 不 flush 的话，最近 15 秒内的播放数据不会进备份包。
@@ -87,16 +102,16 @@ class BackupService {
     await AppDatabase.checkpointAll();
 
     final archive = Archive();
-    // 设置目录（`AppData\config\setting`）整体打成包里的 `config` 条目，
-    // 结构跟老版本一样（`config/settings.json`、`config/fonts/...`），老备份
-    // 也能照样还原。重要库（`AppData\config\db`）不能直接拷：有未合并的
-    // WAL，覆盖一个正在打开的库还会读坏，它的内容已经在 playlists.json /
-    // playstats.json 里按逻辑数据导出了，所以这里跳过 db。
+    // 设置目录（`AppData\config\setting`）打成包里的 `config/setting`，
+    // 插件目录打成 `config/plugin`，和 AppData 下的实际结构一一对应。
+    // 重要库（`AppData\config\db`）不能直接拷：有未合并的 WAL，覆盖一个
+    // 正在打开的库还会读坏，它的内容已经在 playlists.json / playstats.json
+    // 里按逻辑数据导出了，所以这里跳过 db。
     final databaseDir = await AppPaths.databaseDirectory();
     await _addDirectory(
       archive,
       await AppPaths.settingsDirectory(),
-      configDirEntry,
+      settingDirEntry,
       skipDirectory: databaseDir,
     );
     await _addDirectory(
@@ -104,24 +119,24 @@ class BackupService {
       await AppPaths.pluginDirectory(),
       pluginDirEntry,
     );
-    // 收藏也单独导出（在重要库里，不在 config 目录内）。
+    // 收藏也单独导出（在重要库里，不在 config 目录内）。即使为空也写一份，
+    // 让备份包的条目固定，方便查看 / 比对。
     final playlists = await PlaylistRepository().exportAll();
-    if (playlists.isNotEmpty) {
-      final bytes = utf8.encode(jsonEncode(playlists));
-      archive.addFile(ArchiveFile(playlistsEntry, bytes.length, bytes));
-    }
+    final playlistBytes = utf8.encode(jsonEncode(playlists));
+    archive.addFile(
+      ArchiveFile(playlistsEntry, playlistBytes.length, playlistBytes),
+    );
     // 已听进度导出成一份逻辑快照（统计 / 排行已移除）。
     final progress = await PlayProgressStore.exportSnapshot();
-    final hasProgress = (progress['progress'] as List?)?.isNotEmpty == true;
-    if (hasProgress) {
-      final bytes = utf8.encode(jsonEncode(progress));
-      archive.addFile(ArchiveFile(playStatsEntry, bytes.length, bytes));
-    }
+    final progressBytes = utf8.encode(jsonEncode(progress));
+    archive.addFile(
+      ArchiveFile(playStatsEntry, progressBytes.length, progressBytes),
+    );
     final zipped = ZipEncoder().encode(archive);
     return Uint8List.fromList(zipped);
   }
 
-  /// 把目录里的文件加进压缩包。
+  /// 把目录里的文件加进压缩包（连同子目录条目一起写，空目录也保留）。
   ///
   /// [skipDirectory] 用于跳过嵌在目录里的子目录（Android 的 config 目录里就
   /// 包含重要库所在的 `db` 目录）。
@@ -132,14 +147,27 @@ class BackupService {
     Directory? skipDirectory,
   }) async {
     if (!await dir.exists()) return;
+    // 目录本身也写一条：即使里面没有文件，备份包里也能看到这个文件夹。
+    archive.addFile(ArchiveFile.directory('$entryName/'));
     final skipPath = skipDirectory?.path;
     await for (final entity in dir.list(recursive: true, followLinks: false)) {
-      if (entity is! File) continue;
-      if (skipPath != null && p.isWithin(skipPath, entity.path)) continue;
-      final bytes = await entity.readAsBytes();
+      if (skipPath != null &&
+          (p.equals(skipPath, entity.path) ||
+              p.isWithin(skipPath, entity.path))) {
+        continue;
+      }
       final relative = p
           .relative(entity.path, from: dir.path)
           .replaceAll('\\', '/');
+      if (entity is Directory) {
+        archive.addFile(ArchiveFile.directory('$entryName/$relative/'));
+        continue;
+      }
+      if (entity is! File) continue;
+      // 设置写盘时先落 `settings.json.tmp` 再改名：半成品没有备份价值
+      // （`.bak` 才是上一份完整设置），也别让它跟着还原回去。
+      if (entity.path.endsWith('.tmp')) continue;
+      final bytes = await entity.readAsBytes();
       archive.addFile(ArchiveFile('$entryName/$relative', bytes.length, bytes));
     }
   }
@@ -160,24 +188,33 @@ class BackupService {
     // 文件盖到正在用的库上（SQLite 会直接读坏）；新备份已经不打包它了，
     // 这里再挡一次老备份包。
     final configDir = await AppPaths.settingsDirectory();
+    final pluginDir = await AppPaths.pluginDirectory();
     final dbDir = await AppPaths.databaseDirectory();
-    // 老备份（尤其 Android）把重要库的 `db/` 一起打进了 `config/`：还原时
+    // 老备份（尤其 Android）把重要库的 `db/` 一起打进了配置目录：还原时
     // 一律跳过这个前缀，库内容由 playlists.json / playstats.json 还原。
     final dbRelative = p.relative(dbDir.path, from: configDir.path);
     final skipDbPrefix = dbRelative.startsWith('..') || p.isAbsolute(dbRelative)
         ? 'db'
         : dbRelative.replaceAll('\\', '/');
+
+    // 新备份：`config/setting/*` + `config/plugin/*`。
     await _restoreDirectory(
       archive,
-      configDirEntry,
+      settingDirEntry,
       configDir,
-      skipPrefix: skipDbPrefix,
+      skipPrefixes: [skipDbPrefix],
     );
+    await _restoreDirectory(archive, pluginDirEntry, pluginDir);
+
+    // 老备份：`config/*` 直接就是设置文件，插件目录在包根 `plugin/*`。
+    // 新格式的两个子目录已经还原过了，这里跳过，别把插件放进设置目录。
     await _restoreDirectory(
       archive,
-      pluginDirEntry,
-      await AppPaths.pluginDirectory(),
+      legacyConfigDirEntry,
+      configDir,
+      skipPrefixes: [skipDbPrefix, 'setting', 'plugin'],
     );
+    await _restoreDirectory(archive, legacyPluginDirEntry, pluginDir);
 
     // 2) 清空 temp 目录：本地歌曲索引等在这里，下次进入「本地」分类会
     //    按配置里的扫描目录重新扫描。数据库文件被占用删不掉时，把表也清了。
@@ -209,14 +246,17 @@ class BackupService {
         break;
       }
     }
-    // 老备份没有这一条：保持现有已听进度不动（和热榜的处理一致），
-    // 免得「还原一个没有进度的旧备份」把已有进度抹掉。
+    // 新版备份固定带这一条；老备份没有，或者快照里一条进度都没有时，
+    // 保持现有已听进度不动（和热榜的处理一致），免得「还原一个没有进度的
+    // 备份」把已有进度抹掉。
     if (entry == null) return;
     try {
       final raw = utf8.decode(entry.content as List<int>);
       if (raw.trim().isEmpty) return;
       final decoded = jsonDecode(raw);
       if (decoded is! Map) return;
+      final progress = decoded['progress'];
+      if (progress is! List || progress.isEmpty) return;
       await PlayProgressStore.importSnapshot(
         decoded.map((key, value) => MapEntry('$key', value)),
       );
@@ -286,23 +326,29 @@ class BackupService {
 
   /// 把压缩包里的某个目录还原到目标目录（覆盖同名文件）。
   ///
-  /// [skipPrefix] 是目录内的相对路径前缀（Android 上的 `db`），命中的文件
-  /// 直接跳过（数据库文件由逻辑快照还原，不能覆盖正在打开的库）。
+  /// [skipPrefixes] 是目录内的相对路径前缀：命中的文件直接跳过。用途：
+  /// - Android 老备份里的 `db`（数据库文件由逻辑快照还原，不能覆盖正在
+  ///   打开的库）；
+  /// - 老格式还原时跳过 `setting` / `plugin`（新格式的两个子目录）。
   static Future<void> _restoreDirectory(
     Archive archive,
     String entryName,
     Directory target, {
-    String? skipPrefix,
+    Iterable<String> skipPrefixes = const [],
   }) async {
+    final skip = [
+      for (final prefix in skipPrefixes)
+        if (prefix.isNotEmpty) prefix.replaceAll('\\', '/'),
+    ];
     await target.create(recursive: true);
     for (final file in archive.files) {
       if (!file.isFile) continue;
       if (!file.name.startsWith('$entryName/')) continue;
       final relative = file.name.substring(entryName.length + 1);
       if (relative.isEmpty || relative.contains('..')) continue;
-      if (skipPrefix != null &&
-          skipPrefix.isNotEmpty &&
-          (relative == skipPrefix || relative.startsWith('$skipPrefix/'))) {
+      if (skip.any(
+        (prefix) => relative == prefix || relative.startsWith('$prefix/'),
+      )) {
         continue;
       }
       final content = file.content;
