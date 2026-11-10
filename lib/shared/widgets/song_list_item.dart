@@ -57,7 +57,7 @@ class SongListItem extends ConsumerWidget {
   /// 下载管理等列表不需要这个标记。
   final bool showPlayedTag;
 
-  /// 是否在「已听 / 时长」左侧显示收藏红心。
+  /// 是否在「已听 N」右侧、时长左侧显示收藏红心。
   ///
   /// 红心只在歌曲已被收藏时出现，点击直接取消收藏；收藏的第三方歌单 /
   /// 专辑 / 作者详情页会关掉它，避免从别人的内容里改自己的收藏。
@@ -488,7 +488,7 @@ class SongListItem extends ConsumerWidget {
         ? _buildPlayedTag(colors, context, ref, compact: !narrow)
         : null;
     final heart = showFavoriteHeart && !selectionMode
-        ? _buildFavoriteHeart(context, ref)
+        ? _buildFavoriteHeart(ref)
         : null;
     final vipTag = _buildVipTag(colors, compact: !narrow);
     final partsTag = _buildPartsTag(colors, compact: !narrow);
@@ -517,7 +517,7 @@ class SongListItem extends ConsumerWidget {
               ],
               Row(
                 mainAxisSize: MainAxisSize.min,
-                children: [?heart, playedTag, ?vipTag],
+                children: [playedTag, ?heart, ?vipTag],
               ),
             ],
           ),
@@ -530,8 +530,8 @@ class SongListItem extends ConsumerWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         ?trailingBadge,
-        ?heart,
         ?playedTag,
+        ?heart,
         ?vipTag,
         ?partsTag,
         ?duration,
@@ -579,32 +579,20 @@ class SongListItem extends ConsumerWidget {
   /// 收藏红心：只在当前歌曲已收藏时出现，点击直接取消收藏。
   ///
   /// 用 select 只订阅「这一首是否在收藏里」，其它歌曲增删不会重建本行。
-  Widget? _buildFavoriteHeart(BuildContext context, WidgetRef ref) {
+  Widget? _buildFavoriteHeart(WidgetRef ref) {
     final favorited = ref.watch(
       favoriteSongIdsProvider.select((ids) => ids.contains(song.id)),
     );
     if (!favorited) return null;
-    return Padding(
-      // 紧贴「已听 / 时长」左侧，但在窄屏两行布局里也要和下面的标签对齐。
-      padding: const EdgeInsets.only(right: AppSpacing.xs),
-      child: GestureDetector(
-        // 只负责取消收藏：吃掉点击，避免冒泡到整行的「播放」手势。
-        onTap: () {
-          ref
-              .read(playlistsProvider.notifier)
-              .removeSongFromPlaylist('__favorites__', song.id);
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(context.tr('已取消收藏')),
-              duration: const Duration(seconds: 1),
-            ),
-          );
-        },
-        behavior: HitTestBehavior.opaque,
-        child: const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 2, vertical: 4),
-          child: Icon(Icons.favorite, size: 14, color: Colors.red),
-        ),
+    return GestureDetector(
+      // 只负责取消收藏：吃掉点击，避免冒泡到整行的「播放」手势。
+      onTap: () => ref
+          .read(playlistsProvider.notifier)
+          .removeSongFromPlaylist('__favorites__', song.id),
+      behavior: HitTestBehavior.opaque,
+      child: const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+        child: Icon(Icons.favorite, size: 14, color: Colors.red),
       ),
     );
   }
