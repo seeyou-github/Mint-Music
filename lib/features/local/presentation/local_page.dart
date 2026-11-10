@@ -19,6 +19,7 @@ import '../../../shared/widgets/song_index_width.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../../../shared/widgets/song_selection.dart';
 import '../application/local_providers.dart';
+import '../../blacklist/application/blacklist_providers.dart';
 import '../../player/application/playback_context.dart';
 import '../../player/application/mini_player_visibility.dart';
 import '../../library/domain/models/recently_played.dart';
@@ -1865,6 +1866,7 @@ class _LocalSongItem extends ConsumerWidget {
       playbackControllerProvider.select((s) => s.currentSong?.id),
     );
     final isPlaying = playingId == song.id;
+    final blocked = ref.watch(blacklistProvider).isBlocked(song);
 
     return SizedBox(
       // 固定行高，保证 itemExtent 与实际布局一致
@@ -1872,6 +1874,8 @@ class _LocalSongItem extends ConsumerWidget {
       child: GestureDetector(
         onTap: selectionMode
             ? () => onSelectionToggle?.call(song)
+            : blocked
+            ? () => _showBlockedHint(context)
             : () => onPlay(song),
         onLongPress: selectionMode ? null : onLongPress,
         child: Container(
@@ -1982,20 +1986,30 @@ class _LocalSongItem extends ConsumerWidget {
                       style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w500,
-                        color: isPlaying ? colors.primary : colors.textPrimary,
+                        // 与在线歌曲一致：黑名单里的歌名变灰，表示放不了。
+                        color: blocked
+                            ? colors.textPrimary.withValues(alpha: 0.45)
+                            : (isPlaying ? colors.primary : colors.textPrimary),
                       ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 2),
-                    Text(
-                      song.artist,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: colors.textSecondary,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    Row(
+                      children: [
+                        if (blocked) _buildBlacklistTag(colors, context),
+                        Expanded(
+                          child: Text(
+                            song.artist,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: colors.textSecondary,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -2030,6 +2044,37 @@ class _LocalSongItem extends ConsumerWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  /// 黑名单标签（与在线歌曲列表同款，显示在歌手名左侧）。
+  Widget _buildBlacklistTag(ThemeColors colors, BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(right: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+      decoration: BoxDecoration(
+        color: colors.error.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(2),
+      ),
+      child: Text(
+        context.tr('黑名单'),
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+          color: colors.error,
+        ),
+      ),
+    );
+  }
+
+  /// 点到黑名单歌曲时给个提示，避免看起来像「点了没反应」。
+  void _showBlockedHint(BuildContext context) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(context.tr('这首歌在黑名单里，已跳过播放')),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
       ),
     );
   }
