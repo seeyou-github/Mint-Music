@@ -8,6 +8,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:on_audio_query/on_audio_query.dart';
 import '../../../../shared/services/app_image_cache.dart';
 import '../../../../shared/services/cover_cache_service.dart';
+import '../../../local/data/local_metadata_reader.dart';
 import '../models/song.dart';
 import '../../application/playback_controller.dart';
 
@@ -121,39 +122,73 @@ class CoverColorExtractor {
     OnAudioQuery? audioQuery,
   }) async {
     final coverUrl = song.coverUrl;
+
+    if (song.isLocal) {
+      // 与播放页封面组件保持同一条链路：封面缓存（MediaStore）→ 音频文件内嵌
+      // 封面。不少 Android 设备的 MediaStore 没有 artwork，界面上的封面是现场
+      // 从文件里提取的；取色只查 MediaStore / 缓存会一直得到默认灰，表现为
+      // 「本地歌有封面，主界面和播放栏却不变色」。
+      final bytes = await _localArtworkBytes(song, audioQuery: audioQuery);
+      if (bytes != null && bytes.isNotEmpty) {
+        return extract(MemoryImage(bytes));
+      }
+      // 本地确实没有封面时，再试匹配到的在线封面地址。
+      if (coverUrl != null && coverUrl.isNotEmpty) {
+        return extractFromUrl(coverUrl);
+      }
+      return CoverColorResult.defaultResult;
+    }
+
     if (coverUrl != null && coverUrl.isNotEmpty) {
       return extractFromUrl(coverUrl);
     }
 
     if (song.mediaStoreId != null) {
-      final query = audioQuery ?? OnAudioQuery();
-      try {
-        final Uint8List? bytes = await query.queryArtwork(
+      final bytes = await _localArtworkBytes(song, audioQuery: audioQuery);
+      if (bytes != null && bytes.isNotEmpty) {
+        return extract(MemoryImage(bytes));
+      }
+    }
+
+    return CoverColorResult.defaultResult;
+  }
+
+  /// 本地封面字节：缓存 / MediaStore 优先，都没有时从音频文件里读内嵌封面。
+  ///
+  /// 与 [MusicCoverImage] 的兜底一致，并在读到时回填封面缓存，避免播放页
+  /// 再次解析整个音频文件。
+  static Future<Uint8List?> _localArtworkBytes(
+    Song song, {
+    OnAudioQuery? audioQuery,
+  }) async {
+    try {
+      if (audioQuery != null && song.mediaStoreId != null) {
+        final bytes = await audioQuery.queryArtwork(
           song.mediaStoreId!,
           ArtworkType.AUDIO,
           quality: 100,
           size: 400,
         );
-        if (bytes == null || bytes.isEmpty) {
-          return CoverColorResult.defaultResult;
-        }
-        return extract(MemoryImage(bytes));
-      } catch (_) {
-        return CoverColorResult.defaultResult;
+        if (bytes != null && bytes.isNotEmpty) return bytes;
+      } else {
+        final bytes = await CoverCacheService().getArtwork(
+          song.id,
+          mediaStoreId: song.mediaStoreId,
+        );
+        if (bytes != null && bytes.isNotEmpty) return bytes;
       }
-    }
+    } catch (_) {}
 
-    // 桌面端没有 MediaStore，本地歌曲的封面在封面缓存里。
-    if (song.isLocal) {
-      try {
-        final bytes = await CoverCacheService().getArtwork(song.id);
-        if (bytes != null && bytes.isNotEmpty) {
-          return extract(MemoryImage(bytes));
-        }
-      } catch (_) {}
+    final filePath = song.filePath;
+    if (filePath == null || filePath.isEmpty) return null;
+    try {
+      final artwork = (await LocalMetadataReader.read(filePath)).artwork;
+      if (artwork == null || artwork.isEmpty) return null;
+      unawaited(CoverCacheService().putArtwork(song.id, artwork));
+      return artwork;
+    } catch (_) {
+      return null;
     }
-
-    return CoverColorResult.defaultResult;
   }
 
   /// 从封面地址（网络 URL / 本地文件路径）提取主色。
