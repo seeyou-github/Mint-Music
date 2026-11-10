@@ -61,11 +61,16 @@ final int mineNavIndex = appNavItems.indexWhere(
 /// 一级导航切分支（手机底部导航与桌面侧边栏共用）。
 ///
 /// 「我的」下的设置、插件管理、最近播放等二级页面是 push 在该分支自己的
-/// 页面栈里的，`goBranch` 默认会把这些页面恢复出来。所以进入「我的」时
-/// 一律回到它的初始页面：从别的分类点进来不会恢复上次打开的二级页面，
-/// 已经在「我的」时重复点击也会退回一级页面。
+/// 页面栈里的，`goBranch` 默认会把这些页面恢复出来，而带
+/// `initialLocation: true` 清栈时 Flutter 会给被摘掉的顶页播一遍关闭转场。
+/// 所以每次切换前先静默移除「我的」的二级页面（[mineBranchPages]），
+/// 切回「我的」时就不会看到设置页滑出去。
+///
+/// 进入「我的」仍一律回到它的初始页面：从别的分类点进来不会恢复上次
+/// 打开的二级页面，已经在「我的」时重复点击也会退回一级页面。
 /// 发现 / 收藏 / 本地仍然按各自分支的页面栈恢复（歌单详情、榜单详情等）。
 void switchMainTab(StatefulNavigationShell shell, int index) {
+  mineBranchPages.closeSecondaryPages();
   shell.goBranch(index, initialLocation: index == mineNavIndex);
 }
 

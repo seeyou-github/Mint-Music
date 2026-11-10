@@ -25,7 +25,14 @@ import '../../features/settings/presentation/settings_page.dart';
 import '../../features/player/presentation/full_player_page.dart';
 import '../../features/player/presentation/lyric_page.dart';
 import '../constants/app_routes.dart';
+import 'branch_page_tracker.dart';
 import 'navigation_shell_provider.dart';
+
+/// 「我的」分支的页面栈。
+///
+/// 切换一级分类时用它静默关掉设置、插件管理等二级页面，
+/// 见 [switchMainTab]。
+final mineBranchPages = BranchPageTracker();
 
 /// 二级页面的统一转场：从右侧滑入，并给页面铺一层不透明的主界面背景。
 ///
@@ -168,7 +175,10 @@ final appRouter = GoRouter(
 
         // ── 我的 ──────────────────────────────────────────────
         // 设置 / 下载 / 插件管理 / 最近播放 / 听歌识曲都属于「我的」分支。
+        // [mineBranchPages] 记录这个分支自己的页面栈，切走时用来静默关闭
+        // 已经打开的二级页面。
         StatefulShellBranch(
+          observers: [mineBranchPages],
           routes: [
             GoRoute(
               path: AppRoutes.mine,

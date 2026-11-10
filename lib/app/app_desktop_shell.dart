@@ -88,6 +88,9 @@ class _AppDesktopShellState extends ConsumerState<AppDesktopShell> {
     //    用 goBranch 的话新分类会留在它们底下，表现为「点了没反应」，
     //    高亮还会被紧接着的路由通知改回去。
     if (_hasRootPushedPage() || shell == null) {
+      // 根 navigator 上的页面由 `go` 关闭；「我的」分支自己的二级页面
+      // 不会被 `go` 顺带处理，这里先静默摘掉，切回时不会看到关闭动画。
+      mineBranchPages.closeSecondaryPages();
       setState(() => _activeIndex = index);
       appRouter.go(route);
       return;
@@ -95,7 +98,12 @@ class _AppDesktopShellState extends ConsumerState<AppDesktopShell> {
 
     // 2) 连续点击同一个分类：回到该分类的第一级界面。
     if (index == _activeIndex) {
-      shell.goBranch(index, initialLocation: true);
+      if (index == mineNavIndex) {
+        // 「我的」要同时把已经打开的设置等二级页面静默关掉。
+        switchMainTab(shell, index);
+      } else {
+        shell.goBranch(index, initialLocation: true);
+      }
       _ensureBranchSwitched(index, route, toRoot: true);
       return;
     }
