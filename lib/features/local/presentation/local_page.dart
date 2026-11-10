@@ -234,13 +234,23 @@ class _LocalPageState extends ConsumerState<LocalPage>
     );
   }
 
+  /// 当前展示的歌曲：按选中的文件夹过滤（「全部」时不过滤）。
+  List<Song> _visibleSongs(List<Song> songs, [String? folder]) => folder == null
+      ? songs
+      : songs.where((s) => _isInFolder(s, folder)).toList();
+
   void _locateCurrentSong() {
     final playbackState = ref.read(playbackControllerProvider);
     final currentSong = playbackState.currentSong;
     if (currentSong == null) return;
 
     final songs = ref.read(filteredLocalSongsProvider);
-    final index = songs.indexWhere((s) => s.id == currentSong.id);
+    // 列表是按当前目录过滤后的结果，下标也必须按同一份列表算；
+    // 用全库下标会在选中文件夹时滚到接近末尾的位置。
+    final index = _visibleSongs(
+      songs,
+      _selectedFolder,
+    ).indexWhere((s) => s.id == currentSong.id);
     if (index == -1) return;
 
     unawaited(
@@ -272,9 +282,7 @@ class _LocalPageState extends ConsumerState<LocalPage>
     }
 
     // 按当前选中的文件夹过滤（顶部文件夹栏切换）。
-    final songs = _selectedFolder == null
-        ? allSongs
-        : allSongs.where((s) => _isInFolder(s, _selectedFolder!)).toList();
+    final songs = _visibleSongs(allSongs, _selectedFolder);
 
     // 当前播放歌曲：判断某个文件夹要不要显示「定位」按钮（见 [_buildSongsPage]）。
     final currentSong = ref.watch(
@@ -885,9 +893,7 @@ class _LocalPageState extends ConsumerState<LocalPage>
     Song? currentSong, {
     required bool primary,
   }) {
-    final songs = folder == null
-        ? allSongs
-        : allSongs.where((s) => _isInFolder(s, folder)).toList();
+    final songs = _visibleSongs(allSongs, folder);
     // 搜索没命中时不能把空结果说成「当前目录为空」：目录里可能还有歌。
     final searching = ref.watch(localSearchQueryProvider).trim().isNotEmpty;
     // 定位按钮只在当前页显示：下一屏还没切过去，点了也没有可滚动的位置。
