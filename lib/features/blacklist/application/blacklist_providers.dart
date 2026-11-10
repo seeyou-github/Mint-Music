@@ -46,6 +46,12 @@ class BlacklistNotifier extends Notifier<BlacklistData> {
     await ref.read(blacklistStoreProvider).save(state);
   }
 
+  /// 重新从设置文件里读一遍黑名单。
+  ///
+  /// 备份还原会把 settings.json 整个换掉，但这里的 [_loaded] 还是启动时那次
+  /// 的结果，不重读的话界面要等重启才会变成备份里的内容。
+  Future<void> reload() => _load();
+
   // ------------------------------------------------------------ 判定
 
   bool isBlocked(Song song) => state.isBlocked(song);

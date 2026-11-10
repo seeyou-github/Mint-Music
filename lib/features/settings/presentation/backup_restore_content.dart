@@ -165,9 +165,9 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
       _showProgress(tr('正在还原备份...'));
       await stopPlaybackForRestore(container);
       await BackupService.restoreBackup(bytes);
-      await _applyRestoredBackup(container);
+      final message = await _applyRestoredBackup(container);
       _closeProgress();
-      _toast(tr('还原完成，已重新加载音源'));
+      _toast(message);
     } catch (e) {
       _closeProgress();
       _toast(tr('还原失败：$e'), error: true);
@@ -315,9 +315,9 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
       );
       await stopPlaybackForRestore(container);
       await BackupService.restoreBackup(bytes);
-      await _applyRestoredBackup(container);
+      final message = await _applyRestoredBackup(container);
       _closeProgress();
-      _toast(tr('还原完成，已重新加载音源'));
+      _toast(message);
     } catch (e) {
       _closeProgress();
       if (!mounted) return;
@@ -384,17 +384,27 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
   }
 
   /// 还原后的热应用：设置 / 字体 / 歌单 / 进度立即生效，插件重新加载。
-  Future<void> _applyRestoredBackup(ProviderContainer container) async {
-    await applyRestoredBackup(
-      container,
-      onProgress: (message) {
-        if (!mounted) return;
-        _showProgress(tr(message));
-      },
-    );
-    // 还原出的 WebDAV 配置可能和输入框里的不一样，同步一次，免得之后
-    // 随手改一个字段又把旧值写回去。
-    if (mounted) _loadConfig();
+  ///
+  /// 返回要提示给用户的那句话：插件没能重载（超时 / 失败）时如实说明要先重启，
+  /// 不要假装一切都好了。
+  Future<String> _applyRestoredBackup(ProviderContainer container) async {
+    var pluginsReloaded = true;
+    try {
+      pluginsReloaded = await applyRestoredBackup(
+        container,
+        onProgress: (message) {
+          if (!mounted) return;
+          _showProgress(tr(message));
+        },
+      );
+    } finally {
+      // 还原出的 WebDAV 配置可能和输入框里的不一样，同步一次，免得之后
+      // 随手改一个字段又把旧值写回去。
+      if (mounted) _loadConfig();
+    }
+    return pluginsReloaded
+        ? tr('还原完成，已重新加载音源')
+        : tr('还原完成；音源重载超时，重启应用后生效');
   }
 
   Future<bool> _showRetryDialog(String message) async {

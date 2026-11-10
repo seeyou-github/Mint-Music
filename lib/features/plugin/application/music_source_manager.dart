@@ -184,6 +184,15 @@ class MusicSourceManager {
     _pluginSourceStatesLoaded = true;
   }
 
+  /// 重新从设置文件里读插件音源开关（备份还原后调用）。
+  ///
+  /// 开关存在 settings.json 里，但这里加载一次就置位不再读，还原后不重读的话
+  /// 「插件音源」的开关状态要等重启才变成备份里的样子。
+  Future<void> reloadPluginSourceStates() async {
+    _pluginSourceStatesLoaded = false;
+    await loadPluginSourceStates();
+  }
+
   /// 开启/关闭插件自带的某个音源。
   Future<void> setPluginSourceEnabled(
     String pluginId,

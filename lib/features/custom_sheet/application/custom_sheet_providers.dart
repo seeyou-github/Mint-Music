@@ -47,6 +47,9 @@ class CustomSheetNotifier extends Notifier<CustomSheetData> {
     await ref.read(customSheetStoreProvider).save(state);
   }
 
+  /// 重新从设置文件里读一遍自定义歌单数据（备份还原后调用）。
+  Future<void> reload() => _load();
+
   // ---------------------------------------------------------------- 分类
 
   Future<CustomSheetCategory> addCategory(String name) async {

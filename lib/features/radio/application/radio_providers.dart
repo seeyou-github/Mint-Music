@@ -39,6 +39,9 @@ class RadioNotifier extends Notifier<RadioData> {
     await ref.read(radioStoreProvider).save(state);
   }
 
+  /// 重新从设置文件里读一遍电台数据（备份还原后调用）。
+  Future<void> reload() => _load();
+
   /// 分类栏用：第一项固定是「全部」。
   List<RadioCategory> get categories => [
     RadioCategory.all,
