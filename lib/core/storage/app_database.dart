@@ -109,35 +109,6 @@ class AppDatabase {
     }
   }
 
-  /// 清空临时库里的**全部**数据（还原备份时调用）。
-  ///
-  /// 还原会清空 temp 目录，但 Windows 上数据库文件正被 SQLite 打开，
-  /// 目录删除会静默失败；这里把表也清一遍，保证「清空临时数据」的语义。
-  ///
-  /// 热榜不在这里：它现在只是 settings.json 里的一小段配置（哪个音源加了
-  /// 哪个榜单），随设置备份 / 还原，不再进临时库。
-  static Future<void> clearAllCacheData() async {
-    try {
-      final db = await cacheDatabase();
-      const tables = [
-        'local_songs',
-        'local_dirs',
-        'recently_played',
-        'lyrics',
-        'song_play_progress',
-        'playback_state',
-        'cache_index',
-      ];
-      await db.transaction((txn) async {
-        for (final table in tables) {
-          await txn.delete(table);
-        }
-      });
-    } catch (e) {
-      debugPrint('[AppDatabase] 清空缓存库失败: $e');
-    }
-  }
-
   static AppDatabase? _instance;
   static Future<AppDatabase>? _pending;
 

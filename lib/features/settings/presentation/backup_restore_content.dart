@@ -176,7 +176,7 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
         backgroundColor: colors.surface,
         title: Text(tr('确认还原'), style: TextStyle(color: colors.textPrimary)),
         content: Text(
-          tr('还原会覆盖当前的应用设置、插件文件与收藏歌单，并清空临时数据，确定继续吗？'),
+          tr('还原会覆盖当前的应用设置、插件文件与收藏歌单，确定继续吗？'),
           style: TextStyle(color: colors.textSecondary),
         ),
         actions: [

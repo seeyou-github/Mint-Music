@@ -36,8 +36,8 @@ import '../../features/library/data/playlist_store.dart';
 /// - 用备份里的 `config/setting` / `config/plugin` **覆盖**现有目录；
 /// - 有 `playlists.json` / `playstats.json` 时把它们写回数据库；老备份的收藏
 ///   还在 `config/playlists.json` 里、热榜还在 `hotboards.json` 里，也照样能还原；
-/// - **清空 `temp` 目录**（里面的本地歌曲索引等会失效，下次进入「本地」分类
-///   会按配置里的扫描目录重新扫描一次）。
+/// - **不改动 `temp` 目录**：播放记录、歌词 / 封面 / 歌曲缓存等临时数据
+///   保持原样，还原后仍然可用。
 class BackupService {
   const BackupService._();
 
@@ -176,8 +176,8 @@ class BackupService {
 
   /// 用备份包强制覆盖现有配置。
   static Future<void> restoreBackup(Uint8List bytes) async {
-    // 先把延迟写的数据落盘：还原会清空临时数据，不落盘的话这些数据
-    // 之后仍可能被内存态写回去。
+    // 先把延迟写的数据落盘（已听进度是攒批写的）：不落盘的话，导入备份
+    // 快照之后，内存里攒着的旧进度还会被写回库里。
     await AppDatabase.flushAll();
 
     final archive = ZipDecoder().decodeBytes(bytes);
@@ -216,12 +216,7 @@ class BackupService {
     );
     await _restoreDirectory(archive, legacyPluginDirEntry, pluginDir);
 
-    // 2) 清空 temp 目录：本地歌曲索引等在这里，下次进入「本地」分类会
-    //    按配置里的扫描目录重新扫描。数据库文件被占用删不掉时，把表也清了。
-    await AppDatabase.clearAllCacheData();
-    await _clearTempDirectory();
-
-    // 3) 还原出的 settings.json 要重新读进内存：不重载的话，此后任何一次
+    // 2) 还原出的 settings.json 要重新读进内存：不重载的话，此后任何一次
     //    设置写入都会用还原前的内存值把整个文件覆盖回去（还原白做）。
     try {
       await (await AppPreferences.getInstance()).reload();
@@ -229,7 +224,7 @@ class BackupService {
       debugPrint('[BackupService] 重载设置失败: $e');
     }
 
-    // 4) 收藏 / 已听进度在重要库里，单独从条目还原（老备份的收藏还在
+    // 3) 收藏 / 已听进度在重要库里，单独从条目还原（老备份的收藏还在
     //    `config/playlists.json`，见 [_restorePlaylists]）；热榜配置现在就在
     //    刚还原的 settings.json 里，只有老备份的 `hotboards.json` 才需要这一步。
     await _restoreHotBoards(archive);
@@ -355,27 +350,6 @@ class BackupService {
       final dest = File(p.join(target.path, relative));
       await dest.parent.create(recursive: true);
       await dest.writeAsBytes(content, flush: true);
-    }
-  }
-
-  /// 清空临时目录的内容（保留目录本身）。
-  static Future<void> _clearTempDirectory() async {
-    try {
-      final dir = await AppPaths.tempDirectory();
-      if (!await dir.exists()) return;
-      await for (final entity in dir.list(followLinks: false)) {
-        try {
-          if (entity is Directory) {
-            await entity.delete(recursive: true);
-          } else if (entity is File) {
-            await entity.delete();
-          }
-        } catch (e) {
-          debugPrint('[BackupService] 删除临时文件失败: $e');
-        }
-      }
-    } catch (e) {
-      debugPrint('[BackupService] 清空临时目录失败: $e');
     }
   }
 }
