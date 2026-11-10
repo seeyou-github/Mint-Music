@@ -3785,8 +3785,8 @@ class _StorageContent extends ConsumerWidget {
                   } catch (_) {}
                 },
                 style: OutlinedButton.styleFrom(
-                  foregroundColor: colors.primary,
-                  side: BorderSide(color: colors.primary),
+                  foregroundColor: colors.textSecondary,
+                  side: BorderSide(color: colors.divider),
                 ),
                 child: Text(context.tr('选择目录')),
               ),
@@ -3909,8 +3909,8 @@ class _StorageContent extends ConsumerWidget {
                   } catch (_) {}
                 },
                 style: OutlinedButton.styleFrom(
-                  foregroundColor: colors.primary,
-                  side: BorderSide(color: colors.primary),
+                  foregroundColor: colors.textSecondary,
+                  side: BorderSide(color: colors.divider),
                 ),
                 child: Text(context.tr('选择目录')),
               ),

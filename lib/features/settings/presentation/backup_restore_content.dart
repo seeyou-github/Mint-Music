@@ -462,7 +462,7 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
     );
   }
 
-  /// 并排的两个胶囊按钮：左边主色描边，右边中性描边。
+  /// 并排的两个胶囊按钮（同一套中性描边样式）。
   Widget _pairButtons({
     required ThemeColors colors,
     required String leftLabel,
@@ -480,7 +480,6 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
             icon: leftIcon,
             label: leftLabel,
             onTap: onLeft,
-            primary: true,
           ),
         ),
         const SizedBox(width: AppSpacing.md),
@@ -490,7 +489,6 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
             icon: rightIcon,
             label: rightLabel,
             onTap: onRight,
-            primary: false,
           ),
         ),
       ],
@@ -502,15 +500,8 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
     required IconData icon,
     required String label,
     required VoidCallback? onTap,
-    required bool primary,
   }) {
-    return _PairButton(
-      colors: colors,
-      icon: icon,
-      label: label,
-      onTap: onTap,
-      primary: primary,
-    );
+    return _PairButton(colors: colors, icon: icon, label: label, onTap: onTap);
   }
 
   // ---------------------------------------------------------------- 构建
@@ -823,14 +814,12 @@ class _PairButton extends StatefulWidget {
   final IconData icon;
   final String label;
   final VoidCallback? onTap;
-  final bool primary;
 
   const _PairButton({
     required this.colors,
     required this.icon,
     required this.label,
     required this.onTap,
-    required this.primary,
   });
 
   @override
@@ -844,14 +833,11 @@ class _PairButtonState extends State<_PairButton> {
   Widget build(BuildContext context) {
     final colors = widget.colors;
     final enabled = widget.onTap != null;
-    final accent = widget.primary ? colors.primary : colors.textPrimary;
-    final color = enabled ? accent : colors.textHint;
+    final color = enabled ? colors.textPrimary : colors.textHint;
     final borderColor = enabled
-        ? (widget.primary
-              ? colors.primary.withValues(alpha: 0.8)
-              : colors.divider)
+        ? colors.divider
         : colors.divider.withValues(alpha: 0.5);
-    final hoverColor = widget.primary ? colors.primary : colors.textPrimary;
+    final hoverColor = colors.textPrimary;
 
     return MouseRegion(
       cursor: enabled ? SystemMouseCursors.click : MouseCursor.defer,
@@ -871,7 +857,7 @@ class _PairButtonState extends State<_PairButton> {
           alignment: Alignment.center,
           decoration: BoxDecoration(
             color: _hovered && enabled
-                ? hoverColor.withValues(alpha: widget.primary ? 0.12 : 0.07)
+                ? hoverColor.withValues(alpha: 0.07)
                 : Colors.transparent,
             borderRadius: BorderRadius.circular(AppRadius.full),
             border: Border.all(color: borderColor),
