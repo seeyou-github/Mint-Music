@@ -698,7 +698,7 @@ class _LocalPlaylistDetailPageState
                             ),
                             const SizedBox(width: AppSpacing.sm),
                           ],
-                          _buildSortButton(colors),
+                          _buildMoreButton(colors, playlist),
                         ],
                       ),
                     ),
@@ -706,73 +706,78 @@ class _LocalPlaylistDetailPageState
                 ],
               ),
             ),
-            // 更多操作
-            PopupMenuButton<String>(
-              icon: Icon(
-                Icons.more_horiz,
-                size: 24,
-                color: colors.textSecondary,
-              ),
-              color: colors.surface,
-              onSelected: (value) {
-                if (value == 'export') {
-                  _exportPlaylist(context, ref, colors, playlist);
-                } else if (value == 'edit') {
-                  _editPlaylist(context, ref, colors, playlist);
-                } else if (value == 'multiselect') {
-                  _toggleMultiSelectMode();
-                }
-              },
-              itemBuilder: (context) => [
-                PopupMenuItem(
-                  value: 'multiselect',
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.select_all,
-                        size: 18,
-                        color: colors.textSecondary,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        context.tr(_selection.isActive ? '取消批量选择' : '批量选择'),
-                        style: TextStyle(color: colors.textPrimary),
-                      ),
-                    ],
-                  ),
-                ),
-                PopupMenuItem(
-                  value: 'edit',
-                  child: Text(
-                    context.tr('编辑歌单'),
-                    style: TextStyle(color: colors.textPrimary),
-                  ),
-                ),
-                PopupMenuItem(
-                  value: 'export',
-                  child: Text(
-                    context.tr('导出歌单'),
-                    style: TextStyle(color: colors.textPrimary),
-                  ),
-                ),
-              ],
-            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildSortButton(ThemeColors colors) {
-    return GestureDetector(
-      onTap: () => _showSortBottomSheet(colors),
+  /// 更多操作：与原来的排序按钮同款（主色圆角胶囊）。
+  Widget _buildMoreButton(ThemeColors colors, Playlist playlist) {
+    return PopupMenuButton<String>(
+      tooltip: context.tr('更多'),
+      padding: EdgeInsets.zero,
+      color: colors.surface,
+      onSelected: (value) {
+        if (value == 'sort') {
+          _showSortBottomSheet(colors);
+        } else if (value == 'export') {
+          _exportPlaylist(context, ref, colors, playlist);
+        } else if (value == 'edit') {
+          _editPlaylist(context, ref, colors, playlist);
+        } else if (value == 'multiselect') {
+          _toggleMultiSelectMode();
+        }
+      },
+      itemBuilder: (context) => [
+        PopupMenuItem(
+          value: 'sort',
+          child: Row(
+            children: [
+              Icon(Icons.sort, size: 18, color: colors.textSecondary),
+              const SizedBox(width: 8),
+              Text(
+                context.tr('排序方式'),
+                style: TextStyle(color: colors.textPrimary),
+              ),
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: 'multiselect',
+          child: Row(
+            children: [
+              Icon(Icons.select_all, size: 18, color: colors.textSecondary),
+              const SizedBox(width: 8),
+              Text(
+                context.tr(_selection.isActive ? '取消批量选择' : '批量选择'),
+                style: TextStyle(color: colors.textPrimary),
+              ),
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: 'edit',
+          child: Text(
+            context.tr('编辑歌单'),
+            style: TextStyle(color: colors.textPrimary),
+          ),
+        ),
+        PopupMenuItem(
+          value: 'export',
+          child: Text(
+            context.tr('导出歌单'),
+            style: TextStyle(color: colors.textPrimary),
+          ),
+        ),
+      ],
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
           color: colors.primary,
           borderRadius: BorderRadius.circular(AppRadius.full),
         ),
-        child: Icon(Icons.sort, size: 14, color: colors.textOnPrimary),
+        child: Icon(Icons.more_horiz, size: 14, color: colors.textOnPrimary),
       ),
     );
   }

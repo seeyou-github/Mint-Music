@@ -609,34 +609,58 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
                   const SizedBox(height: 2),
                   _buildSourceNameTag(ref, colors, playlist),
                   const SizedBox(height: 2),
-                  Row(
-                    children: [
-                      _buildActionButton(
-                        colors,
-                        Icons.play_arrow,
-                        context.tr('播放全部'),
-                        () {
-                          _playAll(_songs);
-                        },
-                      ),
-                      const SizedBox(width: AppSpacing.sm),
-                      _buildFavoriteButton(colors, playlist),
-                    ],
+                  // 窄屏下「播放全部 / 收藏 / 更多」一行放不下，允许横向滚动。
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _buildActionButton(
+                          colors,
+                          Icons.play_arrow,
+                          context.tr('播放全部'),
+                          () {
+                            _playAll(_songs);
+                          },
+                        ),
+                        const SizedBox(width: AppSpacing.sm),
+                        _buildFavoriteButton(colors, playlist),
+                        const SizedBox(width: AppSpacing.sm),
+                        _buildMoreButton(context, colors, playlist),
+                      ],
+                    ),
                   ),
                 ],
               ),
             ),
-            // 更多操作
-            GestureDetector(
-              onTap: () => _showMoreActions(context, colors, playlist),
-              child: Padding(
-                padding: const EdgeInsets.all(AppSpacing.xs),
-                child: Icon(
-                  Icons.more_horiz,
-                  size: 24,
-                  color: colors.textSecondary,
-                ),
-              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 更多操作：与「收藏」按钮同款（描边胶囊）。
+  Widget _buildMoreButton(BuildContext context, ThemeColors colors, playlist) {
+    return GestureDetector(
+      onTap: () => _showMoreActions(context, colors, playlist),
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md,
+          vertical: AppSpacing.xs,
+        ),
+        decoration: BoxDecoration(
+          color: colors.surfaceVariant,
+          borderRadius: BorderRadius.circular(AppRadius.full),
+          border: Border.all(color: colors.divider),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.more_horiz, size: 16, color: colors.textSecondary),
+            const SizedBox(width: AppSpacing.xs),
+            Text(
+              context.tr('更多'),
+              style: TextStyle(fontSize: 12, color: colors.textPrimary),
             ),
           ],
         ),

@@ -81,7 +81,7 @@ class LibraryPage extends ConsumerWidget {
             const Spacer(),
             _buildImportButton(context, colors, ref),
             const SizedBox(width: AppSpacing.sm),
-            const PlaylistSyncButton(),
+            const PlaylistSyncButton(compact: true),
           ],
         ),
       );
@@ -124,7 +124,7 @@ class LibraryPage extends ConsumerWidget {
           const SizedBox(width: AppSpacing.sm),
           _buildImportButton(context, colors, ref),
           const SizedBox(width: AppSpacing.sm),
-          const PlaylistSyncButton(),
+          const PlaylistSyncButton(compact: true),
         ],
       ),
     );
@@ -135,30 +135,11 @@ class LibraryPage extends ConsumerWidget {
     ThemeColors colors,
     WidgetRef ref,
   ) {
-    return GestureDetector(
-      onTap: () => _showCreateDialog(context, colors, ref),
-      child: Container(
-        padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.md,
-          vertical: 6,
-        ),
-        decoration: floatingButtonDecoration(colors),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.add, size: 14, color: colors.textPrimary),
-            const SizedBox(width: AppSpacing.xs),
-            Text(
-              context.tr('新建歌单'),
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w500,
-                color: colors.textPrimary,
-              ),
-            ),
-          ],
-        ),
-      ),
+    return _buildHeaderIconButton(
+      colors,
+      Icons.add,
+      context.tr('新建歌单'),
+      () => _showCreateDialog(context, colors, ref),
     );
   }
 
@@ -167,28 +148,31 @@ class LibraryPage extends ConsumerWidget {
     ThemeColors colors,
     WidgetRef ref,
   ) {
-    return GestureDetector(
-      onTap: () => _showImportDialog(context, colors, ref),
-      child: Container(
-        padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.md,
-          vertical: 6,
-        ),
-        decoration: floatingButtonDecoration(colors),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.file_download, size: 14, color: colors.textSecondary),
-            const SizedBox(width: AppSpacing.xs),
-            Text(
-              context.tr('导入'),
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w500,
-                color: colors.textSecondary,
-              ),
-            ),
-          ],
+    return _buildHeaderIconButton(
+      colors,
+      Icons.file_download,
+      context.tr('导入'),
+      () => _showImportDialog(context, colors, ref),
+    );
+  }
+
+  /// 顶部图标按钮：与本地页「选择目录 / 扫描」同款（圆角方块 + 居中图标）。
+  Widget _buildHeaderIconButton(
+    ThemeColors colors,
+    IconData icon,
+    String tooltip,
+    VoidCallback onTap,
+  ) {
+    return Tooltip(
+      message: tooltip,
+      child: GestureDetector(
+        onTap: onTap,
+        behavior: HitTestBehavior.opaque,
+        child: Container(
+          width: 40,
+          height: 40,
+          decoration: floatingButtonDecoration(colors, radius: AppRadius.md),
+          child: Icon(icon, size: 20, color: colors.textSecondary),
         ),
       ),
     );
@@ -349,20 +333,15 @@ class LibraryPage extends ConsumerWidget {
                           }
                         },
                       ),
-                      _PlaylistAction(
-                        icon: Icons.edit,
-                        label: context.tr('编辑'),
-                        color: colors.textSecondary,
-                        onTap: () =>
-                            _showEditDialog(context, colors, ref, playlist),
-                      ),
-                      _PlaylistAction(
-                        icon: Icons.delete,
-                        label: context.tr('删除'),
-                        color: colors.textSecondary,
-                        onTap: () =>
-                            _confirmDelete(context, colors, ref, playlist),
-                      ),
+                      // 「我的收藏」不能删除，只有自己建的歌单才有删除入口。
+                      if (playlist.id != '__favorites__')
+                        _PlaylistAction(
+                          icon: Icons.delete,
+                          label: context.tr('删除'),
+                          color: colors.textSecondary,
+                          onTap: () =>
+                              _confirmDelete(context, colors, ref, playlist),
+                        ),
                     ],
                   ),
                 ],
@@ -535,90 +514,6 @@ class LibraryPage extends ConsumerWidget {
             },
             child: Text(
               context.tr('创建'),
-              style: TextStyle(color: colors.primary),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showEditDialog(
-    BuildContext context,
-    ThemeColors colors,
-    WidgetRef ref,
-    local_playlist.Playlist playlist,
-  ) {
-    final controller = TextEditingController(text: playlist.name);
-    final descController = TextEditingController(text: playlist.description);
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: colors.surface,
-        title: Text(
-          context.tr('编辑歌单'),
-          style: TextStyle(color: colors.textPrimary),
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: controller,
-              autofocus: true,
-              decoration: InputDecoration(
-                hintText: context.tr('歌单名称'),
-                hintStyle: TextStyle(color: colors.textHint),
-                enabledBorder: UnderlineInputBorder(
-                  borderSide: BorderSide(color: colors.divider),
-                ),
-                focusedBorder: UnderlineInputBorder(
-                  borderSide: BorderSide(color: colors.primary),
-                ),
-              ),
-              style: TextStyle(color: colors.textPrimary),
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            TextField(
-              controller: descController,
-              decoration: InputDecoration(
-                hintText: context.tr('歌单描述（可选）'),
-                hintStyle: TextStyle(color: colors.textHint),
-                enabledBorder: UnderlineInputBorder(
-                  borderSide: BorderSide(color: colors.divider),
-                ),
-                focusedBorder: UnderlineInputBorder(
-                  borderSide: BorderSide(color: colors.primary),
-                ),
-              ),
-              style: TextStyle(color: colors.textPrimary),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text(
-              context.tr('取消'),
-              style: TextStyle(color: colors.textHint),
-            ),
-          ),
-          TextButton(
-            onPressed: () {
-              final name = controller.text.trim();
-              if (name.isNotEmpty) {
-                ref
-                    .read(playlistsProvider.notifier)
-                    .updatePlaylist(
-                      playlist.copyWith(
-                        name: name,
-                        description: descController.text.trim(),
-                      ),
-                    );
-                Navigator.pop(ctx);
-              }
-            },
-            child: Text(
-              context.tr('保存'),
               style: TextStyle(color: colors.primary),
             ),
           ),

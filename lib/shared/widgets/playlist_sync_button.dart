@@ -21,9 +21,16 @@ enum _SyncPhase { idle, syncing, success }
 /// [alsoBackup] 为 true 时，歌单同步完成后还会把当前配置备份一份到 WebDAV
 /// （「设置 → 备份还原 → 立即同步」用，逻辑 = 歌单同步 + 备份）。
 class PlaylistSyncButton extends ConsumerStatefulWidget {
-  const PlaylistSyncButton({super.key, this.alsoBackup = false});
+  const PlaylistSyncButton({
+    super.key,
+    this.alsoBackup = false,
+    this.compact = false,
+  });
 
   final bool alsoBackup;
+
+  /// 只显示图标（与本地页顶部的「扫描」按钮同款 40×40 圆角方块）。
+  final bool compact;
 
   @override
   ConsumerState<PlaylistSyncButton> createState() => _PlaylistSyncButtonState();
@@ -172,19 +179,58 @@ class _PlaylistSyncButtonState extends ConsumerState<PlaylistSyncButton> {
     final syncing = _phase == _SyncPhase.syncing;
     final success = _phase == _SyncPhase.success;
     final foreground = success ? colors.success : colors.textSecondary;
+    final tooltip = syncing
+        ? context.tr('点击停止同步')
+        : success
+        ? context.tr('已同步')
+        : widget.alsoBackup
+        ? context.tr('同步歌单并备份配置')
+        : context.tr('同步歌单');
+
+    if (widget.compact) {
+      return GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: _sync,
+        child: Tooltip(
+          message: tooltip,
+          waitDuration: const Duration(milliseconds: 600),
+          child: Container(
+            width: 40,
+            height: 40,
+            decoration: success
+                ? BoxDecoration(
+                    color: colors.success.withValues(alpha: 0.08),
+                    border: Border.all(color: colors.success),
+                    borderRadius: BorderRadius.circular(AppRadius.md),
+                  )
+                : floatingButtonDecoration(colors, radius: AppRadius.md),
+            child: Center(
+              child: syncing
+                  ? SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: colors.primary,
+                      ),
+                    )
+                  : Icon(
+                      success ? Icons.check_circle : Icons.sync,
+                      size: 20,
+                      color: foreground,
+                    ),
+            ),
+          ),
+        ),
+      );
+    }
 
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       // 同步中再点一次 = 停止（会取消底层请求，并把改到一半的本地歌单还原）。
       onTap: _sync,
       child: Tooltip(
-        message: syncing
-            ? context.tr('点击停止同步')
-            : success
-            ? context.tr('已同步')
-            : widget.alsoBackup
-            ? context.tr('同步歌单并备份配置')
-            : context.tr('同步歌单'),
+        message: tooltip,
         waitDuration: const Duration(milliseconds: 600),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 180),
