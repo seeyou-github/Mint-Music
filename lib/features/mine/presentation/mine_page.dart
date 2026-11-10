@@ -68,8 +68,8 @@ class MinePage extends ConsumerWidget {
                     ],
                   ),
                 ),
-                // 应用版本号（Windows 上是编译时间）放在标题栏右侧，颜色跟随
-                // 「设置 → 外观设置 → 字体颜色」。
+                // 应用版本号（Windows / Android 上是构建时间）放在标题栏右侧，
+                // 颜色跟随「设置 → 外观设置 → 字体颜色」。
                 versionAsync.when(
                   data: (version) => Text(
                     version,

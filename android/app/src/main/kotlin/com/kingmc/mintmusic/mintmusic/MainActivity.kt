@@ -28,6 +28,7 @@ private const val AUDIO_EFFECTS_TAG = "MintAudioEffects"
 
 class MainActivity : AudioServiceActivity() {
     private val MEDIA_CHANNEL = "com.mintmusic/media"
+    private val APP_INFO_CHANNEL = "com.mintmusic/app_info"
     private val TAG_WRITER_CHANNEL = "com.mintmusic/tag_writer"
     private val AUDIO_EFFECTS_CHANNEL = "com.mintmusic/audio_effects"
     private val DESKTOP_LYRIC_CHANNEL = "com.mintmusic/desktop_lyric"
@@ -56,6 +57,24 @@ class MainActivity : AudioServiceActivity() {
                             result.success(true)
                         } else {
                             result.success(false)
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+
+        // 版本号：APK 的 versionName 由 Gradle 在构建时写入编译时间
+        // （见 app/build.gradle.kts），这里读回来给「我的」页面显示。
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, APP_INFO_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "versionName" -> {
+                        try {
+                            @Suppress("DEPRECATION")
+                            val info = packageManager.getPackageInfo(packageName, 0)
+                            result.success(info.versionName)
+                        } catch (error: Throwable) {
+                            result.error("UNAVAILABLE", error.message, null)
                         }
                     }
                     else -> result.notImplemented()

@@ -9,6 +9,7 @@ import '../../../core/storage/app_preferences.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/l10n/app_locale.dart';
 import '../../../core/l10n/l10n.dart';
+import '../../../core/platform/android_app_version.dart';
 import '../../../core/platform/download_paths.dart';
 import '../../../core/platform/windows_file_version.dart';
 import '../../../core/theme/theme_provider.dart';
@@ -522,18 +523,26 @@ final fullScreenBackgroundModeProvider = Provider<FullScreenBackgroundMode>(
 );
 
 // -- app version (loaded once) --
-/// 应用版本号：Windows 上显示「编译时间」，格式 `年.月日.时分`（如 `2026.1110.0106`）。
+/// 应用版本号：Windows / Android 上显示「编译时间」，格式 `年.月日.时分`
+/// （如 `2026.1110.0106`）。
 ///
-/// 取值顺序：
-/// 1. **exe 的版本资源**（`FileVersion`）：构建时由 CMake 生成的
-///    `build_stamp.h`（北京时间，见 `tool/win_build_stamp.dart`）写进
-///    `Runner.rc`，解压、拷贝、改名都不会变，是判断「这个 exe 是哪次编译
-///    出来的」最可靠的来源；
-/// 2. 读不到时退回产物（exe / `app.so` / `kernel_blob.bin`）的修改时间，
-///    直接显示（与属性页一致：zip 解压会整体偏 8 小时，这里无法可靠还原，
-///    只作兜底）；
-/// 3. 都不行（或非 Windows）才用 [AppConstants.appVersion]。
+/// * **Android**：读安装包的 `versionName`。Gradle 在每次构建时把当前时间
+///   （北京时间）写进 versionName，见 `android/app/build.gradle.kts`，所以
+///   本地和 GitHub Actions 打出来的包显示的都是各自的构建时间。
+/// * **Windows**：
+///   1. **exe 的版本资源**（`FileVersion`）：构建时由 CMake 生成的
+///      `build_stamp.h`（北京时间，见 `tool/win_build_stamp.dart`）写进
+///      `Runner.rc`，解压、拷贝、改名都不会变，是判断「这个 exe 是哪次编译
+///      出来的」最可靠的来源；
+///   2. 读不到时退回产物（exe / `app.so` / `kernel_blob.bin`）的修改时间，
+///      直接显示（与属性页一致：zip 解压会整体偏 8 小时，这里无法可靠还原，
+///      只作兜底）。
+/// * 都读不到（或其它平台）才用 [AppConstants.appVersion]。
 final appVersionProvider = FutureProvider<String>((ref) async {
+  if (Platform.isAndroid) {
+    final version = await readAndroidAppVersionName();
+    if (version != null) return version;
+  }
   if (Platform.isWindows) {
     final stamped = readWindowsFileVersion();
     // 只认「年.月日.时分」这种编译时间；旧版本 exe 的 `2.0.0+1` 不显示。
