@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/l10n/l10n.dart';
 import '../../../../core/theme/app_spacing.dart';
+import '../../../../core/theme/app_surface.dart';
 import '../../../../core/theme/theme_provider.dart';
 import '../../../../shared/widgets/music_cover_image.dart';
 import '../../../../shared/widgets/source_icon.dart';
@@ -274,9 +275,7 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
   /// （`wy` → `wy@插件`）仍算同一首歌。
   bool _isSameSong(Song song) {
     if (song.id != widget.song.id) return false;
-    final currentBase = MusicSourceManager.splitSourceId(
-      song.lyricSourceId,
-    ).$1;
+    final currentBase = MusicSourceManager.splitSourceId(song.lyricSourceId).$1;
     final targetBase = MusicSourceManager.splitSourceId(
       widget.song.lyricSourceId,
     ).$1;
@@ -512,7 +511,8 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
         height: _barHeight,
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: _searching ? colors.surfaceVariant : colors.primary,
+          // 与侧栏「发现」的激活态一致：主题色调暗做底、文字用主题色。
+          color: _searching ? colors.surfaceVariant : activeChipColor(colors),
           shape: BoxShape.circle,
         ),
         child: _searching
@@ -529,7 +529,7 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
-                  color: colors.textOnPrimary,
+                  color: colors.primary,
                 ),
               ),
       ),
@@ -858,7 +858,8 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
             padding: const EdgeInsets.symmetric(vertical: 11),
             alignment: Alignment.center,
             decoration: BoxDecoration(
-              color: enabled ? colors.primary : colors.surfaceVariant,
+              // 与侧栏「发现」的激活态一致：主题色调暗做底、文字用主题色。
+              color: enabled ? activeChipColor(colors) : colors.surfaceVariant,
               borderRadius: BorderRadius.circular(AppRadius.full),
             ),
             child: Text(
@@ -866,7 +867,7 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
               style: TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.w600,
-                color: enabled ? colors.textOnPrimary : colors.textHint,
+                color: enabled ? colors.primary : colors.textHint,
               ),
             ),
           ),

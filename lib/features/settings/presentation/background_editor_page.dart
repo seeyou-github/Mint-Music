@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../app/app_page_background.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
+import '../../../core/theme/app_surface.dart';
 import '../../../core/theme/background_derivation.dart';
 import '../../../core/theme/background_gradient.dart';
 import '../../../core/theme/theme_provider.dart';
@@ -674,9 +675,11 @@ class _BackgroundEditorPageState extends ConsumerState<BackgroundEditorPage> {
         height: 46,
         child: FilledButton(
           onPressed: _save,
+          // 与侧栏「发现」的激活态一致：主题色调暗做底、文字用主题色。
           style: FilledButton.styleFrom(
-            backgroundColor: colors.primary,
-            foregroundColor: colors.textOnPrimary,
+            backgroundColor: activeChipColor(colors),
+            foregroundColor: colors.primary,
+            side: BorderSide(color: colors.primary.withValues(alpha: 0.5)),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(AppRadius.full),
             ),

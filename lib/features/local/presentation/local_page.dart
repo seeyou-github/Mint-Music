@@ -1052,16 +1052,18 @@ class _LocalPageState extends ConsumerState<LocalPage>
                   horizontal: 24,
                   vertical: 10,
                 ),
-                decoration: BoxDecoration(
-                  color: colors.primary,
-                  borderRadius: BorderRadius.circular(AppRadius.full),
+                // 与侧栏「发现」的激活态一致：主题色调暗做底、文字用主题色。
+                decoration: activeChipDecoration(
+                  colors,
+                  radius: AppRadius.full,
+                  withBorder: true,
                 ),
                 child: Text(
                   context.tr('扫描本地音乐'),
                   style: TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w500,
-                    color: colors.textOnPrimary,
+                    color: colors.primary,
                   ),
                 ),
               ),
@@ -1779,11 +1781,12 @@ class _LocalPageState extends ConsumerState<LocalPage>
                           child: Container(
                             width: double.infinity,
                             padding: const EdgeInsets.symmetric(vertical: 12),
-                            decoration: BoxDecoration(
-                              color: colors.primary,
-                              borderRadius: BorderRadius.circular(
-                                AppRadius.full,
-                              ),
+                            // 与侧栏「发现」的激活态一致：主题色调暗做底、
+                            // 文字用主题色。
+                            decoration: activeChipDecoration(
+                              colors,
+                              radius: AppRadius.full,
+                              withBorder: true,
                             ),
                             child: Text(
                               context.tr('确认并重新扫描'),
@@ -1791,7 +1794,7 @@ class _LocalPageState extends ConsumerState<LocalPage>
                               style: TextStyle(
                                 fontSize: 14,
                                 fontWeight: FontWeight.w500,
-                                color: colors.textOnPrimary,
+                                color: colors.primary,
                               ),
                             ),
                           ),

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
+import '../../../core/theme/app_surface.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../plugin/application/plugin_providers.dart';
 import '../../plugin/application/plugin_test_service.dart';
@@ -630,9 +631,11 @@ class _PluginTestDialogState extends ConsumerState<PluginTestDialog> {
               onPressed: _restartTest,
               icon: const Icon(Icons.refresh, size: 18),
               label: Text(context.tr('重新测试')),
+              // 与侧栏「发现」的激活态一致：主题色调暗做底、文字用主题色。
               style: ElevatedButton.styleFrom(
-                backgroundColor: colors.primary,
-                foregroundColor: colors.textOnPrimary,
+                backgroundColor: activeChipColor(colors),
+                foregroundColor: colors.primary,
+                side: BorderSide(color: colors.primary.withValues(alpha: 0.5)),
                 padding: const EdgeInsets.symmetric(vertical: 10),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(AppRadius.full),
@@ -663,9 +666,11 @@ class _PluginTestDialogState extends ConsumerState<PluginTestDialog> {
           onPressed: _startTest,
           icon: const Icon(Icons.play_arrow, size: 18),
           label: Text(context.tr('开始测试')),
+          // 与侧栏「发现」的激活态一致：主题色调暗做底、文字用主题色。
           style: ElevatedButton.styleFrom(
-            backgroundColor: colors.primary,
-            foregroundColor: colors.textOnPrimary,
+            backgroundColor: activeChipColor(colors),
+            foregroundColor: colors.primary,
+            side: BorderSide(color: colors.primary.withValues(alpha: 0.5)),
             padding: const EdgeInsets.symmetric(vertical: 10),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(AppRadius.full),

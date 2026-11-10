@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
+import '../../../core/theme/app_surface.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../shared/services/app_image_cache.dart';
 import '../../player/application/playback_controller.dart';
@@ -163,7 +164,11 @@ class _RecognizePageState extends ConsumerState<RecognizePage> {
           if (!Platform.isAndroid) ...[
             GestureDetector(
               onTap: () => context.pop(),
-              child: Icon(Icons.arrow_back, size: 24, color: colors.textPrimary),
+              child: Icon(
+                Icons.arrow_back,
+                size: 24,
+                color: colors.textPrimary,
+              ),
             ),
             const SizedBox(width: AppSpacing.md),
           ],
@@ -471,15 +476,17 @@ class _RecognizePageState extends ConsumerState<RecognizePage> {
             height: 72,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
+              // 平时与侧栏「发现」的激活态一致（主题色调暗做底、图标用主题色）；
+              // 录音中仍是实心红，那是明确的「正在录」状态，不属于统一样式。
               color: isBusy
                   ? colors.disabled
                   : isRecording
                   ? Colors.red
-                  : colors.primary,
+                  : activeChipColor(colors),
               boxShadow: [
                 BoxShadow(
                   color: (isRecording ? Colors.red : colors.primary).withValues(
-                    alpha: 0.3,
+                    alpha: 0.18,
                   ),
                   blurRadius: 12,
                   spreadRadius: 1,
@@ -500,7 +507,7 @@ class _RecognizePageState extends ConsumerState<RecognizePage> {
                 : Icon(
                     isRecording ? Icons.stop_rounded : Icons.mic_rounded,
                     size: 32,
-                    color: colors.textOnPrimary,
+                    color: isRecording ? colors.textOnPrimary : colors.primary,
                   ),
           ),
         ),

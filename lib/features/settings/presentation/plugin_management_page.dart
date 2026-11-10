@@ -9,6 +9,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../../core/constants/app_routes.dart';
 import '../../../../core/l10n/l10n.dart';
 import '../../../../core/theme/app_spacing.dart';
+import '../../../../core/theme/app_surface.dart';
 import '../../../../core/theme/theme_provider.dart';
 import '../../plugin/data/plugin_service.dart';
 import '../../plugin/data/source_health_store.dart';
@@ -962,16 +963,18 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
             onTap: () => _showAddPluginSheet(colors),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
-              decoration: BoxDecoration(
-                color: colors.primary,
-                borderRadius: BorderRadius.circular(AppRadius.full),
+              // 与侧栏「发现」的激活态一致：主题色调暗做底、文字用主题色。
+              decoration: activeChipDecoration(
+                colors,
+                radius: AppRadius.full,
+                withBorder: true,
               ),
               child: Text(
                 context.tr('添加插件'),
                 style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w500,
-                  color: colors.textOnPrimary,
+                  color: colors.primary,
                 ),
               ),
             ),
@@ -2036,9 +2039,11 @@ class _AddPluginSheetState extends State<_AddPluginSheet> {
                     ? context.tr('安装中 $_installDone/$_installTotal')
                     : context.tr('选择文件'),
               ),
+              // 与侧栏「发现」的激活态一致：主题色调暗做底、文字用主题色。
               style: ElevatedButton.styleFrom(
-                backgroundColor: colors.primary,
-                foregroundColor: colors.textOnPrimary,
+                backgroundColor: activeChipColor(colors),
+                foregroundColor: colors.primary,
+                side: BorderSide(color: colors.primary.withValues(alpha: 0.5)),
                 padding: const EdgeInsets.symmetric(vertical: 12),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(AppRadius.full),
@@ -2125,9 +2130,11 @@ class _AddPluginSheetState extends State<_AddPluginSheet> {
                     ? context.tr('安装中 $_installDone/$_installTotal')
                     : (_isLoading ? context.tr('下载中...') : context.tr('下载并安装')),
               ),
+              // 与侧栏「发现」的激活态一致：主题色调暗做底、文字用主题色。
               style: ElevatedButton.styleFrom(
-                backgroundColor: colors.primary,
-                foregroundColor: colors.textOnPrimary,
+                backgroundColor: activeChipColor(colors),
+                foregroundColor: colors.primary,
+                side: BorderSide(color: colors.primary.withValues(alpha: 0.5)),
                 padding: const EdgeInsets.symmetric(vertical: 12),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(AppRadius.full),

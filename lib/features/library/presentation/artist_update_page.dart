@@ -8,6 +8,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
+import '../../../core/theme/app_surface.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../../../shared/widgets/music_cover_image.dart';
@@ -500,15 +501,22 @@ class _ArtistUpdatePageState extends ConsumerState<ArtistUpdatePage> {
         _prepareError == null &&
         !_adding &&
         _pages.any((page) => page.loaded);
-    final contentColor = enabled ? colors.textOnPrimary : colors.textHint;
+    final contentColor = enabled ? colors.primary : colors.textHint;
     return GestureDetector(
       onTap: enabled ? () => unawaited(_showAddNewDialog()) : null,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-        decoration: BoxDecoration(
-          color: enabled ? colors.primary : colors.surfaceVariant,
-          borderRadius: BorderRadius.circular(AppRadius.full),
-        ),
+        // 与侧栏「发现」的激活态一致：主题色调暗做底、文字用主题色。
+        decoration: enabled
+            ? activeChipDecoration(
+                colors,
+                radius: AppRadius.full,
+                withBorder: true,
+              )
+            : BoxDecoration(
+                color: colors.surfaceVariant,
+                borderRadius: BorderRadius.circular(AppRadius.full),
+              ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -726,16 +734,18 @@ class _ArtistUpdatePageState extends ConsumerState<ArtistUpdatePage> {
                   horizontal: 20,
                   vertical: 8,
                 ),
-                decoration: BoxDecoration(
-                  color: colors.primary,
-                  borderRadius: BorderRadius.circular(AppRadius.full),
+                // 与侧栏「发现」的激活态一致：主题色调暗做底、文字用主题色。
+                decoration: activeChipDecoration(
+                  colors,
+                  radius: AppRadius.full,
+                  withBorder: true,
                 ),
                 child: Text(
                   context.tr('重试'),
                   style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w500,
-                    color: colors.textOnPrimary,
+                    color: colors.primary,
                   ),
                 ),
               ),

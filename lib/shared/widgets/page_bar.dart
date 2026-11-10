@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/l10n/l10n.dart';
 import '../../core/theme/app_spacing.dart';
+import '../../core/theme/app_surface.dart';
 import '../../core/theme/theme_provider.dart';
 import '../../core/utils/responsive_layout.dart';
 import '../../features/player/application/mini_player_visibility.dart';
@@ -248,13 +249,16 @@ class _PageBarState extends ConsumerState<PageBar> {
   }
 
   ButtonStyle _buttonStyle(ThemeColors colors, {bool selected = false}) {
+    // 选中项与侧栏「发现」的激活态一致：主题色调暗做底、文字用主题色。
     return OutlinedButton.styleFrom(
-      foregroundColor: selected ? colors.textOnPrimary : colors.textSecondary,
-      disabledForegroundColor: selected
-          ? colors.textOnPrimary
-          : colors.textHint,
-      backgroundColor: selected ? colors.primary : Colors.transparent,
-      side: BorderSide(color: selected ? colors.primary : colors.divider),
+      foregroundColor: selected ? colors.primary : colors.textSecondary,
+      disabledForegroundColor: selected ? colors.primary : colors.textHint,
+      backgroundColor: selected ? activeChipColor(colors) : Colors.transparent,
+      side: BorderSide(
+        color: selected
+            ? colors.primary.withValues(alpha: 0.5)
+            : colors.divider,
+      ),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppRadius.full),
       ),

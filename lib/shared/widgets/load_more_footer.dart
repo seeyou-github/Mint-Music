@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/l10n/l10n.dart';
 import '../../core/theme/app_spacing.dart';
+import '../../core/theme/app_surface.dart';
 import '../../core/theme/theme_colors.dart';
 
 /// 分页列表底部的状态。
@@ -153,20 +154,22 @@ class LoadErrorView extends StatelessWidget {
                   horizontal: AppSpacing.xl,
                   vertical: 8,
                 ),
-                decoration: BoxDecoration(
-                  color: colors.primary,
-                  borderRadius: BorderRadius.circular(AppRadius.full),
+                // 与侧栏「发现」的激活态一致：主题色调暗做底、文字用主题色。
+                decoration: activeChipDecoration(
+                  colors,
+                  radius: AppRadius.full,
+                  withBorder: true,
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.refresh, size: 16, color: colors.textOnPrimary),
+                    Icon(Icons.refresh, size: 16, color: colors.primary),
                     const SizedBox(width: 6),
                     Text(
                       context.tr('重试'),
                       style: TextStyle(
                         fontSize: 13,
-                        color: colors.textOnPrimary,
+                        color: colors.primary,
                         fontWeight: FontWeight.w500,
                       ),
                     ),

@@ -9,6 +9,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
+import '../../../core/theme/app_surface.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../shared/services/cover_cache_service.dart';
 import '../../../shared/widgets/source_icon.dart';
@@ -355,11 +356,12 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
               child: TabBar(
                 controller: _tabController,
                 indicatorSize: TabBarIndicatorSize.tab,
+                // 与侧栏「发现」的激活态一致：主题色调暗做底、文字用主题色。
                 indicator: BoxDecoration(
-                  color: colors.primary,
+                  color: activeChipColor(colors),
                   borderRadius: BorderRadius.circular(AppRadius.full),
                 ),
-                labelColor: colors.textOnPrimary,
+                labelColor: colors.primary,
                 unselectedLabelColor: colors.textSecondary,
                 labelStyle: const TextStyle(
                   fontSize: 14,
@@ -423,10 +425,17 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
                   horizontal: AppSpacing.md,
                   vertical: AppSpacing.xs,
                 ),
-                decoration: BoxDecoration(
-                  color: _saving ? colors.textHint : colors.primary,
-                  borderRadius: BorderRadius.circular(AppRadius.full),
-                ),
+                // 与侧栏「发现」的激活态一致：主题色调暗做底、文字用主题色。
+                decoration: _saving
+                    ? BoxDecoration(
+                        color: colors.surfaceVariant,
+                        borderRadius: BorderRadius.circular(AppRadius.full),
+                      )
+                    : activeChipDecoration(
+                        colors,
+                        radius: AppRadius.full,
+                        withBorder: true,
+                      ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -436,18 +445,18 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
                         height: 14,
                         child: CircularProgressIndicator(
                           strokeWidth: 2,
-                          color: colors.textOnPrimary,
+                          color: colors.primary,
                         ),
                       )
                     else
-                      Icon(Icons.check, size: 16, color: colors.textOnPrimary),
+                      Icon(Icons.check, size: 16, color: colors.primary),
                     const SizedBox(width: 4),
                     Text(
                       context.tr('保存到文件'),
                       style: TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w600,
-                        color: colors.textOnPrimary,
+                        color: colors.primary,
                       ),
                     ),
                   ],
@@ -1248,9 +1257,10 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
         height: _searchBarHeight,
         alignment: Alignment.center,
         decoration: BoxDecoration(
+          // 与侧栏「发现」的激活态一致：主题色调暗做底、文字用主题色。
           color: enabled
-              ? colors.primary
-              : colors.primary.withValues(alpha: 0.4),
+              ? activeChipColor(colors)
+              : activeChipColor(colors).withValues(alpha: 0.5),
           shape: BoxShape.circle,
         ),
         child: _searching
@@ -1259,7 +1269,7 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
                 height: 16,
                 child: CircularProgressIndicator(
                   strokeWidth: 2,
-                  color: colors.textOnPrimary,
+                  color: colors.primary,
                 ),
               )
             : Text(
@@ -1267,7 +1277,7 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w600,
-                  color: colors.textOnPrimary,
+                  color: colors.primary,
                 ),
               ),
       ),
