@@ -2063,14 +2063,17 @@ class MusicSourceManager {
       if (pluginSourceId == null) continue;
 
       try {
-        final result = await host.getMusicUrlResult(
+        final fetched = await _fetchMusicUrlWithQualityFallback(
+          host,
           pluginSourceId,
           musicInfo,
           quality,
+          allowQualityDowngrade: allowQualityDowngrade,
         );
+        final result = fetched.result;
         // 服务器实际给的音质（可能低于请求：网易云要 lossless 会给 exhigh）。
         final actualQuality = _effectiveQuality(
-          requested: quality,
+          requested: fetched.requested,
           reported: result.quality,
           allowDowngrade: allowQualityDowngrade,
         );
@@ -2195,14 +2198,43 @@ class MusicSourceManager {
     for (final playbackSourceId in usable) {
       final name = sourceDisplayName(playbackSourceId);
       final watch = Stopwatch()..start();
+      var requestQuality = quality;
       try {
-        final result = await _resolveWithPlaybackSource(
-          song,
-          playbackSourceId: playbackSourceId,
-          quality: quality,
-          excludedUrls: excludedUrls,
-          allowQualityDowngrade: allowQualityDowngrade,
-        ).timeout(perSourceTimeout);
+        PluginMusicUrlResult result;
+        try {
+          result = await _resolveWithPlaybackSource(
+            song,
+            playbackSourceId: playbackSourceId,
+            quality: requestQuality,
+            excludedUrls: excludedUrls,
+            allowQualityDowngrade: allowQualityDowngrade,
+          ).timeout(perSourceTimeout);
+        } catch (error) {
+          // 插件说「这个音质没有，只给得出更低档」：同一首歌在同一平台上
+          // 换个音质就行，换播放源只会多搜一遍。单独再给一次超时预算，
+          // 避免第一次请求已用掉大半、重试刚开始就被判超时。
+          final fallback = allowQualityDowngrade
+              ? qualityFallbackFromError(_shortError(error), requestQuality)
+              : null;
+          if (fallback == null) rethrow;
+          print(
+            '[MusicSourceManager] 播放源 $playbackSourceId 音质不可用，'
+            '改用 $fallback 重试',
+          );
+          requestQuality = fallback;
+          try {
+            result = await _resolveWithPlaybackSource(
+              song,
+              playbackSourceId: playbackSourceId,
+              quality: fallback,
+              excludedUrls: excludedUrls,
+              allowQualityDowngrade: allowQualityDowngrade,
+            ).timeout(perSourceTimeout);
+          } catch (_) {
+            // 重试仍失败：带回原始错误，它包含插件对各接口的完整说明。
+            throw error;
+          }
+        }
         watch.stop();
         final attempt = DataSourceAttempt(
           sourceId: playbackSourceId,
@@ -2368,6 +2400,52 @@ class MusicSourceManager {
       headers: result.headers,
       source: playbackSourceId,
     );
+  }
+
+  /// 取一次播放地址；插件明确表示「这个音质没有、只给得出更低档」时，
+  /// 按它自己提到的档位重试**同一个源**。
+  ///
+  /// 这类错误（如酷我的「没有 128k mp3 版本，所有接口最高只给到 100k aac」）
+  /// 不是音源坏了：换下一个播放源还要重新搜索，结果也未必更好。播放允许
+  /// 降级时直接用 100k 再取一次，界面随后显示实际音质。下载 / 插件测试不
+  /// 允许替换音质，保持原样失败。
+  ///
+  /// 返回的 `requested` 是最终请求的档位，调用方用它归一化插件回报的音质。
+  Future<({PluginMusicUrlResult result, String requested})>
+  _fetchMusicUrlWithQualityFallback(
+    PluginHost host,
+    String pluginSourceId,
+    MusicInfoForPlugin musicInfo,
+    String quality, {
+    required bool allowQualityDowngrade,
+  }) async {
+    try {
+      final result = await host.getMusicUrlResult(
+        pluginSourceId,
+        musicInfo,
+        quality,
+      );
+      return (result: result, requested: quality);
+    } catch (error) {
+      if (!allowQualityDowngrade) rethrow;
+      final fallback = qualityFallbackFromError(_shortError(error), quality);
+      if (fallback == null) rethrow;
+      print(
+        '[MusicSourceManager] 请求音质不可用，改用插件给出的档位重试: '
+        '$quality -> $fallback',
+      );
+      try {
+        final result = await host.getMusicUrlResult(
+          pluginSourceId,
+          musicInfo,
+          fallback,
+        );
+        return (result: result, requested: fallback);
+      } catch (_) {
+        // 重试也失败时保留原始错误：它包含插件对各接口的完整说明。
+        throw error;
+      }
+    }
   }
 
   /// 归一化插件回报的音质，并决定「降级」是否可接受。

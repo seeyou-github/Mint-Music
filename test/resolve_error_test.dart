@@ -9,6 +9,9 @@ void main() {
         '该音质不存在',
         '音质不可用',
         '没有该音质',
+        '酷我音乐：《好心分手》没有 128k mp3 版本，所有接口最高只给到 100k aac。'
+            '请把音质切到对应档位，或换用其它音源。',
+        'HD 渠道(备用主机)：只给了 100k aac',
         'unsupported quality',
         'quality is not supported',
         'no such quality',
@@ -30,6 +33,43 @@ void main() {
       ]) {
         expect(isQualityUnavailableError(message), isFalse, reason: message);
       }
+    });
+  });
+
+  group('qualityFallbackFromError', () {
+    test('从「只给到 100k aac」里取实际能给的档位', () {
+      const message =
+          '酷我音乐：《好心分手》没有 128k mp3 版本，所有接口最高只给到 100k aac。'
+          '请把音质切到对应档位，或换用其它音源。 · HD 渠道(备用主机)：只给了 100k aac';
+      expect(qualityFallbackFromError(message, '128k'), '100k');
+      // 请求 lossless 时也不能把「没有」里的 128k 当成可用档位。
+      expect(qualityFallbackFromError(message, 'flac'), '100k');
+    });
+
+    test('只接受比请求更低的档位', () {
+      expect(qualityFallbackFromError('没有 320k 音质，最高 128k', '128k'), isNull);
+      expect(qualityFallbackFromError('音质不存在，请切换到 320k', '128k'), isNull);
+      expect(qualityFallbackFromError('没有该音质', '128k'), isNull);
+    });
+
+    test('非音质错误不会被当成降级目标', () {
+      expect(
+        qualityFallbackFromError('code 503：服务暂时不可用（192k 地址过期）', '320k'),
+        isNull,
+      );
+    });
+
+    test('不会把 48kHz 采样率当成 48k 音质', () {
+      expect(qualityFallbackFromError('音质不存在 48kHz', '128k'), isNull);
+    });
+  });
+
+  group('isQualityDowngrade', () {
+    test('非标准比特率也能比较高低', () {
+      expect(isQualityDowngrade('128k', '100k'), isTrue);
+      expect(isQualityDowngrade('100k', '128k'), isFalse);
+      expect(isQualityDowngrade('flac', '100k'), isTrue);
+      expect(isQualityDowngrade('128k', 'flac'), isFalse);
     });
   });
 

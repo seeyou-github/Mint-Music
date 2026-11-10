@@ -19,11 +19,17 @@ const List<String> musicQualityOrder = [
 /// 音质高低排名（越大越高）；未知音质返回 0。
 ///
 /// 别名会先归一化（`high` → `320k`、`lossless` → `flac` 等）。
+/// 比特率档位按实际千比特比较，所以插件报出的非标准档位（如酷我的
+/// `100k`）也能和标准档位一起排序；无损档位统一排在所有比特率之上。
 int musicQualityRankOf(String quality) {
   final key = musicQualityKey(quality);
   final index = musicQualityOrder.indexOf(key);
-  return index < 0 ? 0 : index + 1;
+  final bitrate = _bitrateQualityPattern.firstMatch(key);
+  if (bitrate != null) return int.parse(bitrate.group(1)!);
+  return index < 0 ? 0 : 10000 + index;
 }
+
+final RegExp _bitrateQualityPattern = RegExp(r'^(\d{2,4})\s*k$');
 
 /// [actual] 是否比 [requested] 低（服务器降级）。
 ///
@@ -90,6 +96,14 @@ final List<RegExp> _qualityUnavailablePatterns = [
   RegExp(r'音质.{0,8}(?:不支持|不存在|不可用)'),
   RegExp(r'(?:没有|无)该?音质'),
   RegExp(r'音质不匹配'),
+  // 实测遇到的一类文案：`没有 128k mp3 版本`、`音质切到对应档位`。
+  RegExp(r'(?:没有|无)[^。；;！!\n]{0,20}?版本'),
+  RegExp(r'音质[^。；;！!\n]{0,8}(?:切|改|换|调)'),
+  RegExp(
+    r'(?:只|仅)(?:能|可)?(?:给|提供|支持|有)(?:出|到|了)?'
+    r'[^。；;！!\n]{0,6}\d{2,4}\s*k',
+  ),
+  RegExp(r'最高[^。；;！!\n]{0,12}?\d{2,4}\s*k'),
   RegExp(r'unsupported\s+quality', caseSensitive: false),
   RegExp(
     r'quality.{0,20}(?:not\s+supported?|unsupported|unavailable|not\s+available)',
@@ -97,6 +111,59 @@ final List<RegExp> _qualityUnavailablePatterns = [
   ),
   RegExp(r'no\s+such\s+quality', caseSensitive: false),
 ];
+
+/// 插件错误里提到的数字比特率档位（`100k`、`128K`…）。
+///
+/// 前后都不能粘字母数字，避免把 `128kbps`、`48kHz` 里的数字当成音质。
+final RegExp _bitrateTokenPattern = RegExp(
+  r'(?:^|[^0-9a-zA-Z])(\d{2,4})\s*k(?![0-9a-zA-Z])',
+  caseSensitive: false,
+);
+
+/// 「只给得出 / 最高给到」后面的档位才是真正能用的，`没有 128k` 里的不算。
+final RegExp _availableQualityPattern = RegExp(
+  r'(?:只(?:能|可)?(?:给|提供|支持|有)(?:出|到|了)?|'
+  r'最高(?:只)?(?:给|提供|支持)?(?:出|到)?|仅有|只有)'
+  r'[^0-9a-zA-Z\n]{0,12}?(\d{2,4})\s*k',
+  caseSensitive: false,
+);
+
+/// 从「这个音质拿不到」的错误里找出插件实际能给的更低档位。
+///
+/// 例如酷我会把内部各渠道的结果汇总成：`没有 128k mp3 版本，所有接口
+/// 最高只给到 100k aac`。这种错误换播放源解决不了——同一首歌在别的源上
+/// 还要重新搜索——按插件自己提到的 `100k` 重试同一个源即可。
+///
+/// 只接受比 [requested] 低的档位；没提到、或提到的都不比它低时返回 null。
+String? qualityFallbackFromError(String message, String requested) {
+  if (!isQualityUnavailableError(message)) return null;
+  final requestedRank = musicQualityRankOf(requested);
+  if (requestedRank <= 0) return null;
+
+  String? best;
+  var bestRank = 0;
+  void consider(String match) {
+    final rank = musicQualityRankOf(match);
+    if (rank <= 0 || rank >= requestedRank || rank <= bestRank) return;
+    best = match;
+    bestRank = rank;
+  }
+
+  // 优先看「只给 / 最高」这类措辞：`没有 128k mp3 版本` 里的 128k 不能拿来重试。
+  var phraseMatched = false;
+  for (final match in _availableQualityPattern.allMatches(message)) {
+    phraseMatched = true;
+    consider('${match.group(1)}k');
+  }
+  // 提到了「能给的档位」却都不比请求低：不要再退回「没有」里的档位。
+  if (best != null || phraseMatched) return best;
+
+  // 没有这类措辞时，退回扫描错误里的全部比特率档位。
+  for (final match in _bitrateTokenPattern.allMatches(message)) {
+    consider('${match.group(1)}k');
+  }
+  return best;
+}
 
 /// 这个错误再请求一次也不会变（鉴权 / 限流 / 明确的 4xx）。
 ///

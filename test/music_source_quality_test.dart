@@ -35,6 +35,9 @@ class _Service implements PluginService {
   String? getPluginIdForHost(PluginHost host) => (host as _Host).id;
 
   @override
+  String pluginTypeOf(String pluginId) => 'lx';
+
+  @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
@@ -131,6 +134,51 @@ void main() {
       expect(host.calls, [('wy', '1', 'flac24bit')]);
     }
     expect(errors, ['offline', 'Unsupported quality: flac24bit']);
+  });
+
+  test(
+    'playback retries the same host at the quality the plugin says it has',
+    () async {
+      final host = _Host('kw-fallback')
+        ..reply = (quality, _) {
+          if (quality == '128k') {
+            throw Exception(
+              '酷我音乐：《好心分手》没有 128k mp3 版本，'
+              '所有接口最高只给到 100k aac。',
+            );
+          }
+          return const PluginMusicUrlResult(url: _url, quality: '100k aac');
+        };
+      final errors = <String>[];
+
+      final result = await MusicSourceManager(_Service([host]))
+          .getMusicUrlResult(
+            _song,
+            quality: '128k',
+            allowQualityDowngrade: true,
+            onResolveError: errors.add,
+          );
+
+      expect(result?.url, _url);
+      // 播放页显示的是实际使用的档位，不是带编码后缀的原始标签。
+      expect(result?.quality, '100k');
+      expect(errors, isEmpty);
+      expect(host.calls, [('wy', '1', '128k'), ('wy', '1', '100k')]);
+    },
+  );
+
+  test('download / plugin-test path keeps the requested quality', () async {
+    final host = _Host('kw-fallback')
+      ..reply = (_, _) => throw Exception('没有 128k mp3 版本，所有接口最高只给到 100k aac');
+    final errors = <String>[];
+
+    final result = await MusicSourceManager(
+      _Service([host]),
+    ).getMusicUrlResult(_song, quality: '128k', onResolveError: errors.add);
+
+    expect(result, isNull);
+    expect(errors.single, contains('100k aac'));
+    expect(host.calls, [('wy', '1', '128k')]);
   });
 
   test(
@@ -339,7 +387,9 @@ void main() {
     required String base,
   }) =>
       MusicSourceManager(_Service([data, if (other != null) other, playback]))
-        ..setDataSourcePlaybackSources({'data': '$base@playback'});
+        ..setDataSourcePlaybackSources({
+          'data': ['$base@playback'],
+        });
 
   for (final platform in dataPlatforms) {
     for (final boundInSource in [true, false]) {
@@ -497,6 +547,47 @@ void main() {
       expect(data.calls, isEmpty);
     });
   }
+
+  test(
+    'same-platform data-source playback retries a quality-unavailable source',
+    () async {
+      final data = _Host(
+        'data',
+        isDataSource: true,
+        platform: 'kw',
+        platformName: '酷我音乐',
+      );
+      final playback = _Host('playback', platform: 'kw', platformName: '酷我音乐')
+        ..reply = (quality, _) {
+          if (quality == '128k') {
+            throw Exception(
+              '酷我音乐：《好心分手》没有 128k mp3 版本，'
+              '所有接口最高只给到 100k aac。',
+            );
+          }
+          return const PluginMusicUrlResult(url: _url, quality: '100k');
+        };
+      final manager = delegatedManager(
+        data: data,
+        playback: playback,
+        base: 'kw',
+      );
+
+      final result = await manager.getMusicUrlResult(
+        dataSong(dataPlatforms[2], boundInSource: true),
+        quality: '128k',
+        allowQualityDowngrade: true,
+      );
+
+      expect(result?.url, _url);
+      expect(result?.quality, '100k');
+      expect(playback.calls, [
+        ('kw', '654321', '128k'),
+        ('kw', '654321', '100k'),
+      ]);
+      expect(playback.searchCalls, isEmpty);
+    },
+  );
 
   test('same-platform Kuwo prompt URL is rejected without searching', () async {
     final data = _Host(
