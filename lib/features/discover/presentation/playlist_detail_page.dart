@@ -839,8 +839,6 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
                   ),
                   isPlaying: isPlaying,
                   showPlayedTag: true,
-                  // 第三方歌单是远端内容，列表里不显示收藏红心。
-                  showFavoriteHeart: false,
                   selectionMode: selecting,
                   selected: _selection.isSelected(song.id),
                   onSelectionToggle: (s) => _selection.toggle(s.id),

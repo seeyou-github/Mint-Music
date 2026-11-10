@@ -59,8 +59,8 @@ class SongListItem extends ConsumerWidget {
 
   /// 是否在「已听 N」右侧、时长左侧显示收藏红心。
   ///
-  /// 红心只在歌曲已被收藏时出现，点击直接取消收藏；收藏的第三方歌单 /
-  /// 专辑 / 作者详情页会关掉它，避免从别人的内容里改自己的收藏。
+  /// 红心只在歌曲已被收藏时出现，点击直接取消收藏。所有浏览类列表（歌单 /
+  /// 专辑 / 作者 / 榜单详情）都打开它，同一首歌在哪里都能看到收藏状态。
   final bool showFavoriteHeart;
 
   final VoidCallback? onTap;
