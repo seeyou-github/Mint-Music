@@ -1100,7 +1100,12 @@ class _LocalPageState extends ConsumerState<LocalPage>
   }
 
   void _playSong(Song song) {
-    final songs = ref.read(filteredLocalSongsProvider);
+    // 播放队列与列表保持一致：选中某个文件夹时只用该文件夹里的歌，
+    // 不要混进「全部」分类里的其它歌曲。
+    final songs = _visibleSongs(
+      ref.read(filteredLocalSongsProvider),
+      _selectedFolder,
+    );
     final index = songs.indexWhere((s) => s.id == song.id);
     final controller = ref.read(playbackControllerProvider.notifier);
     PlaybackContext.instance.set(PlaybackSourceType.local);
