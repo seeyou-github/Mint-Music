@@ -225,6 +225,9 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
     final isPlaying = ref.watch(
       playbackControllerProvider.select((state) => state.isPlaying),
     );
+    // 底色不用主题色，跟随主界面背景：与歌单详情页顶栏同一取色方式，
+    // 取背景渐变顶部色派生，保证卡片始终比身后的背景略亮一档。
+    final background = ref.watch(detailHeaderSurfaceProvider);
     return _buildCardFrame(
       colors,
       child: InkWell(
@@ -233,22 +236,13 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
           fit: StackFit.expand,
           children: [
             Container(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    colors.primary.withValues(alpha: 0.85),
-                    colors.primary.withValues(alpha: 0.35),
-                  ],
-                ),
-              ),
+              decoration: BoxDecoration(color: background),
               child: isCurrent
                   ? null
                   : Icon(
                       Icons.shuffle,
                       size: 44,
-                      color: colors.textOnPrimary.withValues(alpha: 0.9),
+                      color: colors.textPrimary.withValues(alpha: 0.9),
                     ),
             ),
             Positioned(
