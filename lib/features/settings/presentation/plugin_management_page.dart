@@ -118,7 +118,7 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: colors.surface,
+        backgroundColor: colors.dialogSurface,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppRadius.lg),
         ),
@@ -1343,7 +1343,7 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
     showModalBottomSheet(
       useRootNavigator: true,
       context: context,
-      backgroundColor: colors.surface,
+      backgroundColor: colors.dialogSurface,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
@@ -1409,7 +1409,7 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: colors.surface,
+        backgroundColor: colors.dialogSurface,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppRadius.lg),
         ),
@@ -1490,7 +1490,7 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: colors.surface,
+        backgroundColor: colors.dialogSurface,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppRadius.lg),
         ),
@@ -1635,7 +1635,7 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: colors.surface,
+        backgroundColor: colors.dialogSurface,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppRadius.lg),
         ),
@@ -2363,7 +2363,7 @@ class _AddPluginSheetState extends State<_AddPluginSheet> {
     return showDialog<String>(
       context: context,
       builder: (ctx) => SimpleDialog(
-        backgroundColor: colors.surface,
+        backgroundColor: colors.dialogSurface,
         title: Text(
           ctx.tr('无法识别插件类型'),
           style: TextStyle(

@@ -189,7 +189,7 @@ class _LocalPageState extends ConsumerState<LocalPage>
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
-        backgroundColor: colors.surface,
+        backgroundColor: colors.dialogSurface,
         title: Text(
           context.tr('需要存储权限'),
           style: TextStyle(color: colors.textPrimary),
@@ -1197,7 +1197,7 @@ class _LocalPageState extends ConsumerState<LocalPage>
       context: context,
       useRootNavigator: true,
       builder: (context) => AlertDialog(
-        backgroundColor: colors.surface,
+        backgroundColor: colors.dialogSurface,
         title: Text(
           context.tr('删除歌曲'),
           style: TextStyle(color: colors.textPrimary),
@@ -1268,7 +1268,7 @@ class _LocalPageState extends ConsumerState<LocalPage>
       context: context,
       useRootNavigator: true,
       builder: (context) => AlertDialog(
-        backgroundColor: colors.surface,
+        backgroundColor: colors.dialogSurface,
         title: Text(
           context.tr('删除歌曲'),
           style: TextStyle(color: colors.textPrimary),
@@ -1354,7 +1354,7 @@ class _LocalPageState extends ConsumerState<LocalPage>
           builder: (context) {
             return Container(
               decoration: BoxDecoration(
-                color: colors.surface,
+                color: colors.dialogSurface,
                 borderRadius: const BorderRadius.vertical(
                   top: Radius.circular(16),
                 ),
@@ -1471,7 +1471,7 @@ class _LocalPageState extends ConsumerState<LocalPage>
           builder: (context, setModalState) {
             return Container(
               decoration: BoxDecoration(
-                color: colors.surface,
+                color: colors.dialogSurface,
                 borderRadius: const BorderRadius.vertical(
                   top: Radius.circular(16),
                 ),

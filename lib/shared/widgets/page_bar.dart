@@ -346,7 +346,7 @@ class _PageBarState extends ConsumerState<PageBar> {
       // 按偏大的预算多塞一个按钮导致轻微溢出。这里自己控制内边距。
       padding: EdgeInsets.zero,
       tooltip: context.tr('跳转到指定页'),
-      color: colors.surface,
+      color: colors.dialogSurface,
       elevation: 8,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppRadius.md),

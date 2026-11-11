@@ -100,7 +100,7 @@ Future<String?> showPluginSourcePicker(
   return showModalBottomSheet<String>(
     useRootNavigator: true,
     context: context,
-    backgroundColor: colors.surface,
+    backgroundColor: colors.dialogSurface,
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
     ),

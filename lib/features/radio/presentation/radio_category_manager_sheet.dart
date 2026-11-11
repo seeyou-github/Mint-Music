@@ -23,7 +23,7 @@ Future<void> showRadioCategoryManagerSheet(
       duration: Duration(milliseconds: 220),
       reverseDuration: Duration(milliseconds: 180),
     ),
-    backgroundColor: colors.surface,
+    backgroundColor: colors.dialogSurface,
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(AppRadius.xl)),
     ),
@@ -80,7 +80,7 @@ class _RadioCategoryManagerSheetState
     final name = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: colors.surface,
+        backgroundColor: colors.dialogSurface,
         title: Text(
           context.tr('修改分类名称'),
           style: TextStyle(fontSize: 17, color: colors.textPrimary),
@@ -136,7 +136,7 @@ class _RadioCategoryManagerSheetState
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: colors.surface,
+        backgroundColor: colors.dialogSurface,
         title: Text(
           context.tr('删除分类'),
           style: TextStyle(fontSize: 17, color: colors.textPrimary),
@@ -173,7 +173,7 @@ class _RadioCategoryManagerSheetState
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: colors.surface,
+        backgroundColor: colors.dialogSurface,
         title: Text(
           context.tr('删除电台'),
           style: TextStyle(fontSize: 17, color: colors.textPrimary),

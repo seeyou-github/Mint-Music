@@ -253,7 +253,7 @@ class _AppState extends ConsumerState<App> {
     final retry = await showDialog<bool>(
       context: dialogContext,
       builder: (ctx) => AlertDialog(
-        backgroundColor: colors.surface,
+        backgroundColor: colors.dialogSurface,
         title: Text(tr('歌单同步失败'), style: TextStyle(color: colors.textPrimary)),
         content: SingleChildScrollView(
           child: Text(
@@ -510,7 +510,7 @@ class _AppState extends ConsumerState<App> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: colors.surface,
+        backgroundColor: colors.dialogSurface,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Row(
           children: [

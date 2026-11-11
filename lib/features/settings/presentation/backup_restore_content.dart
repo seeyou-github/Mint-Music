@@ -186,7 +186,7 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
     final result = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: colors.surface,
+        backgroundColor: colors.dialogSurface,
         title: Text(tr('确认还原'), style: TextStyle(color: colors.textPrimary)),
         content: Text(
           tr('还原会覆盖当前的应用设置、插件文件与收藏歌单，确定继续吗？'),
@@ -370,7 +370,7 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
       SnackBar(
         // 一直显示，直到任务结束主动关闭。
         persist: true,
-        backgroundColor: colors.surface,
+        backgroundColor: colors.dialogSurface,
         content: Row(
           children: [
             const SizedBox(
@@ -432,7 +432,7 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
     final result = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: colors.surface,
+        backgroundColor: colors.dialogSurface,
         title: Text(tr('操作失败'), style: TextStyle(color: colors.textPrimary)),
         content: Text(message, style: TextStyle(color: colors.textSecondary)),
         actions: [
@@ -702,7 +702,7 @@ class _RemoteBackupSheetState extends ConsumerState<_RemoteBackupSheet> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: colors.surface,
+        backgroundColor: colors.dialogSurface,
         title: Text(tr('删除远端备份'), style: TextStyle(color: colors.textPrimary)),
         content: Text(
           tr('确定删除「${file.name}」吗？删除后无法恢复。'),
@@ -739,7 +739,7 @@ class _RemoteBackupSheetState extends ConsumerState<_RemoteBackupSheet> {
       await showDialog<void>(
         context: context,
         builder: (ctx) => AlertDialog(
-          backgroundColor: colors.surface,
+          backgroundColor: colors.dialogSurface,
           title: Text(tr('删除失败'), style: TextStyle(color: colors.textPrimary)),
           content: SingleChildScrollView(
             child: Text(
@@ -768,7 +768,7 @@ class _RemoteBackupSheetState extends ConsumerState<_RemoteBackupSheet> {
     return Container(
       constraints: BoxConstraints(maxHeight: maxHeight),
       decoration: BoxDecoration(
-        color: colors.surface,
+        color: colors.dialogSurface,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
       ),
       child: SafeArea(

@@ -12,6 +12,14 @@ class ThemeColors {
   final Color surface;
   final Color surfaceVariant;
 
+  /// 弹框 / 底部弹层 / 弹出菜单 / SnackBar 的底色，**永远不透明**。
+  ///
+  /// 高斯模糊模式下 [surface] 是半透明玻璃层（见 `blurGlassSurface`），
+  /// 那是给贴在照片上的主界面控件用的。浮层不行：它盖在整片照片上，
+  /// 45% 的纹理透上来会把文字糊掉，所以浮层单独用这套实心派生色。
+  final Color dialogSurface;
+  final Color dialogSurfaceVariant;
+
   final Color textPrimary;
   final Color textSecondary;
   final Color textHint;
@@ -39,6 +47,8 @@ class ThemeColors {
     required this.background,
     required this.surface,
     required this.surfaceVariant,
+    required this.dialogSurface,
+    required this.dialogSurfaceVariant,
     required this.textPrimary,
     required this.textSecondary,
     required this.textHint,
@@ -65,6 +75,8 @@ class ThemeColors {
       background: background,
       surface: surface,
       surfaceVariant: surfaceVariant,
+      dialogSurface: dialogSurface,
+      dialogSurfaceVariant: dialogSurfaceVariant,
       textPrimary: textPrimary ?? this.textPrimary,
       textSecondary: textSecondary ?? this.textSecondary,
       textHint: textHint,
@@ -105,6 +117,9 @@ class ThemeColors {
     final surface = isLight
         ? _lighten(background, 0.18)
         : _shiftLightness(background, 0.035);
+    final surfaceVariant = isLight
+        ? _lighten(background, 0.30)
+        : _shiftLightness(background, 0.06);
     return ThemeColors(
       primary: primary,
       primaryLight: primaryLight,
@@ -113,9 +128,9 @@ class ThemeColors {
       accentLight: accentLight,
       background: background,
       surface: surface,
-      surfaceVariant: isLight
-          ? _lighten(background, 0.30)
-          : _shiftLightness(background, 0.06),
+      surfaceVariant: surfaceVariant,
+      dialogSurface: surface,
+      dialogSurfaceVariant: surfaceVariant,
       textPrimary: textPrimary,
       textSecondary: textSecondary,
       textHint: textHint,
@@ -136,7 +151,8 @@ class ThemeColors {
   ///
   /// 文字颜色、背景代表色、边框色都保持原样：`floatingShadows` /
   /// `estimateBrightnessForColor` 仍按不透明的 [background] 判断明暗，
-  /// 边框也不会因为跟着变半透明而消失。
+  /// 边框也不会因为跟着变半透明而消失。[dialogSurface] 同样不动 ——
+  /// 浮层要的就是实心，玻璃只给主界面控件。
   ThemeColors copyWithSurface({Color? surface, Color? surfaceVariant}) {
     final newSurface = surface ?? this.surface;
     return ThemeColors(
@@ -148,6 +164,8 @@ class ThemeColors {
       background: background,
       surface: newSurface,
       surfaceVariant: surfaceVariant ?? this.surfaceVariant,
+      dialogSurface: dialogSurface,
+      dialogSurfaceVariant: dialogSurfaceVariant,
       textPrimary: textPrimary,
       textSecondary: textSecondary,
       textHint: textHint,
@@ -184,6 +202,8 @@ class ThemeColors {
       background: const Color(0xFFDCD7C9),
       surface: const Color(0xFFEAE7DF),
       surfaceVariant: const Color(0xFFF3F1EC),
+      dialogSurface: const Color(0xFFEAE7DF),
+      dialogSurfaceVariant: const Color(0xFFF3F1EC),
       textPrimary: const Color(0xFF000000),
       textSecondary: const Color(0xFF3A3933),
       textHint: const Color(0xFF999999),
@@ -210,6 +230,8 @@ class ThemeColors {
       background: const Color(0xFF212128),
       surface: const Color(0xFF33333E),
       surfaceVariant: const Color(0xFF3F3F4C),
+      dialogSurface: const Color(0xFF33333E),
+      dialogSurfaceVariant: const Color(0xFF3F3F4C),
       textPrimary: const Color(0xFFFFFFFF),
       textSecondary: const Color(0xFF9D9D9D),
       textHint: const Color(0xFF727272),
@@ -235,6 +257,8 @@ class ThemeColors {
     background: Color(0xFF212128),
     surface: Color(0xFF33333E),
     surfaceVariant: Color(0xFF3F3F4C),
+    dialogSurface: Color(0xFF33333E),
+    dialogSurfaceVariant: Color(0xFF3F3F4C),
     textPrimary: Color(0xFFFFFFFF),
     textSecondary: Color(0xFF9D9D9D),
     textHint: Color(0xFF727272),
@@ -259,6 +283,8 @@ class ThemeColors {
     background: Color(0xFFDCD7C9),
     surface: Color(0xFFEAE7DF),
     surfaceVariant: Color(0xFFF3F1EC),
+    dialogSurface: Color(0xFFEAE7DF),
+    dialogSurfaceVariant: Color(0xFFF3F1EC),
     textPrimary: Color(0xFF000000),
     textSecondary: Color(0xFF3A3933),
     textHint: Color(0xFF999999),

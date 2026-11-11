@@ -482,7 +482,7 @@ class _CustomSheetEditPageState extends ConsumerState<CustomSheetEditPage> {
       useRootNavigator: true,
       context: context,
       isScrollControlled: true,
-      backgroundColor: colors.surface,
+      backgroundColor: colors.dialogSurface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(AppRadius.xl)),
       ),
@@ -740,7 +740,7 @@ class _SheetCategoryManagerSheetState
     final name = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: colors.surface,
+        backgroundColor: colors.dialogSurface,
         title: Text(
           context.tr('分类改名'),
           style: TextStyle(fontSize: 17, color: colors.textPrimary),
@@ -789,7 +789,7 @@ class _SheetCategoryManagerSheetState
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: colors.surface,
+        backgroundColor: colors.dialogSurface,
         title: Text(
           context.tr('删除分类'),
           style: TextStyle(fontSize: 17, color: colors.textPrimary),

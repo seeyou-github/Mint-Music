@@ -141,7 +141,7 @@ class _LocalPlaylistDetailPageState
       context: context,
       useRootNavigator: true,
       builder: (ctx) => AlertDialog(
-        backgroundColor: colors.surface,
+        backgroundColor: colors.dialogSurface,
         title: Text(
           context.tr('从歌单移除'),
           style: TextStyle(color: colors.textPrimary),
@@ -207,7 +207,7 @@ class _LocalPlaylistDetailPageState
       context: context,
       useRootNavigator: true,
       builder: (ctx) => AlertDialog(
-        backgroundColor: colors.surface,
+        backgroundColor: colors.dialogSurface,
         title: Text(
           context.tr('移除歌曲'),
           style: TextStyle(color: colors.textPrimary),
@@ -718,7 +718,7 @@ class _LocalPlaylistDetailPageState
     return PopupMenuButton<String>(
       tooltip: context.tr('更多'),
       padding: EdgeInsets.zero,
-      color: colors.surface,
+      color: colors.dialogSurface,
       onSelected: (value) {
         if (value == 'sort') {
           _showSortBottomSheet(colors);
@@ -789,7 +789,7 @@ class _LocalPlaylistDetailPageState
     showModalBottomSheet(
       useRootNavigator: true,
       context: context,
-      backgroundColor: colors.surface,
+      backgroundColor: colors.dialogSurface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(AppRadius.xl)),
       ),
@@ -1455,7 +1455,7 @@ class _LocalPlaylistDetailPageState
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: colors.surface,
+        backgroundColor: colors.dialogSurface,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppRadius.lg),
         ),
@@ -1585,7 +1585,7 @@ class _LocalPlaylistDetailPageState
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: colors.surface,
+        backgroundColor: colors.dialogSurface,
         title: Text(
           context.tr('编辑歌单'),
           style: TextStyle(color: colors.textPrimary),

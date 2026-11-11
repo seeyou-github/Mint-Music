@@ -112,7 +112,7 @@ class _AppShellState extends ConsumerState<AppShell> {
       final openSettings = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
-          backgroundColor: colors.surface,
+          backgroundColor: colors.dialogSurface,
           title: Text(
             context.tr('开启通知权限'),
             style: TextStyle(color: colors.textPrimary),

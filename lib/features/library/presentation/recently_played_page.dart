@@ -204,7 +204,7 @@ class _RecentlyPlayedPageState extends ConsumerState<RecentlyPlayedPage> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: colors.surface,
+        backgroundColor: colors.dialogSurface,
         title: Text(
           context.tr('清除最近播放'),
           style: TextStyle(color: colors.textPrimary),

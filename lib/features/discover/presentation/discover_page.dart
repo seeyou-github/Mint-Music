@@ -1352,7 +1352,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: colors.surface,
+        backgroundColor: colors.dialogSurface,
         title: Text(
           context.tr('删除歌单'),
           style: TextStyle(fontSize: 17, color: colors.textPrimary),
@@ -1389,7 +1389,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
     showModalBottomSheet<void>(
       useRootNavigator: true,
       context: context,
-      backgroundColor: colors.surface,
+      backgroundColor: colors.dialogSurface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(AppRadius.xl)),
       ),
@@ -1639,7 +1639,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
         duration: Duration(milliseconds: 220),
         reverseDuration: Duration(milliseconds: 180),
       ),
-      backgroundColor: colors.surface,
+      backgroundColor: colors.dialogSurface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(AppRadius.xl)),
       ),
@@ -2745,7 +2745,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
         duration: Duration(milliseconds: 220),
         reverseDuration: Duration(milliseconds: 180),
       ),
-      backgroundColor: colors.surface,
+      backgroundColor: colors.dialogSurface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(AppRadius.xl)),
       ),

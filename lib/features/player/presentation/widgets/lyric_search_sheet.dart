@@ -300,7 +300,7 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
       child: Container(
         height: sheetHeight,
         decoration: BoxDecoration(
-          color: colors.surface,
+          color: colors.dialogSurface,
           borderRadius: const BorderRadius.vertical(
             top: Radius.circular(AppRadius.lg),
           ),
@@ -446,7 +446,7 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
     final label = selected?.name ?? _sourceId;
     return PopupMenuButton<String>(
       tooltip: context.tr('切换音源'),
-      color: colors.surface,
+      color: colors.dialogSurface,
       position: PopupMenuPosition.under,
       onSelected: (value) {
         if (value == _sourceId) return;

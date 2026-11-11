@@ -509,7 +509,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
       decoration: BoxDecoration(
         // Compact mode (player menu) uses always-dark surface matching the play queue.
         // Full mode (song context menu) uses the themed surface (white in light theme).
-        color: widget.compactMode ? AppColors.surface : colors.surface,
+        color: widget.compactMode ? AppColors.surface : colors.dialogSurface,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
       ),
       child: SafeArea(

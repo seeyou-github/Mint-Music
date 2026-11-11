@@ -457,7 +457,7 @@ class LibraryPage extends ConsumerWidget {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: colors.surface,
+        backgroundColor: colors.dialogSurface,
         title: Text(
           context.tr('删除歌单'),
           style: TextStyle(color: colors.textPrimary),
@@ -497,7 +497,7 @@ class LibraryPage extends ConsumerWidget {
     showDialog(
       context: context,
       builder: (ctx) => Dialog(
-        backgroundColor: colors.surface,
+        backgroundColor: colors.dialogSurface,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppRadius.lg),
         ),
@@ -635,7 +635,7 @@ class LibraryPage extends ConsumerWidget {
     showDialog(
       context: context,
       builder: (ctx) => Dialog(
-        backgroundColor: colors.surface,
+        backgroundColor: colors.dialogSurface,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppRadius.lg),
         ),

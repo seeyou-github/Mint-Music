@@ -664,7 +664,7 @@ class _SongEntryDialogState extends ConsumerState<_SongEntryDialog> {
   Widget build(BuildContext context) {
     final colors = ref.watch(themeColorsProvider);
     return AlertDialog(
-      backgroundColor: colors.surface,
+      backgroundColor: colors.dialogSurface,
       title: Text(
         context.tr('添加歌曲'),
         style: TextStyle(color: colors.textPrimary, fontSize: 17),
@@ -737,7 +737,7 @@ class _ArtistEntryDialogState extends ConsumerState<_ArtistEntryDialog> {
   Widget build(BuildContext context) {
     final colors = ref.watch(themeColorsProvider);
     return AlertDialog(
-      backgroundColor: colors.surface,
+      backgroundColor: colors.dialogSurface,
       title: Text(
         context.tr('添加歌手'),
         style: TextStyle(color: colors.textPrimary, fontSize: 17),

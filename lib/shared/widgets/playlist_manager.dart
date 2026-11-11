@@ -145,7 +145,7 @@ class _CreatePlaylistDialogState extends ConsumerState<_CreatePlaylistDialog> {
 
     return AlertDialog(
       scrollable: true,
-      backgroundColor: colors.surface,
+      backgroundColor: colors.dialogSurface,
       title: Text(
         context.tr('新增歌单'),
         style: TextStyle(color: colors.textPrimary),

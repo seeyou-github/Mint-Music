@@ -76,4 +76,22 @@ void main() {
       expect(colors.miniPlayerBackground, colors.surface);
     });
   });
+
+  group('ThemeColors.copyWithSurface', () {
+    test('控件换成半透明玻璃层后，弹框底色仍是不透明的派生色', () {
+      final colors = ThemeColors.darkWithPrimary(
+        const Color(0xFF6366F1),
+      ).copyWithBackground(const Color(0xFF121212));
+      final glass = colors.copyWithSurface(
+        surface: colors.surface.withValues(alpha: 0.55),
+        surfaceVariant: colors.surfaceVariant.withValues(alpha: 0.55),
+      );
+
+      expect(glass.surface.a, lessThan(1.0));
+      expect(glass.dialogSurface.a, 1.0);
+      expect(glass.dialogSurfaceVariant.a, 1.0);
+      expect(glass.dialogSurface, colors.surface);
+      expect(glass.dialogSurfaceVariant, colors.surfaceVariant);
+    });
+  });
 }

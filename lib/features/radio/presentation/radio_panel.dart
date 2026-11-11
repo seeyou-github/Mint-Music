@@ -154,7 +154,7 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: colors.surface,
+        backgroundColor: colors.dialogSurface,
         title: Text(
           context.tr('删除分类'),
           style: TextStyle(fontSize: 17, color: colors.textPrimary),
@@ -511,7 +511,7 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
         size: 18,
         color: Colors.white.withValues(alpha: 0.9),
       ),
-      color: colors.surface,
+      color: colors.dialogSurface,
       tooltip: context.tr('更多'),
       onSelected: (value) {
         if (value == 'edit') {
@@ -587,7 +587,7 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: colors.surface,
+        backgroundColor: colors.dialogSurface,
         title: Text(
           context.tr('删除电台'),
           style: TextStyle(fontSize: 17, color: colors.textPrimary),
@@ -650,7 +650,7 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
     return showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: colors.surface,
+        backgroundColor: colors.dialogSurface,
         title: Text(
           context.tr('无法播放电台'),
           style: TextStyle(fontSize: 17, color: colors.textPrimary),

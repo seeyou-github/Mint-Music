@@ -744,7 +744,7 @@ void _showBottomPicker(
     useRootNavigator: true,
     context: context,
     sheetAnimationStyle: _settingsSheetAnimationStyle,
-    backgroundColor: colors.surface,
+    backgroundColor: colors.dialogSurface,
     isScrollControlled: true,
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
@@ -1446,7 +1446,7 @@ class _AppearanceContent extends ConsumerWidget {
       useRootNavigator: true,
       context: context,
       sheetAnimationStyle: _settingsSheetAnimationStyle,
-      backgroundColor: colors.surface,
+      backgroundColor: colors.dialogSurface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
@@ -1646,7 +1646,7 @@ class _AppearanceContent extends ConsumerWidget {
       useRootNavigator: true,
       context: context,
       sheetAnimationStyle: _settingsSheetAnimationStyle,
-      backgroundColor: colors.surface,
+      backgroundColor: colors.dialogSurface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
@@ -1744,7 +1744,7 @@ class _AppearanceContent extends ConsumerWidget {
       useRootNavigator: true,
       context: context,
       sheetAnimationStyle: _settingsSheetAnimationStyle,
-      backgroundColor: colors.surface,
+      backgroundColor: colors.dialogSurface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
@@ -2001,7 +2001,7 @@ class _AppearanceContent extends ConsumerWidget {
       useRootNavigator: true,
       context: context,
       sheetAnimationStyle: _settingsSheetAnimationStyle,
-      backgroundColor: colors.surface,
+      backgroundColor: colors.dialogSurface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
@@ -2079,7 +2079,7 @@ class _AppearanceContent extends ConsumerWidget {
       useRootNavigator: true,
       context: context,
       sheetAnimationStyle: _settingsSheetAnimationStyle,
-      backgroundColor: colors.surface,
+      backgroundColor: colors.dialogSurface,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
@@ -2154,7 +2154,7 @@ class _AppearanceContent extends ConsumerWidget {
       useRootNavigator: true,
       context: context,
       sheetAnimationStyle: _settingsSheetAnimationStyle,
-      backgroundColor: colors.surface,
+      backgroundColor: colors.dialogSurface,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
@@ -2597,7 +2597,7 @@ void _showDesktopLyricCustomActions(
     useRootNavigator: true,
     context: context,
     sheetAnimationStyle: _settingsSheetAnimationStyle,
-    backgroundColor: colors.surface,
+    backgroundColor: colors.dialogSurface,
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
     ),
@@ -2716,7 +2716,7 @@ void _showDesktopLyricColorPicker(
       useRootNavigator: true,
       context: context,
       sheetAnimationStyle: _settingsSheetAnimationStyle,
-      backgroundColor: colors.surface,
+      backgroundColor: colors.dialogSurface,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
@@ -2749,7 +2749,7 @@ void _showDesktopLyricColorPicker(
     useRootNavigator: true,
     context: context,
     sheetAnimationStyle: _settingsSheetAnimationStyle,
-    backgroundColor: colors.surface,
+    backgroundColor: colors.dialogSurface,
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
     ),
@@ -3274,7 +3274,7 @@ class _PlaybackContent extends ConsumerWidget {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: colors.surface,
+        backgroundColor: colors.dialogSurface,
         title: Text(
           context.tr('保存为新预设'),
           style: TextStyle(color: colors.textPrimary),
@@ -4146,7 +4146,7 @@ class _StorageContent extends ConsumerWidget {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: colors.surface,
+        backgroundColor: colors.dialogSurface,
         title: Text(
           context.tr('重置目录设置'),
           style: TextStyle(color: colors.textPrimary),
@@ -4225,7 +4225,7 @@ class _StorageContent extends ConsumerWidget {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: colors.surface,
+        backgroundColor: colors.dialogSurface,
         title: Text(
           context.tr('清除缓存'),
           style: TextStyle(color: colors.textPrimary),

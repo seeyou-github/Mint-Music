@@ -1024,7 +1024,7 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
       backgroundColor: Colors.transparent,
       builder: (ctx) => Container(
         decoration: BoxDecoration(
-          color: colors.surface,
+          color: colors.dialogSurface,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
         ),
         child: SafeArea(

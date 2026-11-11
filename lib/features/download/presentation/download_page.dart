@@ -197,7 +197,7 @@ class DownloadPage extends ConsumerWidget {
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: colors.surface,
+        backgroundColor: colors.dialogSurface,
         title: Text(
           context.tr('下载路径'),
           style: TextStyle(color: colors.textPrimary),
@@ -264,7 +264,7 @@ class DownloadPage extends ConsumerWidget {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: colors.surface,
+        backgroundColor: colors.dialogSurface,
         title: Text(
           context.tr('清除下载列表'),
           style: TextStyle(color: colors.textPrimary),
@@ -673,7 +673,7 @@ class _DownloadTaskItemState extends ConsumerState<_DownloadTaskItem> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: colors.surface,
+        backgroundColor: colors.dialogSurface,
         title: Text(
           context.tr('删除下载文件'),
           style: TextStyle(color: colors.textPrimary),
@@ -698,7 +698,7 @@ class _DownloadTaskItemState extends ConsumerState<_DownloadTaskItem> {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     content: Text(context.tr('已删除下载文件')),
-                    backgroundColor: colors.surfaceVariant,
+                    backgroundColor: colors.dialogSurfaceVariant,
                   ),
                 );
               }

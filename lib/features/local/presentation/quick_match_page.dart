@@ -268,7 +268,7 @@ class _QuickMatchPageState extends ConsumerState<QuickMatchPage> {
           PopupMenuButton<String>(
             enabled: dirs.isNotEmpty,
             tooltip: context.tr('选择目录'),
-            color: colors.surface,
+            color: colors.dialogSurface,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(AppRadius.md),
             ),

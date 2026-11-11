@@ -147,7 +147,7 @@ class _PlaylistSyncButtonState extends ConsumerState<PlaylistSyncButton> {
     final retry = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: colors.surface,
+        backgroundColor: colors.dialogSurface,
         title: Text(
           widget.alsoBackup ? tr('同步失败') : tr('歌单同步失败'),
           style: TextStyle(color: colors.textPrimary),

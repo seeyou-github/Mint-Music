@@ -334,7 +334,8 @@ final detailHeaderSurfaceProvider = Provider<Color>((ref) {
 ///
 /// 高斯模糊模式下这里的「背景渐变」是照片主色派生的那条（见
 /// [backgroundGradientProvider]），控件色调跟着照片走；并且会再换成半透明
-/// 玻璃层，让照片的纹理透出来，而不是用一块实心色把照片盖住。
+/// 玻璃层，让照片的纹理透出来，而不是用一块实心色把照片盖住。弹框 / 底部
+/// 弹层 / 弹出菜单 / SnackBar 例外，它们用 `dialogSurface` 保持实心。
 final themeColorsProvider = Provider<ThemeColors>((ref) {
   final base = ref.watch(baseThemeColorsProvider);
   final mid = ref.watch(backgroundGradientProvider).mid;

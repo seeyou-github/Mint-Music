@@ -484,7 +484,7 @@ class _RadioEditPageState extends ConsumerState<RadioEditPage> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: colors.surface,
+        backgroundColor: colors.dialogSurface,
         title: Text(
           context.tr('删除分类'),
           style: TextStyle(fontSize: 17, color: colors.textPrimary),

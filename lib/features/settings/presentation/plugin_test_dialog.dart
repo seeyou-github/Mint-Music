@@ -114,7 +114,7 @@ class _PluginTestDialogState extends ConsumerState<PluginTestDialog> {
     final running = _starting || (report?.running ?? false);
 
     return Dialog(
-      backgroundColor: colors.surface,
+      backgroundColor: colors.dialogSurface,
       insetPadding: const EdgeInsets.symmetric(
         horizontal: AppSpacing.lg,
         vertical: AppSpacing.xl,

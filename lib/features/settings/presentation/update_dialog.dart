@@ -27,7 +27,7 @@ Future<void> showUpdateDialog(BuildContext context, UpdateInfo info) async {
   await showDialog<void>(
     context: context,
     builder: (ctx) => AlertDialog(
-      backgroundColor: colors.surface,
+      backgroundColor: colors.dialogSurface,
       title: Row(
         children: [
           Icon(Icons.system_update_alt, color: colors.primary, size: 26),

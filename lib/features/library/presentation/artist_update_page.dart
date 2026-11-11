@@ -211,7 +211,7 @@ class _ArtistUpdatePageState extends ConsumerState<ArtistUpdatePage> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        backgroundColor: colors.surface,
+        backgroundColor: colors.dialogSurface,
         title: Row(
           children: [
             Icon(Icons.playlist_add, size: 20, color: colors.primary),

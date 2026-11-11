@@ -316,7 +316,7 @@ Future<void> showAddSongsToPlaylistSheet(
             .toList();
         return Container(
           decoration: BoxDecoration(
-            color: colors.surface,
+            color: colors.dialogSurface,
             borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
           ),
           child: SafeArea(
