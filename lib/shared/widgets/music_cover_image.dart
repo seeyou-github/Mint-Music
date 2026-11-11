@@ -38,9 +38,9 @@ class MusicCoverImage extends StatefulWidget {
   /// 播放器封面用它触发 getPic 兜底换地址重试，与歌曲列表项行为一致。
   final void Function()? onLoadFailed;
 
-  /// 图片真正取到字节并开始显示时回调（每张图一次）。
-  /// 背景层用它记住「上一张成功加载的封面」。
-  final void Function()? onLoaded;
+  /// 图片真正取到字节并开始显示时回调（每张图一次），带原始字节。
+  /// 背景层用它把「上一张封面」原样冻结住。
+  final void Function(Uint8List bytes)? onLoaded;
 
   const MusicCoverImage({
     super.key,
@@ -489,11 +489,12 @@ class _MusicCoverImageState extends State<MusicCoverImage> {
       if (_notifiedLoadedKey != loadedKey) {
         _notifiedLoadedKey = loadedKey;
         final onLoaded = widget.onLoaded;
+        final bytes = _bytes!;
         if (onLoaded != null) {
           // 加载完成会触发 setState，不能在 build 里直接回调（调用方也常
           // setState），推到当前帧结束之后。
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) onLoaded();
+            if (mounted) onLoaded(bytes);
           });
         }
       }

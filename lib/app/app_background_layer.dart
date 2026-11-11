@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -11,13 +12,22 @@ import '../shared/widgets/background_dither_layer.dart';
 import '../shared/widgets/background_glow_layer.dart';
 import '../shared/widgets/music_cover_image.dart';
 
-/// 背景层最近一次真正加载成功的封面所属歌曲。
+/// 背景层上一次真正显示出来的封面（歌曲 + 原始图片字节）。
 ///
-/// 不能只记在某个背景层组件的 State 里：主界面（`MaterialApp.builder`）、
-/// 每个二级页、播放页各有一份背景层，State 跟着页面创建 / 销毁。切歌时如果
-/// 新歌封面还没到，任何一份背景层都得能立刻拿到「上一首的封面」垫底，否则
-/// 那一层就会退回渐变 / 黑底。
-final lastCoverBackdropSongProvider = StateProvider<Song?>((ref) => null);
+/// 只记「哪首歌」不够：切歌时新封面还没下来，背景要保持画面完全不动，就得
+/// 把上一张图的字节直接留着画，而不是让各层再去磁盘 / 网络取一遍。
+/// 放在全局 provider 里还顺便解决了主界面、二级页、播放页各有一份背景层、
+/// 新建的那层拿不到上一张图的问题。
+class _CoverBackdrop {
+  const _CoverBackdrop(this.song, this.bytes);
+
+  final Song song;
+  final Uint8List bytes;
+}
+
+final _lastCoverBackdropProvider = StateProvider<_CoverBackdrop?>(
+  (ref) => null,
+);
 
 /// 主界面背景层：按「背景颜色模式」画渐变（+ 光晕）或高斯模糊图。
 ///
@@ -141,12 +151,13 @@ class _GradientBackground extends ConsumerWidget {
 /// 「当前歌曲封面糊化」背景。
 ///
 /// 封面走 [MusicCoverImage] 那条链路（在线地址 / 本地缓存 / 音频内嵌封面都
-/// 能取到）；还在加载或这首歌压根没有封面时，下面那层 [fallback] 直接透出来，
-/// 不会先黑一下。上一首的封面加载成功过时，切到没封面（或封面加载失败）的
-/// 歌会继续沿用那张封面，只有从没取到过封面才退回 [fallback]。
+/// 能取到）。切歌时**画面不动**：新歌封面在下面悄悄加载，真正取到字节之前，
+/// 最上面一直是上一张封面糊化的结果；只有它加载成功并写进
+/// [_lastCoverBackdropProvider] 后背景才整体换一次。从未取到过封面时退回
+/// [fallback]（用户添加的模糊图 / 渐变）。
 ///
-/// 「上一首封面」记在 [lastCoverBackdropSongProvider] 里而不是本组件的 State
-/// 里：切歌时主界面 / 二级页 / 播放页任意一层背景重建，都能立刻沿用同一张。
+/// 「上一张封面」记在 provider 里而不是本组件的 State 里：主界面 / 二级页 /
+/// 播放页任意一层背景重建，都能立刻拿到同一张图，不用重新加载。
 class _CoverBlurBackground extends ConsumerStatefulWidget {
   const _CoverBlurBackground({
     required this.song,
@@ -165,7 +176,7 @@ class _CoverBlurBackground extends ConsumerStatefulWidget {
   final bool lightenForLightTheme;
   final double autoDarken;
 
-  /// 兜底背景（用户的模糊图 / 渐变），同时充当封面加载期间的垫底。
+  /// 兜底背景（用户的模糊图 / 渐变）。
   final Widget fallback;
 
   @override
@@ -185,23 +196,42 @@ class _CoverBlurBackgroundState extends ConsumerState<_CoverBlurBackground> {
   static String _coverKey(Song song) =>
       '${song.coverUrl}|${song.mediaStoreId}|${song.filePath}|${song.id}';
 
-  void _remember(Song song) {
+  /// 这张封面已经真的加载出来可以显示了：从这一刻起背景才切到它。
+  void _remember(Song song, Uint8List bytes) {
     if (!mounted) return;
-    final record = ref.read(lastCoverBackdropSongProvider);
+    final record = ref.read(_lastCoverBackdropProvider);
     if (record != null) {
-      // 已经记过同一张封面。
-      if (_coverKey(record) == _coverKey(song)) return;
+      final sameCover = _coverKey(record.song) == _coverKey(song);
+      // 同一张图、同一份字节：已经记过。
+      if (sameCover && identical(record.bytes, bytes)) return;
       // 迟到的回调属于更早那首歌：现在记的是更新的封面，不能往回退。
-      if (_coverKey(song) != _coverKey(widget.song)) return;
+      if (!sameCover && _coverKey(song) != _coverKey(widget.song)) return;
     }
-    ref.read(lastCoverBackdropSongProvider.notifier).state = song;
+    ref.read(_lastCoverBackdropProvider.notifier).state = _CoverBackdrop(
+      song,
+      bytes,
+    );
   }
 
-  Widget _blurredCover(Song song) {
+  Widget _blurImage(Widget image, {Key? key}) {
     return _BlurBackground(
+      key: key,
       // 底下已经有兜底背景了，不要再铺一层不透明底色。
       baseColor: null,
-      image: MusicCoverImage(
+      image: image,
+      sigma: widget.sigma,
+      brightness: widget.brightness,
+      saturation: widget.saturation,
+      lightenForLightTheme: widget.lightenForLightTheme,
+      autoDarken: widget.autoDarken,
+    );
+  }
+
+  /// 当前歌的封面：只负责加载，加载成功写进记录后才露出来。
+  Widget _loadCurrentCover(Song song) {
+    return _blurImage(
+      key: const ValueKey<String>('cover-loading'),
+      MusicCoverImage(
         // 换封面换 key：上一首的字节不能带过来（切歌瞬间会闪一下旧封面）。
         key: ValueKey<String>(_coverKey(song)),
         url: song.coverUrl,
@@ -215,33 +245,50 @@ class _CoverBlurBackgroundState extends ConsumerState<_CoverBlurBackground> {
         filterQuality: FilterQuality.low,
         // 取不到图时不留占位图标：让下面那层兜底背景透出来。
         errorWidget: const SizedBox.shrink(),
-        onLoaded: () => _remember(song),
+        onLoaded: (bytes) => _remember(song, bytes),
       ),
-      sigma: widget.sigma,
-      brightness: widget.brightness,
-      saturation: widget.saturation,
-      lightenForLightTheme: widget.lightenForLightTheme,
-      autoDarken: widget.autoDarken,
+    );
+  }
+
+  /// 上一张封面：字节直接画。和 [MusicCoverImage] 里那张共用同一份解码缓存，
+  /// 不会出现「重新解码 / 重新下载」的空窗，切歌瞬间画面是静止的。
+  Widget _frozenCover(Uint8List bytes) {
+    return _blurImage(
+      key: const ValueKey<String>('cover-frozen'),
+      Image.memory(
+        bytes,
+        fit: BoxFit.cover,
+        width: double.infinity,
+        height: double.infinity,
+        cacheWidth: _kCoverDecodeWidth,
+        gaplessPlayback: true,
+        filterQuality: FilterQuality.low,
+      ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
     final song = widget.song;
-    final last = ref.watch(lastCoverBackdropSongProvider);
+    final record = ref.watch(_lastCoverBackdropProvider);
     final showCurrent = _hasCoverSource(song);
-    // 新封面加载 / 失败期间，旧封面垫在下面；加载完成就被新封面盖住。
-    final showLast =
-        last != null && (!showCurrent || _coverKey(last) != _coverKey(song));
 
-    if (!showCurrent && !showLast) return widget.fallback;
+    // 从没取到过封面：直接退回兜底（用户的图 / 渐变）。
+    if (record == null && !showCurrent) return widget.fallback;
 
     return Stack(
       fit: StackFit.expand,
       children: [
         widget.fallback,
-        if (showLast) _blurredCover(last),
-        if (showCurrent) _blurredCover(song),
+        // 当前歌的封面在下面悄悄加载：加载完成才写进记录。
+        // 记录已经在画面上时它被整块盖住，不再参与绘制（省一次全屏模糊）。
+        if (showCurrent)
+          Offstage(
+            offstage: record != null,
+            child: _loadCurrentCover(song),
+          ),
+        // 上一张封面压在最上面：新封面没到之前画面一动不动。
+        if (record != null) _frozenCover(record.bytes),
       ],
     );
   }
@@ -258,6 +305,7 @@ const int _kCoverDecodeWidth = 512;
 /// 高斯模糊背景：图片 → 模糊 → 叠亮度 → 噪点。
 class _BlurBackground extends StatelessWidget {
   const _BlurBackground({
+    super.key,
     required this.image,
     required this.sigma,
     required this.brightness,
