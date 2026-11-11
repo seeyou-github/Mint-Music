@@ -52,6 +52,28 @@ final blurBackgroundSigmaProvider = StateProvider<double>((ref) => 30);
 /// 背景图亮度：1 = 原图，小于 1 压暗、大于 1 提亮。
 final blurBackgroundBrightnessProvider = StateProvider<double>((ref) => 0.85);
 
+/// 背景图饱和度：1 = 原图，0 = 灰度，大于 1 更艳。
+///
+/// 很多封面 / 照片颜色过浓，糊满整屏后刺眼；这里可以只降不升地往回收。
+final blurBackgroundSaturationProvider = StateProvider<double>((ref) => 1.0);
+
+/// 饱和度用的颜色矩阵（[s] = 1 时是单位矩阵）。
+///
+/// 灰度权重用 Rec. 709 的 0.2126 / 0.7152 / 0.0722，与 `ColorFilter.matrix`
+/// 的语义一致；矩阵乘在 RGB 上、不动 alpha。
+List<double> blurSaturationMatrix(double s) {
+  final v = s.clamp(0.0, 2.0);
+  const lr = 0.2126;
+  const lg = 0.7152;
+  const lb = 0.0722;
+  return [
+    lr + (1 - lr) * v, lg - lg * v, lb - lb * v, 0, 0, //
+    lr - lr * v, lg + (1 - lg) * v, lb - lb * v, 0, 0, //
+    lr - lr * v, lg - lg * v, lb + (1 - lb) * v, 0, 0, //
+    0, 0, 0, 1, 0, //
+  ];
+}
+
 /// 「亮图自动压暗」强度（0 = 关闭，1 = 最强）。
 ///
 /// 用户的「亮度」是固定值，白底封面和暗色封面套同一档亮度时，前者会亮得

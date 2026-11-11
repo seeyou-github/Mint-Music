@@ -1368,7 +1368,7 @@ class _AppearanceContent extends ConsumerWidget {
           SettingRow(
             icon: Icons.image_outlined,
             title: '高斯模糊背景图',
-            subtitle: '选一张图铺满主界面，可调模糊程度、亮度与亮图压暗；未选择时沿用背景渐变',
+            subtitle: '选一张图铺满主界面，可调模糊程度、亮度、饱和度与亮图压暗；未选择时沿用背景渐变',
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -1396,8 +1396,8 @@ class _AppearanceContent extends ConsumerWidget {
           icon: Icons.auto_awesome,
           title: '主界面跟随封面变色',
           subtitle: backgroundMode == BackgroundMode.blur
-              // 模糊程度 / 亮度沿用「高斯模糊背景图」页里的两个滑条。
-              ? '播放歌曲时，主界面背景用当前歌曲封面做高斯模糊（模糊程度 / 亮度沿用上面设置）'
+              // 模糊程度 / 亮度 / 饱和度沿用「高斯模糊背景图」页里的滑条。
+              ? '播放歌曲时，主界面背景用当前歌曲封面做高斯模糊（模糊程度 / 亮度 / 饱和度沿用上面设置）'
               : '主界面背景按当前歌曲的封面色调变化',
           trailing: Switch(
             // 浅色主题下这个开关不生效：直接禁用（自动灰掉），也不显示为开启。

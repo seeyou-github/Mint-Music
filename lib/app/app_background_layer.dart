@@ -27,6 +27,9 @@ class AppBackgroundLayer extends ConsumerWidget {
       // 调完能直接看到主界面跟着变。
       final sigma = ref.watch(blurBackgroundSigmaProvider);
       final brightness = ref.watch(blurBackgroundBrightnessProvider);
+      // 饱和度 / 亮度都是「设置 → 高斯模糊背景图」里的滑条，用户图与封面
+      // 糊化背景共用（封面糊化本质也是同一张图铺满）。
+      final saturation = ref.watch(blurBackgroundSaturationProvider);
       // 浅色主题下正文是深色，照片太暗就看不清字，额外盖一层白纱。
       final lighten = ref.watch(isLightThemeActiveProvider);
       // 亮图自动压暗：按当前背景图的平均亮度补一层黑，越亮压得越多。
@@ -62,6 +65,7 @@ class AppBackgroundLayer extends ConsumerWidget {
           ),
           sigma: sigma,
           brightness: brightness,
+          saturation: saturation,
           lightenForLightTheme: lighten,
           autoDarken: autoDarken,
         );
@@ -78,6 +82,7 @@ class AppBackgroundLayer extends ConsumerWidget {
             song: song,
             sigma: sigma,
             brightness: brightness,
+            saturation: saturation,
             lightenForLightTheme: lighten,
             autoDarken: autoDarken,
             // 封面还在下载 / 这首歌根本没封面时，就用它兜着。
@@ -136,6 +141,7 @@ class _CoverBlurBackground extends StatefulWidget {
     required this.song,
     required this.sigma,
     required this.brightness,
+    required this.saturation,
     required this.lightenForLightTheme,
     required this.autoDarken,
     required this.fallback,
@@ -144,6 +150,7 @@ class _CoverBlurBackground extends StatefulWidget {
   final Song song;
   final double sigma;
   final double brightness;
+  final double saturation;
   final bool lightenForLightTheme;
   final double autoDarken;
 
@@ -200,6 +207,7 @@ class _CoverBlurBackgroundState extends State<_CoverBlurBackground> {
       ),
       sigma: widget.sigma,
       brightness: widget.brightness,
+      saturation: widget.saturation,
       lightenForLightTheme: widget.lightenForLightTheme,
       autoDarken: widget.autoDarken,
     );
@@ -241,6 +249,7 @@ class _BlurBackground extends StatelessWidget {
     required this.image,
     required this.sigma,
     required this.brightness,
+    required this.saturation,
     required this.lightenForLightTheme,
     required this.autoDarken,
     required this.baseColor,
@@ -253,6 +262,9 @@ class _BlurBackground extends StatelessWidget {
 
   /// 1 = 原图；小于 1 压暗，大于 1 提亮。
   final double brightness;
+
+  /// 饱和度：1 = 原图，0 = 灰度（见 [blurSaturationMatrix]）。
+  final double saturation;
 
   /// 浅色主题是否额外盖一层白纱（深色文字压在暗背景上会看不清）。
   final bool lightenForLightTheme;
@@ -273,6 +285,16 @@ class _BlurBackground extends StatelessWidget {
     final darken = normalized < 1 ? (1 - normalized) : 0.0;
     final whiten = normalized > 1 ? (normalized - 1) * 0.6 : 0.0;
 
+    // 饱和度先作用在图上，再模糊 / 叠亮度：颜色收回来之后模糊出来的色块
+    // 也不会整片过浓。1 = 原图时连滤镜都不包，省一次渲染。
+    final sat = saturation.clamp(0.0, 2.0);
+    final source = sat == 1.0
+        ? image
+        : ColorFiltered(
+            colorFilter: ColorFilter.matrix(blurSaturationMatrix(sat)),
+            child: image,
+          );
+
     return RepaintBoundary(
       child: Stack(
         fit: StackFit.expand,
@@ -280,14 +302,14 @@ class _BlurBackground extends StatelessWidget {
           // 图片加载出来之前、或解码失败时的底色。
           if (baseColor != null) ColoredBox(color: baseColor!),
           if (blurSigma <= 0.5)
-            Transform.scale(scale: scale, child: image)
+            Transform.scale(scale: scale, child: source)
           else
             ImageFiltered(
               imageFilter: ui.ImageFilter.blur(
                 sigmaX: blurSigma,
                 sigmaY: blurSigma,
               ),
-              child: Transform.scale(scale: scale, child: image),
+              child: Transform.scale(scale: scale, child: source),
             ),
           // 浅色主题：正文是深色，先把图整体提亮，否则暗照片上根本看不清字。
           if (lightenForLightTheme)

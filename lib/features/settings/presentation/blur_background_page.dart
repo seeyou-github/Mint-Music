@@ -176,6 +176,7 @@ class _BlurBackgroundPageState extends ConsumerState<BlurBackgroundPage> {
     final selectedName = ref.watch(blurBackgroundImageNameProvider);
     final sigma = ref.watch(blurBackgroundSigmaProvider);
     final brightness = ref.watch(blurBackgroundBrightnessProvider);
+    final saturation = ref.watch(blurBackgroundSaturationProvider);
     final autoDarkenStrength = ref.watch(blurBackgroundAutoDarkenProvider);
     // 预览用用户图自己的平均亮度算自动压暗，和主界面同一套公式。
     final tint = ref.watch(blurBackgroundTintProvider).valueOrNull;
@@ -209,6 +210,7 @@ class _BlurBackgroundPageState extends ConsumerState<BlurBackgroundPage> {
                       imagePath,
                       sigma,
                       brightness,
+                      saturation,
                       autoDarken,
                     ),
                     const SizedBox(height: AppSpacing.lg),
@@ -256,6 +258,28 @@ class _BlurBackgroundPageState extends ConsumerState<BlurBackgroundPage> {
                           },
                           onChangeEnd: (v) => unawaited(
                             _persist((s) => s.setBlurBackgroundBrightness(v)),
+                          ),
+                        ),
+                        SettingDivider(colors: colors),
+                        _BlurSlider(
+                          icon: Icons.palette_outlined,
+                          title: '饱和度',
+                          value: saturation.clamp(0, 2),
+                          min: 0,
+                          max: 2,
+                          divisions: 20,
+                          valueLabel: '${(saturation * 100).round()}%',
+                          colors: colors,
+                          onChanged: (v) {
+                            ref
+                                    .read(
+                                      blurBackgroundSaturationProvider.notifier,
+                                    )
+                                    .state =
+                                v;
+                          },
+                          onChangeEnd: (v) => unawaited(
+                            _persist((s) => s.setBlurBackgroundSaturation(v)),
                           ),
                         ),
                         SettingDivider(colors: colors),
@@ -359,12 +383,13 @@ class _BlurBackgroundPageState extends ConsumerState<BlurBackgroundPage> {
     );
   }
 
-  /// 预览：和主界面同一套处理（模糊 + 亮度），所见即所得。
+  /// 预览：和主界面同一套处理（饱和度 + 模糊 + 亮度），所见即所得。
   Widget _buildPreview(
     ThemeColors colors,
     String? imagePath,
     double sigma,
     double brightness,
+    double saturation,
     double autoDarken,
   ) {
     final blurSigma = sigma.clamp(0.0, 60.0);
@@ -372,6 +397,7 @@ class _BlurBackgroundPageState extends ConsumerState<BlurBackgroundPage> {
     final normalized = brightness.clamp(0.2, 1.4);
     final darken = normalized < 1 ? (1 - normalized) : 0.0;
     final whiten = normalized > 1 ? (normalized - 1) * 0.6 : 0.0;
+    final sat = saturation.clamp(0.0, 2.0);
 
     return AspectRatio(
       // 16:9 的高度再压 30%（16 / (9 * 0.7)），预览不占太多竖向空间。
@@ -390,12 +416,15 @@ class _BlurBackgroundPageState extends ConsumerState<BlurBackgroundPage> {
                 ),
                 child: Transform.scale(
                   scale: scale,
-                  child: Image.file(
-                    File(imagePath),
-                    fit: BoxFit.cover,
-                    cacheWidth: 1080,
-                    gaplessPlayback: true,
-                    errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                  child: ColorFiltered(
+                    colorFilter: ColorFilter.matrix(blurSaturationMatrix(sat)),
+                    child: Image.file(
+                      File(imagePath),
+                      fit: BoxFit.cover,
+                      cacheWidth: 1080,
+                      gaplessPlayback: true,
+                      errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                    ),
                   ),
                 ),
               )

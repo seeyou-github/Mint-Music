@@ -215,6 +215,7 @@ class SettingsService {
   static const _blurImagesKey = 'blur_background_images';
   static const _blurSigmaKey = 'blur_background_sigma';
   static const _blurBrightnessKey = 'blur_background_brightness';
+  static const _blurSaturationKey = 'blur_background_saturation';
   static const _blurAutoDarkenKey = 'blur_background_auto_darken';
 
   /// 背景颜色模式（`gradient` / `blur`）。
@@ -246,6 +247,12 @@ class SettingsService {
       _prefs.getDouble(_blurBrightnessKey) ?? 0.85;
   Future<void> setBlurBackgroundBrightness(double v) =>
       _prefs.setDouble(_blurBrightnessKey, v);
+
+  /// 背景图饱和度（1 = 原图）。
+  double getBlurBackgroundSaturation() =>
+      _prefs.getDouble(_blurSaturationKey) ?? 1.0;
+  Future<void> setBlurBackgroundSaturation(double v) =>
+      _prefs.setDouble(_blurSaturationKey, v);
 
   /// 亮图自动压暗强度（0 = 关闭）。
   double getBlurBackgroundAutoDarken() =>
