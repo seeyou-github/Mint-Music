@@ -169,7 +169,7 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
         body: Stack(
           children: [
             // 背景就是主界面那一层（同一个 AppBackgroundLayer）：
-            // 渐变 / 模糊图 / 跟随封面全都同源，点进来只有上面多了层压暗。
+            // 渐变 / 模糊图 / 跟随封面全都同源，也不额外压暗 / 叠蒙版。
             const PlayerPageBackground(),
             // 手机横屏左栏是紧凑的「封面 + 控件」，没有留给频谱条的空间，
             // 否则它会横跨两栏压在播放控制上。
@@ -180,14 +180,6 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
                 bottom: 148,
                 child: _AudioVisualizer(),
               ),
-            Positioned.fill(
-              child: IgnorePointer(
-                child: Opacity(
-                  opacity: 0.02,
-                  child: Container(color: Colors.white),
-                ),
-              ),
-            ),
             SafeArea(
               child: Builder(
                 builder: (context) {
