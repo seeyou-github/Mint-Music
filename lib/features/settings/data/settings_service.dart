@@ -214,6 +214,7 @@ class SettingsService {
   static const _blurImageKey = 'blur_background_image';
   static const _blurSigmaKey = 'blur_background_sigma';
   static const _blurBrightnessKey = 'blur_background_brightness';
+  static const _blurAutoDarkenKey = 'blur_background_auto_darken';
 
   /// 背景颜色模式（`gradient` / `blur`）。
   BackgroundMode getBackgroundMode() =>
@@ -238,6 +239,12 @@ class SettingsService {
       _prefs.getDouble(_blurBrightnessKey) ?? 0.85;
   Future<void> setBlurBackgroundBrightness(double v) =>
       _prefs.setDouble(_blurBrightnessKey, v);
+
+  /// 亮图自动压暗强度（0 = 关闭）。
+  double getBlurBackgroundAutoDarken() =>
+      _prefs.getDouble(_blurAutoDarkenKey) ?? 0.7;
+  Future<void> setBlurBackgroundAutoDarken(double v) =>
+      _prefs.setDouble(_blurAutoDarkenKey, v);
 
   // -- 歌曲列表不显示封面 --
   static const _songListHideCoverKey = 'song_list_hide_cover';

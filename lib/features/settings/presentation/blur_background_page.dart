@@ -146,6 +146,15 @@ class _BlurBackgroundPageState extends ConsumerState<BlurBackgroundPage> {
     final imagePath = ref.watch(blurBackgroundImagePathProvider).valueOrNull;
     final sigma = ref.watch(blurBackgroundSigmaProvider);
     final brightness = ref.watch(blurBackgroundBrightnessProvider);
+    final autoDarkenStrength = ref.watch(blurBackgroundAutoDarkenProvider);
+    // 预览用用户图自己的平均亮度算自动压暗，和主界面同一套公式。
+    final tint = ref.watch(blurBackgroundTintProvider).valueOrNull;
+    final autoDarken = tint == null
+        ? 0.0
+        : blurAutoDarkenAlpha(
+            luminance: tint.computeLuminance(),
+            strength: autoDarkenStrength,
+          );
     final horizontal = ResponsiveLayout.horizontalPadding(context);
 
     return AppPageBackground(
@@ -165,7 +174,13 @@ class _BlurBackgroundPageState extends ConsumerState<BlurBackgroundPage> {
                     AppSpacing.xl,
                   ),
                   children: [
-                    _buildPreview(colors, imagePath, sigma, brightness),
+                    _buildPreview(
+                      colors,
+                      imagePath,
+                      sigma,
+                      brightness,
+                      autoDarken,
+                    ),
                     const SizedBox(height: AppSpacing.lg),
                     SettingGroup(
                       title: '背景图',
@@ -250,6 +265,28 @@ class _BlurBackgroundPageState extends ConsumerState<BlurBackgroundPage> {
                             _persist((s) => s.setBlurBackgroundBrightness(v)),
                           ),
                         ),
+                        SettingDivider(colors: colors),
+                        _BlurSlider(
+                          icon: Icons.contrast,
+                          title: '亮图自动压暗',
+                          value: autoDarkenStrength.clamp(0, 1),
+                          min: 0,
+                          max: 1,
+                          divisions: 20,
+                          valueLabel: '${(autoDarkenStrength * 100).round()}%',
+                          colors: colors,
+                          onChanged: (v) {
+                            ref
+                                    .read(
+                                      blurBackgroundAutoDarkenProvider.notifier,
+                                    )
+                                    .state =
+                                v;
+                          },
+                          onChangeEnd: (v) => unawaited(
+                            _persist((s) => s.setBlurBackgroundAutoDarken(v)),
+                          ),
+                        ),
                       ],
                     ),
                   ],
@@ -298,6 +335,7 @@ class _BlurBackgroundPageState extends ConsumerState<BlurBackgroundPage> {
     String? imagePath,
     double sigma,
     double brightness,
+    double autoDarken,
   ) {
     final blurSigma = sigma.clamp(0.0, 60.0);
     final scale = blurSigma <= 0.5 ? 1.0 : 1.0 + blurSigma / 120;
@@ -355,6 +393,8 @@ class _BlurBackgroundPageState extends ConsumerState<BlurBackgroundPage> {
               ColoredBox(color: Colors.black.withValues(alpha: darken)),
             if (whiten > 0)
               ColoredBox(color: Colors.white.withValues(alpha: whiten)),
+            if (autoDarken > 0)
+              ColoredBox(color: Colors.black.withValues(alpha: autoDarken)),
           ],
         ),
       ),

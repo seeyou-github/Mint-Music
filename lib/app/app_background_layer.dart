@@ -29,6 +29,19 @@ class AppBackgroundLayer extends ConsumerWidget {
       final brightness = ref.watch(blurBackgroundBrightnessProvider);
       // 浅色主题下正文是深色，照片太暗就看不清字，额外盖一层白纱。
       final lighten = ref.watch(isLightThemeActiveProvider);
+      // 亮图自动压暗：按当前背景图的平均亮度补一层黑，越亮压得越多。
+      // 用取色结果的亮度（取色算法给的就是跳过极暗 / 极亮像素后的平均色）。
+      final autoDarkenStrength = ref.watch(blurBackgroundAutoDarkenProvider);
+      final tint = ref.watch(coverBlurBackdropEnabledProvider)
+          ? (ref.watch(coverAccentColorProvider) ??
+                ref.watch(backgroundBlurTintProvider))
+          : ref.watch(backgroundBlurTintProvider);
+      final autoDarken = tint == null
+          ? 0.0
+          : blurAutoDarkenAlpha(
+              luminance: tint.computeLuminance(),
+              strength: autoDarkenStrength,
+            );
 
       // 没有图时退回渐变：主界面不能空着。
       final Widget fallback;
@@ -50,6 +63,7 @@ class AppBackgroundLayer extends ConsumerWidget {
           sigma: sigma,
           brightness: brightness,
           lightenForLightTheme: lighten,
+          autoDarken: autoDarken,
         );
       }
 
@@ -65,6 +79,7 @@ class AppBackgroundLayer extends ConsumerWidget {
             sigma: sigma,
             brightness: brightness,
             lightenForLightTheme: lighten,
+            autoDarken: autoDarken,
             // 封面还在下载 / 这首歌根本没封面时，就用它兜着。
             fallback: fallback,
           );
@@ -121,6 +136,7 @@ class _CoverBlurBackground extends StatelessWidget {
     required this.sigma,
     required this.brightness,
     required this.lightenForLightTheme,
+    required this.autoDarken,
     required this.fallback,
   });
 
@@ -128,6 +144,7 @@ class _CoverBlurBackground extends StatelessWidget {
   final double sigma;
   final double brightness;
   final bool lightenForLightTheme;
+  final double autoDarken;
 
   /// 兜底背景（用户的模糊图 / 渐变），同时充当封面加载期间的垫底。
   final Widget fallback;
@@ -165,6 +182,7 @@ class _CoverBlurBackground extends StatelessWidget {
           sigma: sigma,
           brightness: brightness,
           lightenForLightTheme: lightenForLightTheme,
+          autoDarken: autoDarken,
         ),
       ],
     );
@@ -186,6 +204,7 @@ class _BlurBackground extends StatelessWidget {
     required this.sigma,
     required this.brightness,
     required this.lightenForLightTheme,
+    required this.autoDarken,
     required this.baseColor,
   });
 
@@ -199,6 +218,9 @@ class _BlurBackground extends StatelessWidget {
 
   /// 浅色主题是否额外盖一层白纱（深色文字压在暗背景上会看不清）。
   final bool lightenForLightTheme;
+
+  /// 亮图自动压暗的黑色不透明度（见 [blurAutoDarkenAlpha]）。
+  final double autoDarken;
 
   /// 图片下面铺的底色；为 null 表示「底下已有背景」，不铺（否则会盖住兜底背景）。
   final Color? baseColor;
@@ -236,6 +258,9 @@ class _BlurBackground extends StatelessWidget {
             ColoredBox(color: Colors.black.withValues(alpha: darken)),
           if (whiten > 0)
             ColoredBox(color: Colors.white.withValues(alpha: whiten)),
+          // 亮图自动压暗：放在固定亮度之后，按图片本身的亮度补压。
+          if (autoDarken > 0)
+            ColoredBox(color: Colors.black.withValues(alpha: autoDarken)),
           // 与渐变背景一样做一层抖动，避免大面积纯色出现色带。
           const BackgroundDitherLayer(),
         ],

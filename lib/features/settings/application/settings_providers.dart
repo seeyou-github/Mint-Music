@@ -679,6 +679,8 @@ final settingsInitProvider = FutureProvider<void>((ref) async {
       .getBlurBackgroundSigma();
   ref.read(blurBackgroundBrightnessProvider.notifier).state = svc
       .getBlurBackgroundBrightness();
+  ref.read(blurBackgroundAutoDarkenProvider.notifier).state = svc
+      .getBlurBackgroundAutoDarken();
   ref.read(songListHideCoverProvider.notifier).state = svc
       .getSongListHideCover();
   ref.read(customBackgroundGradientsLightProvider.notifier).state = svc

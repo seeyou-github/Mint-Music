@@ -44,6 +44,31 @@ final blurBackgroundSigmaProvider = StateProvider<double>((ref) => 30);
 /// 背景图亮度：1 = 原图，小于 1 压暗、大于 1 提亮。
 final blurBackgroundBrightnessProvider = StateProvider<double>((ref) => 0.85);
 
+/// 「亮图自动压暗」强度（0 = 关闭，1 = 最强）。
+///
+/// 用户的「亮度」是固定值，白底封面和暗色封面套同一档亮度时，前者会亮得
+/// 看不清白字、后者又太黑。这里再按图片自身的平均亮度补一层黑色：图片越亮
+/// 压得越多，暗图几乎不压。
+final blurBackgroundAutoDarkenProvider = StateProvider<double>((ref) => 0.7);
+
+/// 按图片平均亮度算自动压暗的黑色不透明度。
+///
+/// 亮度不超过 [threshold] 不压；从 [threshold] 到 1 线性增加，纯白图最多压
+/// `maxAlpha * strength`。图片的「平均亮度」由取色结果（取色算法跳过极暗 /
+/// 极亮像素后的平均色）的 luminance 提供。
+double blurAutoDarkenAlpha({
+  required double luminance,
+  required double strength,
+  double threshold = 0.3,
+  double maxAlpha = 0.5,
+}) {
+  if (strength <= 0) return 0;
+  final l = luminance.clamp(0.0, 1.0);
+  if (l <= threshold) return 0;
+  final t = ((l - threshold) / (1 - threshold)).clamp(0.0, 1.0);
+  return t * maxAlpha * strength.clamp(0.0, 1.0);
+}
+
 /// 背景图的绝对路径：没设置、文件被删掉或读不出来时返回 null，
 /// 由调用方退回渐变背景。
 final blurBackgroundImagePathProvider = FutureProvider<String?>((ref) async {
