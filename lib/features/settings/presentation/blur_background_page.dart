@@ -52,7 +52,7 @@ class _BlurBackgroundPageState extends ConsumerState<BlurBackgroundPage> {
 
   Future<void> _loadDirectory() async {
     try {
-      final dir = await AppPaths.settingsDirectory();
+      final dir = await AppPaths.blurBackgroundDirectory();
       if (!mounted) return;
       setState(() => _dirPath = dir.path);
       await _pruneMissing(dir);
@@ -65,10 +65,33 @@ class _BlurBackgroundPageState extends ConsumerState<BlurBackgroundPage> {
   Future<void> _pruneMissing(Directory dir) async {
     final names = ref.read(blurBackgroundImageNamesProvider);
     if (names.isEmpty) return;
+    final legacyDir = await AppPaths.settingsDirectory();
     final existing = <String>[];
+    var moved = false;
     for (final name in names) {
-      if (await File(p.join(dir.path, name)).exists()) existing.add(name);
+      final file = File(p.join(dir.path, name));
+      if (await file.exists()) {
+        existing.add(name);
+        continue;
+      }
+      // 旧版本 / 从旧备份还原回来的图片还放在设置目录根下：顺手搬进来。
+      final legacy = File(p.join(legacyDir.path, name));
+      if (!await legacy.exists()) continue;
+      try {
+        await legacy.rename(file.path);
+        existing.add(name);
+        moved = true;
+      } catch (_) {
+        try {
+          await legacy.copy(file.path);
+          await legacy.delete();
+          existing.add(name);
+          moved = true;
+        } catch (_) {}
+      }
     }
+    // 文件从旧路径搬走了：让预览按新路径重新解析（旧 FileImage key 会失效）。
+    if (moved) ref.invalidate(blurBackgroundImagePathProvider);
     if (existing.length == names.length) return;
     ref.read(blurBackgroundImageNamesProvider.notifier).state = existing;
     await _persist((svc) => svc.setBlurBackgroundImages(existing));
@@ -85,7 +108,7 @@ class _BlurBackgroundPageState extends ConsumerState<BlurBackgroundPage> {
       final picked = await FilePicker.platform.pickFiles(type: FileType.image);
       final sourcePath = picked?.files.single.path;
       if (sourcePath == null) return;
-      final dir = await AppPaths.settingsDirectory();
+      final dir = await AppPaths.blurBackgroundDirectory();
       final ext = p.extension(sourcePath).toLowerCase();
       // 文件名带时间戳，**不能**沿用固定名：Flutter 的图片缓存是按
       // `FileImage(路径)` 做 key 的，同名覆盖文件后组件拿到的还是上一张
@@ -327,7 +350,8 @@ class _BlurBackgroundPageState extends ConsumerState<BlurBackgroundPage> {
     final dir = _dirPath;
     return SettingGroup(
       title: '背景图',
-      subtitle: '点击图片切换背景，右上角按钮删除；图片会复制到设置目录，备份还原时一起带走',
+      subtitle:
+          '点击图片切换背景，右上角按钮删除；图片保存在 config/setting/background_pic，备份还原时一起带走',
       colors: colors,
       children: [
         Wrap(

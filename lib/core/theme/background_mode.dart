@@ -105,15 +105,29 @@ final blurBackgroundImagePathProvider = FutureProvider<String?>((ref) async {
   final name = ref.watch(blurBackgroundImageNameProvider).trim();
   if (name.isEmpty) return null;
   try {
-    final dir = await AppPaths.settingsDirectory();
+    final dir = await AppPaths.blurBackgroundDirectory();
     final file = File(p.join(dir.path, name));
-    if (!await file.exists()) return null;
-    if (await file.length() == 0) return null;
-    return file.path;
+    if (await _isUsableImage(file)) return file.path;
+    // 旧版图片直接放在设置目录里；还原旧备份后还没被启动迁移搬到子目录时，
+    // 按旧路径取，避免背景暂时退回渐变。
+    final legacy = File(
+      p.join((await AppPaths.settingsDirectory()).path, name),
+    );
+    if (await _isUsableImage(legacy)) return legacy.path;
+    return null;
   } catch (_) {
     return null;
   }
 });
+
+Future<bool> _isUsableImage(File file) async {
+  try {
+    if (!await file.exists()) return false;
+    return await file.length() > 0;
+  } catch (_) {
+    return false;
+  }
+}
 
 /// 高斯模糊背景图的「基调色」：压暗后的照片主色。
 ///

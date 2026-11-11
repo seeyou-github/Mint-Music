@@ -12,6 +12,7 @@ import 'package:path_provider/path_provider.dart';
 /// AppData\
 ///   config\            配置（跟着「备份 / 还原」整体打包）
 ///     setting\         设置（settings.json、字体、自定义封面等）
+///       background_pic\ 高斯模糊背景图（用户体验上传的图片）
 ///     db\              重要数据库（我的收藏、收藏歌单、已听进度）
 ///     plugin\          插件文件
 ///   download_music\    默认下载目录（仅 Windows）
@@ -33,6 +34,9 @@ class AppPaths {
 
   /// 设置目录名（`config\setting`）。
   static const String settingFolderName = 'setting';
+
+  /// 高斯模糊背景图目录名（`config\setting\background_pic`）。
+  static const String backgroundPicFolderName = 'background_pic';
 
   /// 插件目录名（`config\plugin`）。
   static const String pluginFolderName = 'plugin';
@@ -125,6 +129,17 @@ class AppPaths {
     return _ensureDirectory(Directory(p.join(base.path, 'fonts')));
   }
 
+  /// 高斯模糊背景图目录（`config\setting\background_pic`）。
+  ///
+  /// 单独放一层子目录：设置页可以上传多张图，和 settings.json / 字体混在
+  /// 一起不好管理；备份是把整个 `config\setting` 递归打包的，图片照样跟着走。
+  static Future<Directory> blurBackgroundDirectory() async {
+    final base = await settingsDirectory();
+    return _ensureDirectory(
+      Directory(p.join(base.path, backgroundPicFolderName)),
+    );
+  }
+
   /// 插件文件目录。
   ///
   /// - Windows / Android：`AppData\config\plugin`
@@ -207,19 +222,55 @@ class AppPaths {
   /// | Android `files\db` | `AppData\config\db` |
   /// | Android `<文档>\plugin` | `AppData\config\plugin` |
   /// | Android `<缓存>\db` | `AppData\temp\db` |
+  /// | 设置目录里的 `background_blur*` | `AppData\config\setting\background_pic\` |
   ///
   /// 任何一步失败都只打日志、不影响启动（下次启动会再试）。缓存目录里的图片
   /// 等可再生数据不搬（系统会自己回收旧缓存目录）。
   static Future<void> migrateLegacyLayout() async {
-    if (!usesAppDataLayout) return;
     try {
-      if (Platform.isWindows) {
-        await _migrateWindowsLayout();
-      } else {
-        await _migrateAndroidLayout();
+      if (usesAppDataLayout) {
+        if (Platform.isWindows) {
+          await _migrateWindowsLayout();
+        } else {
+          await _migrateAndroidLayout();
+        }
       }
+      await _migrateBlurBackgroundImages();
     } catch (e) {
       print('[AppPaths] 迁移旧目录结构失败: $e');
+    }
+  }
+
+  /// 把旧版直接放在设置目录里的高斯模糊背景图挪进 `background_pic\`。
+  ///
+  /// 设置里只存文件名，移动文件不改配置；目标同名文件已存在时跳过，
+  /// 下次启动会再试，不会覆盖。
+  static Future<void> _migrateBlurBackgroundImages() async {
+    try {
+      final setting = await settingsDirectory();
+      final target = await blurBackgroundDirectory();
+      if (!await setting.exists() || p.equals(setting.path, target.path)) {
+        return;
+      }
+      await for (final entity in setting.list(followLinks: false)) {
+        if (entity is! File) continue;
+        final name = p.basename(entity.path);
+        // 与设置页里生成的文件名前缀一致（`background_blur_<时间戳>.jpg`）。
+        if (!name.startsWith('background_blur')) continue;
+        final dest = File(p.join(target.path, name));
+        if (await dest.exists()) continue;
+        try {
+          await entity.rename(dest.path);
+        } catch (_) {
+          // 跨盘 / 权限不允许 rename 时退回复制 + 删除。
+          try {
+            await entity.copy(dest.path);
+            await entity.delete();
+          } catch (_) {}
+        }
+      }
+    } catch (e) {
+      print('[AppPaths] 迁移高斯模糊背景图失败: $e');
     }
   }
 
