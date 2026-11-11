@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../app/app_page_background.dart';
 import '../../app/app_shell.dart';
@@ -27,6 +28,7 @@ import '../../features/settings/presentation/settings_page.dart';
 import '../../features/player/presentation/full_player_page.dart';
 import '../../features/player/presentation/lyric_page.dart';
 import '../constants/app_routes.dart';
+import '../theme/background_mode.dart';
 import 'branch_page_tracker.dart';
 import 'navigation_shell_provider.dart';
 
@@ -35,6 +37,32 @@ import 'navigation_shell_provider.dart';
 /// 切换一级分类时用它静默关掉设置、插件管理等二级页面，
 /// 见 [switchMainTab]。
 final mineBranchPages = BranchPageTracker();
+
+/// 当前背景是不是一张整屏的高斯模糊图。
+///
+/// 模糊背景在 GPU 上很贵：中端 Android 每一层都要把整屏重新卷积一遍。滑动
+/// 转场里两页各自带着一整屏模糊层一起移动，掉帧最明显；而且两页的模糊图
+/// 未必是同一张（跟随封面时新歌的封面可能已经在加载），滑动中会在页边出现
+/// 一条颜色对不上的竖条（见 `AppPageBackground`）。
+bool _blurBackgroundActive(BuildContext context) {
+  final container = ProviderScope.containerOf(context, listen: false);
+  return container.read(backgroundModeProvider) == BackgroundMode.blur;
+}
+
+/// 模糊模式下的转场：不做位移，原位淡入。
+///
+/// 两页的背景位置完全重合，只需要一次透明度混合，省掉整屏模糊层跟着滑动
+/// 的开销；两页背影哪怕不是同一张图，也是柔和地交叉淡化，不会出现硬边的
+/// 色块。淡入只占 `animation` 的前 55%（约 120ms），剩下的时间页面已经
+/// 完全可见，少画几十帧。
+Widget _blurFade(Animation<double> animation, Widget child) {
+  return FadeTransition(
+    opacity: animation.drive(
+      CurveTween(curve: const Interval(0, 0.55, curve: Curves.easeOut)),
+    ),
+    child: child,
+  );
+}
 
 /// 二级页面的统一转场：从右侧滑入，并给页面铺一层不透明的主界面背景。
 ///
@@ -48,12 +76,16 @@ Widget _slideTransition(
   Animation<double> secondaryAnimation,
   Widget child,
 ) {
+  final page = AppPageBackground(child: child);
+  if (_blurBackgroundActive(context)) {
+    return _blurFade(animation, page);
+  }
   return SlideTransition(
     position: Tween<Offset>(
       begin: const Offset(1, 0),
       end: Offset.zero,
     ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOutCubic)),
-    child: AppPageBackground(child: child),
+    child: page,
   );
 }
 
@@ -65,6 +97,9 @@ Widget _slideTransitionBare(
   Animation<double> secondaryAnimation,
   Widget child,
 ) {
+  if (_blurBackgroundActive(context)) {
+    return _blurFade(animation, child);
+  }
   return SlideTransition(
     position: Tween<Offset>(
       begin: const Offset(1, 0),
