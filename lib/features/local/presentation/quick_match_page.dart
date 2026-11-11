@@ -8,6 +8,7 @@ import 'package:go_router/go_router.dart';
 import '../../../core/constants/app_routes.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
+import '../../../core/theme/app_surface.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../../player/domain/models/song.dart';
@@ -591,9 +592,8 @@ class _QuickMatchPageState extends ConsumerState<QuickMatchPage> {
               colors,
               icon: Icons.edit,
               tooltip: context.tr('编辑标签'),
-              onTap: () => context.push(
-                '${AppRoutes.tagEditor}?songId=${song.id}',
-              ),
+              onTap: () =>
+                  context.push('${AppRoutes.tagEditor}?songId=${song.id}'),
             ),
             _actionCell(
               colors,
@@ -710,6 +710,12 @@ class _QuickMatchPageState extends ConsumerState<QuickMatchPage> {
             const SizedBox(height: AppSpacing.md),
             FilledButton.icon(
               onPressed: () => unawaited(_addDirectory()),
+              // 与侧栏「发现」的激活态一致：主题色调暗做底、文字用主题色。
+              style: FilledButton.styleFrom(
+                backgroundColor: activeChipColor(colors),
+                foregroundColor: colors.primary,
+                side: BorderSide(color: colors.primary.withValues(alpha: 0.5)),
+              ),
               icon: const Icon(Icons.create_new_folder_outlined, size: 18),
               label: Text(context.tr('添加扫描目录')),
             ),

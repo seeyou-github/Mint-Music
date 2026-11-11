@@ -1,6 +1,10 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../core/theme/app_surface.dart';
+import '../../core/theme/theme_provider.dart';
 
 /// 「饱和度 / 明度方块 + 色相滑条」的取色区。
 ///
@@ -239,7 +243,7 @@ class _HsvColorAreaState extends State<HsvColorArea> {
 /// HSV 取色面板：饱和度/明度方块 + 色相滑条 + 预览 + 保存 / 取消。
 ///
 /// 用于「设置 - 外观设置 - 字体颜色 / 第二字体颜色」里新增自定义颜色。
-class HsvColorPicker extends StatefulWidget {
+class HsvColorPicker extends ConsumerStatefulWidget {
   const HsvColorPicker({
     super.key,
     required this.initialColor,
@@ -261,10 +265,10 @@ class HsvColorPicker extends StatefulWidget {
   final VoidCallback onCancel;
 
   @override
-  State<HsvColorPicker> createState() => _HsvColorPickerState();
+  ConsumerState<HsvColorPicker> createState() => _HsvColorPickerState();
 }
 
-class _HsvColorPickerState extends State<HsvColorPicker> {
+class _HsvColorPickerState extends ConsumerState<HsvColorPicker> {
   late double _hue;
   late double _saturation;
   late double _value;
@@ -323,6 +327,7 @@ class _HsvColorPickerState extends State<HsvColorPicker> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final colors = ref.watch(themeColorsProvider);
     final pureHue = HSVColor.fromAHSV(1, _hue, 1, 1).toColor();
 
     return Column(
@@ -536,10 +541,21 @@ class _HsvColorPickerState extends State<HsvColorPicker> {
         Row(
           mainAxisAlignment: MainAxisAlignment.end,
           children: [
-            TextButton(onPressed: widget.onCancel, child: const Text('取消')),
+            TextButton(
+              onPressed: widget.onCancel,
+              style: TextButton.styleFrom(foregroundColor: colors.primary),
+              child: const Text('取消'),
+            ),
             const SizedBox(width: 8),
             FilledButton(
               onPressed: () => widget.onSave(_color),
+              // 与侧栏「发现」的激活态一致：主题色调暗做底、文字用主题色。
+              // 不写 style 时会落到全局 FilledButton 主题，那是固定的绿色。
+              style: FilledButton.styleFrom(
+                backgroundColor: activeChipColor(colors),
+                foregroundColor: colors.primary,
+                side: BorderSide(color: colors.primary.withValues(alpha: 0.5)),
+              ),
               child: const Text('保存'),
             ),
           ],

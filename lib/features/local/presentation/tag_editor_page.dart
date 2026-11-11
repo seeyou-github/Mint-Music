@@ -1014,6 +1014,14 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
           const SizedBox(width: AppSpacing.sm),
           FilledButton(
             onPressed: candidate == null ? null : _applySelected,
+            // 与侧栏「发现」的激活态一致：主题色调暗做底、文字用主题色。
+            style: FilledButton.styleFrom(
+              backgroundColor: activeChipColor(colors),
+              foregroundColor: colors.primary,
+              disabledBackgroundColor: colors.surfaceVariant,
+              disabledForegroundColor: colors.textHint,
+              side: BorderSide(color: colors.primary.withValues(alpha: 0.5)),
+            ),
             child: Text(context.tr('使用')),
           ),
         ],

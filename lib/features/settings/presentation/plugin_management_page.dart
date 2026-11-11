@@ -610,7 +610,12 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
           ),
           Switch(
             value: enabled,
+            // 与侧栏「发现」的激活态一致：轨道用主题色调暗、滑块用主题色。
+            activeTrackColor: activeChipColor(colors),
             activeThumbColor: colors.primary,
+            trackOutlineColor: WidgetStateProperty.all(
+              colors.primary.withValues(alpha: 0.5),
+            ),
             materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
             onChanged: (value) =>
                 _setPluginSourceEnabled(plugin, source, sourceId, value),

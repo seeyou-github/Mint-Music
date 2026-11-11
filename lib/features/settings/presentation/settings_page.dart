@@ -2267,6 +2267,15 @@ class _AppearanceContent extends ConsumerWidget {
                             _showSettingsMessage(sheetContext, '没有可导入的字体文件');
                           }
                         },
+                        // 与侧栏「发现」的激活态一致：主题色调暗做底、
+                        // 文字用主题色。
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: activeChipColor(colors),
+                          foregroundColor: colors.primary,
+                          side: BorderSide(
+                            color: colors.primary.withValues(alpha: 0.5),
+                          ),
+                        ),
                         icon: const Icon(Icons.file_upload_outlined, size: 18),
                         label: Text(context.tr('导入字体文件')),
                       ),
