@@ -289,7 +289,9 @@ class _CoverBlurBackgroundState extends ConsumerState<_CoverBlurBackground> {
     return Stack(
       fit: StackFit.expand,
       children: [
-        widget.fallback,
+        // 冻结的封面已经铺满整屏时，兜底背景被整块盖住，不用再画：兜底往往
+        // 也是一整屏模糊（用户的模糊图），每新建一层背景就白糊一遍。
+        Offstage(offstage: record != null, child: widget.fallback),
         // 当前歌的封面在下面悄悄加载：加载完成才写进记录。
         // 记录已经在画面上时它被整块盖住，不再参与绘制（省一次全屏模糊）。
         if (showCurrent)
