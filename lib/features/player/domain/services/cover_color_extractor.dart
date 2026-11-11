@@ -17,10 +17,17 @@ class CoverColorResult {
   final Color lightColor;
   final bool useDarkText;
 
+  /// 整张图的色彩浓度：0 = 黑白灰 / 暗到看不出颜色，1 = 颜色很足。
+  ///
+  /// 背景层用它给饱和度滑条打折（见 `effectiveBlurSaturation`）：黑白图、
+  /// 暗图上硬拉饱和度只会放大噪点和色斑。取色失败时保持 1（不衰减）。
+  final double colorfulness;
+
   const CoverColorResult({
     required this.dominantColor,
     required this.lightColor,
     required this.useDarkText,
+    this.colorfulness = 1,
   });
 
   static const CoverColorResult defaultResult = CoverColorResult(
@@ -30,10 +37,16 @@ class CoverColorResult {
   );
 }
 
-int _extractDominantColor(Uint8List rgbaBytes) {
+/// 平均色 + 整张图的色彩浓度。
+///
+/// 浓度取每像素色度（max - min，等价于 HSV 的 S × V）的平均值：纯黑 / 纯白 /
+/// 灰度图是 0，暗到看不出颜色的图也很低，颜色正常的图才明显。
+(int, double) _extractDominantColor(Uint8List rgbaBytes) {
   final pixelCount = rgbaBytes.length ~/ 4;
   int rSum = 0, gSum = 0, bSum = 0;
   int count = 0;
+  double chromaSum = 0;
+  int chromaCount = 0;
   final step = pixelCount > 8000 ? (pixelCount / 4000).floor().clamp(1, 20) : 1;
 
   for (int i = 0; i < pixelCount; i += step) {
@@ -43,6 +56,13 @@ int _extractDominantColor(Uint8List rgbaBytes) {
     final b = rgbaBytes[offset + 2];
     final a = rgbaBytes[offset + 3];
     if (a < 128) continue;
+
+    // 色彩浓度：所有不透明像素都算（含极暗 / 极亮），纯黑白灰自然是 0。
+    final maxChannel = r > g ? (r > b ? r : b) : (g > b ? g : b);
+    final minChannel = r < g ? (r < b ? r : b) : (g < b ? g : b);
+    chromaSum += (maxChannel - minChannel) / 255;
+    chromaCount++;
+
     final brightness = (r * 299 + g * 587 + b * 114) ~/ 1000;
     if (brightness < 25 || brightness > 245) continue;
     rSum += r;
@@ -51,11 +71,15 @@ int _extractDominantColor(Uint8List rgbaBytes) {
     count++;
   }
 
-  if (count == 0) return 0xFF333333;
-  return 0xFF000000 |
-      ((rSum ~/ count) << 16) |
-      ((gSum ~/ count) << 8) |
-      (bSum ~/ count);
+  final colorfulness = chromaCount == 0 ? 1.0 : chromaSum / chromaCount;
+  if (count == 0) return (0xFF333333, colorfulness);
+  return (
+    0xFF000000 |
+        ((rSum ~/ count) << 16) |
+        ((gSum ~/ count) << 8) |
+        (bSum ~/ count),
+    colorfulness,
+  );
 }
 
 class CoverColorExtractor {
@@ -94,7 +118,10 @@ class CoverColorExtractor {
       }
 
       final rgbaBytes = byteData.buffer.asUint8List();
-      final dominantArgb = await compute(_extractDominantColor, rgbaBytes);
+      final (dominantArgb, colorfulness) = await compute(
+        _extractDominantColor,
+        rgbaBytes,
+      );
 
       final dominantColor = Color(dominantArgb);
       final luminance = dominantColor.computeLuminance();
@@ -111,6 +138,7 @@ class CoverColorExtractor {
         dominantColor: dominantColor,
         lightColor: lightColor,
         useDarkText: useDarkText,
+        colorfulness: colorfulness,
       );
     } catch (e) {
       return CoverColorResult.defaultResult;

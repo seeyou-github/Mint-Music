@@ -48,6 +48,16 @@ class AppBackgroundLayer extends ConsumerWidget {
       // 饱和度 / 亮度都是「设置 → 高斯模糊背景图」里的滑条，用户图与封面
       // 糊化背景共用（封面糊化本质也是同一张图铺满）。
       final saturation = ref.watch(blurBackgroundSaturationProvider);
+      // 图片本身很灰 / 很暗（黑白图、暗图）时饱和度调整自动减弱：这类图上
+      // 硬拉饱和度只会把压缩噪点、色斑放大。用户图与封面各按自己的色彩浓度算。
+      final imageSaturation = effectiveBlurSaturation(
+        saturation,
+        ref.watch(backgroundBlurColorfulnessProvider),
+      );
+      final coverSaturation = effectiveBlurSaturation(
+        saturation,
+        ref.watch(coverAccentColorfulnessProvider),
+      );
       // 浅色主题下正文是深色，照片太暗就看不清字，额外盖一层白纱。
       final lighten = ref.watch(isLightThemeActiveProvider);
       // 亮图自动压暗：按当前背景图的平均亮度补一层黑，越亮压得越多。
@@ -83,7 +93,7 @@ class AppBackgroundLayer extends ConsumerWidget {
           ),
           sigma: sigma,
           brightness: brightness,
-          saturation: saturation,
+          saturation: imageSaturation,
           lightenForLightTheme: lighten,
           autoDarken: autoDarken,
         );
@@ -100,7 +110,7 @@ class AppBackgroundLayer extends ConsumerWidget {
             song: song,
             sigma: sigma,
             brightness: brightness,
-            saturation: saturation,
+            saturation: coverSaturation,
             lightenForLightTheme: lighten,
             autoDarken: autoDarken,
             // 封面还在下载 / 这首歌根本没封面时，就用它兜着。

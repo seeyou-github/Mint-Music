@@ -203,12 +203,18 @@ class _BlurBackgroundPageState extends ConsumerState<BlurBackgroundPage> {
     final autoDarkenStrength = ref.watch(blurBackgroundAutoDarkenProvider);
     // 预览用用户图自己的平均亮度算自动压暗，和主界面同一套公式。
     final tint = ref.watch(blurBackgroundTintProvider).valueOrNull;
-    final autoDarken = tint == null
+    final tintColor = tint?.color;
+    final autoDarken = tintColor == null
         ? 0.0
         : blurAutoDarkenAlpha(
-            luminance: tint.computeLuminance(),
+            luminance: tintColor.computeLuminance(),
             strength: autoDarkenStrength,
           );
+    // 黑白 / 暗图上饱和度调整会自动减弱，预览与主界面保持一致。
+    final effectiveSaturation = effectiveBlurSaturation(
+      saturation,
+      tint?.colorfulness ?? 1,
+    );
     final horizontal = ResponsiveLayout.horizontalPadding(context);
 
     return AppPageBackground(
@@ -233,7 +239,7 @@ class _BlurBackgroundPageState extends ConsumerState<BlurBackgroundPage> {
                       imagePath,
                       sigma,
                       brightness,
-                      saturation,
+                      effectiveSaturation,
                       autoDarken,
                     ),
                     const SizedBox(height: AppSpacing.lg),

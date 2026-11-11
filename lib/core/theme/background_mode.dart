@@ -74,6 +74,38 @@ List<double> blurSaturationMatrix(double s) {
   ];
 }
 
+/// 当前背景图自身的色彩浓度。
+///
+/// 0 = 黑白灰 / 暗到看不出颜色，1 = 颜色很足。由取色器解码背景图时顺手算出
+/// （每像素色度的平均值），app 层写进这里；[effectiveBlurSaturation] 用它
+/// 决定饱和度滑条生效多少。「跟随封面」时换成封面自己的浓度
+/// （`coverAccentColorfulnessProvider`）。取不到图时保持 1（不衰减）。
+final backgroundBlurColorfulnessProvider = StateProvider<double>((ref) => 1);
+
+/// 图片本身色彩很低时，饱和度调整按这个比例打折。
+///
+/// 纯黑白 / 灰度图是 0（调了也没颜色可调），暗到发黑的图色度也很低；
+/// 从 [startAt] 到 [fullAt] 平滑升到 1，正常颜色的图不受影响。
+double saturationStrengthForColorfulness(
+  double colorfulness, {
+  double startAt = 0.04,
+  double fullAt = 0.18,
+}) {
+  final t = ((colorfulness - startAt) / (fullAt - startAt)).clamp(0.0, 1.0);
+  // smoothstep：低浓度区间过渡柔和，不会在某个数值上力度突变。
+  return t * t * (3 - 2 * t);
+}
+
+/// 滑条上的 [saturation] 按图片自身色彩浓度打折后的实际值。
+///
+/// 黑白 / 暗图上硬拉饱和度只会把压缩噪点、色斑放大，所以这类图几乎不生效；
+/// 颜色正常的图原样生效。
+double effectiveBlurSaturation(double saturation, double colorfulness) {
+  final strength = saturationStrengthForColorfulness(colorfulness);
+  final s = saturation.clamp(0.0, 2.0);
+  return (1 + (s - 1) * strength).clamp(0.0, 2.0);
+}
+
 /// 「亮图自动压暗」强度（0 = 关闭，1 = 100%，2 = 200%）。
 ///
 /// 用户的「亮度」是固定值，白底封面和暗色封面套同一档亮度时，前者会亮得
