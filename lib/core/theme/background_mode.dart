@@ -78,8 +78,9 @@ List<double> blurSaturationMatrix(double s) {
 ///
 /// 0 = 黑白灰 / 暗到看不出颜色，1 = 颜色很足。由取色器解码背景图时顺手算出
 /// （每像素色度的平均值），app 层写进这里；[effectiveBlurSaturation] 用它
-/// 决定饱和度滑条生效多少。「跟随封面」时换成封面自己的浓度
-/// （`coverAccentColorfulnessProvider`）。取不到图时保持 1（不衰减）。
+/// 决定饱和度滑条生效多少。「跟随封面」时封面那层在图片加载出来、成为背景
+/// 之前就自己算好浓度（见 `_CoverBackdrop`），不经过这里。取不到图时保持 1
+/// （不衰减）。
 final backgroundBlurColorfulnessProvider = StateProvider<double>((ref) => 1);
 
 /// 图片本身色彩很低时，饱和度调整按这个比例打折。

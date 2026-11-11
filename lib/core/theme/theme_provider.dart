@@ -229,12 +229,6 @@ final songListHideCoverProvider = StateProvider<bool>((ref) => false);
 /// `currentCoverColorProvider` 出结果时把颜色写进来，这里只负责存。
 final coverAccentColorProvider = StateProvider<Color?>((ref) => null);
 
-/// 当前封面自身的色彩浓度（0 = 黑白灰 / 暗到看不出颜色，1 = 颜色很足）。
-///
-/// 与 [coverAccentColorProvider] 一起由 app 层从取色结果同步过来，背景层用它
-/// 给饱和度滑条打折：黑白 / 暗封面上硬拉饱和度只会放大噪点和色斑。
-final coverAccentColorfulnessProvider = StateProvider<double>((ref) => 1);
-
 /// 背景光晕的启动种子。
 ///
 /// 每次启动应用换一个随机值，光晕的位置 / 半径因此「每次启动都不同」；
