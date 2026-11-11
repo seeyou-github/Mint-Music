@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mintmusic/core/theme/app_theme.dart';
+import 'package:mintmusic/core/theme/theme_colors.dart';
 
 // 说明：完整 App 的冒烟测试需要真实音频服务（AudioService / just_audio /
 // audio_session 等平台通道），在纯 flutter_test 环境中无法运行
@@ -11,8 +12,8 @@ void main() {
   testWidgets('AppTheme 渲染浅色 / 深色 MaterialApp', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
-        theme: AppTheme.light,
-        darkTheme: AppTheme.dark,
+        theme: AppTheme.light(ThemeColors.dark.primary),
+        darkTheme: AppTheme.dark(ThemeColors.dark.primary),
         home: const Scaffold(body: Text('薄荷音乐')),
       ),
     );
@@ -20,7 +21,8 @@ void main() {
   });
 
   test('AppTheme 浅色 / 深色亮度正确', () {
-    expect(AppTheme.light.brightness, Brightness.light);
-    expect(AppTheme.dark.brightness, Brightness.dark);
+    final primary = ThemeColors.dark.primary;
+    expect(AppTheme.light(primary).brightness, Brightness.light);
+    expect(AppTheme.dark(primary).brightness, Brightness.dark);
   });
 }

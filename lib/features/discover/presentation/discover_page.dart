@@ -2217,6 +2217,10 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
           const SizedBox(height: AppSpacing.md),
           OutlinedButton.icon(
             onPressed: _addingHotBoard ? null : () => unawaited(_addHotBoard()),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: colors.primary,
+              side: BorderSide(color: colors.primary.withValues(alpha: 0.5)),
+            ),
             icon: const Icon(Icons.add, size: 18),
             label: Text(context.tr('选择榜单')),
           ),

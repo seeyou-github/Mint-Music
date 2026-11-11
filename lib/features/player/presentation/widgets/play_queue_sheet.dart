@@ -153,6 +153,10 @@ class _PlayQueueSheetContentState
     // 队列是「活」的：直接 watch provider，删除某首后就地刷新列表，
     // 不需要关闭弹层再重新打开。
     final playbackState = ref.watch(playbackControllerProvider);
+    // 当前播放项的强调色跟随「外观设置 → 主题色」，不再写死 Spotify 绿。
+    final primary = ref.watch(
+      themeColorsProvider.select((colors) => colors.primary),
+    );
 
     // 弹层开着的时候切歌（自动下一首 / 外部点播）：同样把新的当前歌曲滚进
     // 可视区，否则看到的一直是打开弹层时那一首。
@@ -216,10 +220,7 @@ class _PlayQueueSheetContentState
                               },
                               child: Text(
                                 context.tr('清空'),
-                                style: const TextStyle(
-                                  color: AppColors.primary,
-                                  fontSize: 14,
-                                ),
+                                style: TextStyle(color: primary, fontSize: 14),
                               ),
                             ),
                           ],
@@ -270,7 +271,7 @@ class _PlayQueueSheetContentState
                                         ? Icon(
                                             Icons.play_arrow,
                                             size: 14,
-                                            color: AppColors.primary,
+                                            color: primary,
                                           )
                                         : Padding(
                                             padding: EdgeInsets.only(left: 2),
@@ -308,7 +309,7 @@ class _PlayQueueSheetContentState
                                             Icons.music_note,
                                             size: 20,
                                             color: isCurrent
-                                                ? AppColors.primary
+                                                ? primary
                                                 : AppColors.textHint,
                                           ),
                                         ),
@@ -329,7 +330,7 @@ class _PlayQueueSheetContentState
                                         alpha: 0.45,
                                       )
                                     : (isCurrent
-                                          ? AppColors.primary
+                                          ? primary
                                           : AppColors.textPrimary),
                               ),
                               maxLines: 1,
@@ -370,9 +371,7 @@ class _PlayQueueSheetContentState
                                               alpha: 0.7,
                                             )
                                           : (isCurrent
-                                                ? AppColors.primary.withValues(
-                                                    alpha: 0.7,
-                                                  )
+                                                ? primary.withValues(alpha: 0.7)
                                                 : AppColors.textHint),
                                     ),
                                     maxLines: 1,
@@ -382,10 +381,10 @@ class _PlayQueueSheetContentState
                               ],
                             ),
                             trailing: isCurrent
-                                ? const Icon(
+                                ? Icon(
                                     Icons.volume_up,
                                     size: 18,
-                                    color: AppColors.primary,
+                                    color: primary,
                                   )
                                 : IconButton(
                                     icon: const Icon(

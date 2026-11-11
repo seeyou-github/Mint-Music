@@ -285,6 +285,13 @@ class _AppState extends ConsumerState<App> {
     final appFontFamily = ref.watch(appFontSelectedProvider);
     // 当前是否为浅色外观：状态栏图标的明暗跟着它走。
     final isLightActive = ref.watch(isLightThemeActiveProvider);
+    // Material 主题按「外观设置 → 主题色」生成：所有没显式写 style 的按钮 /
+    // 开关 / 滑块 / 进度条都从 colorScheme.primary 取色，换主题色时一起变。
+    // 只订阅 primary 这一项，跟随封面变色（surface 变化）不会重建整个 App；
+    // AppTheme 还按主题色缓存 ThemeData，重复 build 不重复构造。
+    final materialPrimary = ref.watch(
+      themeColorsProvider.select((colors) => colors.primary),
+    );
     // 「主界面跟随封面变色」要用的主色：core 层只负责存颜色，取色在
     // features 层（currentCoverColorProvider），所以在这里同步过去。
     // 监听负责切歌，[_syncCoverAccent] 负责首帧（监听不回溯已有结果）。
@@ -358,8 +365,11 @@ class _AppState extends ConsumerState<App> {
         child: MaterialApp.router(
           title: tr('Music'),
           debugShowCheckedModeBanner: false,
-          theme: _applyAppFont(AppTheme.light, appFontFamily),
-          darkTheme: _applyAppFont(AppTheme.dark, appFontFamily),
+          theme: _applyAppFont(AppTheme.light(materialPrimary), appFontFamily),
+          darkTheme: _applyAppFont(
+            AppTheme.dark(materialPrimary),
+            appFontFamily,
+          ),
           themeMode: themeMode,
           routerConfig: appRouter,
           builder: (context, child) {
@@ -431,9 +441,7 @@ class _AppState extends ConsumerState<App> {
               fit: StackFit.passthrough,
               children: [
                 Positioned.fill(
-                  child: IgnorePointer(
-                    child: const AppBackgroundLayer(),
-                  ),
+                  child: IgnorePointer(child: const AppBackgroundLayer()),
                 ),
                 body,
               ],

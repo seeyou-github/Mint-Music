@@ -6,10 +6,33 @@ import 'app_typography.dart';
 class AppTheme {
   AppTheme._();
 
-  static ThemeData? _lightCache;
-  static ThemeData? _darkCache;
+  /// 按「当前主题色」缓存：主题色没变时复用同一份 ThemeData，避免每次 build
+  /// 都重建整套组件主题。
+  static final Map<String, ThemeData> _cache = {};
 
-  static ThemeData get light => _lightCache ??= ThemeData(
+  /// 深色主题里用的「亮一档」主题色（与 ThemeColors.lightWithPrimary 的
+  /// primaryLight 同一算法）。
+  static Color _lightVariant(Color primary) =>
+      Color.lerp(primary, Colors.white, 0.2)!;
+
+  /// 主题色上的文字色：白色，和 ThemeColors.textOnPrimary 一致。
+  static const Color _onPrimary = Color(0xFFFFFFFF);
+
+  static ThemeData light(Color primary) => _cache.putIfAbsent(
+    'light|${primary.toARGB32()}',
+    () => _buildLight(primary),
+  );
+
+  static ThemeData dark(Color primary) => _cache.putIfAbsent(
+    'dark|${primary.toARGB32()}',
+    () => _buildDark(primary, _lightVariant(primary)),
+  );
+
+  /// 浅色 Material 主题：所有写死的 Spotify 绿都换成 [primary]。
+  /// 没显式写 style 的 FilledButton / OutlinedButton / Switch / Slider /
+  /// Checkbox / TabBar 等控件，都是从这里的 colorScheme 取色，因此会自动跟随
+  /// 「外观设置 → 主题色」。
+  static ThemeData _buildLight(Color primary) => ThemeData(
     useMaterial3: true,
     brightness: Brightness.light,
     // 全局关闭点击水波纹。
@@ -19,15 +42,15 @@ class AppTheme {
     // 颜色变化承担（见 song_list_item 等处的 highlightColor），不影响可点性判断。
     splashFactory: NoSplash.splashFactory,
     splashColor: Colors.transparent,
-    colorScheme: const ColorScheme.light(
-      primary: AppColors.primary,
-      onPrimary: AppColors.textOnPrimary,
-      secondary: AppColors.accent,
-      onSecondary: AppColors.textOnPrimary,
+    colorScheme: ColorScheme.light(
+      primary: primary,
+      onPrimary: _onPrimary,
+      secondary: primary,
+      onSecondary: _onPrimary,
       surface: Color(0xFFFFFFFF),
       onSurface: Color(0xFF1A1A1A),
       error: AppColors.error,
-      onError: AppColors.textOnPrimary,
+      onError: _onPrimary,
     ),
     scaffoldBackgroundColor: const Color(0xFFF5F5F5),
     appBarTheme: const AppBarTheme(
@@ -48,9 +71,9 @@ class AppTheme {
         vertical: AppSpacing.sm,
       ),
     ),
-    bottomNavigationBarTheme: const BottomNavigationBarThemeData(
+    bottomNavigationBarTheme: BottomNavigationBarThemeData(
       backgroundColor: Color(0xFFF5F5F5),
-      selectedItemColor: AppColors.primary,
+      selectedItemColor: primary,
       unselectedItemColor: Color(0xFF999999),
       type: BottomNavigationBarType.fixed,
       elevation: 0,
@@ -63,14 +86,14 @@ class AppTheme {
     navigationBarTheme: NavigationBarThemeData(
       elevation: 0,
       backgroundColor: const Color(0xFFF5F5F5),
-      indicatorColor: AppColors.primary.withValues(alpha: 0.12),
+      indicatorColor: primary.withValues(alpha: 0.12),
       labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
     ),
     elevatedButtonTheme: ElevatedButtonThemeData(
       style: ElevatedButton.styleFrom(
         elevation: 0,
-        backgroundColor: AppColors.primary,
-        foregroundColor: AppColors.textOnPrimary,
+        backgroundColor: primary,
+        foregroundColor: _onPrimary,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppRadius.full),
         ),
@@ -81,7 +104,7 @@ class AppTheme {
       ),
     ),
     textButtonTheme: TextButtonThemeData(
-      style: TextButton.styleFrom(foregroundColor: AppColors.primary),
+      style: TextButton.styleFrom(foregroundColor: primary),
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
@@ -96,7 +119,7 @@ class AppTheme {
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(AppRadius.lg),
-        borderSide: const BorderSide(color: AppColors.primary, width: 1.5),
+        borderSide: BorderSide(color: primary, width: 1.5),
       ),
       contentPadding: const EdgeInsets.symmetric(
         horizontal: AppSpacing.lg,
@@ -109,17 +132,17 @@ class AppTheme {
       thickness: 1,
       space: 1,
     ),
-    sliderTheme: const SliderThemeData(
-      activeTrackColor: AppColors.primary,
+    sliderTheme: SliderThemeData(
+      activeTrackColor: primary,
       inactiveTrackColor: Color(0xFFE0E0E0),
-      thumbColor: AppColors.primary,
-      overlayColor: Color(0x1F1DB954),
+      thumbColor: primary,
+      overlayColor: primary.withValues(alpha: 0.12),
       trackHeight: 3,
     ),
     iconTheme: const IconThemeData(color: Color(0xFF666666), size: 24),
     floatingActionButtonTheme: FloatingActionButtonThemeData(
-      backgroundColor: AppColors.primary,
-      foregroundColor: AppColors.textOnPrimary,
+      backgroundColor: primary,
+      foregroundColor: _onPrimary,
       elevation: 2,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppRadius.xl),
@@ -127,26 +150,26 @@ class AppTheme {
     ),
     chipTheme: ChipThemeData(
       backgroundColor: const Color(0xFFF0F0F0),
-      selectedColor: AppColors.primary.withValues(alpha: 0.12),
+      selectedColor: primary.withValues(alpha: 0.12),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppRadius.full),
       ),
       side: BorderSide.none,
     ),
-    progressIndicatorTheme: const ProgressIndicatorThemeData(
-      color: AppColors.primary,
+    progressIndicatorTheme: ProgressIndicatorThemeData(
+      color: primary,
       linearTrackColor: Color(0xFFE0E0E0),
     ),
     switchTheme: SwitchThemeData(
       thumbColor: WidgetStateProperty.resolveWith((states) {
         if (states.contains(WidgetState.selected)) {
-          return AppColors.textOnPrimary;
+          return _onPrimary;
         }
         return const Color(0xFF999999);
       }),
       trackColor: WidgetStateProperty.resolveWith((states) {
         if (states.contains(WidgetState.selected)) {
-          return AppColors.primary;
+          return primary;
         }
         return const Color(0xFFE0E0E0);
       }),
@@ -194,7 +217,8 @@ class AppTheme {
     ),
   );
 
-  static ThemeData get dark => _darkCache ??= ThemeData(
+  /// 深色 Material 主题（同上，主题色全部来自 [primary]）。
+  static ThemeData _buildDark(Color primary, Color primaryLight) => ThemeData(
     useMaterial3: true,
     brightness: Brightness.dark,
     // 全局关闭点击水波纹。
@@ -204,15 +228,15 @@ class AppTheme {
     // 颜色变化承担（见 song_list_item 等处的 highlightColor），不影响可点性判断。
     splashFactory: NoSplash.splashFactory,
     splashColor: Colors.transparent,
-    colorScheme: const ColorScheme.dark(
-      primary: AppColors.primaryLight,
-      onPrimary: AppColors.textOnPrimary,
-      secondary: AppColors.accentLight,
-      onSecondary: AppColors.textOnPrimary,
+    colorScheme: ColorScheme.dark(
+      primary: primaryLight,
+      onPrimary: _onPrimary,
+      secondary: primaryLight,
+      onSecondary: _onPrimary,
       surface: AppColors.darkSurface,
       onSurface: AppColors.darkTextPrimary,
       error: AppColors.error,
-      onError: AppColors.textOnPrimary,
+      onError: _onPrimary,
     ),
     scaffoldBackgroundColor: AppColors.darkBackground,
     appBarTheme: AppBarTheme(
@@ -236,9 +260,9 @@ class AppTheme {
         vertical: AppSpacing.sm,
       ),
     ),
-    bottomNavigationBarTheme: const BottomNavigationBarThemeData(
+    bottomNavigationBarTheme: BottomNavigationBarThemeData(
       backgroundColor: AppColors.darkSurface,
-      selectedItemColor: AppColors.primaryLight,
+      selectedItemColor: primaryLight,
       unselectedItemColor: AppColors.darkTextSecondary,
       type: BottomNavigationBarType.fixed,
       elevation: 0,
@@ -251,14 +275,14 @@ class AppTheme {
     navigationBarTheme: NavigationBarThemeData(
       elevation: 0,
       backgroundColor: AppColors.darkSurface,
-      indicatorColor: AppColors.primaryLight.withValues(alpha: 0.15),
+      indicatorColor: primaryLight.withValues(alpha: 0.15),
       labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
     ),
     elevatedButtonTheme: ElevatedButtonThemeData(
       style: ElevatedButton.styleFrom(
         elevation: 0,
-        backgroundColor: AppColors.primaryLight,
-        foregroundColor: AppColors.textOnPrimary,
+        backgroundColor: primaryLight,
+        foregroundColor: _onPrimary,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppRadius.full),
         ),
@@ -269,7 +293,7 @@ class AppTheme {
       ),
     ),
     textButtonTheme: TextButtonThemeData(
-      style: TextButton.styleFrom(foregroundColor: AppColors.primaryLight),
+      style: TextButton.styleFrom(foregroundColor: primaryLight),
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
@@ -284,7 +308,7 @@ class AppTheme {
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(AppRadius.lg),
-        borderSide: const BorderSide(color: AppColors.primaryLight, width: 1.5),
+        borderSide: BorderSide(color: primaryLight, width: 1.5),
       ),
       contentPadding: const EdgeInsets.symmetric(
         horizontal: AppSpacing.lg,
@@ -293,8 +317,8 @@ class AppTheme {
       hintStyle: const TextStyle(color: AppColors.darkTextSecondary),
     ),
     floatingActionButtonTheme: FloatingActionButtonThemeData(
-      backgroundColor: AppColors.primaryLight,
-      foregroundColor: AppColors.textOnPrimary,
+      backgroundColor: primaryLight,
+      foregroundColor: _onPrimary,
       elevation: 2,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppRadius.xl),
@@ -302,7 +326,7 @@ class AppTheme {
     ),
     chipTheme: ChipThemeData(
       backgroundColor: AppColors.darkSurface,
-      selectedColor: AppColors.primaryLight.withValues(alpha: 0.2),
+      selectedColor: primaryLight.withValues(alpha: 0.2),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppRadius.full),
       ),
@@ -314,10 +338,10 @@ class AppTheme {
       space: 1,
     ),
     sliderTheme: SliderThemeData(
-      activeTrackColor: AppColors.primaryLight,
+      activeTrackColor: primaryLight,
       inactiveTrackColor: AppColors.darkDivider,
-      thumbColor: AppColors.primaryLight,
-      overlayColor: AppColors.primaryLight.withValues(alpha: 0.15),
+      thumbColor: primaryLight,
+      overlayColor: primaryLight.withValues(alpha: 0.15),
       trackHeight: 3,
     ),
     textTheme: TextTheme(
@@ -365,20 +389,20 @@ class AppTheme {
       color: AppColors.darkTextSecondary,
       size: 24,
     ),
-    progressIndicatorTheme: const ProgressIndicatorThemeData(
-      color: AppColors.primaryLight,
+    progressIndicatorTheme: ProgressIndicatorThemeData(
+      color: primaryLight,
       linearTrackColor: AppColors.darkDivider,
     ),
     switchTheme: SwitchThemeData(
       thumbColor: WidgetStateProperty.resolveWith((states) {
         if (states.contains(WidgetState.selected)) {
-          return AppColors.textOnPrimary;
+          return _onPrimary;
         }
         return AppColors.darkTextSecondary;
       }),
       trackColor: WidgetStateProperty.resolveWith((states) {
         if (states.contains(WidgetState.selected)) {
-          return AppColors.primaryLight;
+          return primaryLight;
         }
         return AppColors.darkDivider;
       }),

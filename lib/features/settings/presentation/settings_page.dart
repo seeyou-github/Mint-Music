@@ -1585,6 +1585,12 @@ class _AppearanceContent extends ConsumerWidget {
                     OutlinedButton.icon(
                       onPressed: () =>
                           _openBackgroundEditor(context, isLight: isLight),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: colors.primary,
+                        side: BorderSide(
+                          color: colors.primary.withValues(alpha: 0.5),
+                        ),
+                      ),
                       icon: const Icon(Icons.colorize, size: 18),
                       label: Text(sheetContext.tr('新增颜色')),
                     ),
@@ -1927,6 +1933,12 @@ class _AppearanceContent extends ConsumerWidget {
                           onSaved: reopenPalette,
                         );
                       },
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: colors.primary,
+                        side: BorderSide(
+                          color: colors.primary.withValues(alpha: 0.5),
+                        ),
+                      ),
                       icon: const Icon(Icons.colorize, size: 18),
                       label: Text(sheetContext.tr('新增颜色')),
                     ),
@@ -2862,6 +2874,10 @@ void _showDesktopLyricColorPicker(
                 Navigator.pop(sheetContext);
                 openEditor();
               },
+              style: OutlinedButton.styleFrom(
+                foregroundColor: colors.primary,
+                side: BorderSide(color: colors.primary.withValues(alpha: 0.5)),
+              ),
               icon: const Icon(Icons.colorize, size: 18),
               label: Text(sheetContext.tr('新增颜色')),
             ),
