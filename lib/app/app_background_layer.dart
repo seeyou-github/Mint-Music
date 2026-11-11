@@ -129,8 +129,9 @@ class _GradientBackground extends ConsumerWidget {
 ///
 /// 封面走 [MusicCoverImage] 那条链路（在线地址 / 本地缓存 / 音频内嵌封面都
 /// 能取到）；还在加载或这首歌压根没有封面时，下面那层 [fallback] 直接透出来，
-/// 不会先黑一下。
-class _CoverBlurBackground extends StatelessWidget {
+/// 不会先黑一下。上一首的封面加载成功过时，切到没封面（或封面加载失败）的
+/// 歌会继续沿用那张封面，只有从没取到过封面才退回 [fallback]。
+class _CoverBlurBackground extends StatefulWidget {
   const _CoverBlurBackground({
     required this.song,
     required this.sigma,
@@ -150,40 +151,77 @@ class _CoverBlurBackground extends StatelessWidget {
   final Widget fallback;
 
   @override
+  State<_CoverBlurBackground> createState() => _CoverBlurBackgroundState();
+}
+
+class _CoverBlurBackgroundState extends State<_CoverBlurBackground> {
+  /// 最近一次真正加载成功的封面所属歌曲。
+  Song? _lastLoadedSong;
+
+  static bool _hasCoverSource(Song song) =>
+      (song.coverUrl?.isNotEmpty ?? false) ||
+      song.isLocal ||
+      song.mediaStoreId != null;
+
+  /// 判断「是不是同一张封面」用的 key：换清晰度会换封面地址，但歌没变。
+  static String _coverKey(Song song) =>
+      '${song.coverUrl}|${song.mediaStoreId}|${song.filePath}|${song.id}';
+
+  void _remember(Song song) {
+    if (!mounted || !_hasCoverSource(song)) return;
+    // 迟到的回调属于之前那首歌：不能覆盖当前歌的封面记录。
+    if (_coverKey(song) != _coverKey(widget.song)) return;
+    if (_lastLoadedSong != null &&
+        _coverKey(_lastLoadedSong!) == _coverKey(song)) {
+      return;
+    }
+    setState(() => _lastLoadedSong = song);
+  }
+
+  Widget _blurredCover(Song song) {
+    return _BlurBackground(
+      // 底下已经有兜底背景了，不要再铺一层不透明底色。
+      baseColor: null,
+      image: MusicCoverImage(
+        // 换封面换 key：上一首的字节不能带过来（切歌瞬间会闪一下旧封面）。
+        key: ValueKey<String>(_coverKey(song)),
+        url: song.coverUrl,
+        songId: song.id,
+        mediaStoreId: song.mediaStoreId,
+        filePath: song.filePath,
+        fit: BoxFit.cover,
+        width: double.infinity,
+        height: double.infinity,
+        cacheWidth: _kCoverDecodeWidth,
+        filterQuality: FilterQuality.low,
+        // 取不到图时不留占位图标：让下面那层兜底背景透出来。
+        errorWidget: const SizedBox.shrink(),
+        onLoaded: () => _remember(song),
+      ),
+      sigma: widget.sigma,
+      brightness: widget.brightness,
+      lightenForLightTheme: widget.lightenForLightTheme,
+      autoDarken: widget.autoDarken,
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final hasCoverSource =
-        (song.coverUrl?.isNotEmpty ?? false) ||
-        song.isLocal ||
-        song.mediaStoreId != null;
-    if (!hasCoverSource) return fallback;
+    final song = widget.song;
+    final last = _lastLoadedSong;
+    final showCurrent = _hasCoverSource(song);
+    // 新封面加载 / 失败期间，旧封面垫在下面；加载完成就被新封面盖住。
+    final showLast =
+        last != null && (!showCurrent || _coverKey(last) != _coverKey(song));
+
+    if (!showCurrent && !showLast) return widget.fallback;
 
     return Stack(
       fit: StackFit.expand,
       children: [
-        fallback,
-        _BlurBackground(
-          // 底下已经有兜底背景了，不要再铺一层不透明底色。
-          baseColor: null,
-          image: MusicCoverImage(
-            // 换歌换 key：上一首的字节不能带过来（切歌瞬间会闪一下旧封面）。
-            key: ValueKey<String>('${song.id}|${song.coverUrl}'),
-            url: song.coverUrl,
-            songId: song.id,
-            mediaStoreId: song.mediaStoreId,
-            filePath: song.filePath,
-            fit: BoxFit.cover,
-            width: double.infinity,
-            height: double.infinity,
-            cacheWidth: _kCoverDecodeWidth,
-            filterQuality: FilterQuality.low,
-            // 取不到图时不留占位图标：让下面那层兜底背景透出来。
-            errorWidget: const SizedBox.shrink(),
-          ),
-          sigma: sigma,
-          brightness: brightness,
-          lightenForLightTheme: lightenForLightTheme,
-          autoDarken: autoDarken,
-        ),
+        widget.fallback,
+        if (showLast) _blurredCover(last),
+        if (showCurrent) _blurredCover(song),
       ],
     );
   }

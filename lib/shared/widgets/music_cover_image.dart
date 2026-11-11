@@ -38,6 +38,10 @@ class MusicCoverImage extends StatefulWidget {
   /// 播放器封面用它触发 getPic 兜底换地址重试，与歌曲列表项行为一致。
   final void Function()? onLoadFailed;
 
+  /// 图片真正取到字节并开始显示时回调（每张图一次）。
+  /// 背景层用它记住「上一张成功加载的封面」。
+  final void Function()? onLoaded;
+
   const MusicCoverImage({
     super.key,
     this.url,
@@ -54,6 +58,7 @@ class MusicCoverImage extends StatefulWidget {
     this.cacheHeight,
     this.filterQuality = FilterQuality.medium,
     this.onLoadFailed,
+    this.onLoaded,
   });
 
   /// 封面被改动（编辑标签页上传 / 删除封面）后调用。
@@ -125,6 +130,9 @@ class _MusicCoverImageState extends State<MusicCoverImage> {
   Uint8List? _bytes;
   bool _loading = true;
   String? _lastKey;
+
+  /// 已经回调过 [MusicCoverImage.onLoaded] 的那张图（避免每次 build 都回调）。
+  String? _notifiedLoadedKey;
 
   /// 上一次取图时的全局封面版本号（见 [_MusicCoverImageState.refresh]）。
   int _seenRevision = _MusicCoverImageState._revision;
@@ -476,6 +484,21 @@ class _MusicCoverImageState extends State<MusicCoverImage> {
 
   @override
   Widget build(BuildContext context) {
+    if (_bytes != null) {
+      final loadedKey = _lastKey ?? '';
+      if (_notifiedLoadedKey != loadedKey) {
+        _notifiedLoadedKey = loadedKey;
+        final onLoaded = widget.onLoaded;
+        if (onLoaded != null) {
+          // 加载完成会触发 setState，不能在 build 里直接回调（调用方也常
+          // setState），推到当前帧结束之后。
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) onLoaded();
+          });
+        }
+      }
+    }
+
     if (_loading && _bytes == null) {
       return widget.errorWidget ?? _buildPlaceholder();
     }

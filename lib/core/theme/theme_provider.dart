@@ -248,9 +248,11 @@ final backgroundGradientProvider = Provider<BackgroundGradient>((ref) {
   // 派生 surface（比背景亮一档），界面就是「颜色轻微变化 + 略亮一点」。
   if (ref.watch(backgroundModeProvider) == BackgroundMode.blur) {
     // 用「当前歌曲封面糊化」当背景时，控件底色得跟着这首歌的封面色走，
-    // 否则照片是新的、卡片还是上一张图的色调。
+    // 否则照片是新的、卡片还是上一张图的色调。当前歌没封面（取不到主色）时
+    // 背景退回用户选的模糊图，底色也跟着那张图走。
     final tint = ref.watch(coverBlurBackdropEnabledProvider)
-        ? ref.watch(coverAccentColorProvider)
+        ? (ref.watch(coverAccentColorProvider) ??
+              ref.watch(backgroundBlurTintProvider))
         : ref.watch(backgroundBlurTintProvider);
     if (tint != null) {
       final colors = deriveBackgroundGradient(tint, isLight: isLight);
