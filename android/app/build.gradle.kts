@@ -39,6 +39,14 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = appVersionCode
         versionName = appVersionName
+
+        // 只打包 arm64-v8a。`--target-platform android-arm64` 只限制 Flutter
+        // 引擎，插件 AAR（如 sqlite3_flutter_libs）自带的 armeabi-v7a /
+        // x86 / x86_64 原生库仍会被一起打进同一个 APK——固定版本号去掉
+        // --split-per-abi 之后 APK 就变成多 ABI 的「胖包」了，这里统一裁掉。
+        ndk {
+            abiFilters += listOf("arm64-v8a")
+        }
     }
 
     packaging {
