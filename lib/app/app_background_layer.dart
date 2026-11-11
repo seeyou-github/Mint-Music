@@ -11,6 +11,14 @@ import '../shared/widgets/background_dither_layer.dart';
 import '../shared/widgets/background_glow_layer.dart';
 import '../shared/widgets/music_cover_image.dart';
 
+/// 背景层最近一次真正加载成功的封面所属歌曲。
+///
+/// 不能只记在某个背景层组件的 State 里：主界面（`MaterialApp.builder`）、
+/// 每个二级页、播放页各有一份背景层，State 跟着页面创建 / 销毁。切歌时如果
+/// 新歌封面还没到，任何一份背景层都得能立刻拿到「上一首的封面」垫底，否则
+/// 那一层就会退回渐变 / 黑底。
+final lastCoverBackdropSongProvider = StateProvider<Song?>((ref) => null);
+
 /// 主界面背景层：按「背景颜色模式」画渐变（+ 光晕）或高斯模糊图。
 ///
 /// 全局那层背景（`MaterialApp.builder`）和二级页面自己那份背景都用它，
@@ -136,7 +144,10 @@ class _GradientBackground extends ConsumerWidget {
 /// 能取到）；还在加载或这首歌压根没有封面时，下面那层 [fallback] 直接透出来，
 /// 不会先黑一下。上一首的封面加载成功过时，切到没封面（或封面加载失败）的
 /// 歌会继续沿用那张封面，只有从没取到过封面才退回 [fallback]。
-class _CoverBlurBackground extends StatefulWidget {
+///
+/// 「上一首封面」记在 [lastCoverBackdropSongProvider] 里而不是本组件的 State
+/// 里：切歌时主界面 / 二级页 / 播放页任意一层背景重建，都能立刻沿用同一张。
+class _CoverBlurBackground extends ConsumerStatefulWidget {
   const _CoverBlurBackground({
     required this.song,
     required this.sigma,
@@ -158,31 +169,32 @@ class _CoverBlurBackground extends StatefulWidget {
   final Widget fallback;
 
   @override
-  State<_CoverBlurBackground> createState() => _CoverBlurBackgroundState();
+  ConsumerState<_CoverBlurBackground> createState() =>
+      _CoverBlurBackgroundState();
 }
 
-class _CoverBlurBackgroundState extends State<_CoverBlurBackground> {
-  /// 最近一次真正加载成功的封面所属歌曲。
-  Song? _lastLoadedSong;
-
+class _CoverBlurBackgroundState extends ConsumerState<_CoverBlurBackground> {
   static bool _hasCoverSource(Song song) =>
       (song.coverUrl?.isNotEmpty ?? false) ||
       song.isLocal ||
-      song.mediaStoreId != null;
+      song.mediaStoreId != null ||
+      // 下载下来的在线歌曲：source 还是平台名，封面存在文件 / 封面缓存里。
+      (song.filePath?.isNotEmpty ?? false);
 
   /// 判断「是不是同一张封面」用的 key：换清晰度会换封面地址，但歌没变。
   static String _coverKey(Song song) =>
       '${song.coverUrl}|${song.mediaStoreId}|${song.filePath}|${song.id}';
 
   void _remember(Song song) {
-    if (!mounted || !_hasCoverSource(song)) return;
-    // 迟到的回调属于之前那首歌：不能覆盖当前歌的封面记录。
-    if (_coverKey(song) != _coverKey(widget.song)) return;
-    if (_lastLoadedSong != null &&
-        _coverKey(_lastLoadedSong!) == _coverKey(song)) {
-      return;
+    if (!mounted) return;
+    final record = ref.read(lastCoverBackdropSongProvider);
+    if (record != null) {
+      // 已经记过同一张封面。
+      if (_coverKey(record) == _coverKey(song)) return;
+      // 迟到的回调属于更早那首歌：现在记的是更新的封面，不能往回退。
+      if (_coverKey(song) != _coverKey(widget.song)) return;
     }
-    setState(() => _lastLoadedSong = song);
+    ref.read(lastCoverBackdropSongProvider.notifier).state = song;
   }
 
   Widget _blurredCover(Song song) {
@@ -216,7 +228,7 @@ class _CoverBlurBackgroundState extends State<_CoverBlurBackground> {
   @override
   Widget build(BuildContext context) {
     final song = widget.song;
-    final last = _lastLoadedSong;
+    final last = ref.watch(lastCoverBackdropSongProvider);
     final showCurrent = _hasCoverSource(song);
     // 新封面加载 / 失败期间，旧封面垫在下面；加载完成就被新封面盖住。
     final showLast =
