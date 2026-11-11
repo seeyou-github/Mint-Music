@@ -1099,7 +1099,7 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppRadius.md),
       ),
-      color: colors.surface,
+      color: colors.dialogSurface,
       elevation: 8,
       items: [
         for (final source in sources)

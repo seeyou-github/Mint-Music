@@ -915,7 +915,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
       context: context,
       position: position,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      color: colors.surface,
+      color: colors.dialogSurface,
       elevation: 8,
       items: sources.map((source) {
         return PopupMenuItem<String>(

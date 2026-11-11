@@ -1123,7 +1123,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppRadius.md),
       ),
-      color: colors.surface,
+      color: colors.dialogSurface,
       elevation: 8,
       items: sources.map((source) {
         return PopupMenuItem<String>(
