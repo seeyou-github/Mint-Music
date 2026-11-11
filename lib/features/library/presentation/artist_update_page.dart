@@ -400,8 +400,9 @@ class _ArtistUpdatePageState extends ConsumerState<ArtistUpdatePage> {
   ) {
     final coverSize = ResponsiveLayout.isTablet(context) ? 80.0 : 64.0;
     return Container(
-      // 与其它详情页一致：顶栏是贴着页面顶部的一条纯色栏，不要圆角、不要阴影，
-      // 颜色也就是背景渐变顶部色轻度提亮的结果，不再做上下渐变。
+      // 与其它详情页一致：顶栏是贴着页面顶部的一条半透明栏，不要圆角、
+      // 不要阴影；底色取背景渐变顶部色的半透明版（detailPageHeaderSurfaceProvider），
+      // 页面背景直接透上来，不再用一块实心色把顶部和列表分成两截。
       padding: EdgeInsets.fromLTRB(
         AppSpacing.md + AppSpacing.sm,
         // 状态栏沉浸：色块铺到屏幕顶端，状态栏高度算进内边距，
@@ -410,7 +411,7 @@ class _ArtistUpdatePageState extends ConsumerState<ArtistUpdatePage> {
         AppSpacing.md + AppSpacing.lg,
         AppSpacing.md + AppSpacing.sm,
       ),
-      color: ref.watch(detailHeaderSurfaceProvider),
+      color: ref.watch(detailPageHeaderSurfaceProvider),
       child: Row(
         children: [
           // Android 靠系统返回手势 / 返回键，顶部不放返回箭头。

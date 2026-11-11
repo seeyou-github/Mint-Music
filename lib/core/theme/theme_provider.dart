@@ -333,6 +333,25 @@ final detailHeaderSurfaceProvider = Provider<Color>((ref) {
   return base.copyWithBackground(backdrop).surface;
 });
 
+/// 歌单 / 榜单 / 作者 / 专辑详情页顶栏实际铺的那层半透明底色。
+///
+/// 顶栏以前在渐变模式下是不透明实心色，和下面直接铺在背景上的歌曲列表之间
+/// 有一条明显色差线，顶部看起来像单独贴上去的一截。这里把同一档底色压成
+/// 半透明，顶栏身后就是页面自己的背景（同一张渐变 / 同一张模糊图），上下
+/// 连成一片；模糊模式下 [detailHeaderSurfaceProvider] 本来就是半透明玻璃，
+/// 原样返回。
+///
+/// 不直接用 [ThemeColors.surface]：高斯模糊下它是给卡片用的玻璃色，顶栏
+/// 需要更透一档，才不至于把照片纹理整块盖住。
+final detailPageHeaderSurfaceProvider = Provider<Color>((ref) {
+  final surface = ref.watch(detailHeaderSurfaceProvider);
+  if (ref.watch(blurGlassEnabledProvider)) return surface;
+  final isLight = ref.watch(isLightThemeActiveProvider);
+  // 只留一半：颜色仍是「比背景亮一档」的派生色，透出来的背景把上下连起来，
+  // 又不至于让白字 / 黑字失去依托。
+  return surface.withValues(alpha: isLight ? 0.50 : 0.55);
+});
+
 /// 界面实际使用的主题色。
 ///
 /// 用背景渐变的中间色走一遍 `copyWithBackground`：`surface` /

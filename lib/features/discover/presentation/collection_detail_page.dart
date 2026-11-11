@@ -471,10 +471,10 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
   ) {
     final songs = _songs;
     return Container(
-      // 顶栏是贴着页面顶部的一条纯色栏：不要圆角、不要阴影，也不留外边距，
-      // 宽度铺满、颜色一直铺到状态栏，跟下面的列表只靠色差分界。
-      // 底色仍取背景渐变顶部色轻度提亮（见 detailHeaderSurfaceProvider），
-      // 跟随用户设置的背景，不再按专辑 / 作者封面取色。
+      // 顶栏是贴着页面顶部的一条半透明栏：不要圆角、不要阴影，也不留外边距，
+      // 宽度铺满、颜色一直铺到状态栏。
+      // 底色的取法见 detailPageHeaderSurfaceProvider：跟着背景渐变顶部色走，
+      // 只做半透明处理，让页面背景直接透上来，顶栏和列表是同一片背景。
       padding: EdgeInsets.fromLTRB(
         AppSpacing.md + AppSpacing.sm,
         // 状态栏沉浸：色块铺到屏幕顶端，状态栏高度算进内边距，
@@ -483,7 +483,7 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
         AppSpacing.md + AppSpacing.lg,
         AppSpacing.sm + AppSpacing.sm,
       ),
-      color: ref.watch(detailHeaderSurfaceProvider),
+      color: ref.watch(detailPageHeaderSurfaceProvider),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
