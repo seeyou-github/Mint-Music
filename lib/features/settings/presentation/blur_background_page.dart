@@ -309,9 +309,9 @@ class _BlurBackgroundPageState extends ConsumerState<BlurBackgroundPage> {
                         _BlurSlider(
                           icon: Icons.contrast,
                           title: '亮图自动压暗',
-                          value: autoDarkenStrength.clamp(0, 1),
+                          value: autoDarkenStrength.clamp(0, 2),
                           min: 0,
-                          max: 1,
+                          max: 2,
                           divisions: 20,
                           valueLabel: '${(autoDarkenStrength * 100).round()}%',
                           colors: colors,

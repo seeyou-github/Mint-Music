@@ -74,29 +74,31 @@ List<double> blurSaturationMatrix(double s) {
   ];
 }
 
-/// 「亮图自动压暗」强度（0 = 关闭，1 = 最强）。
+/// 「亮图自动压暗」强度（0 = 关闭，1 = 100%，2 = 200%）。
 ///
 /// 用户的「亮度」是固定值，白底封面和暗色封面套同一档亮度时，前者会亮得
 /// 看不清白字、后者又太黑。这里再按图片自身的平均亮度补一层黑色：图片越亮
-/// 压得越多，暗图几乎不压。
+/// 压得越多，暗图几乎不压。100% 对特别亮的图仍可能不够，允许拉到 200%。
 final blurBackgroundAutoDarkenProvider = StateProvider<double>((ref) => 0.7);
 
 /// 按图片平均亮度算自动压暗的黑色不透明度。
 ///
 /// 亮度不超过 [threshold] 不压；从 [threshold] 到 1 线性增加，纯白图最多压
-/// `maxAlpha * strength`。图片的「平均亮度」由取色结果（取色算法跳过极暗 /
+/// `maxAlpha * strength`（[strength] 取 0~2，200% 时接近全黑，但用 [limit]
+/// 兜底保留一点纹理）。图片的「平均亮度」由取色结果（取色算法跳过极暗 /
 /// 极亮像素后的平均色）的 luminance 提供。
 double blurAutoDarkenAlpha({
   required double luminance,
   required double strength,
   double threshold = 0.3,
-  double maxAlpha = 0.5,
+  double maxAlpha = 0.65,
+  double limit = 0.9,
 }) {
   if (strength <= 0) return 0;
   final l = luminance.clamp(0.0, 1.0);
   if (l <= threshold) return 0;
   final t = ((l - threshold) / (1 - threshold)).clamp(0.0, 1.0);
-  return t * maxAlpha * strength.clamp(0.0, 1.0);
+  return (t * maxAlpha * strength.clamp(0.0, 2.0)).clamp(0.0, limit);
 }
 
 /// 背景图的绝对路径：没设置、文件被删掉或读不出来时返回 null，
