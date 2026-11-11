@@ -673,8 +673,15 @@ final settingsInitProvider = FutureProvider<void>((ref) async {
       .getCoverBackground();
   // 背景颜色模式：背景渐变 / 高斯模糊（默认），以及模糊图相关的三项。
   ref.read(backgroundModeProvider.notifier).state = svc.getBackgroundMode();
-  ref.read(blurBackgroundImageNameProvider.notifier).state = svc
-      .getBlurBackgroundImage();
+  final blurImageName = svc.getBlurBackgroundImage();
+  ref.read(blurBackgroundImageNameProvider.notifier).state = blurImageName;
+  // 多图列表：老版本只存了一张图的文件名，升级后把它补进列表，否则设置页
+  // 里一张图都不显示、主界面其实还在用那张图。
+  var blurImageNames = svc.getBlurBackgroundImages();
+  if (blurImageNames.isEmpty && blurImageName.trim().isNotEmpty) {
+    blurImageNames = [blurImageName];
+  }
+  ref.read(blurBackgroundImageNamesProvider.notifier).state = blurImageNames;
   ref.read(blurBackgroundSigmaProvider.notifier).state = svc
       .getBlurBackgroundSigma();
   ref.read(blurBackgroundBrightnessProvider.notifier).state = svc

@@ -38,6 +38,14 @@ final backgroundModeProvider = StateProvider<BackgroundMode>(
 /// 文件名不变，重新拼一下就能用。
 final blurBackgroundImageNameProvider = StateProvider<String>((ref) => '');
 
+/// 设置目录里保存的所有背景图文件名（用户可以上传多张来回切换）。
+///
+/// 顺序就是设置页里图片的排列顺序；[blurBackgroundImageNameProvider] 是其中
+/// 当前选中的那张。
+final blurBackgroundImageNamesProvider = StateProvider<List<String>>(
+  (ref) => const [],
+);
+
 /// 模糊程度（高斯 sigma）：0 = 不模糊，越大越糊。
 final blurBackgroundSigmaProvider = StateProvider<double>((ref) => 30);
 

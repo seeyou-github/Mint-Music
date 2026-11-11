@@ -212,6 +212,7 @@ class SettingsService {
   // -- 背景颜色模式：背景渐变 / 高斯模糊（默认高斯模糊） --
   static const _backgroundModeKey = 'background_mode';
   static const _blurImageKey = 'blur_background_image';
+  static const _blurImagesKey = 'blur_background_images';
   static const _blurSigmaKey = 'blur_background_sigma';
   static const _blurBrightnessKey = 'blur_background_brightness';
   static const _blurAutoDarkenKey = 'blur_background_auto_darken';
@@ -227,6 +228,12 @@ class SettingsService {
       _prefs.getString(_blurImageKey) ?? '';
   Future<void> setBlurBackgroundImage(String name) =>
       _prefs.setString(_blurImageKey, name);
+
+  /// 设置目录里保存的全部背景图文件名（用户可上传多张）。
+  List<String> getBlurBackgroundImages() =>
+      _prefs.getStringList(_blurImagesKey) ?? const [];
+  Future<void> setBlurBackgroundImages(List<String> names) =>
+      _prefs.setStringList(_blurImagesKey, names);
 
   /// 模糊程度（高斯 sigma）。
   double getBlurBackgroundSigma() =>

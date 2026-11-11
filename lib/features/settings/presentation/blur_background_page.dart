@@ -21,9 +21,10 @@ import 'settings_page.dart';
 
 /// 「设置 → 外观设置 → 背景颜色模式 = 高斯模糊」时显示的背景图设置页。
 ///
-/// 用户可以选一张图，主界面把它高斯模糊后铺满；模糊程度 / 亮度两个滑条实时
-/// 预览。图片会**复制进设置目录**（`config/setting`），备份还原时跟着走，
-/// 设置里只存文件名，换设备 / 换安装目录也能对应上。
+/// 用户可以上传多张图，点缩略图切换当前背景；主界面把选中的图高斯模糊后
+/// 铺满，模糊程度 / 亮度 / 亮图自动压暗实时预览。图片会**复制进设置目录**
+/// （`config/setting`），备份还原时跟着走，设置里只存文件名，换设备 / 换安装
+/// 目录也能对应上。
 class BlurBackgroundPage extends ConsumerStatefulWidget {
   const BlurBackgroundPage({super.key});
 
@@ -35,11 +36,47 @@ class _BlurBackgroundPageState extends ConsumerState<BlurBackgroundPage> {
   /// 正在挑图（防止连点弹出两个文件选择器）。
   bool _picking = false;
 
+  /// 设置目录的绝对路径：缩略图要把「文件名」拼成可读路径。
+  String? _dirPath;
+
   /// 设置目录里背景图的文件名前缀：`background_blur_<时间戳>.jpg` …
   ///
-  /// 老版本用的是固定名 `background_blur.jpg`，同样以这个前缀开头，选新图时
-  /// 会被一起清掉。
+  /// 老版本用的是固定名 `background_blur.jpg`，同样以这个前缀开头。
   static const String _fileStem = 'background_blur';
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadDirectory());
+  }
+
+  Future<void> _loadDirectory() async {
+    try {
+      final dir = await AppPaths.settingsDirectory();
+      if (!mounted) return;
+      setState(() => _dirPath = dir.path);
+      await _pruneMissing(dir);
+    } catch (e) {
+      debugPrint('[BlurBackground] 读取设置目录失败: $e');
+    }
+  }
+
+  /// 去掉列表里已经被外部删掉的文件，并保证选中项仍然有效。
+  Future<void> _pruneMissing(Directory dir) async {
+    final names = ref.read(blurBackgroundImageNamesProvider);
+    if (names.isEmpty) return;
+    final existing = <String>[];
+    for (final name in names) {
+      if (await File(p.join(dir.path, name)).exists()) existing.add(name);
+    }
+    if (existing.length == names.length) return;
+    ref.read(blurBackgroundImageNamesProvider.notifier).state = existing;
+    await _persist((svc) => svc.setBlurBackgroundImages(existing));
+    final selected = ref.read(blurBackgroundImageNameProvider).trim();
+    if (selected.isEmpty || !existing.contains(selected)) {
+      await _selectImage(existing.isEmpty ? '' : existing.first);
+    }
+  }
 
   Future<void> _pickImage() async {
     if (_picking) return;
@@ -57,20 +94,14 @@ class _BlurBackgroundPageState extends ConsumerState<BlurBackgroundPage> {
           '${_fileStem}_${DateTime.now().microsecondsSinceEpoch}'
           '${ext.isEmpty ? '.png' : ext}';
       final target = File(p.join(dir.path, name));
-      // 先写新图，再删旧图：万一选的就是设置目录里那张（自己拷进来的），
-      // 反过来的顺序会把源文件先删掉导致复制失败。
       await File(sourcePath).copy(target.path);
-      // 配置目录里只留当前这张。
-      final removed = await _deleteStoredImages(keep: name);
-      await _evict(removed);
-
       if (!mounted) return;
-      ref.read(blurBackgroundImageNameProvider.notifier).state = name;
-      ref.invalidate(blurBackgroundImagePathProvider);
-      // 主色也要重算：它按路径缓存，虽然新名字已经是新路径，但这里显式失效
-      // 一次，避免「图换了、控件底色还是上一张」的时序问题。
-      ref.invalidate(blurBackgroundTintProvider);
-      await _persist((svc) => svc.setBlurBackgroundImage(name));
+
+      final names = [...ref.read(blurBackgroundImageNamesProvider), name];
+      ref.read(blurBackgroundImageNamesProvider.notifier).state = names;
+      await _persist((svc) => svc.setBlurBackgroundImages(names));
+      // 新加进来的图片默认选中并使用。
+      await _selectImage(name);
     } catch (e) {
       debugPrint('[BlurBackground] 选择背景图失败: $e');
       if (!mounted) return;
@@ -85,38 +116,35 @@ class _BlurBackgroundPageState extends ConsumerState<BlurBackgroundPage> {
     }
   }
 
-  Future<void> _removeImage() async {
-    final removed = await _deleteStoredImages(keep: '');
-    await _evict(removed);
-    if (!mounted) return;
-    ref.read(blurBackgroundImageNameProvider.notifier).state = '';
+  /// 切换当前背景图（点缩略图）。
+  Future<void> _selectImage(String name) async {
+    if (ref.read(blurBackgroundImageNameProvider) == name) return;
+    ref.read(blurBackgroundImageNameProvider.notifier).state = name;
     ref.invalidate(blurBackgroundImagePathProvider);
+    // 主色也要重算：它按路径缓存，这里显式失效一次，避免「图换了、控件
+    // 底色还是上一张」的时序问题。
     ref.invalidate(blurBackgroundTintProvider);
-    await _persist((svc) => svc.setBlurBackgroundImage(''));
+    await _persist((svc) => svc.setBlurBackgroundImage(name));
   }
 
-  /// 删掉设置目录里所有 `background_blur*`，[keep] 指定的那个除外。
-  ///
-  /// 返回被删掉的文件路径，调用方拿去清图片缓存。
-  Future<List<String>> _deleteStoredImages({required String keep}) async {
-    final removed = <String>[];
-    try {
-      final dir = await AppPaths.settingsDirectory();
-      if (!await dir.exists()) return removed;
-      await for (final entity in dir.list(followLinks: false)) {
-        if (entity is! File) continue;
-        final name = p.basename(entity.path);
-        if (!name.startsWith(_fileStem)) continue;
-        if (name == keep) continue;
-        try {
-          await entity.delete();
-          removed.add(entity.path);
-        } catch (_) {}
-      }
-    } catch (e) {
-      debugPrint('[BlurBackground] 清理旧背景图失败: $e');
+  /// 删除一张背景图；删的是当前选中的那张时，自动切到剩下的第一张。
+  Future<void> _deleteImage(String name) async {
+    final names = [...ref.read(blurBackgroundImageNamesProvider)]..remove(name);
+    ref.read(blurBackgroundImageNamesProvider.notifier).state = names;
+    await _persist((svc) => svc.setBlurBackgroundImages(names));
+
+    final selected = ref.read(blurBackgroundImageNameProvider).trim();
+    if (selected == name) {
+      await _selectImage(names.isEmpty ? '' : names.first);
     }
-    return removed;
+
+    final dir = _dirPath;
+    if (dir == null) return;
+    final path = p.join(dir, name);
+    try {
+      await File(path).delete();
+    } catch (_) {}
+    await _evict([path]);
   }
 
   /// 把已经删掉的旧图的解码结果从图片缓存里踢出去。
@@ -144,6 +172,8 @@ class _BlurBackgroundPageState extends ConsumerState<BlurBackgroundPage> {
   Widget build(BuildContext context) {
     final colors = ref.watch(themeColorsProvider);
     final imagePath = ref.watch(blurBackgroundImagePathProvider).valueOrNull;
+    final imageNames = ref.watch(blurBackgroundImageNamesProvider);
+    final selectedName = ref.watch(blurBackgroundImageNameProvider);
     final sigma = ref.watch(blurBackgroundSigmaProvider);
     final brightness = ref.watch(blurBackgroundBrightnessProvider);
     final autoDarkenStrength = ref.watch(blurBackgroundAutoDarkenProvider);
@@ -182,44 +212,7 @@ class _BlurBackgroundPageState extends ConsumerState<BlurBackgroundPage> {
                       autoDarken,
                     ),
                     const SizedBox(height: AppSpacing.lg),
-                    SettingGroup(
-                      title: '背景图',
-                      colors: colors,
-                      children: [
-                        SettingRow(
-                          icon: Icons.image_outlined,
-                          title: imagePath == null ? '选择图片' : '更换图片',
-                          subtitle: '图片会复制到设置目录，备份还原时一起带走',
-                          trailing: _picking
-                              ? const SizedBox(
-                                  width: 18,
-                                  height: 18,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : Icon(
-                                  Icons.folder_open,
-                                  size: 18,
-                                  color: colors.textSecondary,
-                                ),
-                          colors: colors,
-                          onTap: _picking
-                              ? null
-                              : () => unawaited(_pickImage()),
-                        ),
-                        if (imagePath != null) ...[
-                          SettingDivider(colors: colors),
-                          SettingRow(
-                            icon: Icons.delete_outline,
-                            title: '移除图片',
-                            trailing: const SizedBox.shrink(),
-                            colors: colors,
-                            onTap: () => unawaited(_removeImage()),
-                          ),
-                        ],
-                      ],
-                    ),
+                    _buildImagePicker(colors, imageNames, selectedName),
                     SettingGroup(
                       title: '效果',
                       colors: colors,
@@ -299,6 +292,43 @@ class _BlurBackgroundPageState extends ConsumerState<BlurBackgroundPage> {
     );
   }
 
+  /// 背景图管理：已上传的图片缩略图 + 「新增」按钮。
+  ///
+  /// 点缩略图切换当前背景，缩略图右上角的红色按钮删除该图。
+  Widget _buildImagePicker(
+    ThemeColors colors,
+    List<String> names,
+    String selectedName,
+  ) {
+    final dir = _dirPath;
+    return SettingGroup(
+      title: '背景图',
+      subtitle: '点击图片切换背景，右上角按钮删除；图片会复制到设置目录，备份还原时一起带走',
+      colors: colors,
+      children: [
+        Wrap(
+          spacing: AppSpacing.sm,
+          runSpacing: AppSpacing.sm,
+          children: [
+            for (final name in names)
+              _BlurImageTile(
+                path: dir == null ? null : p.join(dir, name),
+                selected: name == selectedName,
+                colors: colors,
+                onTap: () => unawaited(_selectImage(name)),
+                onDelete: () => unawaited(_deleteImage(name)),
+              ),
+            _AddImageTile(
+              colors: colors,
+              picking: _picking,
+              onTap: _picking ? null : () => unawaited(_pickImage()),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
   Widget _buildHeader(ThemeColors colors) {
     return Padding(
       padding: EdgeInsets.fromLTRB(
@@ -344,7 +374,8 @@ class _BlurBackgroundPageState extends ConsumerState<BlurBackgroundPage> {
     final whiten = normalized > 1 ? (normalized - 1) * 0.6 : 0.0;
 
     return AspectRatio(
-      aspectRatio: 16 / 9,
+      // 16:9 的高度再压 30%（16 / (9 * 0.7)），预览不占太多竖向空间。
+      aspectRatio: 160 / 63,
       child: ClipRRect(
         borderRadius: BorderRadius.circular(AppRadius.lg),
         child: Stack(
@@ -397,6 +428,138 @@ class _BlurBackgroundPageState extends ConsumerState<BlurBackgroundPage> {
               ColoredBox(color: Colors.black.withValues(alpha: autoDarken)),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// 一张已上传背景图的缩略图：点它切换背景，右上角红点删除。
+class _BlurImageTile extends StatelessWidget {
+  const _BlurImageTile({
+    required this.path,
+    required this.selected,
+    required this.colors,
+    required this.onTap,
+    required this.onDelete,
+  });
+
+  static const double _size = 88;
+
+  final String? path;
+  final bool selected;
+  final ThemeColors colors;
+  final VoidCallback onTap;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: SizedBox(
+        width: _size,
+        height: _size,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  ColoredBox(color: colors.surfaceVariant),
+                  if (path != null)
+                    Image.file(
+                      File(path!),
+                      fit: BoxFit.cover,
+                      cacheWidth: 220,
+                      gaplessPlayback: true,
+                      errorBuilder: (_, _, _) => Icon(
+                        Icons.broken_image_outlined,
+                        size: 22,
+                        color: colors.textHint,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            // 选中状态：主题色描边；未选中用普通分隔线。
+            IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: selected ? colors.primary : colors.divider,
+                    width: selected ? 2 : 1,
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              top: 4,
+              right: 4,
+              child: GestureDetector(
+                onTap: onDelete,
+                child: Container(
+                  width: 22,
+                  height: 22,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFFE5484D),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.close, size: 14, color: Colors.white),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 「新增」按钮：与缩略图同尺寸的空心方块。
+class _AddImageTile extends StatelessWidget {
+  const _AddImageTile({
+    required this.colors,
+    required this.picking,
+    required this.onTap,
+  });
+
+  final ThemeColors colors;
+  final bool picking;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(10),
+      onTap: onTap,
+      child: Container(
+        width: _BlurImageTile._size,
+        height: _BlurImageTile._size,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: colors.divider),
+        ),
+        child: picking
+            ? const Center(
+                child: SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              )
+            : Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.add, size: 24, color: colors.textSecondary),
+                  const SizedBox(height: 4),
+                  Text(
+                    context.tr('新增'),
+                    style: TextStyle(fontSize: 12, color: colors.textSecondary),
+                  ),
+                ],
+              ),
       ),
     );
   }
