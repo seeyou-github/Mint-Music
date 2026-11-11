@@ -102,8 +102,11 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      - name: Build Android APK
-        run: flutter build apk --release
+      # 与其他 Android 工作流一致：只出 arm64-v8a 的 APK。不分 ABI 打包时，
+      # 插件 AAR（sqlite3_flutter_libs 等）自带的 armeabi-v7a / x86 / x86_64
+      # 原生库会和 arm64 一起塞进同一个 APK。
+      - name: Build Android APK (arm-v8a only)
+        run: flutter build apk --release --split-per-abi --target-platform android-arm64 --android-skip-build-dependency-validation
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4

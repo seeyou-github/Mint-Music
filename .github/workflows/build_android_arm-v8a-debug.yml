@@ -35,13 +35,13 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      # 不要加 --split-per-abi：Flutter 在分 ABI 打包时会把每个 APK 的
-      # versionCode 改成 `abi * 1000 + 基础值`（arm64 → 20263111），
-      # 与 build.gradle.kts 里固定的 20261111 对不上。APK 只含 arm64-v8a
-      # 由 build.gradle.kts 的 abiFilters 保证；--target-platform 只是让
-      # Flutter 只编 arm64 引擎。
+      # 必须 --split-per-abi：不分 ABI 打包时，插件 AAR（sqlite3_flutter_libs
+      # 等）自带的 armeabi-v7a / x86 / x86_64 原生库会和 arm64 一起塞进同一个
+      # APK（--target-platform 只限制 Flutter 引擎）。分 ABI 后产出的单个 APK
+      # 只含 arm64-v8a。Flutter 会给每个 APK 的 versionCode 加固定偏移
+      # （arm64 → 20263111），不是编译时间，包号依然固定。
       - name: Build Android APK (arm-v8a only)
-        run: flutter build apk --debug --target-platform android-arm64 --android-skip-build-dependency-validation
+        run: flutter build apk --debug --split-per-abi --target-platform android-arm64 --android-skip-build-dependency-validation
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
