@@ -229,6 +229,14 @@ final songListHideCoverProvider = StateProvider<bool>((ref) => false);
 /// `currentCoverColorProvider` 出结果时把颜色写进来，这里只负责存。
 final coverAccentColorProvider = StateProvider<Color?>((ref) => null);
 
+/// 当前封面自身的色彩浓度（0 = 黑白灰 / 暗到看不出颜色，1 = 颜色很足）。
+///
+/// 与 [coverAccentColorProvider] 一起由 app 层从取色结果同步过来。控件底色
+/// 从封面主色派生（见 [backgroundGradientProvider]），饱和度滑条按这个浓度
+/// 打折 —— 黑白 / 暗封面上硬拉饱和度只会把噪点、色斑放大。背景图片那层
+/// 不读这里，它在图片成为背景之前就按字节自己算好了。
+final coverAccentColorfulnessProvider = StateProvider<double>((ref) => 1);
+
 /// 背景光晕的启动种子。
 ///
 /// 每次启动应用换一个随机值，光晕的位置 / 半径因此「每次启动都不同」；
@@ -250,12 +258,24 @@ final backgroundGradientProvider = Provider<BackgroundGradient>((ref) {
     // 用「当前歌曲封面糊化」当背景时，控件底色得跟着这首歌的封面色走，
     // 否则照片是新的、卡片还是上一张图的色调。当前歌没封面（取不到主色）时
     // 背景退回用户选的模糊图，底色也跟着那张图走。
-    final tint = ref.watch(coverBlurBackdropEnabledProvider)
-        ? (ref.watch(coverAccentColorProvider) ??
-              ref.watch(backgroundBlurTintProvider))
-        : ref.watch(backgroundBlurTintProvider);
+    final coverTint = ref.watch(coverBlurBackdropEnabledProvider)
+        ? ref.watch(coverAccentColorProvider)
+        : null;
+    final tint = coverTint ?? ref.watch(backgroundBlurTintProvider);
     if (tint != null) {
-      final colors = deriveBackgroundGradient(tint, isLight: isLight);
+      // 饱和度滑条也作用在控件底色上：背景照片调灰 / 调艳之后，从它主色
+      // 派生的卡片、按钮、顶栏、菜单要一起变，否则背景和控件两个色调。
+      // 浓度与背景图那层取同一份（封面按封面、用户图按用户图）。
+      final saturation = effectiveBlurSaturation(
+        ref.watch(blurBackgroundSaturationProvider),
+        coverTint != null
+            ? ref.watch(coverAccentColorfulnessProvider)
+            : ref.watch(backgroundBlurColorfulnessProvider),
+      );
+      final colors = deriveBackgroundGradient(
+        applyBlurSaturation(tint, saturation),
+        isLight: isLight,
+      );
       return BackgroundGradient(colors: colors, mid: colors[1], glowCount: 0);
     }
     // 还没取到色（图刚选 / 正在算）时继续走下面的用户渐变，界面不会闪。

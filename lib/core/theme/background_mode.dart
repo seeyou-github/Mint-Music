@@ -74,6 +74,30 @@ List<double> blurSaturationMatrix(double s) {
   ];
 }
 
+/// 把饱和度颜色矩阵作用到单个颜色上（权重与 [blurSaturationMatrix] 相同）。
+///
+/// 控件底色是从背景主色派生出来的（卡片、按钮、顶栏、菜单…），背景照片被
+/// 调成灰度 / 更艳之后，这些颜色也得跟着变；按同一套矩阵算，两者色调才
+/// 对得上，而不是背景灰了控件还是原来的艳丽色。
+Color applyBlurSaturation(Color color, double saturation) {
+  final s = saturation.clamp(0.0, 2.0);
+  if (s == 1.0) return color;
+  const lr = 0.2126;
+  const lg = 0.7152;
+  const lb = 0.0722;
+  final r = color.r;
+  final g = color.g;
+  final b = color.b;
+  double mix(double cr, double cg, double cb) =>
+      (cr * r + cg * g + cb * b).clamp(0.0, 1.0);
+  return Color.from(
+    alpha: color.a,
+    red: mix(lr + (1 - lr) * s, lg - lg * s, lb - lb * s),
+    green: mix(lr - lr * s, lg + (1 - lg) * s, lb - lb * s),
+    blue: mix(lr - lr * s, lg - lg * s, lb + (1 - lb) * s),
+  );
+}
+
 /// 当前背景图自身的色彩浓度。
 ///
 /// 0 = 黑白灰 / 暗到看不出颜色，1 = 颜色很足。由取色器解码背景图时顺手算出

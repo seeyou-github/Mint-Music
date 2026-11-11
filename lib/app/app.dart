@@ -156,10 +156,10 @@ class _AppState extends ConsumerState<App> {
     );
   }
 
-  /// 把当前封面主色同步给 core 层的 [coverAccentColorProvider]。
+  /// 把当前封面主色与色彩浓度同步给 core 层的 [coverAccentColorProvider]。
   ///
   /// 「主界面跟随封面变色」只在这份颜色非空时生效；颜色没算好 / 没有封面时
-  /// 什么都不做，背景会退回用户选的渐变。
+  /// 什么都不做，背景会退回用户选的渐变。浓度用来给控件底色的饱和度打折。
   void _syncCoverAccent() {
     final result = ref.read(currentCoverColorProvider).valueOrNull;
     // 取色失败 / 歌曲没有封面时返回的是默认中性灰：这时保留上一首封面的
@@ -168,11 +168,16 @@ class _AppState extends ConsumerState<App> {
       return;
     }
     final color = result.dominantColor;
-    if (ref.read(coverAccentColorProvider) == color) return;
+    final colorfulness = result.colorfulness;
+    if (ref.read(coverAccentColorProvider) == color &&
+        ref.read(coverAccentColorfulnessProvider) == colorfulness) {
+      return;
+    }
     // build 期间不能直接改 provider，推到下一帧。
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       ref.read(coverAccentColorProvider.notifier).state = color;
+      ref.read(coverAccentColorfulnessProvider.notifier).state = colorfulness;
     });
   }
 
