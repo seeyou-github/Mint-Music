@@ -352,6 +352,18 @@ final detailPageHeaderSurfaceProvider = Provider<Color>((ref) {
   return surface.withValues(alpha: isLight ? 0.50 : 0.55);
 });
 
+/// 底部迷你播放栏的底色。
+///
+/// 高斯模糊模式下控件统一是半透明玻璃，但迷你播放栏只有 56 高、歌名是
+/// 13 号字，照片的纹理和明暗直接透上来会让文字发糊（Android 上尤其明显）。
+/// 这里把同一档玻璃色提回接近实心：色调仍跟着背景走，只是不再透纹理。
+/// 渐变模式下 [ThemeColors.surface] 本来就不透明，原样返回。
+final miniPlayerSurfaceProvider = Provider<Color>((ref) {
+  final surface = ref.watch(themeColorsProvider).surface;
+  if (!ref.watch(blurGlassEnabledProvider)) return surface;
+  return surface.withValues(alpha: 0.92);
+});
+
 /// 界面实际使用的主题色。
 ///
 /// 用背景渐变的中间色走一遍 `copyWithBackground`：`surface` /

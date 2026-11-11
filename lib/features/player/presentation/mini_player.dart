@@ -248,7 +248,7 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer>
               horizontal: isTablet ? 12 : AppSpacing.sm,
             ),
             decoration: BoxDecoration(
-              color: colors.surface,
+              color: ref.watch(miniPlayerSurfaceProvider),
               borderRadius: BorderRadius.circular(height / 2),
               boxShadow: [
                 BoxShadow(
