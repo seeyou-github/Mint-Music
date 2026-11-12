@@ -152,7 +152,14 @@ class _PlayQueueSheetContentState
   Widget build(BuildContext context) {
     // 队列是「活」的：直接 watch provider，删除某首后就地刷新列表，
     // 不需要关闭弹层再重新打开。
-    final playbackState = ref.watch(playbackControllerProvider);
+    // 分字段 select：播放进度每 200ms 变一次整包 state（队列/下标不变），
+    // 不 select 的话弹层在播放期间每秒重建 5 次。
+    final queue = ref.watch(
+      playbackControllerProvider.select((s) => s.queue),
+    );
+    final currentIndex = ref.watch(
+      playbackControllerProvider.select((s) => s.currentIndex),
+    );
     // 当前播放项的强调色跟随「外观设置 → 主题色」，不再写死 Spotify 绿。
     final primary = ref.watch(
       themeColorsProvider.select((colors) => colors.primary),
@@ -173,8 +180,6 @@ class _PlayQueueSheetContentState
       },
     );
     final blacklist = ref.watch(blacklistProvider);
-    final queue = playbackState.queue;
-    final currentIndex = playbackState.currentIndex;
     // 设置里关掉封面后队列行也不显示封面，同时不再加载封面图片。
     final hideCover = ref.watch(songListHideCoverProvider);
     return Container(

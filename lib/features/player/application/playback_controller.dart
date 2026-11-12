@@ -247,7 +247,11 @@ final playbackControllerProvider =
 // metadata. Quality switching replaces only the transient audio URL, so it
 // must not make player pages behave as if a new song was selected.
 final currentSongIdentityProvider = Provider<int>((ref) {
-  final song = ref.watch(playbackControllerProvider).currentSong;
+  // select 当前歌曲：进度每 200ms 的整包 state 变化里 currentSong 引用
+  // 不变，不 select 的话这个 provider 在播放期间每秒空跑 5 次 hash。
+  final song = ref.watch(
+    playbackControllerProvider.select((s) => s.currentSong),
+  );
   if (song == null) return 0;
   return Object.hashAll([
     song.id,

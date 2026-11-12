@@ -388,7 +388,11 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
 
     // 提前计算当前播放歌曲在本歌单中的索引，用于定位按钮。
     // 在外层 Stack 中直接渲染 FAB，避免嵌套 Stack 裁剪导致按钮不可见。
-    final currentSong = ref.watch(playbackControllerProvider).currentSong;
+    // select 当前歌曲：播放进度每 200ms 变一次整包 state，不 select 的话
+    // 本页在播放期间每秒重建 5 次。
+    final currentSong = ref.watch(
+      playbackControllerProvider.select((s) => s.currentSong),
+    );
     final int currentSongIndex = currentSong == null
         ? -1
         : _songs.indexWhere((s) => s.id == currentSong.id);

@@ -1385,7 +1385,10 @@ class _LocalPlaylistDetailPageState
   /// 悬浮定位按钮：仅当当前播放的歌曲在本歌单中时显示，
   /// 点击将歌曲列表滚动到正在播放的那一首。
   Widget _buildLocateFab(ThemeColors colors) {
-    final currentSong = ref.watch(playbackControllerProvider).currentSong;
+    // select 当前歌曲：避免播放进度每 200ms 的整包 state 变化触发本页重建。
+    final currentSong = ref.watch(
+      playbackControllerProvider.select((s) => s.currentSong),
+    );
     if (currentSong == null) return const SizedBox.shrink();
     final index = _sortedSongs.indexWhere((s) => s.id == currentSong.id);
     if (index == -1) return const SizedBox.shrink();
