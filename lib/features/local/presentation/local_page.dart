@@ -16,6 +16,7 @@ import '../../../core/utils/responsive_layout.dart';
 import '../../../core/utils/scroll_locate.dart';
 import '../../../shared/widgets/song_action_sheet.dart';
 import '../../../shared/widgets/song_index_width.dart';
+import '../../../shared/widgets/song_row_spacing.dart';
 import '../../../shared/widgets/song_row_hover.dart';
 import '../../../shared/widgets/song_favorite_heart.dart';
 import '../../../shared/widgets/music_cover_image.dart';
@@ -951,8 +952,10 @@ class _LocalPageState extends ConsumerState<LocalPage>
           padding: EdgeInsets.only(
             // 左右各 8（原来是 16）：配合行内 4px 内边距，序号左边距、
             // 「更多」按钮到屏幕边缘的距离都缩到原来的一半。
-            left: AppSpacing.sm,
-            right: AppSpacing.sm,
+            // Windows 上改由行内统一给 [wideSongRowPadding]，外层不再叠加，
+            // 这样本地列表与歌单详情页等共享列表的边距完全一致。
+            left: useWideSongRowSpacing ? 0 : AppSpacing.sm,
+            right: useWideSongRowSpacing ? 0 : AppSpacing.sm,
             // 底部多留出空间，避免最后一项被悬浮的迷你播放器遮挡；
             // 多选模式下还要再避开底部批量操作栏。
             bottom:
@@ -1836,8 +1839,12 @@ class _LocalSongItem extends ConsumerWidget {
   final VoidCallback? onLongPress;
 
   /// 序号列宽度：按最大序号位数自适应；多选模式至少要放得下勾选框。
+  ///
+  /// Windows 上再给序号左右各加 [wideSongIndexInset]，与共享列表一致；
+  /// 多选模式显示勾选框，不加这段宽度以免挤压它。
   double _indexWidth(BuildContext context) {
-    final width = songIndexWidth(context, maxIndex: maxIndex, fontSize: 13);
+    var width = songIndexWidth(context, maxIndex: maxIndex, fontSize: 13);
+    if (useWideSongRowSpacing && !selectionMode) width += wideSongIndexExtra;
     const checkboxWidth = 34.0;
     return selectionMode && width < checkboxWidth ? checkboxWidth : width;
   }
@@ -1868,8 +1875,12 @@ class _LocalSongItem extends ConsumerWidget {
         child: Container(
           // 左右内边距减半（8 → 4），上下保持 8：行高 64 = 封面 48 + 上下各 8，
           // 竖向一旦改动，`itemExtent` 定位就会偏。
-          padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.xs,
+          // Windows 上改用与共享列表统一的 [wideSongRowPadding]（外层不再叠加
+          // 8dp），序号左边距与「更多」按钮右边距相等。
+          padding: EdgeInsets.symmetric(
+            horizontal: useWideSongRowSpacing
+                ? wideSongRowPadding
+                : AppSpacing.xs,
             vertical: AppSpacing.sm,
           ),
           decoration: BoxDecoration(
@@ -1899,25 +1910,34 @@ class _LocalSongItem extends ConsumerWidget {
                               MaterialTapTargetSize.shrinkWrap,
                         ),
                       )
-                    : (isPlaying
-                          ? Icon(
-                              Icons.play_arrow,
-                              size: 18,
-                              color: colors.primary,
-                            )
-                          : Text(
-                              '${index + 1}',
-                              // 序号贴着列表左边，不再居中留一大块空白。
-                              textAlign: TextAlign.left,
-                              maxLines: 1,
-                              softWrap: false,
-                              style: TextStyle(
-                                fontSize: 13,
-                                // 序号用「第二字体颜色」：浅色主题下 textHint 太淡。
-                                color: colors.textSecondary,
-                                fontWeight: FontWeight.w500,
+                    : Padding(
+                        // Windows 上序号左右各留 12dp：序号列变宽、序号不贴
+                        // 屏幕边缘也不贴封面，与共享列表一致。
+                        padding: EdgeInsets.symmetric(
+                          horizontal: useWideSongRowSpacing
+                              ? wideSongIndexInset
+                              : 0,
+                        ),
+                        child: isPlaying
+                            ? Icon(
+                                Icons.play_arrow,
+                                size: 18,
+                                color: colors.primary,
+                              )
+                            : Text(
+                                '${index + 1}',
+                                // 序号贴着列表左边，不再居中留一大块空白。
+                                textAlign: TextAlign.left,
+                                maxLines: 1,
+                                softWrap: false,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  // 序号用「第二字体颜色」：浅色主题下 textHint 太淡。
+                                  color: colors.textSecondary,
+                                  fontWeight: FontWeight.w500,
+                                ),
                               ),
-                            )),
+                      ),
               ),
               const SizedBox(width: AppSpacing.sm),
               Container(
@@ -2016,10 +2036,11 @@ class _LocalSongItem extends ConsumerWidget {
                   onTap: () => onContextMenu(colors, song),
                   child: Padding(
                     // 右侧只留 2（原来 4），配合行内 4px：⋮ 到屏幕边缘
-                    // 由 28 收到 14。
-                    padding: const EdgeInsets.only(
+                    // 由 28 收到 14。Windows 上放宽到 4，让按钮内侧留白
+                    // ≈12dp，与共享列表的「更多」按钮一致，左右边距相等。
+                    padding: EdgeInsets.only(
                       left: AppSpacing.xs,
-                      right: 2,
+                      right: useWideSongRowSpacing ? AppSpacing.xs : 2,
                       top: AppSpacing.xs,
                       bottom: AppSpacing.xs,
                     ),

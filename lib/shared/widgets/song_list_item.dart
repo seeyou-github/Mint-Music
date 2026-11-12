@@ -19,6 +19,7 @@ import '../../features/plugin/domain/plugin_types.dart';
 import '../../features/plugin/application/plugin_providers.dart';
 import 'music_cover_image.dart';
 import 'song_index_width.dart';
+import 'song_row_spacing.dart';
 import 'song_row_hover.dart';
 import 'song_favorite_heart.dart';
 import 'source_name_tag.dart';
@@ -166,13 +167,16 @@ class SongListItem extends ConsumerWidget {
             ? colors.primary.withValues(alpha: 0.08)
             : Colors.transparent,
         child: Padding(
-          // 行尾是「更多」按钮时不额外留白：图标本身在 20dp 的框里只占中间
-          // 约 4dp，按钮宽度也收窄了（见 _buildMenuButton），靠它们就能让三个
-          // 点距屏幕右缘 ≈12dp，和序号距左缘的 12dp 对齐。
-          // 行尾换成自定义内容（下载进度、勾选等）时仍保留原来的留白。
+          // Windows 上统一放大左右留白：行外侧 36dp + 序号列 / 更多按钮各
+          // 自带 12dp 内侧留白 = 序号文字与 ⋮ 距屏幕边缘都是 48dp（原 12dp
+          // 的 4 倍），左右严格对齐。其它平台沿用原来的紧凑布局：
+          // 行左 12dp，行尾是「更多」按钮时不额外留白，靠按钮内部留白让
+          // 三个点距屏幕右缘 ≈12dp。
           padding: EdgeInsets.only(
-            left: AppSpacing.md,
-            right: hasMenuButton ? 0 : AppSpacing.md / 2,
+            left: useWideSongRowSpacing ? wideSongRowPadding : AppSpacing.md,
+            right: useWideSongRowSpacing
+                ? wideSongRowPadding
+                : (hasMenuButton ? 0 : AppSpacing.md / 2),
             top: AppSpacing.sm,
             bottom: AppSpacing.sm,
           ),
@@ -212,12 +216,18 @@ class SongListItem extends ConsumerWidget {
   }
 
   /// 序号列宽度：按最大序号位数自适应；多选模式至少留出勾选框的位置。
+  ///
+  /// Windows 上再给序号左右各加 [wideSongIndexInset]，把序号从屏幕边缘和
+  /// 封面之间都拉开；多选模式显示的是勾选框，不加这段宽度以免挤压它。
   double indexColumnWidth(BuildContext context) {
-    final width = songIndexWidth(
+    var width = songIndexWidth(
       context,
       maxIndex: maxIndex ?? ((index ?? 0) + 1),
       fontSize: 13,
     );
+    if (useWideSongRowSpacing && !selectionMode) {
+      width += wideSongIndexExtra;
+    }
     return selectionMode ? math.max(width, _checkboxWidth) : width;
   }
 
@@ -243,22 +253,27 @@ class SongListItem extends ConsumerWidget {
   Widget _buildIndex(ThemeColors colors, double width) {
     return SizedBox(
       width: width,
-      // 序号贴着列表左边（不再在固定宽度里居中）：两位数的列表不用白搭一串
-      // 空白，封面也能整体左移。
-      child: isPlaying
-          ? Icon(Icons.play_arrow, size: 18, color: colors.primary)
-          : Text(
-              index != null ? '${index! + 1}' : '',
-              maxLines: 1,
-              softWrap: false,
-              style: TextStyle(
-                fontSize: 13,
-                // 序号用「第二字体颜色」：textHint 在浅色主题下几乎糊在背景里。
-                color: colors.textSecondary,
-                fontWeight: FontWeight.w500,
+      // 序号贴着列的内容区左边（不再在固定宽度里居中）；Windows 上左右各
+      // 留 [wideSongIndexInset]，序号列变宽、序号不贴边也不贴封面。
+      child: Padding(
+        padding: EdgeInsets.symmetric(
+          horizontal: useWideSongRowSpacing ? wideSongIndexInset : 0,
+        ),
+        child: isPlaying
+            ? Icon(Icons.play_arrow, size: 18, color: colors.primary)
+            : Text(
+                index != null ? '${index! + 1}' : '',
+                maxLines: 1,
+                softWrap: false,
+                style: TextStyle(
+                  fontSize: 13,
+                  // 序号用「第二字体颜色」：textHint 在浅色主题下几乎糊在背景里。
+                  color: colors.textSecondary,
+                  fontWeight: FontWeight.w500,
+                ),
+                textAlign: TextAlign.left,
               ),
-              textAlign: TextAlign.left,
-            ),
+      ),
     );
   }
 
@@ -651,9 +666,9 @@ class SongListItem extends ConsumerWidget {
 
   /// 「更多」按钮的宽度：图标 20，左右各留 4。
   ///
-  /// 行尾内边距为 0 时，三个点距屏幕右缘 = 4（按钮内留白）+ 8.3（more_vert
-  /// 图标里那三个点本身只占中间约 3.3dp）≈ 12dp，正好和序号距屏幕左缘的
-  /// 12dp（[AppSpacing.md]）对齐。
+  /// 三个点到按钮右缘 ≈12dp。非 Windows 上行尾内边距 0、行左 12dp，左右
+  /// 正好对齐；Windows 上行左右各 [wideSongRowPadding]（36dp），两侧再加
+  /// 这段 12dp，序号文字与 ⋮ 距屏幕边缘都是 48dp。
   static const double _menuButtonWidth = 28;
 
   /// 「更多」按钮的高度（与行内其它元素居中对齐即可，撑满行高的点击区）。
