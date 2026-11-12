@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import '../../../shared/utils/display_name_sanitizer.dart';
 import '../../../shared/pagination/page_result.dart';
@@ -75,16 +76,52 @@ class _CacheEntry<T> {
   bool get isValid => DateTime.now().difference(timestamp) < ttl;
 }
 
+/// 带条数上限的 LRU：插件缓存以前是普通 Map，翻页 / 搜索一多就无限增长
+/// （每个 key 都带着整页歌曲）。读命中会把条目移到末尾，超出上限先淘汰
+/// 最久没用过的。
+class _LruCache<K, V> {
+  _LruCache(this.maxEntries);
+
+  final int maxEntries;
+  final LinkedHashMap<K, V> _entries = LinkedHashMap();
+
+  V? operator [](K key) {
+    final value = _entries.remove(key);
+    if (value != null) _entries[key] = value;
+    return value;
+  }
+
+  void operator []=(K key, V value) {
+    _entries.remove(key);
+    _entries[key] = value;
+    while (_entries.length > maxEntries) {
+      _entries.remove(_entries.keys.first);
+    }
+  }
+
+  void clear() => _entries.clear();
+}
+
 class MusicSourceManager {
   final PluginService _pluginService;
 
-  final Map<String, _CacheEntry<List<Playlist>>> _hotPlaylistsCache = {};
-  final Map<String, _CacheEntry<Playlist?>> _playlistDetailCache = {};
-  final Map<String, _CacheEntry<List<String>>> _searchSuggestionsCache = {};
-  final Map<String, _CacheEntry<PageResult<Song>>> _searchPageCache = {};
-  final Map<String, _CacheEntry<String?>> _coverCache = {};
-  final Map<String, _CacheEntry<Map<String, List<Song>>>> _searchResultsCache =
-      {};
+  /// 各类插件结果缓存的条数上限：一页搜索 / 详情通常几十条，50 条足够覆盖
+  /// 用户在几个页面间来回切换，又不至于把整页歌曲留到退出。
+  static const int _maxCacheEntries = 50;
+
+  final _LruCache<String, _CacheEntry<List<Playlist>>> _hotPlaylistsCache =
+      _LruCache(_maxCacheEntries);
+  final _LruCache<String, _CacheEntry<Playlist?>> _playlistDetailCache =
+      _LruCache(_maxCacheEntries);
+  final _LruCache<String, _CacheEntry<List<String>>> _searchSuggestionsCache =
+      _LruCache(_maxCacheEntries);
+  final _LruCache<String, _CacheEntry<PageResult<Song>>> _searchPageCache =
+      _LruCache(_maxCacheEntries);
+  final _LruCache<String, _CacheEntry<String?>> _coverCache = _LruCache(
+    _maxCacheEntries,
+  );
+  final _LruCache<String, _CacheEntry<Map<String, List<Song>>>>
+  _searchResultsCache = _LruCache(_maxCacheEntries);
 
   int _suggestRequestId = 0;
   int _searchRequestId = 0;
