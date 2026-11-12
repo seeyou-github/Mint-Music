@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -83,9 +85,44 @@ class CoverColorResult {
 }
 
 class CoverColorExtractor {
+  /// 取色 / 测光只需要缩略图：128px 解码成 RGBA 只有 64KB，而 1024px 原图
+  /// 要 4MB，解码本身也慢一个数量级。
+  static const int _decodeSize = 128;
+
+  /// 取色结果缓存：同一张封面在切歌、返回页面、背景层重建时会被反复取色，
+  /// 命中缓存可以连解码都省掉。键由调用方给（歌单 id / 封面地址）。
+  static const int _resultCacheLimit = 96;
+  static final LinkedHashMap<String, CoverColorResult> _resultCache =
+      LinkedHashMap();
+
+  static CoverColorResult? _cached(String? key) {
+    if (key == null) return null;
+    final result = _resultCache.remove(key);
+    if (result != null) _resultCache[key] = result; // 最近使用
+    return result;
+  }
+
+  static void _store(String? key, CoverColorResult result) {
+    if (key == null) return;
+    _resultCache.remove(key);
+    _resultCache[key] = result;
+    while (_resultCache.length > _resultCacheLimit) {
+      _resultCache.remove(_resultCache.keys.first);
+    }
+  }
+
   /// 把图片解码成原始 RGBA 字节；解码失败 / 超时返回 null。
   static Future<Uint8List?> _rgbaBytes(ImageProvider imageProvider) async {
-    final imageStream = imageProvider.resolve(const ImageConfiguration());
+    // 调用方已经缩过图就不要再套一层（ResizeImage 不能相互叠加）。
+    final provider = imageProvider is ResizeImage
+        ? imageProvider
+        : ResizeImage(
+            imageProvider,
+            width: _decodeSize,
+            height: _decodeSize,
+            allowUpscaling: false,
+          );
+    final imageStream = provider.resolve(const ImageConfiguration());
     final completer = Completer<ui.Image>();
     late ImageStreamListener listener;
     listener = ImageStreamListener(
@@ -113,15 +150,19 @@ class CoverColorExtractor {
     return byteData?.buffer.asUint8List();
   }
 
-  static Future<CoverColorResult> extract(ImageProvider imageProvider) async {
+  static Future<CoverColorResult> extract(
+    ImageProvider imageProvider, {
+    String? cacheKey,
+  }) async {
+    final cached = _cached(cacheKey);
+    if (cached != null) return cached;
     try {
       final rgbaBytes = await _rgbaBytes(imageProvider);
       if (rgbaBytes == null) {
         return CoverColorResult.defaultResult;
       }
 
-      final (dominantArgb, colorfulness) = await compute(
-        _extractDominantColor,
+      final (dominantArgb, colorfulness) = await _ColorWorker.instance.extract(
         rgbaBytes,
       );
 
@@ -136,21 +177,32 @@ class CoverColorExtractor {
         lightColor = _blendWithWhite(dominantColor, 0.85);
       }
 
-      return CoverColorResult(
+      final result = CoverColorResult(
         dominantColor: dominantColor,
         lightColor: lightColor,
         useDarkText: useDarkText,
         colorfulness: colorfulness,
       );
+      _store(cacheKey, result);
+      return result;
     } catch (e) {
+      // 失败结果不缓存：图片可能只是暂时没加载出来，下次还要能重试。
       return CoverColorResult.defaultResult;
     }
   }
+
+  /// 歌曲取色缓存的键：换封面 / 换文件（mtime 变化）时自动失效。
+  static String _songCacheKey(Song song) =>
+      'song:${song.id}:${song.coverUrl ?? ''}:${song.fileModified ?? 0}';
 
   static Future<CoverColorResult> extractFromSong(
     Song song, {
     OnAudioQuery? audioQuery,
   }) async {
+    final cacheKey = _songCacheKey(song);
+    final cached = _cached(cacheKey);
+    if (cached != null) return cached;
+
     final coverUrl = song.coverUrl;
 
     if (song.isLocal) {
@@ -160,23 +212,31 @@ class CoverColorExtractor {
       // 「本地歌有封面，主界面和播放栏却不变色」。
       final bytes = await _localArtworkBytes(song, audioQuery: audioQuery);
       if (bytes != null && bytes.isNotEmpty) {
-        return extract(MemoryImage(bytes));
+        final result = await extract(MemoryImage(bytes));
+        _store(cacheKey, result);
+        return result;
       }
       // 本地确实没有封面时，再试匹配到的在线封面地址。
       if (coverUrl != null && coverUrl.isNotEmpty) {
-        return extractFromUrl(coverUrl);
+        final result = await extractFromUrl(coverUrl);
+        _store(cacheKey, result);
+        return result;
       }
       return CoverColorResult.defaultResult;
     }
 
     if (coverUrl != null && coverUrl.isNotEmpty) {
-      return extractFromUrl(coverUrl);
+      final result = await extractFromUrl(coverUrl);
+      _store(cacheKey, result);
+      return result;
     }
 
     if (song.mediaStoreId != null) {
       final bytes = await _localArtworkBytes(song, audioQuery: audioQuery);
       if (bytes != null && bytes.isNotEmpty) {
-        return extract(MemoryImage(bytes));
+        final result = await extract(MemoryImage(bytes));
+        _store(cacheKey, result);
+        return result;
       }
     }
 
@@ -242,9 +302,13 @@ class CoverColorExtractor {
   ///
   /// 歌单 / 专辑 / 作者 / 榜单详情页的顶栏背景用它，取色算法与播放页相同。
   static Future<CoverColorResult> extractFromUrl(String? url) async {
+    if (url == null || url.isEmpty) return CoverColorResult.defaultResult;
+    final key = 'url:$url';
+    final cached = _cached(key);
+    if (cached != null) return cached;
     final provider = await _providerForUrl(url);
     if (provider == null) return CoverColorResult.defaultResult;
-    return extract(provider);
+    return extract(provider, cacheKey: key);
   }
 
   /// 封面整体亮度（0..1）：所有不透明像素的感知亮度均值。
@@ -295,6 +359,126 @@ double _averageLuminance(Uint8List rgbaBytes) {
     count++;
   }
   return count == 0 ? 0 : sum / count;
+}
+
+// ---------------------------------------------------------------- 取色 isolate
+
+class _ColorExtractionRequest {
+  const _ColorExtractionRequest(this.id, this.rgba);
+
+  final int id;
+  final Uint8List rgba;
+}
+
+class _ColorExtractionResponse {
+  const _ColorExtractionResponse(this.id, this.argb, this.colorfulness);
+
+  final int id;
+  final int argb;
+  final double colorfulness;
+}
+
+/// 常驻的取色 isolate。
+///
+/// 取色在切歌、返回页面、背景层重建时很频繁，`compute()` 每次都要新起一个
+/// isolate（一次完整堆拷贝），开销比算色本身还大；这里让 isolate 一直活着，
+/// 只把 RGBA 字节发进去算。
+class _ColorWorker {
+  _ColorWorker._();
+
+  static final _ColorWorker instance = _ColorWorker._();
+
+  final ReceivePort _responses = ReceivePort();
+  final Map<int, Completer<(int, double)>> _pending = {};
+
+  Isolate? _isolate;
+  SendPort? _requests;
+  Completer<void>? _ready;
+  int _nextId = 0;
+
+  Future<(int, double)> extract(Uint8List rgba) async {
+    final requests = await _ensureStarted();
+    if (requests == null) {
+      // isolate 不可用（Web / 启动失败）：退回当前线程直接算，
+      // 128px 的图最多几十毫秒，总比拿不到颜色好。
+      return _extractDominantColor(rgba);
+    }
+
+    final id = _nextId++;
+    final completer = Completer<(int, double)>();
+    _pending[id] = completer;
+    try {
+      requests.send(_ColorExtractionRequest(id, rgba));
+      return await completer.future.timeout(const Duration(seconds: 10));
+    } catch (_) {
+      return _extractDominantColor(rgba);
+    } finally {
+      _pending.remove(id);
+    }
+  }
+
+  Future<SendPort?> _ensureStarted() async {
+    final existing = _requests;
+    if (existing != null) return existing;
+
+    final pendingReady = _ready;
+    if (pendingReady != null) {
+      await pendingReady.future.timeout(
+        const Duration(seconds: 5),
+        onTimeout: () {},
+      );
+      return _requests;
+    }
+
+    final ready = Completer<void>();
+    _ready = ready;
+    try {
+      _responses.listen(_handleResponse);
+      _isolate = await Isolate.spawn(
+        _colorWorkerMain,
+        _responses.sendPort,
+        debugName: 'cover-color',
+      );
+    } catch (_) {
+      _ready = null;
+      return null;
+    }
+
+    try {
+      await ready.future.timeout(const Duration(seconds: 5));
+    } on TimeoutException {
+      // 端口没送回来：下次调用重新起一个。
+      _ready = null;
+      _isolate?.kill(priority: Isolate.immediate);
+      _isolate = null;
+      return null;
+    }
+    return _requests;
+  }
+
+  void _handleResponse(dynamic message) {
+    if (message is SendPort) {
+      _requests = message;
+      final ready = _ready;
+      if (ready != null && !ready.isCompleted) ready.complete();
+      return;
+    }
+    if (message is _ColorExtractionResponse) {
+      _pending
+          .remove(message.id)
+          ?.complete((message.argb, message.colorfulness));
+    }
+  }
+}
+
+void _colorWorkerMain(SendPort responses) {
+  final requests = ReceivePort();
+  responses.send(requests.sendPort);
+  requests.listen((message) {
+    if (message is! _ColorExtractionRequest) return;
+    final (argb, colorfulness) = _extractDominantColor(message.rgba);
+    responses.send(_ColorExtractionResponse(message.id, argb, colorfulness));
+  });
 }
 
 /// CeruMusic-style eager pre-computation: watches current song and
