@@ -1313,6 +1313,10 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                     _lyricFontLabel(family),
                     () {
                       _showFontFamilyPicker(context, container).then((_) {
+                        // 子弹层打开期间宿主 sheet 可能已被关掉（此时
+                        // StatefulBuilder 已卸载），再 setSheetState 会抛
+                        // setState-after-dispose，先判存活。
+                        if (!context.mounted) return;
                         setSheetState(() {});
                       });
                     },
@@ -1331,6 +1335,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                     '${(rate * 100).toInt()}%',
                     () {
                       _showFontRatePicker(context, container).then((_) {
+                        if (!context.mounted) return;
                         setSheetState(() {});
                       });
                     },
@@ -1349,6 +1354,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                     '$weight',
                     () {
                       _showFontWeightPicker(context, container).then((_) {
+                        if (!context.mounted) return;
                         setSheetState(() {});
                       });
                     },
