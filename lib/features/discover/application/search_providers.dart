@@ -421,14 +421,10 @@ final hotSearchTagsProvider = FutureProvider<List<String>>((ref) async {
   return manager.getHotSearchTags(sourceId: sourceId);
 });
 
-final searchSuggestionsProvider = FutureProvider<List<String>>((ref) async {
-  final query = ref.watch(searchQueryProvider);
-  if (query.isEmpty) return [];
-
-  final sourceId = ref.watch(searchSourceIdProvider);
-  final manager = ref.watch(musicSourceManagerProvider);
-  return manager.getSearchSuggestions(query, sourceId: sourceId);
-});
+// 搜索建议走 searchSuggestInputProvider + searchSuggestResultsProvider：
+// 输入框在 search_page 里做了 300ms 防抖才写入 input。不要直接按
+// searchQueryProvider 拉建议——那是提交后的关键词，逐字 watch 会每敲一个
+// 字发一次请求（以前有个这样的 provider，无消费者已删除）。
 
 /// 搜索历史：**只保存在内存里**。
 ///
