@@ -82,6 +82,13 @@ class DownloadRepository {
     ),
   );
   final List<DownloadTask> _tasks = [];
+
+  /// 任务 id → 在 [_tasks] 中的下标。
+  ///
+  /// 分片回调、状态更新都要按 id 找到任务；列表最多几十上百条时，
+  /// 每个分片做一次 `indexWhere` 线性扫描属于纯粹的浪费。删除任务时
+  /// 重建一次索引（删除本身是 O(n)），其余操作都是 O(1)。
+  final Map<String, int> _taskIndex = {};
   final Map<String, CancelToken> _cancelTokens = {};
 
   /// 每个任务一个速度采样器（按时间窗口取平均，避免速度在「有值 / -」之间闪）。
@@ -292,6 +299,27 @@ class DownloadRepository {
     }
   }
 
+  // ==================== 任务列表索引 ====================
+
+  int _indexOfTask(String taskId) => _taskIndex[taskId] ?? -1;
+
+  void _addTask(DownloadTask task) {
+    _taskIndex[task.id] = _tasks.length;
+    _tasks.add(task);
+  }
+
+  void _removeTaskAt(int index) {
+    _tasks.removeAt(index);
+    _reindexTasks(from: index);
+  }
+
+  void _reindexTasks({int from = 0}) {
+    _taskIndex.removeWhere((_, index) => index >= from);
+    for (var i = from; i < _tasks.length; i++) {
+      _taskIndex[_tasks[i].id] = i;
+    }
+  }
+
   // ==================== 核心操作 ====================
 
   /// 检查存储权限。公共目录需要 MANAGE_EXTERNAL_STORAGE。
@@ -374,7 +402,7 @@ class DownloadRepository {
       createdAt: DateTime.now().millisecondsSinceEpoch,
     );
 
-    _tasks.add(task);
+    _addTask(task);
     // 先把任务推给界面再落盘：下载管理页立刻就能看到这条记录，
     // 不用等数据库写完（以前是先解析播放地址再入队，网络慢时要等好几秒）。
     _emitUpdate();
@@ -400,7 +428,7 @@ class DownloadRepository {
 
   /// 暂停任务
   Future<void> pauseTask(String taskId) async {
-    final index = _tasks.indexWhere((t) => t.id == taskId);
+    final index = _indexOfTask(taskId);
     if (index == -1) return;
 
     final task = _tasks[index];
@@ -427,7 +455,7 @@ class DownloadRepository {
 
   /// 恢复任务（照搬 CeruMusic resumeTask：放入队列头部）
   Future<void> resumeTask(String taskId) async {
-    final index = _tasks.indexWhere((t) => t.id == taskId);
+    final index = _indexOfTask(taskId);
     if (index == -1) return;
 
     final task = _tasks[index];
@@ -450,7 +478,7 @@ class DownloadRepository {
 
   /// 重试任务
   Future<void> retryTask(String taskId) async {
-    final index = _tasks.indexWhere((t) => t.id == taskId);
+    final index = _indexOfTask(taskId);
     if (index == -1) return;
 
     final task = _tasks[index];
@@ -481,7 +509,7 @@ class DownloadRepository {
 
   /// 取消任务
   Future<void> cancelTask(String taskId) async {
-    final index = _tasks.indexWhere((t) => t.id == taskId);
+    final index = _indexOfTask(taskId);
     if (index == -1) return;
 
     final task = _tasks[index];
@@ -508,7 +536,7 @@ class DownloadRepository {
 
   /// 删除任务
   Future<void> deleteTask(String taskId, {bool deleteFile = false}) async {
-    final index = _tasks.indexWhere((t) => t.id == taskId);
+    final index = _indexOfTask(taskId);
     if (index == -1) return;
 
     final task = _tasks[index];
@@ -535,7 +563,7 @@ class DownloadRepository {
       }
     }
 
-    _tasks.removeAt(index);
+    _removeTaskAt(index);
     _emitUpdate();
     _processQueue();
   }
@@ -638,7 +666,7 @@ class DownloadRepository {
   }
 
   Future<void> _startTask(String taskId) async {
-    final index = _tasks.indexWhere((t) => t.id == taskId);
+    final index = _indexOfTask(taskId);
     if (index == -1) return;
 
     _initializingTasks.add(taskId);
@@ -698,7 +726,7 @@ class DownloadRepository {
     } catch (e) {
       debugPrint('[DownloadRepository] 下载失败: $e');
       _initializingTasks.remove(taskId);
-      final idx = _tasks.indexWhere((t) => t.id == taskId);
+      final idx = _indexOfTask(taskId);
       final filePath = idx != -1 ? _tasks[idx].filePath : '';
       final message = _cleanErrorMessage(e);
       if (activeCounted) {
@@ -712,7 +740,7 @@ class DownloadRepository {
   }
 
   void _markError(String taskId, String error) {
-    final idx = _tasks.indexWhere((t) => t.id == taskId);
+    final idx = _indexOfTask(taskId);
     if (idx != -1) {
       _tasks[idx] = _tasks[idx].copyWith(
         status: DownloadStatus.error,
@@ -725,7 +753,7 @@ class DownloadRepository {
   }
 
   Future<void> _downloadFile(String taskId, String url) async {
-    final index = _tasks.indexWhere((t) => t.id == taskId);
+    final index = _indexOfTask(taskId);
     if (index == -1) return;
 
     final task = _tasks[index];
@@ -764,7 +792,7 @@ class DownloadRepository {
           final receivedWithOffset = received + startByte;
 
           final now = DateTime.now();
-          final idx = _tasks.indexWhere((t) => t.id == taskId);
+          final idx = _indexOfTask(taskId);
           // 速度按时间窗口取平均：窗口没到就沿用上一次的值，不会归零，
           // 界面上也就不会在「有值 / -」之间来回闪。
           final speed =
@@ -918,7 +946,7 @@ class DownloadRepository {
           debugPrint('[DownloadRepository] 标签写入失败: $e');
         }
 
-        final idx = _tasks.indexWhere((t) => t.id == taskId);
+        final idx = _indexOfTask(taskId);
         if (idx != -1) {
           _tasks[idx] = _tasks[idx].copyWith(
             progress: 1.0,
@@ -951,7 +979,7 @@ class DownloadRepository {
     } on DioException catch (e) {
       if (e.type == DioExceptionType.cancel) return;
 
-      final idx = _tasks.indexWhere((t) => t.id == taskId);
+      final idx = _indexOfTask(taskId);
       if (idx != -1) {
         final task = _tasks[idx];
         // 断点位置失效（服务器换了文件 / 临时文件已经损坏）：删掉临时文件
@@ -985,7 +1013,7 @@ class DownloadRepository {
         );
       }
     } catch (e) {
-      final idx = _tasks.indexWhere((t) => t.id == taskId);
+      final idx = _indexOfTask(taskId);
       if (idx != -1) {
         final task = _tasks[idx];
         if (task.retries < _maxRetries) {
@@ -1129,7 +1157,7 @@ class DownloadRepository {
   }
 
   void _handleError(String taskId, String error, {String? tempFilePath}) {
-    final idx = _tasks.indexWhere((t) => t.id == taskId);
+    final idx = _indexOfTask(taskId);
     if (idx != -1) {
       _fileLocks.remove(_tasks[idx].filePath);
       _tasks[idx] = _tasks[idx].copyWith(
