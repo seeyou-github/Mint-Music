@@ -1013,7 +1013,7 @@ class _PlayerLyricsPage extends ConsumerWidget {
             child: IgnorePointer(
               child: LyricFormatTag(
                 format: lyricState.lyricFormat!,
-                dark: true,
+                colors: themeColors,
               ),
             ),
           ),

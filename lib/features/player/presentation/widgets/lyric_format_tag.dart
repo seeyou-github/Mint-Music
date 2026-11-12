@@ -5,31 +5,20 @@ import '../../../../core/theme/theme_colors.dart';
 
 /// 逐字歌词的格式标签（YRC / QRC / KRC / LRCX / TTML ...）。
 ///
-/// [dark] 用于深色封面背景（全屏播放页歌词区），否则使用传入的主题颜色。
+/// 颜色一律取传入的主题色：原来有个 `dark: true` 分支写死白字，浅色主题下
+/// 这个标签在浅底上几乎看不见，而且不跟随「外观设置 → 字体颜色」。
 class LyricFormatTag extends StatelessWidget {
-  const LyricFormatTag({
-    super.key,
-    required this.format,
-    this.colors,
-    this.dark = false,
-  });
+  const LyricFormatTag({super.key, required this.format, this.colors});
 
   final String format;
   final ThemeColors? colors;
-  final bool dark;
 
   @override
   Widget build(BuildContext context) {
     final theme = colors;
-    final foreground = dark
-        ? Colors.white.withValues(alpha: 0.8)
-        : theme?.textSecondary ?? Colors.grey;
-    final background = dark
-        ? Colors.white.withValues(alpha: 0.12)
-        : theme?.surfaceVariant ?? Colors.transparent;
-    final border = dark
-        ? Colors.white.withValues(alpha: 0.22)
-        : theme?.divider ?? Colors.grey;
+    final foreground = theme?.textSecondary ?? Colors.grey;
+    final background = theme?.surfaceVariant ?? Colors.transparent;
+    final border = theme?.divider ?? Colors.grey;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),

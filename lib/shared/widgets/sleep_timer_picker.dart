@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_spacing.dart';
+import '../../core/theme/theme_provider.dart';
 import '../../core/l10n/l10n.dart';
 import '../../features/player/application/sleep_timer_provider.dart';
 
@@ -19,6 +19,8 @@ class SleepTimerMenuTile extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final sleep = ref.watch(sleepTimerProvider);
+    // 跟随主题：原来写死深色主题那套常量，浅色主题下文字和图标都是白的。
+    final colors = ref.watch(themeColorsProvider);
     return InkWell(
       onTap: () => showSleepTimerPicker(context),
       child: Padding(
@@ -31,33 +33,29 @@ class SleepTimerMenuTile extends ConsumerWidget {
             Icon(
               sleep.active ? Icons.timer : Icons.timer_outlined,
               size: 22,
-              color: sleep.active ? AppColors.primary : AppColors.textSecondary,
+              color: sleep.active ? colors.primary : colors.textSecondary,
             ),
             const SizedBox(width: AppSpacing.md),
             Text(
               context.tr('定时关闭'),
               style: TextStyle(
                 fontSize: 15,
-                color: sleep.active ? AppColors.primary : AppColors.textPrimary,
+                color: sleep.active ? colors.primary : colors.textPrimary,
               ),
             ),
             const Spacer(),
             if (sleep.active) ...[
               Text(
                 formatSleepTimerRemaining(sleep.remaining),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w500,
-                  color: AppColors.primary,
+                  color: colors.primary,
                 ),
               ),
               const SizedBox(width: 8),
             ],
-            const Icon(
-              Icons.chevron_right,
-              size: 20,
-              color: AppColors.textHint,
-            ),
+            Icon(Icons.chevron_right, size: 20, color: colors.textHint),
           ],
         ),
       ),
@@ -105,11 +103,13 @@ class _SleepTimerPickerSheetState
   Widget build(BuildContext context) {
     final sleep = ref.watch(sleepTimerProvider);
     final notifier = ref.read(sleepTimerProvider.notifier);
+    // 整块跟随主题：原来写死深色底 + 浅色文字，浅色主题下是一块黑框。
+    final colors = ref.watch(themeColorsProvider);
 
     return Container(
-      decoration: const BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      decoration: BoxDecoration(
+        color: colors.dialogSurface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
       ),
       padding: EdgeInsets.only(
         bottom: MediaQuery.of(context).viewInsets.bottom,
@@ -128,7 +128,7 @@ class _SleepTimerPickerSheetState
                   width: 40,
                   height: 4,
                   decoration: BoxDecoration(
-                    color: AppColors.divider,
+                    color: colors.divider,
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
@@ -138,7 +138,7 @@ class _SleepTimerPickerSheetState
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w600,
-                    color: AppColors.textPrimary,
+                    color: colors.textPrimary,
                   ),
                 ),
                 // 已设定时：实时显示剩余倒计时
@@ -147,20 +147,13 @@ class _SleepTimerPickerSheetState
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const Icon(
-                        Icons.timer,
-                        size: 16,
-                        color: AppColors.primary,
-                      ),
+                      Icon(Icons.timer, size: 16, color: colors.primary),
                       const SizedBox(width: 4),
                       Text(
                         context.tr(
                           '剩余 ${formatSleepTimerRemaining(sleep.remaining)} 后自动暂停',
                         ),
-                        style: const TextStyle(
-                          fontSize: 13,
-                          color: AppColors.primary,
-                        ),
+                        style: TextStyle(fontSize: 13, color: colors.primary),
                       ),
                     ],
                   ),
@@ -191,7 +184,12 @@ class _SleepTimerPickerSheetState
                   label: context.tr('关闭'),
                   duration: Duration.zero,
                 ),
-                const Divider(height: 1, indent: 16, endIndent: 16),
+                Divider(
+                  height: 1,
+                  indent: 16,
+                  endIndent: 16,
+                  color: colors.divider,
+                ),
                 // 自定义输入
                 Padding(
                   padding: const EdgeInsets.symmetric(
@@ -200,11 +198,7 @@ class _SleepTimerPickerSheetState
                   ),
                   child: Row(
                     children: [
-                      const Icon(
-                        Icons.edit,
-                        size: 20,
-                        color: AppColors.textSecondary,
-                      ),
+                      Icon(Icons.edit, size: 20, color: colors.textSecondary),
                       const SizedBox(width: 12),
                       SizedBox(
                         width: 60,
@@ -276,6 +270,19 @@ class _SleepTimerPickerSheetState
                             Navigator.pop(context);
                           }
                         },
+                        // 纯文字按钮在浅色主题下几乎看不出是按钮：给一圈主题色
+                        // 15% 的胶囊底 + 主题色文字，和项目里其它按钮一致。
+                        style: TextButton.styleFrom(
+                          backgroundColor: colors.primary.withValues(
+                            alpha: 0.15,
+                          ),
+                          foregroundColor: colors.primary,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
+                          shape: const StadiumBorder(),
+                        ),
                         child: Text(context.tr('确定')),
                       ),
                     ],
@@ -307,9 +314,10 @@ class _SleepTimerPickerSheetState
     required String label,
     required Duration duration,
   }) {
+    final colors = ref.read(themeColorsProvider);
     return ListTile(
-      leading: const Icon(Icons.timer_outlined, color: AppColors.textSecondary),
-      title: Text(label, style: const TextStyle(color: AppColors.textPrimary)),
+      leading: Icon(Icons.timer_outlined, color: colors.textSecondary),
+      title: Text(label, style: TextStyle(color: colors.textPrimary)),
       onTap: () {
         Navigator.pop(ctx);
         if (duration > Duration.zero) {

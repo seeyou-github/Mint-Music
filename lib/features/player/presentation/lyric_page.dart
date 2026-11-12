@@ -274,7 +274,7 @@ class _LyricPageState extends ConsumerState<LyricPage> {
                                     right: 16,
                                     child: LyricFormatTag(
                                       format: lyricState.lyricFormat!,
-                                      dark: true,
+                                      colors: themeColors,
                                     ),
                                   ),
                               ],

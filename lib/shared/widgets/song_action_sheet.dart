@@ -332,6 +332,12 @@ class SongActionSheet extends ConsumerStatefulWidget {
     Song song, {
     bool gated = false,
   }) {
+    // 文字色跟随「外观设置 → 字体颜色」：原来写死白字，浅色主题下弹层是浅底，
+    // 白字几乎看不见。
+    final colors = ProviderScope.containerOf(
+      ctx,
+      listen: false,
+    ).read(themeColorsProvider);
     return InkWell(
       onTap: () {
         if (gated) {
@@ -363,8 +369,8 @@ class SongActionSheet extends ConsumerStatefulWidget {
                     getQualityDisplayName(q),
                     style: TextStyle(
                       color: gated
-                          ? Colors.white.withValues(alpha: 0.35)
-                          : Colors.white,
+                          ? colors.textPrimary.withValues(alpha: 0.35)
+                          : colors.textPrimary,
                       fontSize: 15,
                       fontWeight: FontWeight.w500,
                     ),
@@ -376,8 +382,8 @@ class SongActionSheet extends ConsumerStatefulWidget {
                         : '${ctx.tr(kQualityDescription[q] ?? '')}  ${_estimateSize(q, song.duration)}',
                     style: TextStyle(
                       color: gated
-                          ? Colors.orange.withValues(alpha: 0.7)
-                          : Colors.white.withValues(alpha: 0.5),
+                          ? Colors.orange.withValues(alpha: 0.9)
+                          : colors.textSecondary,
                       fontSize: 12,
                     ),
                   ),
@@ -386,7 +392,7 @@ class SongActionSheet extends ConsumerStatefulWidget {
             ),
             Icon(
               gated ? Icons.lock_outline : Icons.download_outlined,
-              color: Colors.white.withValues(alpha: 0.4),
+              color: colors.textSecondary,
               size: 20,
             ),
           ],
@@ -505,17 +511,13 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
     final blacklist = ref.watch(blacklistProvider);
     final bottomPadding = MediaQuery.of(context).padding.bottom;
 
-    // Compact mode (player menu) uses always-dark colors matching the play queue window.
-    // Full mode (song context menu) uses the theme-provided _colors.
-    final colors = widget.compactMode
-        ? ThemeColors.darkWithPrimary(AppColors.primary)
-        : themeColors;
+    // 两种模式都用主题色：原来「播放页的更多菜单」（compactMode）写死深色底 +
+    // 白字，浅色主题下变成一块黑框，和歌曲列表里的更多弹框完全两个样子。
+    final colors = themeColors;
 
     return Container(
       decoration: BoxDecoration(
-        // Compact mode (player menu) uses always-dark surface matching the play queue.
-        // Full mode (song context menu) uses the themed surface (white in light theme).
-        color: widget.compactMode ? AppColors.surface : _colors.dialogSurface,
+        color: _colors.dialogSurface,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
       ),
       child: SafeArea(
@@ -1480,9 +1482,10 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
       backgroundColor: Colors.transparent,
       builder: (ctx2) {
         return Container(
-          decoration: const BoxDecoration(
-            color: AppColors.surface,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+          decoration: BoxDecoration(
+            // 跟随主题：原来写死深色，浅色主题下这块底和外层白色弹层对不上。
+            color: _colors.dialogSurface,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
           ),
           child: StatefulBuilder(
             builder: (context, setState) {
@@ -1552,9 +1555,9 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
       sheetAnimationStyle: _sheetAnimationStyle,
       backgroundColor: Colors.transparent,
       builder: (ctx2) => Container(
-        decoration: const BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+        decoration: BoxDecoration(
+          color: _colors.dialogSurface,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
         ),
         child: SafeArea(
           child: StatefulBuilder(
@@ -1768,7 +1771,9 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                   .toList();
               return Container(
                 decoration: BoxDecoration(
-                  color: AppColors.surface,
+                  // 底色跟随主题：原来写死深色，浅色主题下弹框是黑的、文字是
+                  // 主题的深色字，糊成一团。
+                  color: _colors.dialogSurface,
                   borderRadius: const BorderRadius.vertical(
                     top: Radius.circular(16),
                   ),
