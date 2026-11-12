@@ -1,5 +1,5 @@
 import 'dart:convert';
-import 'dart:io' show File, FileMode, gzip;
+import 'dart:io' show File, FileMode, RandomAccessFile, gzip;
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -360,21 +360,20 @@ class WebDavService {
   /// 坚果云等）可以按段并发拉取：单连接被限速时，多开几条连接能明显提速。
   /// 服务器不接受 Range 或并发被拒时，[downloadToFile] 会自动退回单线程，
   /// 不会因此失败。
-  static const int downloadParallelism = 8;
+  static const int downloadParallelism = 4;
 
-  /// 小于这个大小不分段：切段 + 合并的开销还不如直接一条流。
-  static const int _minParallelBytes = 2 * 1024 * 1024;
-
-  /// 每段至少这么大，避免把文件切得太碎（8 段各 256KB 反而更慢）。
-  static const int _minSegmentBytes = 1024 * 1024;
+  /// 单个分片的最大字节数，同时也是「要不要分段」的门槛：
+  /// 文件超过这个大小就走多线程，每片最多这么多字节。
+  static const int _maxSegmentBytes = 100 * 1024;
 
   /// 把远端文件流式下载到 [savePath]，失败自动重试并从断点续传。
   ///
   /// 不整包塞进内存再判断成败：直接落盘的好处是失败时已经收到的字节还在，
   /// 下一次带 `Range` 接着下，不用把几十 MB 从头再来一遍。
   ///
-  /// 大小已知且够大时先走 [downloadParallelism] 路分段并发；服务器不支持
-  /// `Range`、并发被限流或某段重试仍失败时，自动回退到单线程续传。
+  /// 大小已知且超过 [_maxSegmentBytes] 时先走 [downloadParallelism] 路分段
+  /// 并发（每片最多 [_maxSegmentBytes]，分片数多于线程数时排队依次下）；
+  /// 服务器不支持 `Range`、并发被限流或某段重试仍失败时，自动回退到单线程。
   Future<void> downloadToFile(
     String path, {
     required String savePath,
@@ -383,7 +382,7 @@ class WebDavService {
   }) async {
     _requireConfigured();
     final total = expectedSize ?? 0;
-    if (total >= _minParallelBytes && downloadParallelism > 1) {
+    if (total > _maxSegmentBytes && downloadParallelism > 1) {
       final done = await _downloadParallel(
         path,
         savePath: savePath,
@@ -459,13 +458,14 @@ class WebDavService {
     required int total,
     void Function(int received, int total)? onProgress,
   }) async {
-    final segments = math
-        .min(downloadParallelism, (total / _minSegmentBytes).ceil())
-        .clamp(1, downloadParallelism);
-    final chunk = (total / segments).ceil();
-    final parts = [
-      for (var i = 0; i < segments; i++) File('$savePath.part$i'),
-    ];
+    // 每片最多 _maxSegmentBytes：文件越大片越多，由 [downloadParallelism] 个
+    // worker 排队依次取，同一时刻最多开这么多条连接。
+    final segmentCount = (total + _maxSegmentBytes - 1) ~/ _maxSegmentBytes;
+    final file = File(savePath);
+    // 每片已经下到多少字节：重试续传和进度都靠它，不去翻文件（文件是预分配的，
+    // 分不清哪段是真数据、哪段还是空洞）。
+    final segmentDone = List<int>.filled(segmentCount, 0);
+    var aborted = false;
 
     var received = 0;
     var lastReportMs = 0;
@@ -481,51 +481,63 @@ class WebDavService {
 
     try {
       final client = _buildClient();
-      // 先花一个 1 字节的请求确认服务器真的支持 Range：不支持的话 8 条连接会
+      // 先花一个 1 字节的请求确认服务器真的支持 Range：不支持的话几条连接会
       // 各自把整份文件下回来（既慢又费流量），必须在开工前就分辨出来。
       if (!await _supportsRange(client, path)) return false;
 
-      await Future.wait(
-        [
-          for (var i = 0; i < segments; i++)
-            _downloadSegment(
+      // 先把目标文件截到最终大小，每个分片直接写自己的偏移位置。
+      // 分片一多，「每片一个临时文件再拼接」会多出几百个文件 + 一次全量拷贝。
+      final truncate = await file.open(mode: FileMode.write);
+      try {
+        await truncate.truncate(total);
+      } finally {
+        await truncate.close();
+      }
+
+      var next = 0;
+      Future<void> worker() async {
+        // 每个 worker 一个句柄，片与片之间复用；写到哪儿由自己 setPosition 定。
+        final handle = await file.open(mode: FileMode.append);
+        try {
+          while (!aborted) {
+            final index = next++;
+            if (index >= segmentCount) return;
+            final start = index * _maxSegmentBytes;
+            final end = math.min(total, start + _maxSegmentBytes) - 1;
+            await _downloadSegment(
               client,
               path,
-              parts[i],
-              i * chunk,
-              math.min(total, (i + 1) * chunk) - 1,
+              handle,
+              segmentDone,
+              index,
+              start,
+              end,
               report,
-            ),
-        ],
-        // 某一段判定「服务器不支持 Range」时立刻收手，不等其它段跑完。
+              () => aborted,
+            );
+          }
+        } finally {
+          await handle.close();
+        }
+      }
+
+      await Future.wait(
+        [for (var i = 0; i < math.min(downloadParallelism, segmentCount); i++) worker()],
+        // 某一片判定「服务器不支持 Range」时立刻收手，不等其它片跑完。
         eagerError: true,
       );
-
-      // 按段顺序拼成一个文件：每段各自独立的临时文件，不用并发写同一个句柄。
-      // 合并完一段就删掉它，临时目录里不会同时压着两份完整文件。
-      final sink = File(savePath).openWrite();
-      try {
-        for (final part in parts) {
-          await sink.addStream(part.openRead());
-          await _deleteQuietly(part);
-        }
-        await sink.flush();
-      } finally {
-        await sink.close();
-      }
       onProgress?.call(total, total);
       return true;
     } on _RangeNotSupported {
-      // 服务器把整份文件发了回来（不支持 Range）：分段没法拼，交给单线程。
+      // 先把还在跑的 worker 喊停，避免它们继续往这个文件里写（下面单线程会
+      // 重新截断整个文件，同时写就会写坏）。
+      aborted = true;
       return false;
     } catch (e) {
+      aborted = true;
       if (isCancelled) rethrow;
       debugPrint('[WebDav] 分段下载失败，回退单线程: $e');
       return false;
-    } finally {
-      for (final part in parts) {
-        await _deleteQuietly(part);
-      }
     }
   }
 
@@ -559,36 +571,27 @@ class WebDavService {
     }
   }
 
-  /// 下载一段 `[start, end]`（闭区间）到 [part]，失败按段重试并续传。
+  /// 下载一片 `[start, end]`（闭区间），直接写进 [handle] 对应的偏移位置。
+  ///
+  /// [segmentDone] 记录每片已下字节：片内重试时从断点续传，进度也按它补报，
+  /// 已经落盘的字节不会重复计。失败按片重试，重试耗尽才整体回退单线程。
   Future<void> _downloadSegment(
     webdav.Client client,
     String path,
-    File part,
+    RandomAccessFile handle,
+    List<int> segmentDone,
+    int index,
     int start,
     int end,
     void Function(int delta) onBytes,
+    bool Function() isAborted,
   ) async {
     Object? lastError;
-    // 这一段已经向进度回调报过的字节数：续传时只补报差额，否则进度会跳。
-    var reported = 0;
     for (var attempt = 1; attempt <= downloadMaxAttempts; attempt++) {
       try {
-        // 这一段已经下到的位置（上次尝试留下的半截 part 文件接着写）。
-        var offset = start;
-        if (await part.exists()) {
-          offset = start + await part.length();
-          // 长度异常（超过这一段应有的范围）就整段重下。
-          if (offset > end + 1) offset = start;
-        }
+        if (isAborted()) throw const _RangeNotSupported();
+        final offset = start + segmentDone[index];
         if (offset > end) return;
-        if (offset == start) {
-          // 从头重写这一段：这一段之前的进度作废，重新计。
-          reported = 0;
-        } else if (offset - start > reported) {
-          // 续传：把已落盘但还没报过的字节补进进度。
-          onBytes(offset - start - reported);
-          reported = offset - start;
-        }
 
         final response = await client.c.req<dynamic>(
           client,
@@ -608,7 +611,7 @@ class WebDavService {
         );
         final status = response.statusCode ?? 0;
         if (status == 200) {
-          // 服务器忽略了 Range，把整份文件发了回来：分段拼不起来，放弃。
+          // 服务器忽略了 Range，把整份文件发了回来：分片拼不起来，放弃。
           _closeStreamBody(response.data);
           throw const _RangeNotSupported();
         }
@@ -628,22 +631,17 @@ class WebDavService {
         if (body is! dio.ResponseBody) {
           throw const WebDavException('下载失败：服务器没有返回数据流');
         }
-        final sink = part.openWrite(
-          mode: offset > start ? FileMode.writeOnlyAppend : FileMode.write,
-        );
+        await handle.setPosition(offset);
         var written = offset;
-        try {
-          await for (final chunk in body.stream) {
-            sink.add(chunk);
-            written += chunk.length;
-            reported += chunk.length;
-            onBytes(chunk.length);
-          }
-          await sink.flush();
-        } finally {
-          await sink.close();
+        await for (final chunk in body.stream) {
+          if (isAborted()) throw const _RangeNotSupported();
+          await handle.writeFrom(chunk);
+          written += chunk.length;
+          segmentDone[index] = written - start;
+          onBytes(chunk.length);
         }
-        // 段内字节数对不上（服务端提前掐断）：按失败处理，交给重试补。
+        await handle.flush();
+        // 片内字节数对不上（服务端提前掐断）：按失败处理，交给重试补。
         if (written != end + 1) {
           throw WebDavException('分段不完整：$written/${end + 1}');
         }
