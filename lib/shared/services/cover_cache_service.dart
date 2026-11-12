@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 
 import '../../features/player/domain/models/song.dart';
 import 'cache_paths.dart';
+import 'cover_memory_cache.dart';
 
 /// 统一的封面缓存服务，管理内存 LRU 缓存和磁盘持久化缓存。
 /// 解决 QueryArtworkWidget 每次独立查询 MediaStore 导致的加载缓慢问题。
@@ -18,10 +19,8 @@ class CoverCacheService {
 
   final OnAudioQuery _audioQuery = OnAudioQuery();
 
-  /// 内存 LRU 缓存：songId → 封面字节数据
-  static final LinkedHashMap<String, Uint8List> _memCache = LinkedHashMap();
-  static const int _maxMemBytes = 32 * 1024 * 1024; // 32MB
-  static int _memBytes = 0;
+  /// 内存 LRU 缓存：songId → 封面字节数据（与网络封面共用一份字节预算）
+  static final CoverMemoryCache _memCache = CoverMemoryCache.instance;
 
   /// 磁盘缓存目录（懒初始化）
   Directory? _cacheDir;
@@ -54,26 +53,12 @@ class CoverCacheService {
 
   /// 从内存缓存获取封面字节
   Uint8List? getFromMemCache(String songId) {
-    final bytes = _memCache.remove(songId);
-    if (bytes != null) {
-      // 移到末尾（最近使用）
-      _memCache[songId] = bytes;
-      return bytes;
-    }
-    return null;
+    return _memCache.get(songId);
   }
 
   /// 将封面字节放入内存缓存
   void _putMemCache(String songId, Uint8List bytes) {
-    if (bytes.length > _maxMemBytes) return; // 单个文件太大不缓存
-    // 淘汰最旧的条目直到有空间
-    while (_memBytes + bytes.length > _maxMemBytes && _memCache.isNotEmpty) {
-      final oldestKey = _memCache.keys.first;
-      final oldest = _memCache.remove(oldestKey);
-      if (oldest != null) _memBytes -= oldest.length;
-    }
-    _memCache[songId] = bytes;
-    _memBytes += bytes.length;
+    _memCache.put(songId, bytes);
   }
 
   /// 获取封面字节数据（内存 → 磁盘 → MediaStore 提取 → 保存）。
@@ -233,8 +218,7 @@ class CoverCacheService {
 
   /// 使特定歌曲的缓存失效
   void invalidate(String songId) {
-    final cached = _memCache.remove(songId);
-    if (cached != null) _memBytes -= cached.length;
+    _memCache.remove(songId);
     _diskPath(songId).then((path) {
       File(path).exists().then((exists) {
         if (exists) File(path).delete();
@@ -265,8 +249,7 @@ class CoverCacheService {
         if (live.contains(songId)) continue;
         try {
           await entity.delete();
-          final cached = _memCache.remove(songId);
-          if (cached != null) _memBytes -= cached.length;
+          _memCache.remove(songId);
           removed++;
         } catch (_) {
           // 单个文件删不掉（被占用）就留给下次扫描。
@@ -284,7 +267,6 @@ class CoverCacheService {
   /// 清除所有缓存
   Future<void> clearAll() async {
     _memCache.clear();
-    _memBytes = 0;
     try {
       final dir = await _getCacheDir();
       if (await dir.exists()) {

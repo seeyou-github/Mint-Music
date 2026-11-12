@@ -58,6 +58,12 @@ class SqliteCacheInfoRepository extends CacheInfoRepository {
     return true;
   }
 
+  /// 命中的条目多久续期一次「最后使用时间」。
+  ///
+  /// 每读一次就写一次太浪费：滚动列表时一屏能命中几十张图。一小时一次足够
+  /// 让 30 天窗口按真实使用时间滚动，常用的图不会被误删。
+  static const Duration _touchInterval = Duration(hours: 1);
+
   @override
   Future<CacheObject?> get(String key) async {
     final db = await _database();
@@ -68,7 +74,36 @@ class SqliteCacheInfoRepository extends CacheInfoRepository {
       limit: 1,
     );
     if (rows.isEmpty) return null;
-    return _fromRow(rows.first);
+    final object = _fromRow(rows.first);
+    if (object == null) return null;
+
+    // flutter_cache_manager 只在写入 / 更新时写 touched，读到缓存不会续期。
+    // 不在这里续的话，「最后使用时间」永远是下载时间，常用老图也会被淘汰。
+    final now = DateTime.now();
+    final touched = object.touched;
+    if (touched == null || now.difference(touched) >= _touchInterval) {
+      try {
+        await db.update(
+          'cache_index',
+          {'touched': now.millisecondsSinceEpoch},
+          where: 'id = ?',
+          whereArgs: [object.id],
+        );
+        return CacheObject(
+          object.url,
+          key: object.key,
+          id: object.id,
+          relativePath: object.relativePath,
+          validTill: object.validTill,
+          eTag: object.eTag,
+          length: object.length,
+          touched: now,
+        );
+      } catch (_) {
+        // 续期失败不影响本次读取。
+      }
+    }
+    return object;
   }
 
   @override

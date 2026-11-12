@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -7,6 +6,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import '../services/app_image_cache.dart';
 import '../services/cover_cache_service.dart';
+import '../services/cover_memory_cache.dart';
 import '../../features/local/data/local_metadata_reader.dart';
 
 /// 统一的封面图片组件，支持：
@@ -92,10 +92,9 @@ class MusicCoverImage extends StatefulWidget {
 }
 
 class _MusicCoverImageState extends State<MusicCoverImage> {
-  static final LinkedHashMap<String, Uint8List> _cache = LinkedHashMap();
+  /// 与本地封面共用一份字节预算（见 [CoverMemoryCache]）。
+  static final CoverMemoryCache _cache = CoverMemoryCache.instance;
   static final Map<String, List<void Function(Uint8List)>> _pending = {};
-  static const int _maxCacheBytes = 24 * 1024 * 1024;
-  static int _cacheBytes = 0;
 
   /// 封面被改动（编辑标签页上传 / 删除封面）后自增，用来让所有封面组件
   /// 丢掉旧字节重新取图 —— 否则列表、播放页会一直显示改动前的封面。
@@ -103,8 +102,7 @@ class _MusicCoverImageState extends State<MusicCoverImage> {
 
   /// 通知所有封面组件：这张封面变了，请重新取图。
   static void refresh(String songId) {
-    final removed = _cache.remove(songId);
-    if (removed != null) _cacheBytes -= removed.length;
+    _cache.remove(songId);
     _pending.remove(songId);
     _revision++;
   }
@@ -202,9 +200,8 @@ class _MusicCoverImageState extends State<MusicCoverImage> {
     _lastKey = cacheKey;
 
     // 内存缓存命中
-    final cached = _cache.remove(cacheKey);
+    final cached = _cache.get(cacheKey);
     if (cached != null) {
-      _cache[cacheKey] = cached;
       setState(() {
         _bytes = cached;
         _loading = false;
@@ -347,14 +344,7 @@ class _MusicCoverImageState extends State<MusicCoverImage> {
   }
 
   void _putCache(String key, Uint8List bytes) {
-    if (bytes.length > _maxCacheBytes) return;
-    while (_cacheBytes + bytes.length > _maxCacheBytes && _cache.isNotEmpty) {
-      final oldestKey = _cache.keys.first;
-      final oldest = _cache.remove(oldestKey);
-      if (oldest != null) _cacheBytes -= oldest.length;
-    }
-    _cache[key] = bytes;
-    _cacheBytes += bytes.length;
+    _cache.put(key, bytes);
   }
 
   void _cacheImage(String cacheKey, Uint8List bytes) {
