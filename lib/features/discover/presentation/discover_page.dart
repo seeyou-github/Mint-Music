@@ -817,12 +817,20 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
           // [_circleIconSize]（实心圆标要铺满才饱满，搜索的放大镜另算）。
           GestureDetector(
             key: _sourceButtonKey,
-            onTap: () => _showSourceMenu(
-              context,
-              colors,
-              sources,
-              currentSource?.id ?? sourceId,
-            ),
+            onTap: () {
+              // 一个音源都没有时下拉菜单是空的（点了没反应），直接把用户
+              // 送到插件管理页去安装。
+              if (sources.isEmpty) {
+                context.go(AppRoutes.pluginManagement);
+                return;
+              }
+              _showSourceMenu(
+                context,
+                colors,
+                sources,
+                currentSource?.id ?? sourceId,
+              );
+            },
             child: Container(
               width: _searchBarHeight,
               height: _searchBarHeight,
