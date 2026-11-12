@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:io';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
@@ -9,8 +10,21 @@ class AudioProcessor {
   final AudioRecorder _recorder = AudioRecorder();
   bool _isRecording = false;
 
-  /// 录音期间的内存 PCM 缓冲区（16kHz 16bit 单声道原始数据）
-  final List<int> _pcmBuffer = [];
+  /// 录音期间的内存 PCM 缓冲区（16kHz 16bit 单声道原始数据）。
+  ///
+  /// 分块存储 + 总字节数封顶：识别只需要最近 ~15 秒，缓冲超过
+  /// [_maxBufferSeconds] 后从队头丢整块，内存占用恒定在 ~640KB，
+  /// 不会随录音时长无限增长（以前是无界 List，录 1 小时几百 MB）。
+  final Queue<Uint8List> _chunks = Queue<Uint8List>();
+  int _totalBytes = 0;
+
+  /// 缓冲保留时长（秒）。要比切片窗口 [maxSeconds] 略大，丢块时才不会
+  /// 影响窗口内数据。
+  static const int _maxBufferSeconds = 20;
+
+  /// 16kHz * 16bit * 单声道 的每秒字节数。
+  static const int _bytesPerSecond = _sourceSampleRateConst * 2;
+  static const int _sourceSampleRateConst = 16000;
 
   /// 录音流订阅
   StreamSubscription? _streamSub;
@@ -26,7 +40,35 @@ class AudioProcessor {
   bool get isRecording => _isRecording;
 
   /// 获取当前缓冲区中的 PCM 样本数
-  int get bufferSampleCount => _pcmBuffer.length ~/ 2;
+  int get bufferSampleCount => _totalBytes ~/ 2;
+
+  /// 追加一块录音数据，超过缓冲上限时从队头丢整块。
+  void _appendChunk(Uint8List data) {
+    // PCM16 流式回调的块长应为偶数（整样本）；万一出现奇数块，把末尾
+    // 孤字节并入下一块之前先按偶数截断，保证后续按样本读取不会错位。
+    final even = data.length.isOdd ? data.sublist(0, data.length - 1) : data;
+    if (even.isEmpty) return;
+    _chunks.add(even);
+    _totalBytes += even.length;
+
+    final maxBytes = _bytesPerSecond * _maxBufferSeconds;
+    while (_totalBytes - _chunks.first.length >= maxBytes) {
+      _totalBytes -= _chunks.removeFirst().length;
+    }
+  }
+
+  /// 取缓冲尾部 [maxBytes] 字节内的块列表（不拷贝数据）。
+  List<Uint8List> _tailChunks(int maxBytes) {
+    if (_totalBytes <= maxBytes) return _chunks.toList(growable: false);
+    final tail = <Uint8List>[];
+    var remaining = maxBytes;
+    for (final chunk in _chunks) {
+      if (remaining <= 0) break;
+      tail.add(chunk);
+      remaining -= chunk.length;
+    }
+    return tail;
+  }
 
   Future<bool> requestPermission() async {
     final status = await Permission.microphone.request();
@@ -38,7 +80,8 @@ class AudioProcessor {
   /// 使用 startStream 获取 PCM16 流式数据，避免文件锁定问题。
   /// 录音数据存入内存缓冲区，切片识别时从缓冲区读取。
   Future<void> startRecording() async {
-    _pcmBuffer.clear();
+    _chunks.clear();
+    _totalBytes = 0;
     _sourceSampleRate = 16000;
 
     // 使用 startStream 获取 PCM16 流式数据
@@ -56,7 +99,7 @@ class AudioProcessor {
     _streamSub = stream.listen(
       (Uint8List data) {
         // PCM16 数据：每个样本 2 字节
-        _pcmBuffer.addAll(data);
+        _appendChunk(data);
       },
       onError: (e) {
         debugPrint('[AudioProcessor] stream error: $e');
@@ -87,30 +130,44 @@ class AudioProcessor {
     await _recorder.stop();
   }
 
-  /// 从内存缓冲区获取重采样到 8kHz 的 PCM 数据
+  /// 从内存缓冲区获取重采样到 8kHz 的 PCM 数据（只取尾部 [maxSeconds] 秒）
   ///
-  /// 对标 CeruMusic: 每次切片时从累积的录音数据中取最后 15 秒
+  /// 对标 CeruMusic: 每次切片时从累积的录音数据中取最后 15 秒。
+  /// 先按字节截取窗口、再转换/重采样：切片周期是固定的，缓冲里无论攒了
+  /// 多久的数据，每片都只处理 15 秒，成本恒定（以前是整缓冲全量转换后再
+  /// 截取，录得越久每片越卡）。
   Float64List getPcm8kFromBuffer({int targetRate = 8000, int maxSeconds = 15}) {
-    if (_pcmBuffer.isEmpty) return Float64List(0);
+    if (_chunks.isEmpty) return Float64List(0);
 
-    // 将 PCM16 字节转换为 Float64 样本
-    final sampleCount = _pcmBuffer.length ~/ 2;
+    final windowBytes = maxSeconds * _sourceSampleRate * 2;
+    final tail = _tailChunks(windowBytes);
+    if (tail.isEmpty) return Float64List(0);
+
+    // 窗口内字节按块顺序拼接为样本数（尾部整块，样本天然对齐）
+    var sampleCount = 0;
+    for (final chunk in tail) {
+      sampleCount += chunk.length ~/ 2;
+    }
     if (sampleCount == 0) return Float64List(0);
 
     final samples = Float64List(sampleCount);
-    for (var i = 0; i < sampleCount; i++) {
-      final lo = _pcmBuffer[i * 2];
-      final hi = _pcmBuffer[i * 2 + 1];
-      // 16-bit signed little-endian
-      int val = (hi << 8) | lo;
-      if (val >= 32768) val -= 65536;
-      samples[i] = val / 32768.0;
+    var out = 0;
+    for (final chunk in tail) {
+      final n = chunk.length ~/ 2;
+      for (var i = 0; i < n; i++) {
+        final lo = chunk[i * 2];
+        final hi = chunk[i * 2 + 1];
+        // 16-bit signed little-endian
+        int val = (hi << 8) | lo;
+        if (val >= 32768) val -= 65536;
+        samples[out++] = val / 32768.0;
+      }
     }
 
     // 重采样到目标采样率
     final resampled = _resample(samples, _sourceSampleRate, targetRate);
 
-    // 取最后 maxSeconds 秒的数据
+    // 窗口已按字节预截断，理论上不会超过 maxSamples；保险再截一次。
     final maxSamples = maxSeconds * targetRate;
     if (resampled.length > maxSamples) {
       return Float64List.sublistView(resampled, resampled.length - maxSamples);
