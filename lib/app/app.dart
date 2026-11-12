@@ -305,6 +305,16 @@ class _AppState extends ConsumerState<App> {
     final materialPrimary = ref.watch(
       themeColorsProvider.select((colors) => colors.primary),
     );
+    // 文字颜色单独订阅：只有「字体颜色 / 第二字体颜色」变化时才重建，
+    // 主界面跟随封面变色（surface 变化）不会连带重建整个 App。
+    final materialColors = ref.watch(
+      themeColorsProvider.select(
+        (colors) => (
+          textPrimary: colors.textPrimary,
+          textSecondary: colors.textSecondary,
+        ),
+      ),
+    );
     // 「主界面跟随封面变色」要用的主色：core 层只负责存颜色，取色在
     // features 层（currentCoverColorProvider），所以在这里同步过去。
     // 监听负责切歌，[_syncCoverAccent] 负责首帧（监听不回溯已有结果）。
@@ -378,9 +388,22 @@ class _AppState extends ConsumerState<App> {
         child: MaterialApp.router(
           title: tr('Music'),
           debugShowCheckedModeBanner: false,
-          theme: _applyAppFont(AppTheme.light(materialPrimary), appFontFamily),
+          // 未显式写 color 的文字跟随「外观设置 → 字体颜色 / 第二字体颜色」：
+          // 当前模式的整套文字色传给对应主题，另一套用默认值（切模式时重建）。
+          theme: _applyAppFont(
+            AppTheme.light(
+              materialPrimary,
+              textPrimary: isLightActive ? materialColors.textPrimary : null,
+              textSecondary: isLightActive ? materialColors.textSecondary : null,
+            ),
+            appFontFamily,
+          ),
           darkTheme: _applyAppFont(
-            AppTheme.dark(materialPrimary),
+            AppTheme.dark(
+              materialPrimary,
+              textPrimary: isLightActive ? null : materialColors.textPrimary,
+              textSecondary: isLightActive ? null : materialColors.textSecondary,
+            ),
             appFontFamily,
           ),
           themeMode: themeMode,

@@ -18,21 +18,44 @@ class AppTheme {
   /// 主题色上的文字色：白色，和 ThemeColors.textOnPrimary 一致。
   static const Color _onPrimary = Color(0xFFFFFFFF);
 
-  static ThemeData light(Color primary) => _cache.putIfAbsent(
-    'light|${primary.toARGB32()}',
-    () => _buildLight(primary),
+  static ThemeData light(
+    Color primary, {
+    Color? textPrimary,
+    Color? textSecondary,
+  }) => _cache.putIfAbsent(
+    'light|${primary.toARGB32()}|${textPrimary?.toARGB32()}|'
+    '${textSecondary?.toARGB32()}',
+    () => _buildLight(
+      primary,
+      textPrimary: textPrimary,
+      textSecondary: textSecondary,
+    ),
   );
 
-  static ThemeData dark(Color primary) => _cache.putIfAbsent(
-    'dark|${primary.toARGB32()}',
-    () => _buildDark(primary, _lightVariant(primary)),
+  static ThemeData dark(
+    Color primary, {
+    Color? textPrimary,
+    Color? textSecondary,
+  }) => _cache.putIfAbsent(
+    'dark|${primary.toARGB32()}|${textPrimary?.toARGB32()}|'
+    '${textSecondary?.toARGB32()}',
+    () => _buildDark(
+      primary,
+      _lightVariant(primary),
+      textPrimary: textPrimary,
+      textSecondary: textSecondary,
+    ),
   );
 
   /// 浅色 Material 主题：所有写死的 Spotify 绿都换成 [primary]。
   /// 没显式写 style 的 FilledButton / OutlinedButton / Switch / Slider /
   /// Checkbox / TabBar 等控件，都是从这里的 colorScheme 取色，因此会自动跟随
   /// 「外观设置 → 主题色」。
-  static ThemeData _buildLight(Color primary) => ThemeData(
+  static ThemeData _buildLight(
+    Color primary, {
+    Color? textPrimary,
+    Color? textSecondary,
+  }) => ThemeData(
     useMaterial3: true,
     brightness: Brightness.light,
     // 全局关闭点击水波纹。
@@ -176,49 +199,54 @@ class AppTheme {
     ),
     textTheme: TextTheme(
       displayLarge: AppTypography.displayLarge.copyWith(
-        color: const Color(0xFF1A1A1A),
+        color: textPrimary ?? const Color(0xFF1A1A1A),
       ),
       displayMedium: AppTypography.displayMedium.copyWith(
-        color: const Color(0xFF1A1A1A),
+        color: textPrimary ?? const Color(0xFF1A1A1A),
       ),
       headlineLarge: AppTypography.headlineLarge.copyWith(
-        color: const Color(0xFF1A1A1A),
+        color: textPrimary ?? const Color(0xFF1A1A1A),
       ),
       headlineMedium: AppTypography.headlineMedium.copyWith(
-        color: const Color(0xFF1A1A1A),
+        color: textPrimary ?? const Color(0xFF1A1A1A),
       ),
       titleLarge: AppTypography.titleLarge.copyWith(
-        color: const Color(0xFF1A1A1A),
+        color: textPrimary ?? const Color(0xFF1A1A1A),
       ),
       titleMedium: AppTypography.titleMedium.copyWith(
-        color: const Color(0xFF1A1A1A),
+        color: textPrimary ?? const Color(0xFF1A1A1A),
       ),
       titleSmall: AppTypography.titleSmall.copyWith(
-        color: const Color(0xFF666666),
+        color: textSecondary ?? const Color(0xFF666666),
       ),
       bodyLarge: AppTypography.bodyLarge.copyWith(
-        color: const Color(0xFF1A1A1A),
+        color: textPrimary ?? const Color(0xFF1A1A1A),
       ),
       bodyMedium: AppTypography.bodyMedium.copyWith(
-        color: const Color(0xFF666666),
+        color: textSecondary ?? const Color(0xFF666666),
       ),
       bodySmall: AppTypography.bodySmall.copyWith(
-        color: const Color(0xFF666666),
+        color: textSecondary ?? const Color(0xFF666666),
       ),
       labelLarge: AppTypography.labelLarge.copyWith(
-        color: const Color(0xFF1A1A1A),
+        color: textPrimary ?? const Color(0xFF1A1A1A),
       ),
       labelMedium: AppTypography.labelMedium.copyWith(
-        color: const Color(0xFF666666),
+        color: textSecondary ?? const Color(0xFF666666),
       ),
       labelSmall: AppTypography.labelSmall.copyWith(
-        color: const Color(0xFF666666),
+        color: textSecondary ?? const Color(0xFF666666),
       ),
     ),
   );
 
   /// 深色 Material 主题（同上，主题色全部来自 [primary]）。
-  static ThemeData _buildDark(Color primary, Color primaryLight) => ThemeData(
+  static ThemeData _buildDark(
+    Color primary,
+    Color primaryLight, {
+    Color? textPrimary,
+    Color? textSecondary,
+  }) => ThemeData(
     useMaterial3: true,
     brightness: Brightness.dark,
     // 全局关闭点击水波纹。
@@ -245,8 +273,8 @@ class AppTheme {
       backgroundColor: AppColors.darkBackground.withValues(alpha: 0.95),
       foregroundColor: AppColors.darkTextPrimary,
       centerTitle: true,
-      titleTextStyle: AppTypography.headlineMedium.copyWith(
-        color: AppColors.darkTextPrimary,
+      titleTextStyle: AppTypography.headlineMedium.      copyWith(
+        color: textPrimary ?? AppColors.darkTextPrimary,
       ),
     ),
     cardTheme: CardThemeData(
@@ -345,44 +373,44 @@ class AppTheme {
       trackHeight: 3,
     ),
     textTheme: TextTheme(
-      displayLarge: AppTypography.displayLarge.copyWith(
-        color: AppColors.darkTextPrimary,
+      displayLarge: AppTypography.displayLarge.      copyWith(
+        color: textPrimary ?? AppColors.darkTextPrimary,
       ),
-      displayMedium: AppTypography.displayMedium.copyWith(
-        color: AppColors.darkTextPrimary,
+      displayMedium: AppTypography.displayMedium.      copyWith(
+        color: textPrimary ?? AppColors.darkTextPrimary,
       ),
-      headlineLarge: AppTypography.headlineLarge.copyWith(
-        color: AppColors.darkTextPrimary,
+      headlineLarge: AppTypography.headlineLarge.      copyWith(
+        color: textPrimary ?? AppColors.darkTextPrimary,
       ),
-      headlineMedium: AppTypography.headlineMedium.copyWith(
-        color: AppColors.darkTextPrimary,
+      headlineMedium: AppTypography.headlineMedium.      copyWith(
+        color: textPrimary ?? AppColors.darkTextPrimary,
       ),
-      titleLarge: AppTypography.titleLarge.copyWith(
-        color: AppColors.darkTextPrimary,
+      titleLarge: AppTypography.titleLarge.      copyWith(
+        color: textPrimary ?? AppColors.darkTextPrimary,
       ),
-      titleMedium: AppTypography.titleMedium.copyWith(
-        color: AppColors.darkTextPrimary,
+      titleMedium: AppTypography.titleMedium.      copyWith(
+        color: textPrimary ?? AppColors.darkTextPrimary,
       ),
-      titleSmall: AppTypography.titleSmall.copyWith(
-        color: AppColors.darkTextSecondary,
+      titleSmall: AppTypography.titleSmall.      copyWith(
+        color: textSecondary ?? AppColors.darkTextSecondary,
       ),
-      bodyLarge: AppTypography.bodyLarge.copyWith(
-        color: AppColors.darkTextPrimary,
+      bodyLarge: AppTypography.bodyLarge.      copyWith(
+        color: textPrimary ?? AppColors.darkTextPrimary,
       ),
-      bodyMedium: AppTypography.bodyMedium.copyWith(
-        color: AppColors.darkTextSecondary,
+      bodyMedium: AppTypography.bodyMedium.      copyWith(
+        color: textSecondary ?? AppColors.darkTextSecondary,
       ),
-      bodySmall: AppTypography.bodySmall.copyWith(
-        color: AppColors.darkTextSecondary,
+      bodySmall: AppTypography.bodySmall.      copyWith(
+        color: textSecondary ?? AppColors.darkTextSecondary,
       ),
-      labelLarge: AppTypography.labelLarge.copyWith(
-        color: AppColors.darkTextPrimary,
+      labelLarge: AppTypography.labelLarge.      copyWith(
+        color: textPrimary ?? AppColors.darkTextPrimary,
       ),
-      labelMedium: AppTypography.labelMedium.copyWith(
-        color: AppColors.darkTextSecondary,
+      labelMedium: AppTypography.labelMedium.      copyWith(
+        color: textSecondary ?? AppColors.darkTextSecondary,
       ),
-      labelSmall: AppTypography.labelSmall.copyWith(
-        color: AppColors.darkTextSecondary,
+      labelSmall: AppTypography.labelSmall.      copyWith(
+        color: textSecondary ?? AppColors.darkTextSecondary,
       ),
     ),
     iconTheme: const IconThemeData(
