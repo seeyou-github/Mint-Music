@@ -1,8 +1,10 @@
 import 'dart:convert';
 import 'dart:io' show File, FileMode, gzip;
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart' as dio;
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:path/path.dart' as p;
 import 'package:webdav_client/webdav_client.dart' as webdav;
 
@@ -18,6 +20,12 @@ class WebDavException implements Exception {
 
   @override
   String toString() => message;
+}
+
+/// 服务器不支持 `Range`（忽略分段请求、把整份文件发回来）时内部抛这个，
+/// 用来把分段下载快速切回单线程，不会当成用户可见的错误。
+class _RangeNotSupported implements Exception {
+  const _RangeNotSupported();
 }
 
 /// 把网络 / WebDAV 异常转换成用户能看懂的原因。
@@ -169,55 +177,27 @@ class WebDavService {
     }
   }
 
-  /// 直接发 GET 读取远端文件。
+  /// 读取远端文件的全部字节。
   ///
   /// 不调用 `client.read()`：它固定先发 OPTIONS 且要求返回 200，遇到
   /// 301/302 的服务器会直接抛错（`DioException [bad response]: null`）。
-  /// 这里让 Dio 跟随重定向，并手动兜底处理未自动跟随的 3xx。
+  /// 这里走和备份包同一条下载链路（[downloadToFile]）：小文件单线程、
+  /// 大文件按段并发，都带重试 / 断点续传和更宽松的空闲超时（歌单同步用）。
   Future<Uint8List> _readBytes(String path) async {
-    final client = _buildClient();
-    var target = path;
-    for (var redirects = 0; redirects <= 5; redirects++) {
-      final response = await client.c.req<List<int>>(
-        client,
-        'GET',
-        target,
-        cancelToken: _cancelToken,
-        optionsHandler: (options) {
-          options.responseType = dio.ResponseType.bytes;
-          options.followRedirects = true;
-          // 状态码由下面统一判断，避免 404 被 Dio 转成无信息的 badResponse。
-          options.validateStatus = (status) => status != null;
-        },
-      );
-      final status = response.statusCode ?? 0;
-      if (status >= 200 && status < 300) {
-        final data = response.data;
-        if (data == null) return Uint8List(0);
-        return data is Uint8List ? data : Uint8List.fromList(data);
-      }
-      if (status >= 300 && status < 400) {
-        final location = response.headers.value('location');
-        if (location == null || location.isEmpty) {
-          throw WebDavException(
-            '服务器返回重定向（HTTP $status），但没有提供跳转地址',
-            statusCode: status,
-          );
-        }
-        final current = Uri.tryParse(target);
-        target = current?.resolve(location).toString() ?? location;
-        continue;
-      }
-      if (status == 404) {
-        throw WebDavException('远端文件不存在（HTTP 404）', statusCode: 404);
-      }
-      final message = response.statusMessage;
-      throw WebDavException(
-        'HTTP $status${message == null || message.isEmpty ? '' : ' $message'}',
-        statusCode: status,
-      );
+    final dir = await AppPaths.tempDirectory();
+    final temp = File(
+      p.join(
+        dir.path,
+        'webdav_read_${DateTime.now().microsecondsSinceEpoch}.bin',
+      ),
+    );
+    try {
+      await downloadToFile(path, savePath: temp.path);
+      if (isCancelled) throw const WebDavException('下载已取消');
+      return await temp.readAsBytes();
+    } finally {
+      await _deleteQuietly(temp);
     }
-    throw const WebDavException('下载失败：重定向次数过多');
   }
 
   /// 直接发 PUT 写入远端文件。
@@ -374,10 +354,27 @@ class WebDavService {
   /// 单次下载最多尝试几次（含首次）：失败后断点续传重试。
   static const int downloadMaxAttempts = 3;
 
+  /// 多线程分段下载的并发数。
+  ///
+  /// WebDAV 走的是标准 HTTP，支持 `Range` 的服务器（TeraCloud / Nextcloud /
+  /// 坚果云等）可以按段并发拉取：单连接被限速时，多开几条连接能明显提速。
+  /// 服务器不接受 Range 或并发被拒时，[downloadToFile] 会自动退回单线程，
+  /// 不会因此失败。
+  static const int downloadParallelism = 8;
+
+  /// 小于这个大小不分段：切段 + 合并的开销还不如直接一条流。
+  static const int _minParallelBytes = 2 * 1024 * 1024;
+
+  /// 每段至少这么大，避免把文件切得太碎（8 段各 256KB 反而更慢）。
+  static const int _minSegmentBytes = 1024 * 1024;
+
   /// 把远端文件流式下载到 [savePath]，失败自动重试并从断点续传。
   ///
   /// 不整包塞进内存再判断成败：直接落盘的好处是失败时已经收到的字节还在，
   /// 下一次带 `Range` 接着下，不用把几十 MB 从头再来一遍。
+  ///
+  /// 大小已知且够大时先走 [downloadParallelism] 路分段并发；服务器不支持
+  /// `Range`、并发被限流或某段重试仍失败时，自动回退到单线程续传。
   Future<void> downloadToFile(
     String path, {
     required String savePath,
@@ -385,6 +382,33 @@ class WebDavService {
     void Function(int received, int total)? onProgress,
   }) async {
     _requireConfigured();
+    final total = expectedSize ?? 0;
+    if (total >= _minParallelBytes && downloadParallelism > 1) {
+      final done = await _downloadParallel(
+        path,
+        savePath: savePath,
+        total: total,
+        onProgress: onProgress,
+      );
+      if (done) return;
+      // 分段被取消（超时）时不能装作成功，也不能再开单线程重下。
+      if (isCancelled) throw const WebDavException('下载已取消');
+    }
+    await _downloadSingle(
+      path,
+      savePath: savePath,
+      expectedSize: expectedSize,
+      onProgress: onProgress,
+    );
+  }
+
+  /// 单线程下载（带整文件断点续传与重试）。
+  Future<void> _downloadSingle(
+    String path, {
+    required String savePath,
+    int? expectedSize,
+    void Function(int received, int total)? onProgress,
+  }) async {
     final client = _buildClient();
     final file = File(savePath);
     Object? lastError;
@@ -423,6 +447,220 @@ class WebDavService {
     await _deleteQuietly(file);
     if (lastError is WebDavException) throw lastError;
     throw WebDavException('下载失败：${lastError ?? '未知错误'}');
+  }
+
+  /// 多线程分段下载：每段各写一个临时文件，全部到齐后按顺序拼成 [savePath]。
+  ///
+  /// 返回 false 表示这条路走不通（服务器忽略 Range、并发被拒、某段重试耗尽），
+  /// 调用方回退单线程；返回 true 表示文件已经完整落盘。
+  Future<bool> _downloadParallel(
+    String path, {
+    required String savePath,
+    required int total,
+    void Function(int received, int total)? onProgress,
+  }) async {
+    final segments = math
+        .min(downloadParallelism, (total / _minSegmentBytes).ceil())
+        .clamp(1, downloadParallelism);
+    final chunk = (total / segments).ceil();
+    final parts = [
+      for (var i = 0; i < segments; i++) File('$savePath.part$i'),
+    ];
+
+    var received = 0;
+    var lastReportMs = 0;
+    void report(int delta) {
+      // 续传 / 重试时同几个字节可能被重复计入，钳一下上限，别让进度条超过 100%。
+      received = math.min(total, received + delta);
+      final now = DateTime.now().millisecondsSinceEpoch;
+      // 分片回调很密：150ms 推一次进度就够，别把 UI 线程刷满。
+      if (now - lastReportMs < 150 && received < total) return;
+      lastReportMs = now;
+      onProgress?.call(received, total);
+    }
+
+    try {
+      final client = _buildClient();
+      // 先花一个 1 字节的请求确认服务器真的支持 Range：不支持的话 8 条连接会
+      // 各自把整份文件下回来（既慢又费流量），必须在开工前就分辨出来。
+      if (!await _supportsRange(client, path)) return false;
+
+      await Future.wait(
+        [
+          for (var i = 0; i < segments; i++)
+            _downloadSegment(
+              client,
+              path,
+              parts[i],
+              i * chunk,
+              math.min(total, (i + 1) * chunk) - 1,
+              report,
+            ),
+        ],
+        // 某一段判定「服务器不支持 Range」时立刻收手，不等其它段跑完。
+        eagerError: true,
+      );
+
+      // 按段顺序拼成一个文件：每段各自独立的临时文件，不用并发写同一个句柄。
+      // 合并完一段就删掉它，临时目录里不会同时压着两份完整文件。
+      final sink = File(savePath).openWrite();
+      try {
+        for (final part in parts) {
+          await sink.addStream(part.openRead());
+          await _deleteQuietly(part);
+        }
+        await sink.flush();
+      } finally {
+        await sink.close();
+      }
+      onProgress?.call(total, total);
+      return true;
+    } on _RangeNotSupported {
+      // 服务器把整份文件发了回来（不支持 Range）：分段没法拼，交给单线程。
+      return false;
+    } catch (e) {
+      if (isCancelled) rethrow;
+      debugPrint('[WebDav] 分段下载失败，回退单线程: $e');
+      return false;
+    } finally {
+      for (final part in parts) {
+        await _deleteQuietly(part);
+      }
+    }
+  }
+
+  /// 问服务器一句「支持 `Range` 吗」：只请求第 1 个字节，看它回不回 206。
+  ///
+  /// 有的 WebDAV 实现（部分只读网关、对象存储的静态映射）会忽略 `Range` 直接
+  /// 回 200 + 整份文件；那种情况下分段下载毫无意义，必须先分辨出来。
+  Future<bool> _supportsRange(webdav.Client client, String path) async {
+    try {
+      final response = await client.c.req<dynamic>(
+        client,
+        'GET',
+        path,
+        cancelToken: _cancelToken,
+        optionsHandler: (options) {
+          options.responseType = dio.ResponseType.stream;
+          options.followRedirects = true;
+          options.validateStatus = (status) => status != null;
+          options.receiveTimeout = downloadIdleTimeout;
+          options.headers = {...?options.headers, 'range': 'bytes=0-0'};
+        },
+      );
+      final supported = response.statusCode == 206;
+      // 这 1 个字节不写盘，直接丢掉释放连接。
+      _closeStreamBody(response.data);
+      return supported;
+    } catch (e) {
+      // 探测失败（网络 / 鉴权）不在这里下结论，交给单线程那条路去报错。
+      debugPrint('[WebDav] Range 探测失败: $e');
+      return false;
+    }
+  }
+
+  /// 下载一段 `[start, end]`（闭区间）到 [part]，失败按段重试并续传。
+  Future<void> _downloadSegment(
+    webdav.Client client,
+    String path,
+    File part,
+    int start,
+    int end,
+    void Function(int delta) onBytes,
+  ) async {
+    Object? lastError;
+    // 这一段已经向进度回调报过的字节数：续传时只补报差额，否则进度会跳。
+    var reported = 0;
+    for (var attempt = 1; attempt <= downloadMaxAttempts; attempt++) {
+      try {
+        // 这一段已经下到的位置（上次尝试留下的半截 part 文件接着写）。
+        var offset = start;
+        if (await part.exists()) {
+          offset = start + await part.length();
+          // 长度异常（超过这一段应有的范围）就整段重下。
+          if (offset > end + 1) offset = start;
+        }
+        if (offset > end) return;
+        if (offset == start) {
+          // 从头重写这一段：这一段之前的进度作废，重新计。
+          reported = 0;
+        } else if (offset - start > reported) {
+          // 续传：把已落盘但还没报过的字节补进进度。
+          onBytes(offset - start - reported);
+          reported = offset - start;
+        }
+
+        final response = await client.c.req<dynamic>(
+          client,
+          'GET',
+          path,
+          cancelToken: _cancelToken,
+          optionsHandler: (options) {
+            options.responseType = dio.ResponseType.stream;
+            options.followRedirects = true;
+            options.validateStatus = (status) => status != null;
+            options.receiveTimeout = downloadIdleTimeout;
+            options.headers = {
+              ...?options.headers,
+              'range': 'bytes=$offset-$end',
+            };
+          },
+        );
+        final status = response.statusCode ?? 0;
+        if (status == 200) {
+          // 服务器忽略了 Range，把整份文件发了回来：分段拼不起来，放弃。
+          _closeStreamBody(response.data);
+          throw const _RangeNotSupported();
+        }
+        if (status != 206) {
+          _closeStreamBody(response.data);
+          if (status == 404) {
+            throw WebDavException('远端文件不存在（HTTP 404）', statusCode: 404);
+          }
+          final message = response.statusMessage;
+          throw WebDavException(
+            'HTTP $status${message == null || message.isEmpty ? '' : ' $message'}',
+            statusCode: status,
+          );
+        }
+
+        final body = response.data;
+        if (body is! dio.ResponseBody) {
+          throw const WebDavException('下载失败：服务器没有返回数据流');
+        }
+        final sink = part.openWrite(
+          mode: offset > start ? FileMode.writeOnlyAppend : FileMode.write,
+        );
+        var written = offset;
+        try {
+          await for (final chunk in body.stream) {
+            sink.add(chunk);
+            written += chunk.length;
+            reported += chunk.length;
+            onBytes(chunk.length);
+          }
+          await sink.flush();
+        } finally {
+          await sink.close();
+        }
+        // 段内字节数对不上（服务端提前掐断）：按失败处理，交给重试补。
+        if (written != end + 1) {
+          throw WebDavException('分段不完整：$written/${end + 1}');
+        }
+        return;
+      } on _RangeNotSupported {
+        rethrow;
+      } catch (e) {
+        lastError = e;
+        if (isCancelled) rethrow;
+        if (!_isRetryableDownloadError(e)) rethrow;
+        if (attempt < downloadMaxAttempts) {
+          await Future<void>.delayed(Duration(milliseconds: 600 * attempt));
+        }
+      }
+    }
+    if (lastError is WebDavException) throw lastError;
+    throw WebDavException('分段下载失败：${lastError ?? '未知错误'}');
   }
 
   /// 发一次 GET，把响应体按块写进 [file]。
