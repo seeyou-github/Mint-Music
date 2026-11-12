@@ -98,7 +98,6 @@ class _LyricScrollViewState extends State<LyricScrollView>
 
   /// 滚动动画的序号：只有最后一次发起的动画结束时才清 [_autoScrolling]。
   int _scrollAnimSeq = 0;
-  int _centerLineIndex = -1;
   int _linesSignature = 0;
   int _activeSignature = 0;
   int _anchorPositionMs = 0;
@@ -111,7 +110,7 @@ class _LyricScrollViewState extends State<LyricScrollView>
     _ensureLineKeys();
     _linesSignature = _makeLinesSignature(widget.lines);
     _syncClock(widget.currentTimeMs, widget.isPlaying);
-    _activeSignature = _makeActiveSignature(_activeIndicesFor(_clock.timeMs));
+    _activeSignature = _activeIndexFor(_clock.timeMs);
     _scrollController.addListener(_handleScroll);
     _queueInitialScroll();
   }
@@ -125,9 +124,8 @@ class _LyricScrollViewState extends State<LyricScrollView>
       _linesSignature = signature;
       _ensureLineKeys();
       _scrollTargetIndex = -1;
-      _centerLineIndex = -1;
       _syncClock(widget.currentTimeMs, widget.isPlaying);
-      _activeSignature = _makeActiveSignature(_activeIndicesFor(_clock.timeMs));
+      _activeSignature = _activeIndexFor(_clock.timeMs);
       _jumpNextScroll = false;
       _queueInitialScroll();
       return;
@@ -236,10 +234,6 @@ class _LyricScrollViewState extends State<LyricScrollView>
     );
   }
 
-  int _makeActiveSignature(List<int> indices) {
-    return Object.hashAll(indices);
-  }
-
   void _syncClock(int positionMs, bool isPlaying) {
     final now = DateTime.now().millisecondsSinceEpoch;
     final drift = (positionMs - _clock.timeMs).abs();
@@ -286,9 +280,8 @@ class _LyricScrollViewState extends State<LyricScrollView>
   }
 
   void _updateActiveLinesAndScroll({bool fromTicker = false}) {
-    final activeIndices = _activeIndicesFor(_clock.timeMs);
-    final signature = _makeActiveSignature(activeIndices);
-    final lineChanged = signature != _activeSignature;
+    final activeIndex = _activeIndexFor(_clock.timeMs);
+    final lineChanged = activeIndex != _activeSignature;
 
     // 行没变且已经定位过时不需要重复滚动；但 seek / 预览把
     // _scrollTargetIndex 清成 -1 后，即使还在同一行也要重新居中。
@@ -298,7 +291,7 @@ class _LyricScrollViewState extends State<LyricScrollView>
     }
 
     if (lineChanged) {
-      _activeSignature = signature;
+      _activeSignature = activeIndex;
       if (!mounted) return;
       setState(() {});
     }
@@ -317,28 +310,31 @@ class _LyricScrollViewState extends State<LyricScrollView>
     }
   }
 
-  List<int> _activeIndicesFor(int timeMs) {
-    if (widget.lines.isEmpty) return const [];
-
-    if (widget.hasYrc) {
-      final activeIndex = widget.lines.lastIndexWhere(
-        (line) => line.startTimeMs <= timeMs,
-      );
-      if (activeIndex < 0) return [0];
-      return [activeIndex];
+  /// 当前应高亮的行号；还没到第一句时按第一行算。
+  ///
+  /// 歌词按时间递增，用二分而不是 `lastIndexWhere`：这个函数每帧都会调用，
+  /// 长歌词（几百行）下线性扫描是白白烧 CPU。
+  int _activeIndexFor(int timeMs) {
+    final lines = widget.lines;
+    if (lines.isEmpty) return -1;
+    var lo = 0;
+    var hi = lines.length - 1;
+    var result = 0;
+    while (lo <= hi) {
+      final mid = (lo + hi) >> 1;
+      if (lines[mid].startTimeMs <= timeMs) {
+        result = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
     }
-
-    final activeIndex = widget.lines.lastIndexWhere(
-      (line) => line.startTimeMs <= timeMs,
-    );
-    if (activeIndex < 0) return [0];
-    return [activeIndex];
+    return result;
   }
 
   int _activeScrollTargetIndex() {
-    final indices = _activeIndicesFor(_clock.timeMs);
-    if (indices.isEmpty) return -1;
-    return indices.last;
+    if (widget.lines.isEmpty) return -1;
+    return _activeIndexFor(_clock.timeMs);
   }
 
   void _handleScroll() {
@@ -351,43 +347,9 @@ class _LyricScrollViewState extends State<LyricScrollView>
     _userScrollTimer?.cancel();
     _userScrollTimer = Timer(_userScrollTimeout, () {
       if (!mounted) return;
-      setState(() {
-        _userScrolling = false;
-        _centerLineIndex = -1;
-      });
+      setState(() => _userScrolling = false);
       _scrollToActiveLine(force: true);
     });
-
-    final index = _findCenterLineIndex();
-    if (index != _centerLineIndex && mounted) {
-      setState(() => _centerLineIndex = index);
-    }
-  }
-
-  int _findCenterLineIndex() {
-    final container = context.findRenderObject() as RenderBox?;
-    if (container == null || widget.lines.isEmpty) return -1;
-
-    final centerY = container.size.height / 2;
-    var closestIndex = -1;
-    var closestDistance = double.infinity;
-
-    for (var i = 0; i < _lineKeys.length; i++) {
-      final lineContext = _lineKeys[i].currentContext;
-      if (lineContext == null) continue;
-      final box = lineContext.findRenderObject() as RenderBox?;
-      if (box == null || !box.hasSize) continue;
-
-      final offset = box.localToGlobal(Offset.zero, ancestor: container);
-      final lineCenterY = offset.dy + box.size.height / 2;
-      final distance = (lineCenterY - centerY).abs();
-      if (distance < closestDistance) {
-        closestDistance = distance;
-        closestIndex = i;
-      }
-    }
-
-    return closestIndex;
   }
 
   void _scrollToActiveLine({
@@ -596,8 +558,7 @@ class _LyricScrollViewState extends State<LyricScrollView>
       );
     }
 
-    final activeIndices = _activeIndicesFor(_clock.timeMs).toSet();
-    final activeIndex = activeIndices.isEmpty ? -1 : activeIndices.last;
+    final activeIndex = _activeIndexFor(_clock.timeMs);
     return Stack(
       children: [
         ShaderMask(
@@ -639,7 +600,7 @@ class _LyricScrollViewState extends State<LyricScrollView>
                   ),
                   itemCount: widget.lines.length,
                   itemBuilder: (context, index) {
-                    final isActive = activeIndices.contains(index);
+                    final isActive = index == activeIndex;
                     return _LyricLineWidget(
                       key: _lineKeys[index],
                       line: widget.lines[index],
@@ -744,7 +705,12 @@ class _LyricLineWidget extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final distance = activeIndex < 0 ? 3 : (index - activeIndex).abs();
-    final opacity = isActive ? 1.0 : 0.25;
+    // 远处歌词用透明度表达景深（原来的逐行高斯模糊每帧都要做一次
+    // ImageFiltered 合成，歌单页/播放页常驻时开销明显，且低端机掉帧）。
+    final dimmedOpacity = enableBlur && !userScrolling && distance > 0
+        ? (0.30 - (distance.clamp(1, 5) - 1) * 0.04).clamp(0.14, 0.30)
+        : 0.25;
+    final opacity = isActive ? 1.0 : dimmedOpacity;
     final scale = enableScale ? (isActive ? 1.05 : 0.9) : 1.0;
     final resolvedFontFamily = _resolveFontFamily();
     final crossAlign = centerAlign
@@ -856,9 +822,6 @@ class _LyricLineWidget extends StatelessWidget {
       );
     }
 
-    final shouldBlur =
-        enableBlur && !userScrolling && !isActive && distance > 0;
-
     // 翻译与歌词同属一行：一起缩放、一起淡出，颜色/透明度才真正一致。
     Widget lineContent = Padding(
       padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 13),
@@ -893,15 +856,6 @@ class _LyricLineWidget extends StatelessWidget {
       ),
     );
 
-    if (shouldBlur) {
-      final sigma = min(1.2 + pow(distance, 0.7) * 1.5, 8).toDouble();
-      return ClipRect(
-        child: ImageFiltered(
-          imageFilter: ui.ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
-          child: animatedLine,
-        ),
-      );
-    }
     return animatedLine;
   }
 
