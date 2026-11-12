@@ -67,7 +67,17 @@ class LyricScrollView extends StatefulWidget {
 class _LyricScrollViewState extends State<LyricScrollView>
     with SingleTickerProviderStateMixin {
   static const _userScrollTimeout = Duration(milliseconds: 3000);
-  static const _autoScrollDuration = Duration(milliseconds: 300);
+
+  /// 换行时的滚动时长。
+  ///
+  /// 原来 300ms：滚起来偏快，一句唱完歌词「唰」地就到位了。放慢到 550ms
+  /// 之后是缓缓滑上去的，和正在唱的句子衔接得更自然。
+  static const _autoScrollDuration = Duration(milliseconds: 550);
+
+  /// 跨行距离较大（超过半个视口，比如间奏后跳几句）时的滚动时长。
+  ///
+  /// 仍比 [_autoScrollDuration] 短，否则滚老远会拖得太久。
+  static const _longScrollDuration = Duration(milliseconds: 380);
   static const _fadeTopStop = 0.15;
   static const _fadeBottomStop = 0.86;
 
@@ -85,6 +95,9 @@ class _LyricScrollViewState extends State<LyricScrollView>
   bool _initialScrollQueued = false;
   bool _jumpNextScroll = false;
   int _scrollTargetIndex = -1;
+
+  /// 滚动动画的序号：只有最后一次发起的动画结束时才清 [_autoScrolling]。
+  int _scrollAnimSeq = 0;
   int _centerLineIndex = -1;
   int _linesSignature = 0;
   int _activeSignature = 0;
@@ -545,16 +558,20 @@ class _LyricScrollViewState extends State<LyricScrollView>
     // 跟随播放进度时一律用平滑动画：正在播放的歌词「滑」到中间，
     // 而不是每到一句就「啪」地跳一下。
     _autoScrolling = true;
+    // 每次发起动画记一个序号：550ms 的动画偶尔会被下一句换行打断，
+    // 被打断时旧的 whenComplete 不该把 _autoScrolling 清掉，否则新动画
+    // 进行中的滚动会被 [_handleScroll] 误判成用户手动拖动。
+    final seq = ++_scrollAnimSeq;
     _scrollController
         .animateTo(
           clamped,
           duration: distance > position.viewportDimension * 0.5
-              ? const Duration(milliseconds: 220)
+              ? _longScrollDuration
               : _autoScrollDuration,
           curve: const _EaseInOutQuad(),
         )
         .whenComplete(() {
-          if (!mounted) return;
+          if (!mounted || seq != _scrollAnimSeq) return;
           _autoScrolling = false;
           // 动画过程中可能又换行了，这里再校正一次位置。
           final target = _activeScrollTargetIndex();
