@@ -75,6 +75,9 @@ class DownloadRepository {
 
   static const _maxRetries = 3;
 
+  /// 重试退避：失败后等固定 5 秒再重入队，不立刻三连发打同一个地址。
+  static const _retryDelay = Duration(seconds: 5);
+
   final Dio _dio = Dio(
     BaseOptions(
       connectTimeout: const Duration(seconds: 30),
@@ -999,7 +1002,13 @@ class DownloadRepository {
           _emitUpdate();
           _fileLocks.remove(task.filePath);
           _activeDownloads--;
-          _processQueue();
+          // 固定退避：失败立刻重入队会三连发打同一个地址，等一会儿再试。
+          unawaited(
+            Future<void>.delayed(
+              _retryDelay,
+              () => _processQueue(),
+            ),
+          );
           return;
         }
         final tempFile = File(tempPath);
@@ -1024,7 +1033,13 @@ class DownloadRepository {
           _emitUpdate();
           _fileLocks.remove(task.filePath);
           _activeDownloads--;
-          _processQueue();
+          // 固定退避：失败立刻重入队会三连发打同一个地址，等一会儿再试。
+          unawaited(
+            Future<void>.delayed(
+              _retryDelay,
+              () => _processQueue(),
+            ),
+          );
           return;
         }
         final tempFile = File(tempPath);
