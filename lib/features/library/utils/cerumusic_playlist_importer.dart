@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 import 'package:archive/archive.dart';
 import 'package:pointycastle/export.dart';
@@ -39,20 +40,22 @@ class CeruMusicPlaylistImporter {
     }
 
     final ext = _getExtension(filePath);
-    final bytes = await file.readAsBytes();
 
-    if (ext == 'cpl') {
-      final encryptedText = utf8.decode(bytes);
-      return decryptPlaylist(encryptedText);
-    } else if (ext == 'cmpl') {
-      final decompressedText = await _gunzipToStringAsync(bytes);
-      return decryptPlaylist(decompressedText);
-    } else if (ext == 'json') {
-      final jsonText = utf8.decode(bytes);
-      return _parseJsonPlaylist(jsonText);
-    } else {
-      throw Exception('不支持的文件类型: $ext');
-    }
+    // 解压 + 解密 + jsonDecode 都可能对大歌单文件跑上几十毫秒，挪到后台
+    // isolate：以前是假异步（await 的入口里同步跑完），导入大文件时界面冻结。
+    return Isolate.run(() {
+      final bytes = File(filePath).readAsBytesSync();
+      switch (ext) {
+        case 'cpl':
+          return decryptPlaylist(utf8.decode(bytes));
+        case 'cmpl':
+          return decryptPlaylist(_gunzipToString(bytes));
+        case 'json':
+          return _parseJsonPlaylist(utf8.decode(bytes));
+        default:
+          throw Exception('不支持的文件类型: $ext');
+      }
+    });
   }
 
   static List<Map<String, dynamic>> decryptPlaylist(String encryptedData) {
@@ -166,10 +169,6 @@ class CeruMusicPlaylistImporter {
     final decompressor = GZipDecoder();
     final decompressed = decompressor.decodeBytes(compressedData);
     return utf8.decode(decompressed);
-  }
-
-  static Future<String> _gunzipToStringAsync(Uint8List compressedData) async {
-    return _gunzipToString(compressedData);
   }
 
   static String _getExtension(String path) {
