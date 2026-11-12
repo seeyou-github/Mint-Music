@@ -353,12 +353,8 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
     // page 参数反复返回同一批歌时，也不会一直翻下去。
     var staleStreak = 0;
     Set<String> previousPageIds = <String>{};
-    var lastRequestedPage = page;
     while (!isEnd) {
       page += 1;
-      // 页码必须单调递增，被改写过的请求序列不可信。
-      if (page <= lastRequestedPage) break;
-      lastRequestedPage = page;
       final detail = await _fetch(page);
       final pageIds = <String>{};
       var duplicates = 0;
