@@ -75,8 +75,11 @@ class DownloadRepository {
 
   static const _maxRetries = 3;
 
-  /// 重试退避：失败后等固定 5 秒再重入队，不立刻三连发打同一个地址。
+  /// 重试退避：失败后等固定 5 秒再重试，不立刻三连发打同一个地址。
   static const _retryDelay = Duration(seconds: 5);
+
+  /// 任务 id → 最早可重试时间。退避只停失败的那一首，其他任务照常调度。
+  final Map<String, DateTime> _retryNotBefore = {};
 
   final Dio _dio = Dio(
     BaseOptions(
@@ -471,6 +474,8 @@ class DownloadRepository {
 
     _initializingTasks.remove(taskId);
     _fileLocks.remove(task.filePath);
+    // 用户手动恢复/重试应当立刻开始，不受自动重试的退避影响。
+    _retryNotBefore.remove(taskId);
 
     _tasks[index] = _retargeted(
       task,
@@ -487,6 +492,8 @@ class DownloadRepository {
     final task = _tasks[index];
     _initializingTasks.remove(taskId);
     _fileLocks.remove(task.filePath);
+    // 用户手动恢复/重试应当立刻开始，不受自动重试的退避影响。
+    _retryNotBefore.remove(taskId);
 
     // 插件给的直链是有时效的（B 站约 2 小时、网易云也会过期），失败后点
     // 「重试」如果再拿老地址去下，只会重复同一个 403 / 404。这里把地址和
@@ -650,15 +657,22 @@ class DownloadRepository {
   // ==================== 队列处理 ====================
 
   void _processQueue() {
+    final now = DateTime.now();
     while (_activeDownloads + _initializingTasks.length < _maxConcurrent) {
       int bestIndex = -1;
       int bestPriority = 999999;
       for (int i = 0; i < _tasks.length; i++) {
-        if (_tasks[i].status == DownloadStatus.queued) {
-          if (_tasks[i].priority < bestPriority) {
-            bestPriority = _tasks[i].priority;
-            bestIndex = i;
-          }
+        if (_tasks[i].status != DownloadStatus.queued) continue;
+        // 退避中的任务到点前不参与调度；到点后由 _scheduleRetry 的定时器
+        // 再叫一次 _processQueue，这里顺手把过期记录清掉。
+        final notBefore = _retryNotBefore[_tasks[i].id];
+        if (notBefore != null) {
+          if (notBefore.isAfter(now)) continue;
+          _retryNotBefore.remove(_tasks[i].id);
+        }
+        if (_tasks[i].priority < bestPriority) {
+          bestPriority = _tasks[i].priority;
+          bestIndex = i;
         }
       }
       if (bestIndex == -1) break;
@@ -666,6 +680,18 @@ class DownloadRepository {
       final task = _tasks[bestIndex];
       _startTask(task.id);
     }
+  }
+
+  /// 只给失败任务挂退避：到点前它不参与调度，队列里其他任务立刻继续跑。
+  /// 到点后主动再叫一次 [_processQueue]，避免没人触发调度时任务一直卡着。
+  void _scheduleRetry(String taskId) {
+    _retryNotBefore[taskId] = DateTime.now().add(_retryDelay);
+    unawaited(
+      Future<void>.delayed(_retryDelay, () {
+        _retryNotBefore.remove(taskId);
+        _processQueue();
+      }),
+    );
   }
 
   Future<void> _startTask(String taskId) async {
@@ -1002,13 +1028,8 @@ class DownloadRepository {
           _emitUpdate();
           _fileLocks.remove(task.filePath);
           _activeDownloads--;
-          // 固定退避：失败立刻重入队会三连发打同一个地址，等一会儿再试。
-          unawaited(
-            Future<void>.delayed(
-              _retryDelay,
-              () => _processQueue(),
-            ),
-          );
+          _scheduleRetry(task.id);
+          _processQueue();
           return;
         }
         final tempFile = File(tempPath);
@@ -1033,13 +1054,8 @@ class DownloadRepository {
           _emitUpdate();
           _fileLocks.remove(task.filePath);
           _activeDownloads--;
-          // 固定退避：失败立刻重入队会三连发打同一个地址，等一会儿再试。
-          unawaited(
-            Future<void>.delayed(
-              _retryDelay,
-              () => _processQueue(),
-            ),
-          );
+          _scheduleRetry(task.id);
+          _processQueue();
           return;
         }
         final tempFile = File(tempPath);
