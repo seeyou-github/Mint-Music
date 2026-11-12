@@ -12,6 +12,7 @@ import '../../../shared/services/app_image_cache.dart';
 import '../../../shared/services/cache_paths.dart';
 import '../../blacklist/application/blacklist_providers.dart';
 import '../../custom_sheet/application/custom_sheet_providers.dart';
+import '../../discover/application/hot_board_providers.dart';
 import '../../library/application/playlist_providers.dart';
 import '../../local/application/local_providers.dart';
 import '../../player/application/play_progress_providers.dart';
@@ -158,6 +159,14 @@ Future<bool> applyRestoredBackup(
   } catch (e) {
     debugPrint('[BackupRestore] 重新读取插件音源开关失败: $e');
   }
+  // 热榜配置同样只在启动时读一次（settings.json 的 hot_boards_v3）：不
+  // 重读的话「榜单 → 热榜」里仍是还原前的列表，要重启才变成备份里的内容。
+  try {
+    container.invalidate(hotBoardsProvider);
+    await container.read(hotBoardsProvider.future);
+  } catch (e) {
+    debugPrint('[BackupRestore] 重新读取热榜配置失败: $e');
+  }
 
   // 插件：整体卸载后按还原出的插件文件重新加载。
   //
@@ -186,5 +195,10 @@ Future<bool> applyRestoredBackup(
     pluginsReloaded = false;
     debugPrint('[BackupRestore] 重新加载插件失败: $e');
   }
+
+  // 热榜卡片里的歌曲只是内存缓存（不落盘）：重读配置后主动预取一次，
+  // 回到「热榜」时卡片不会是空的。失败也没关系，进页面时还会按需重试。
+  unawaited(container.read(hotBoardsProvider.notifier).refreshSongs());
+
   return pluginsReloaded;
 }
