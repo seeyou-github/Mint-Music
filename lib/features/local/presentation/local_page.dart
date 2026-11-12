@@ -1133,12 +1133,11 @@ class _LocalPageState extends ConsumerState<LocalPage>
     final granted = await ref
         .read(localMusicNotifierProvider.notifier)
         .requestPermissionAndScan();
-    if (!mounted) return;
+    // 扫描成功不弹任何提示，只有权限被拒绝时才说明原因。
+    if (!mounted || granted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(
-          granted ? context.tr('扫描完成') : context.tr('权限被拒绝，无法扫描本地音乐'),
-        ),
+        content: Text(context.tr('权限被拒绝，无法扫描本地音乐')),
         duration: const Duration(seconds: 2),
       ),
     );
@@ -1459,9 +1458,23 @@ class _LocalPageState extends ConsumerState<LocalPage>
       await ref.read(scannedDirectoriesProvider.future),
     );
     if (!mounted) return;
+    final initialDirs = List<String>.from(dirs);
+    // 「确认」按钮自己会扫，弹窗关闭回调里不要重复扫一次。
+    var confirmed = false;
+
+    // 关闭弹窗时按「目录集合」判断有没有变化：增删目录会改变歌曲索引，
+    // 只重排顺序不改变集合（见 reorderDirectories），不必重跑全盘扫描。
+    bool directoriesChanged() {
+      if (dirs.length != initialDirs.length) return true;
+      for (final d in dirs) {
+        if (!initialDirs.contains(d)) return true;
+      }
+      return false;
+    }
+
     final bottomPadding = MediaQuery.of(context).padding.bottom;
 
-    showModalBottomSheet(
+    final sheet = showModalBottomSheet(
       context: context,
       useRootNavigator: true,
       isScrollControlled: true,
@@ -1645,49 +1658,13 @@ class _LocalPageState extends ConsumerState<LocalPage>
                           ),
                         ),
                       const SizedBox(height: AppSpacing.lg),
+                      // 底部一行两个按钮：左边添加文件夹，右边确认。
                       Padding(
                         padding: const EdgeInsets.symmetric(
                           horizontal: AppSpacing.lg,
                         ),
                         child: Row(
                           children: [
-                            Expanded(
-                              child: GestureDetector(
-                                onTap: () {
-                                  dirs.clear();
-                                  setModalState(() {});
-                                  unawaited(
-                                    ref
-                                        .read(
-                                          localMusicNotifierProvider.notifier,
-                                        )
-                                        .setDirectories(dirs),
-                                  );
-                                },
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: 12,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: colors.surfaceVariant,
-                                    borderRadius: BorderRadius.circular(
-                                      AppRadius.full,
-                                    ),
-                                    border: Border.all(color: colors.divider),
-                                  ),
-                                  child: Text(
-                                    context.tr('清空目录'),
-                                    textAlign: TextAlign.center,
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w500,
-                                      color: colors.textPrimary,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: AppSpacing.md),
                             Expanded(
                               child: GestureDetector(
                                 onTap: () async {
@@ -1728,76 +1705,60 @@ class _LocalPageState extends ConsumerState<LocalPage>
                                 ),
                               ),
                             ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: AppSpacing.sm),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: AppSpacing.lg,
-                        ),
-                        child: GestureDetector(
-                          onTap: () async {
-                            final messenger = ScaffoldMessenger.of(context);
-                            final notifier = ref.read(
-                              localMusicNotifierProvider.notifier,
-                            );
-                            // 一个目录都没有时不会开始扫描（见 scanAll 的注释），
-                            // 弹窗留着让用户继续添加，只提示一下。
-                            if (dirs.isEmpty) {
-                              messenger.showSnackBar(
-                                SnackBar(
-                                  content: Text(context.tr('未设置扫描目录时不会扫描任何音乐')),
-                                  duration: const Duration(seconds: 2),
-                                ),
-                              );
-                              return;
-                            }
-                            // 目录已确定、扫描马上就开始：先把弹窗收掉再扫。
-                            // 几千首歌的扫描可能要跑很久，弹窗一直盖在上面既挡住
-                            // 顶部「已扫描 x/y」的进度，也让人分不清到底扫没扫。
-                            final wasScanning = ref
-                                .read(scanProgressProvider)
-                                .running;
-                            Navigator.pop(context);
-                            await notifier.setDirectories(dirs);
-                            final scanned = await notifier.scanAll();
-                            if (!mounted) return;
-                            messenger.showSnackBar(
-                              SnackBar(
-                                // 弹窗已经 pop 掉，这里不再持有可用的 BuildContext，
-                                // 用全局 tr（读当前语言镜像）拼提示文字。
-                                content: Text(
-                                  tr(
-                                    wasScanning
-                                        ? '目录已保存，当前正在扫描'
-                                        : (scanned ? '目录已保存并重新扫描' : '目录已保存'),
+                            const SizedBox(width: AppSpacing.md),
+                            Expanded(
+                              child: GestureDetector(
+                                onTap: () async {
+                                  // 一个目录都没有时不会开始扫描（见 scanAll
+                                  // 的注释），弹窗留着让用户继续添加。
+                                  if (dirs.isEmpty) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          context.tr(
+                                            '未设置扫描目录时不会扫描任何音乐',
+                                          ),
+                                        ),
+                                        duration: const Duration(seconds: 2),
+                                      ),
+                                    );
+                                    return;
+                                  }
+                                  // 「确认」自己会扫，弹窗关闭回调里别再扫一次。
+                                  confirmed = true;
+                                  final notifier = ref.read(
+                                    localMusicNotifierProvider.notifier,
+                                  );
+                                  // 先把弹窗收掉再扫：几千首歌的扫描可能要跑
+                                  // 很久，弹窗盖着会挡住顶部的扫描进度。
+                                  Navigator.pop(context);
+                                  await notifier.setDirectories(dirs);
+                                  await notifier.scanAll();
+                                },
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 12,
+                                  ),
+                                  // 主题色底 + 主题色描边 + 主题色文字，
+                                  // 与侧栏「发现」的激活态一致。
+                                  decoration: activeChipDecoration(
+                                    colors,
+                                    radius: AppRadius.full,
+                                    withBorder: true,
+                                  ),
+                                  child: Text(
+                                    context.tr('确认'),
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w500,
+                                      color: colors.primary,
+                                    ),
                                   ),
                                 ),
-                                duration: const Duration(seconds: 2),
-                              ),
-                            );
-                          },
-                          child: Container(
-                            width: double.infinity,
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            // 与侧栏「发现」的激活态一致：主题色调暗做底、
-                            // 文字用主题色。
-                            decoration: activeChipDecoration(
-                              colors,
-                              radius: AppRadius.full,
-                              withBorder: true,
-                            ),
-                            child: Text(
-                              context.tr('确认并重新扫描'),
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w500,
-                                color: colors.primary,
                               ),
                             ),
-                          ),
+                          ],
                         ),
                       ),
                       const SizedBox(height: AppSpacing.lg),
@@ -1809,6 +1770,19 @@ class _LocalPageState extends ConsumerState<LocalPage>
           },
         );
       },
+    );
+    // 不论用哪种方式关掉弹窗（下滑 / 点遮罩 / 返回键），只要目录集合变了
+    // 就补一次扫描，避免用户不点「确认」直接关掉后列表还是旧的。
+    unawaited(
+      sheet.whenComplete(() async {
+        if (!mounted || confirmed) return;
+        if (!directoriesChanged()) return;
+        final notifier = ref.read(localMusicNotifierProvider.notifier);
+        // 弹窗里增删目录的持久化是 unawaited 的，这里再存一次，保证扫描
+        // 读到的一定是最新目录。
+        await notifier.setDirectories(dirs);
+        await notifier.scanAll();
+      }),
     );
   }
 
