@@ -144,6 +144,7 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
     await showRadioCategoryManagerSheet(
       context,
       colors: colors,
+      onAddStation: () => _openEditor(categoryId: _categoryId),
       onCreated: (category) {
         if (mounted) setState(() => _categoryId = category.id);
       },
@@ -197,7 +198,8 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
     final cards = <Widget>[
       if (_categoryId == RadioCategory.allId) _buildRandomCard(colors),
       for (final station in stations) _buildStationCard(colors, station),
-      _buildAddCard(colors),
+      // 已经有电台就不再占一张卡片：「新增电台」收进分类管理弹框里。
+      if (data.stations.isEmpty) _buildAddCard(colors),
     ];
 
     final crossAxisCount = ResponsiveLayout.gridCrossAxisCount(context);
@@ -673,11 +675,11 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
 
   // ------------------------------------------------------------ 操作
 
-  Future<void> _openEditor({RadioStation? station}) async {
+  Future<void> _openEditor({RadioStation? station, String? categoryId}) async {
     final saved = await showRadioEditor(
       context,
       station: station,
-      categoryId: _categoryId,
+      categoryId: categoryId ?? _categoryId,
     );
     if (saved == true && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(

@@ -6,14 +6,17 @@ import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../application/radio_providers.dart';
 
-/// 打开「电台分类管理」弹框：新建 + 已建分类的排序 / 改名 / 删除。
+/// 打开「电台分类管理」弹框：已建电台的排序 / 删除 / 新增，以及分类的
+/// 新建 / 排序 / 改名 / 删除。
 ///
 /// 电台面板与新增 / 编辑电台页共用；[onCreated] 在新建分类后回调，
-/// 调用方可以把新分类设为当前选中。
+/// 调用方可以把新分类设为当前选中；[onAddStation] 用于弹框右上角的
+/// 「新增电台」。
 Future<void> showRadioCategoryManagerSheet(
   BuildContext context, {
   required ThemeColors colors,
   required ValueChanged<RadioCategory> onCreated,
+  VoidCallback? onAddStation,
 }) {
   return showModalBottomSheet<void>(
     useRootNavigator: true,
@@ -27,23 +30,30 @@ Future<void> showRadioCategoryManagerSheet(
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(AppRadius.xl)),
     ),
-    builder: (_) =>
-        RadioCategoryManagerSheet(colors: colors, onCreated: onCreated),
+    builder: (_) => RadioCategoryManagerSheet(
+      colors: colors,
+      onCreated: onCreated,
+      onAddStation: onAddStation,
+    ),
   );
 }
 
-/// 电台分类管理弹框：顶部新建，下方列出已建分类（拖动排序 / 点名称修改 / 删除）。
+/// 电台分类管理弹框：已建电台列表、新建分类输入框、已建分类列表。
 class RadioCategoryManagerSheet extends ConsumerStatefulWidget {
   const RadioCategoryManagerSheet({
     super.key,
     required this.colors,
     required this.onCreated,
+    this.onAddStation,
   });
 
   final ThemeColors colors;
 
   /// 新建分类后回调（调用方把新分类设为当前选中）。
   final ValueChanged<RadioCategory> onCreated;
+
+  /// 点「新增电台」时打开新增页面。
+  final VoidCallback? onAddStation;
 
   @override
   ConsumerState<RadioCategoryManagerSheet> createState() =>
@@ -207,49 +217,60 @@ class _RadioCategoryManagerSheetState
   @override
   Widget build(BuildContext context) {
     final colors = widget.colors;
+    final data = ref.watch(radioProvider);
     // 「全部」是内置分类，不参与管理。
     final categories = [
-      for (final category in ref.watch(radioProvider).categories)
+      for (final category in data.categories)
         if (!category.isAll) category,
     ];
-    final stations = ref.watch(radioProvider).stations;
+    final stations = data.stations;
     return Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
       child: SizedBox(
         height: MediaQuery.sizeOf(context).height * 0.72,
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(
                 AppSpacing.lg,
                 AppSpacing.lg,
                 AppSpacing.lg,
-                AppSpacing.sm,
+                AppSpacing.xs,
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              child: Row(
                 children: [
-                  Text(
-                    context.tr('新建电台分类'),
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: colors.textPrimary,
+                  Expanded(child: _sectionTitle(context.tr('已创建的电台'))),
+                  if (widget.onAddStation != null)
+                    _buildPillButton(
+                      context.tr('新增电台'),
+                      widget.onAddStation,
                     ),
-                  ),
-                  const SizedBox(height: AppSpacing.xs),
-                  Text(
-                    context.tr('分类可拖动排序、点名称改名；电台可拖动排序、删除'),
-                    style: TextStyle(fontSize: 12, color: colors.textHint),
-                  ),
                 ],
               ),
+            ),
+            Expanded(
+              flex: 3,
+              child: stations.isEmpty
+                  ? _emptyHint(context.tr('还没有创建电台'))
+                  : ReorderableListView.builder(
+                      padding: const EdgeInsets.only(
+                        top: AppSpacing.xs,
+                        bottom: AppSpacing.sm,
+                      ),
+                      buildDefaultDragHandles: false,
+                      itemCount: stations.length,
+                      onReorder: (oldIndex, newIndex) => ref
+                          .read(radioProvider.notifier)
+                          .reorderStations(oldIndex, newIndex),
+                      itemBuilder: (context, index) =>
+                          _stationRow(stations, index),
+                    ),
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(
                 AppSpacing.lg,
-                0,
+                AppSpacing.sm,
                 AppSpacing.lg,
                 AppSpacing.sm,
               ),
@@ -282,64 +303,39 @@ class _RadioCategoryManagerSheetState
                     ),
                   ),
                   const SizedBox(width: AppSpacing.sm),
-                  TextButton(
-                    onPressed: _creating ? null : _create,
-                    child: Text(
-                      context.tr(_creating ? '创建中' : '创建'),
-                      style: TextStyle(color: colors.primary),
-                    ),
+                  _buildPillButton(
+                    context.tr('新增分类'),
+                    _creating ? null : _create,
                   ),
                 ],
               ),
             ),
-            Divider(height: 1, color: colors.divider.withValues(alpha: 0.4)),
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.only(bottom: AppSpacing.lg),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _sectionLabel(
-                      context.tr('已建分类'),
-                      context.tr('拖动排序；点名称可修改'),
-                    ),
-                    if (categories.isEmpty)
-                      _emptyHint(context.tr('还没有自建分类'))
-                    else
-                      ReorderableListView.builder(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        padding: EdgeInsets.zero,
-                        buildDefaultDragHandles: false,
-                        itemCount: categories.length,
-                        onReorder: (oldIndex, newIndex) => ref
-                            .read(radioProvider.notifier)
-                            .reorderCategories(oldIndex, newIndex),
-                        itemBuilder: (context, index) =>
-                            _categoryRow(categories, index),
-                      ),
-                    _sectionLabel(
-                      context.tr('已创建的电台'),
-                      context.tr('拖动排序；电台页按此顺序显示'),
-                    ),
-                    if (stations.isEmpty)
-                      _emptyHint(context.tr('还没有创建电台'))
-                    else
-                      ReorderableListView.builder(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        padding: EdgeInsets.zero,
-                        buildDefaultDragHandles: false,
-                        itemCount: stations.length,
-                        onReorder: (oldIndex, newIndex) => ref
-                            .read(radioProvider.notifier)
-                            .reorderStations(oldIndex, newIndex),
-                        itemBuilder: (context, index) =>
-                            _stationRow(stations, index),
-                      ),
-                  ],
-                ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.lg,
+                AppSpacing.xs,
+                AppSpacing.lg,
+                AppSpacing.xs,
               ),
+              child: _sectionTitle(context.tr('已建分类')),
+            ),
+            Expanded(
+              flex: 2,
+              child: categories.isEmpty
+                  ? _emptyHint(context.tr('还没有自建分类'))
+                  : ReorderableListView.builder(
+                      padding: const EdgeInsets.only(
+                        top: AppSpacing.xs,
+                        bottom: AppSpacing.lg,
+                      ),
+                      buildDefaultDragHandles: false,
+                      itemCount: categories.length,
+                      onReorder: (oldIndex, newIndex) => ref
+                          .read(radioProvider.notifier)
+                          .reorderCategories(oldIndex, newIndex),
+                      itemBuilder: (context, index) =>
+                          _categoryRow(categories, index),
+                    ),
             ),
           ],
         ),
@@ -347,36 +343,34 @@ class _RadioCategoryManagerSheetState
     );
   }
 
-  Widget _sectionLabel(String title, String hint) {
+  Widget _sectionTitle(String title) {
+    return Text(
+      title,
+      style: TextStyle(
+        fontSize: 15,
+        fontWeight: FontWeight.w600,
+        color: widget.colors.textPrimary,
+      ),
+    );
+  }
+
+  /// 描边胶囊按钮（弹框里的「新增电台 / 新增分类」）。
+  Widget _buildPillButton(String label, VoidCallback? onTap) {
     final colors = widget.colors;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(
-        AppSpacing.lg,
-        AppSpacing.md,
-        AppSpacing.lg,
-        AppSpacing.sm,
+    return OutlinedButton(
+      onPressed: onTap,
+      style: OutlinedButton.styleFrom(
+        foregroundColor: colors.primary,
+        side: BorderSide(
+          color: onTap == null ? colors.divider : colors.primary,
+        ),
+        shape: const StadiumBorder(),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+        minimumSize: Size.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
       ),
-      child: Row(
-        children: [
-          Text(
-            title,
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: colors.textPrimary,
-            ),
-          ),
-          const SizedBox(width: AppSpacing.sm),
-          Expanded(
-            child: Text(
-              hint,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 11, color: colors.textHint),
-            ),
-          ),
-        ],
-      ),
+      child: Text(label),
     );
   }
 

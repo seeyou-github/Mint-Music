@@ -501,6 +501,7 @@ class _RadioEditPageState extends ConsumerState<RadioEditPage> {
     await showRadioCategoryManagerSheet(
       context,
       colors: colors,
+      onAddStation: () => showRadioEditor(context, categoryId: _categoryId),
       onCreated: (category) {
         if (mounted) setState(() => _categoryId = category.id);
       },
