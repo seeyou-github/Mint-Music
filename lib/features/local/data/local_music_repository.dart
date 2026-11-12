@@ -153,21 +153,31 @@ class LocalMusicRepository {
     return List.unmodifiable(_scannedDirs);
   }
 
+  /// 只从配置里读出扫描目录，不动内存快照、也不需要 [init]。
+  ///
+  /// 备份还原要在覆盖 settings.json **之前**记下「还原前的目录」，之后拿它和
+  /// 备份里的比较，决定要不要补一次自动扫描。那一刻仓库可能还没 init，
+  /// 不能走 [_scannedDirs]（那是空的）。
+  Future<List<String>> readConfiguredDirectories() async {
+    try {
+      final prefs = await AppPreferences.getInstance();
+      return prefs.getStringList(_dirsKey) ?? const <String>[];
+    } catch (e) {
+      debugPrint('[LocalMusic] 读取扫描目录失败: $e');
+      return const <String>[];
+    }
+  }
+
   /// 重新从配置里读扫描目录。
   ///
   /// 备份还原会把 settings.json 整个换掉，但 [_scannedDirs] 是 [init] 时读进来
   /// 的内存快照，而 [init] 初始化过一次就直接返回——不显式重读的话，「本地」
   /// 页面得重启应用才看得到备份里的目录。
   Future<void> reloadDirectories() async {
-    try {
-      final prefs = await AppPreferences.getInstance();
-      final dirs = prefs.getStringList(_dirsKey) ?? const <String>[];
-      _scannedDirs
-        ..clear()
-        ..addAll(dirs);
-    } catch (e) {
-      debugPrint('[LocalMusic] 重新读取扫描目录失败: $e');
-    }
+    final dirs = await readConfiguredDirectories();
+    _scannedDirs
+      ..clear()
+      ..addAll(dirs);
   }
 
   String _genId(String filePath) {

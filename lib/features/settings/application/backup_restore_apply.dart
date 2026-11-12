@@ -41,6 +41,13 @@ Future<void> stopPlaybackForRestore(ProviderContainer container) async {
 /// 让「还原完成」永远等下去（界面会一直停在「正在重新加载音源」）。
 const Duration _pluginReloadTimeout = Duration(seconds: 90);
 
+/// 两组扫描目录是否是同一组（顺序不算差异：顺序只影响扫描先后）。
+bool _sameDirectories(List<String> a, List<String> b) {
+  if (a.length != b.length) return false;
+  final set = a.toSet();
+  return b.every(set.contains);
+}
+
 /// 还原备份后立刻把新内容应用到运行中的应用，免去重启。
 ///
 /// `BackupService.restoreBackup` 已经负责写盘并重载 `AppPreferences`，但运行
@@ -58,11 +65,16 @@ const Duration _pluginReloadTimeout = Duration(seconds: 90);
 ///
 /// [onProgress] 在进入关键步骤时回调中文提示，界面用它更新进度浮层。
 ///
+/// [previousDirectories] 是**还原前**的本地扫描目录（调用方要在覆盖
+/// settings.json 之前取好）。备份里的目录和它不一致时，本地歌曲索引里留着的
+/// 还是旧目录的歌，这里会补一次自动扫描把列表更新过来。
+///
 /// 返回插件是否重载成功：超时 / 失败时返回 false，调用方据此提示「音源要重启
 /// 后才生效」，而不是假装一切正常。
 Future<bool> applyRestoredBackup(
   ProviderContainer container, {
   void Function(String message)? onProgress,
+  List<String>? previousDirectories,
 }) async {
   onProgress?.call('正在应用还原的设置...');
   await stopPlaybackForRestore(container);
@@ -147,8 +159,26 @@ Future<bool> applyRestoredBackup(
   }
   try {
     // 扫描目录缓存在仓库内存里，光 invalidate provider 拿到的还是旧值。
-    await container.read(localMusicRepositoryProvider).reloadDirectories();
+    final repo = container.read(localMusicRepositoryProvider);
+    await repo.reloadDirectories();
     container.invalidate(scannedDirectoriesProvider);
+
+    // 备份里的扫描目录和还原前不一致时，索引里还是旧目录的歌（例如备份里是
+    // a、还原前是 b：目录已经变成 a，歌曲列表却仍是 b 的），界面会一直显示
+    // 旧列表直到用户手动扫一次。这里自动补一次扫描，把列表拉到和新目录一致。
+    final restoredDirs = repo.getScannedDirectories();
+    if (previousDirectories != null &&
+        !_sameDirectories(previousDirectories, restoredDirs)) {
+      final notifier = container.read(localMusicNotifierProvider.notifier);
+      if (restoredDirs.isEmpty) {
+        // 备份里一个扫描目录都没有：旧目录扫出来的歌也不该再留着。
+        onProgress?.call('扫描目录已清空，正在清空本地歌曲列表...');
+        await notifier.clearIndex();
+      } else {
+        onProgress?.call('扫描目录已变化，正在重新扫描本地音乐...');
+        await notifier.scanAll();
+      }
+    }
   } catch (e) {
     debugPrint('[BackupRestore] 重新读取本地扫描目录失败: $e');
   }

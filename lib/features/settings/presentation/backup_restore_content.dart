@@ -15,6 +15,7 @@ import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../shared/widgets/playlist_sync_button.dart';
 import '../../library/application/playlist_providers.dart';
+import '../../local/application/local_providers.dart';
 import '../application/backup_restore_apply.dart';
 import '../application/settings_providers.dart';
 import '../data/settings_service.dart';
@@ -170,8 +171,13 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
       setState(() => _busy = true);
       _showProgress(tr('正在还原备份...'));
       await stopPlaybackForRestore(container);
+      // 目录要在覆盖 settings.json 之前记下来（见 [_snapshotScannedDirectories]）。
+      final previousDirs = await _snapshotScannedDirectories(container);
       await BackupService.restoreBackup(bytes);
-      final message = await _applyRestoredBackup(container);
+      final message = await _applyRestoredBackup(
+        container,
+        previousDirectories: previousDirs,
+      );
       _closeProgress();
       _toast(message);
     } catch (e) {
@@ -331,8 +337,13 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
         ),
       );
       await stopPlaybackForRestore(container);
+      // 同上：还原前先把扫描目录记下来，还原后拿它和备份里的比较。
+      final previousDirs = await _snapshotScannedDirectories(container);
       await BackupService.restoreBackup(bytes);
-      final message = await _applyRestoredBackup(container);
+      final message = await _applyRestoredBackup(
+        container,
+        previousDirectories: previousDirs,
+      );
       _closeProgress();
       _toast(message);
     } catch (e) {
@@ -510,11 +521,15 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
   ///
   /// 返回要提示给用户的那句话：插件没能重载（超时 / 失败）时如实说明要先重启，
   /// 不要假装一切都好了。
-  Future<String> _applyRestoredBackup(ProviderContainer container) async {
+  Future<String> _applyRestoredBackup(
+    ProviderContainer container, {
+    List<String>? previousDirectories,
+  }) async {
     var pluginsReloaded = true;
     try {
       pluginsReloaded = await applyRestoredBackup(
         container,
+        previousDirectories: previousDirectories,
         onProgress: (message) {
           if (!mounted) return;
           _showProgress(tr(message));
@@ -526,6 +541,24 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
       if (mounted) _loadConfig();
     }
     return pluginsReloaded ? tr('还原完成，已重新加载音源') : tr('还原完成；音源重载超时，重启应用后生效');
+  }
+
+  /// 记录还原前的扫描目录。
+  ///
+  /// 还原会把 settings.json 整个换掉，之后就查不到「原来扫的是哪些目录」了；
+  /// 拿它和备份里的目录比较，不一致就说明本地歌曲索引已经过期（还是旧目录的
+  /// 歌），需要补一次自动扫描。
+  Future<List<String>?> _snapshotScannedDirectories(
+    ProviderContainer container,
+  ) async {
+    try {
+      return await container
+          .read(localMusicRepositoryProvider)
+          .readConfiguredDirectories();
+    } catch (e) {
+      debugPrint('[BackupRestore] 读取还原前扫描目录失败: $e');
+      return null;
+    }
   }
 
   Future<bool> _showRetryDialog(String message) async {
