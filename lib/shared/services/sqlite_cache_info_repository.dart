@@ -171,11 +171,17 @@ class SqliteCacheInfoRepository extends CacheInfoRepository {
 
   @override
   Future<int> deleteAll(Iterable<int> ids) async {
-    var deleted = 0;
-    for (final id in ids) {
-      deleted += await delete(id);
-    }
-    return deleted;
+    final list = ids.toList(growable: false);
+    if (list.isEmpty) return 0;
+    final db = await _database();
+    // 一条 DELETE 删完：清理缓存时可能一次淘汰几百条，逐条 delete 会
+    // 产生同样数量的语句和事务。
+    final placeholders = List.filled(list.length, '?').join(',');
+    return db.delete(
+      'cache_index',
+      where: 'id IN ($placeholders)',
+      whereArgs: list,
+    );
   }
 
   @override

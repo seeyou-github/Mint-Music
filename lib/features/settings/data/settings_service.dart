@@ -750,10 +750,25 @@ class SettingsService {
   Future<void> setCacheDir(String v) => _prefs.setString('cache_dir', v);
 
   // -- directory size calculation --
+
+  /// 目录大小缓存：设置页每次重建都会读一次，而递归遍历下载目录（可能有
+  /// 上千个文件、逐个 stat）开销不小。结果缓存一小段时间，清缓存 / 换目录
+  /// 时主动失效。
+  final Map<String, ({String value, DateTime at})> _dirSizeCache = {};
+  static const Duration _dirSizeCacheTtl = Duration(seconds: 30);
+
   Future<String> getDirectorySize(String path) async {
+    final cached = _dirSizeCache[path];
+    final now = DateTime.now();
+    if (cached != null && now.difference(cached.at) < _dirSizeCacheTtl) {
+      return cached.value;
+    }
     try {
       final dir = Directory(path);
-      if (!dir.existsSync()) return '0 B';
+      if (!dir.existsSync()) {
+        _dirSizeCache[path] = (value: '0 B', at: now);
+        return '0 B';
+      }
       int total = 0;
       await for (final entity in dir.list(
         recursive: true,
@@ -761,7 +776,9 @@ class SettingsService {
       )) {
         if (entity is File) total += await entity.length();
       }
-      return _formatBytes(total);
+      final formatted = _formatBytes(total);
+      _dirSizeCache[path] = (value: formatted, at: now);
+      return formatted;
     } catch (_) {
       return '0 B';
     }
@@ -815,6 +832,7 @@ class SettingsService {
     }
     // 歌词缓存与图片缓存索引已经放进临时库，这里一起清掉。
     await AppDatabase.clearCacheData();
+    _dirSizeCache.clear();
     return total;
   }
 }
