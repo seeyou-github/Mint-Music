@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
+import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 import '../../../shared/utils/display_name_sanitizer.dart';
 import '../../../shared/pagination/page_result.dart';
 import '../../player/domain/models/song.dart';
@@ -20,6 +21,13 @@ import '../data/plugin_source_preferences.dart';
 import '../data/source_health_store.dart';
 import '../data/plugin_service.dart';
 import '../data/plugin_host.dart';
+
+/// 调试日志：release 构建直接丢弃。搜索 / 取地址 / 歌词这些热路径以前用
+/// 裸 print，release 也要付字符串拼接和控制台 IO 的成本。
+void _log(String message) {
+  if (!kDebugMode) return;
+  debugPrint(message);
+}
 
 /// 一次「数据源 → 播放源」尝试的结果。
 ///
@@ -727,7 +735,7 @@ class MusicSourceManager {
           if (results.isNotEmpty) return results;
         }
       } catch (e) {
-        print('[MusicSourceManager] searchViaHost search失败: $e');
+        _log('[MusicSourceManager] searchViaHost search失败: $e');
       }
 
       try {
@@ -744,7 +752,7 @@ class MusicSourceManager {
           if (results.isNotEmpty) return results;
         }
       } catch (e) {
-        print('[MusicSourceManager] searchViaHost searchWithHandler失败: $e');
+        _log('[MusicSourceManager] searchViaHost searchWithHandler失败: $e');
       }
     }
 
@@ -1242,13 +1250,13 @@ class MusicSourceManager {
   String? _getSourceIdForHost(PluginHost host, String sourceId) {
     // 变体 id（'wy@插件id'）按平台部分匹配。
     final (baseId, _) = splitSourceId(sourceId);
-    print('[MusicSourceManager] _getSourceIdForHost: 查找 sourceId=$baseId');
-    print(
+    _log('[MusicSourceManager] _getSourceIdForHost: 查找 sourceId=$baseId');
+    _log(
       '[MusicSourceManager] sourceActions keys: ${host.sourceActions.keys.toList()}',
     );
 
     if (host.sourceActions.containsKey(baseId)) {
-      print('[MusicSourceManager] 直接匹配: $baseId');
+      _log('[MusicSourceManager] 直接匹配: $baseId');
       return baseId;
     }
 
@@ -1256,7 +1264,7 @@ class MusicSourceManager {
       final pluginSourceId = entry.key;
       final knownId = SourceIdMapping.knownId(pluginSourceId);
       if (knownId == baseId) {
-        print('[MusicSourceManager] 通过名称映射匹配: $pluginSourceId -> $baseId');
+        _log('[MusicSourceManager] 通过名称映射匹配: $pluginSourceId -> $baseId');
         return pluginSourceId;
       }
 
@@ -1265,7 +1273,7 @@ class MusicSourceManager {
         '',
       );
       if (normalizedName == baseId) {
-        print(
+        _log(
           '[MusicSourceManager] 通过规范化匹配: $pluginSourceId -> $normalizedName',
         );
         return pluginSourceId;
@@ -1275,12 +1283,12 @@ class MusicSourceManager {
     for (final source in host.sources) {
       final knownId = SourceIdMapping.knownId(source.name);
       if (knownId == baseId) {
-        print('[MusicSourceManager] 通过sources匹配: ${source.name} -> $baseId');
+        _log('[MusicSourceManager] 通过sources匹配: ${source.name} -> $baseId');
         return baseId;
       }
     }
 
-    print('[MusicSourceManager] 未找到匹配');
+    _log('[MusicSourceManager] 未找到匹配');
     return null;
   }
 
@@ -1339,7 +1347,7 @@ class MusicSourceManager {
 
         if (host.supportsSearch(resolvedSourceId)) {
           try {
-            print(
+            _log(
               '[MusicSourceManager] 尝试插件搜索: source=$sourceId, query=$query',
             );
             final resultJson = await host.search(
@@ -1362,7 +1370,7 @@ class MusicSourceManager {
               }
             }
           } catch (e) {
-            print(
+            _log(
               '[MusicSourceManager] Plugin search failed for $sourceId: $e',
             );
             lastError = e;
@@ -1389,7 +1397,7 @@ class MusicSourceManager {
               }
             }
           } catch (e) {
-            print(
+            _log(
               '[MusicSourceManager] Plugin searchWithHandler failed for $sourceId: $e',
             );
             lastError = e;
@@ -1402,7 +1410,7 @@ class MusicSourceManager {
       // 有音源尝试过但都失败了：抛出真实原因，界面据此显示「加载失败 + 重试」。
       throw lastError;
     }
-    print('[MusicSourceManager] 没有找到可用的搜索源: $sourceId');
+    _log('[MusicSourceManager] 没有找到可用的搜索源: $sourceId');
     return const PageResult();
   }
 
@@ -1461,7 +1469,7 @@ class MusicSourceManager {
     final cacheKey = 'all:${ids.join(",")}:$query:$page:$limit';
     final cached = _searchResultsCache[cacheKey];
     if (cached != null && cached.isValid) {
-      print('[MusicSourceManager] 搜索结果缓存命中: $cacheKey');
+      _log('[MusicSourceManager] 搜索结果缓存命中: $cacheKey');
       return cached.data;
     }
 
@@ -1481,7 +1489,7 @@ class MusicSourceManager {
 
     while (remainingIds.isNotEmpty) {
       if (requestId != _searchRequestId) {
-        print('[MusicSourceManager] 搜索查询已变更，取消聚合搜索');
+        _log('[MusicSourceManager] 搜索查询已变更，取消聚合搜索');
         return results;
       }
 
@@ -1500,7 +1508,7 @@ class MusicSourceManager {
             results[id] = songs;
           }
         } catch (e) {
-          print('[MusicSourceManager] 聚合搜索超时或失败: $id, $e');
+          _log('[MusicSourceManager] 聚合搜索超时或失败: $id, $e');
           if (requestId == _searchRequestId) {
             results[id] = [];
           }
@@ -1523,7 +1531,7 @@ class MusicSourceManager {
     final cacheKey = '$sourceId:$query';
     final cached = _searchSuggestionsCache[cacheKey];
     if (cached != null && cached.isValid) {
-      print('[MusicSourceManager] 搜索建议缓存命中: $cacheKey');
+      _log('[MusicSourceManager] 搜索建议缓存命中: $cacheKey');
       return cached.data;
     }
 
@@ -1670,7 +1678,7 @@ class MusicSourceManager {
       final tags = _pluginHotSearchTags(raw);
       if (tags.isNotEmpty) return tags;
     } catch (e) {
-      print('[MusicSourceManager] 插件热门搜索获取失败 source=$sourceId: $e');
+      _log('[MusicSourceManager] 插件热门搜索获取失败 source=$sourceId: $e');
     }
     return const <String>[];
   }
@@ -1777,10 +1785,10 @@ class MusicSourceManager {
         return songs;
       }
 
-      print('[MusicSourceManager] 无法识别的搜索结果格式: ${decoded.runtimeType}');
+      _log('[MusicSourceManager] 无法识别的搜索结果格式: ${decoded.runtimeType}');
       return [];
     } catch (e) {
-      print('[MusicSourceManager] Failed to parse plugin search result: $e');
+      _log('[MusicSourceManager] Failed to parse plugin search result: $e');
       return [];
     }
   }
@@ -2141,13 +2149,13 @@ class MusicSourceManager {
           // 记录实际提供地址的音源（插件），界面上据此显示当前使用的音源。
           source: _pluginSourceAppId(host, pluginSourceId),
         );
-        print(
+        _log(
           '[MusicSourceManager] LX URL candidate: source=$sourceId '
           'requested=$quality reported=${result.quality} host=${_urlHost(url)}',
         );
         // 拒绝酷我提示音 / 加密格式 URL
         if (musicInfo.source == 'kw' && _isKuwoPromptUrl(url)) {
-          print('[MusicSourceManager] 拒绝酷我无效 URL: $url');
+          _log('[MusicSourceManager] 拒绝酷我无效 URL: $url');
           continue;
         }
         if (url.isNotEmpty &&
@@ -2162,7 +2170,7 @@ class MusicSourceManager {
           }
         }
       } catch (e) {
-        print(
+        _log(
           '[MusicSourceManager] LX URL failed: '
           'source=$sourceId quality=$quality error=$e',
         );
@@ -2273,7 +2281,7 @@ class MusicSourceManager {
               ? qualityFallbackFromError(_shortError(error), requestQuality)
               : null;
           if (fallback == null) rethrow;
-          print(
+          _log(
             '[MusicSourceManager] 播放源 $playbackSourceId 音质不可用，'
             '改用 $fallback 重试',
           );
@@ -2290,7 +2298,7 @@ class MusicSourceManager {
             // 重试仍失败：带回原始错误，它包含插件对各接口的完整说明。
             // 重试失败原因单独打日志：插件不认这个档位（如只声明 128k/320k
             // 却报「最高只给到 100k」）时，靠它才能看出为什么没换成功。
-            print(
+            _log(
               '[MusicSourceManager] 播放源 $playbackSourceId 改用 $fallback '
               '重试仍失败: $retryError',
             );
@@ -2492,7 +2500,7 @@ class MusicSourceManager {
       if (!allowQualityDowngrade) rethrow;
       final fallback = qualityFallbackFromError(_shortError(error), quality);
       if (fallback == null) rethrow;
-      print(
+      _log(
         '[MusicSourceManager] 请求音质不可用，改用插件给出的档位重试: '
         '$quality -> $fallback',
       );
@@ -2505,7 +2513,7 @@ class MusicSourceManager {
         return (result: result, requested: fallback);
       } catch (retryError) {
         // 重试也失败时保留原始错误：它包含插件对各接口的完整说明。
-        print(
+        _log(
           '[MusicSourceManager] 改用插件给出的档位 $fallback 重试仍失败: '
           '$retryError',
         );
@@ -2730,11 +2738,11 @@ class MusicSourceManager {
     // 找那个插件取词，换音源后不会拿到别的音源的歌词。
     final sourceId = song.lyricSourceId;
     if (sourceId.isEmpty) {
-      print('[MusicSourceManager] getLyric: source is empty');
+      _log('[MusicSourceManager] getLyric: source is empty');
       return null;
     }
 
-    print(
+    _log(
       '[MusicSourceManager] getLyric: source=$sourceId, songId=${song.id}, title=${song.title}',
     );
 
@@ -2745,21 +2753,21 @@ class MusicSourceManager {
       if (pluginSourceId != null) {
         final musicInfo = _buildPluginMusicInfo(song, sourceId);
         try {
-          print('[MusicSourceManager] getLyric: calling plugin getLyric');
+          _log('[MusicSourceManager] getLyric: calling plugin getLyric');
           final result = await host.getLyric(pluginSourceId, musicInfo);
-          print(
+          _log(
             '[MusicSourceManager] getLyric: plugin result: ${result != null ? "has ${result.length} chars" : "null"}',
           );
           if (result != null && result.isNotEmpty) {
             return result;
           }
         } catch (e) {
-          print('[MusicSourceManager] getLyric: plugin error: $e');
+          _log('[MusicSourceManager] getLyric: plugin error: $e');
         }
       }
     }
 
-    print('[MusicSourceManager] getLyric: no source available');
+    _log('[MusicSourceManager] getLyric: no source available');
     // 同名插件没给到歌词时，再用其它已安装的插件找同一首歌的歌词。
     final otherLyric = await _lyricFromOtherPlugins(song);
     if (otherLyric == null) return null;
@@ -2786,7 +2794,7 @@ class MusicSourceManager {
         final result = await getLyricResult(candidate);
         if (result != null && _hasLyric(result)) return result;
       } catch (e) {
-        print('[MusicSourceManager] 其它插件歌词获取失败: $e');
+        _log('[MusicSourceManager] 其它插件歌词获取失败: $e');
       }
     }
     return null;
@@ -2813,7 +2821,7 @@ class MusicSourceManager {
           if (_isSameSong(song, item)) matched.add(item);
         }
       } catch (e) {
-        print('[MusicSourceManager] 匹配歌曲失败 source=$sourceId: $e');
+        _log('[MusicSourceManager] 匹配歌曲失败 source=$sourceId: $e');
       }
     }
     return matched;
@@ -3162,7 +3170,7 @@ class MusicSourceManager {
       return year;
     } catch (e) {
       // 失败不缓存：网络恢复后再问一次还能拿到。
-      print('[MusicSourceManager] 取专辑年份失败（$key）: $e');
+      _log('[MusicSourceManager] 取专辑年份失败（$key）: $e');
       return null;
     }
   }
@@ -3182,7 +3190,7 @@ class MusicSourceManager {
           final result = await host.getLyricResult(pluginSourceId, musicInfo);
           if (_hasLyric(result)) return result;
         } catch (e) {
-          print('[MusicSourceManager] getLyricResult: plugin error: $e');
+          _log('[MusicSourceManager] getLyricResult: plugin error: $e');
         }
       }
     }
@@ -3463,7 +3471,7 @@ class MusicSourceManager {
         if (playlists.isNotEmpty) return playlists;
       }
     } catch (e) {
-      print('[MusicSourceManager] 插件热门歌单获取失败 source=$sourceId: $e');
+      _log('[MusicSourceManager] 插件热门歌单获取失败 source=$sourceId: $e');
     }
     return const [];
   }
@@ -3508,7 +3516,7 @@ class MusicSourceManager {
         total: total,
       );
     } catch (e) {
-      print('[MusicSourceManager] 插件发现详情获取失败 id=$appId: $e');
+      _log('[MusicSourceManager] 插件发现详情获取失败 id=$appId: $e');
       rethrow;
     }
   }
@@ -3516,7 +3524,7 @@ class MusicSourceManager {
   Future<List<Playlist>> getHotPlaylists({String sourceId = 'wy'}) async {
     final cached = _hotPlaylistsCache[sourceId];
     if (cached != null && cached.isValid) {
-      print('[MusicSourceManager] 热门歌单缓存命中: $sourceId');
+      _log('[MusicSourceManager] 热门歌单缓存命中: $sourceId');
       return cached.data;
     }
 
@@ -3541,7 +3549,7 @@ class MusicSourceManager {
         );
         if (groups.isNotEmpty) return groups;
       } catch (e) {
-        print('[MusicSourceManager] 插件歌单分类获取失败 source=$sourceId: $e');
+        _log('[MusicSourceManager] 插件歌单分类获取失败 source=$sourceId: $e');
       }
     }
 
@@ -3561,7 +3569,7 @@ class MusicSourceManager {
         );
         if (hot.isNotEmpty) return hot;
       } catch (e) {
-        print('[MusicSourceManager] 插件热门标签获取失败 source=$sourceId: $e');
+        _log('[MusicSourceManager] 插件热门标签获取失败 source=$sourceId: $e');
       }
       try {
         final groups = _pluginTagGroupsFromJson(
@@ -3572,7 +3580,7 @@ class MusicSourceManager {
           return groups.expand((group) => group.tags).take(8).toList();
         }
       } catch (e) {
-        print('[MusicSourceManager] 插件歌单分类获取失败 source=$sourceId: $e');
+        _log('[MusicSourceManager] 插件歌单分类获取失败 source=$sourceId: $e');
       }
     }
 
@@ -3626,7 +3634,7 @@ class MusicSourceManager {
           _decodePluginJson(await host.getTopLists()),
         );
       } catch (e) {
-        print('[MusicSourceManager] 插件榜单获取失败 source=$sourceId: $e');
+        _log('[MusicSourceManager] 插件榜单获取失败 source=$sourceId: $e');
       }
     }
     return [];
@@ -3671,7 +3679,7 @@ class MusicSourceManager {
   }) async {
     final cached = _playlistDetailCache[playlistId];
     if (cached != null && cached.isValid) {
-      print('[MusicSourceManager] 歌单详情缓存命中: $playlistId');
+      _log('[MusicSourceManager] 歌单详情缓存命中: $playlistId');
       return cached.data;
     }
 
