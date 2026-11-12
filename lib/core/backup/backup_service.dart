@@ -1,6 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
+import 'dart:isolate';
 
 import 'package:archive/archive.dart';
 import 'package:flutter/foundation.dart';
@@ -111,75 +111,36 @@ class BackupService {
     // 设置现在是防抖写盘，备份前必须结算，否则刚改的设置不会进包。
     await AppPreferences.maybeInstance?.flushNow();
 
-    final archive = Archive();
     // 设置目录（`AppData\config\setting`）打成包里的 `config/setting`，
     // 插件目录打成 `config/plugin`，和 AppData 下的实际结构一一对应。
     // 重要库（`AppData\config\db`）不能直接拷：有未合并的 WAL，覆盖一个
     // 正在打开的库还会读坏，它的内容已经在 playlists.json / playstats.json
     // 里按逻辑数据导出了，所以这里跳过 db。
     final databaseDir = await AppPaths.databaseDirectory();
-    await _addDirectory(
-      archive,
-      await AppPaths.settingsDirectory(),
-      settingDirEntry,
-      skipDirectory: databaseDir,
-    );
-    await _addDirectory(
-      archive,
-      await AppPaths.pluginDirectory(),
-      pluginDirEntry,
-    );
     // 收藏也单独导出（在重要库里，不在 config 目录内）。即使为空也写一份，
     // 让备份包的条目固定，方便查看 / 比对。
     final playlists = await PlaylistRepository().exportAll();
     final playlistBytes = utf8.encode(jsonEncode(playlists));
-    archive.addFile(
-      ArchiveFile(playlistsEntry, playlistBytes.length, playlistBytes),
-    );
     // 已听进度导出成一份逻辑快照（统计 / 排行已移除）。
     final progress = await PlayProgressStore.exportSnapshot();
     final progressBytes = utf8.encode(jsonEncode(progress));
-    archive.addFile(
-      ArchiveFile(playStatsEntry, progressBytes.length, progressBytes),
-    );
-    final zipped = ZipEncoder().encode(archive);
-    return Uint8List.fromList(zipped);
-  }
 
-  /// 把目录里的文件加进压缩包（连同子目录条目一起写，空目录也保留）。
-  ///
-  /// [skipDirectory] 用于跳过嵌在目录里的子目录（Android 的 config 目录里就
-  /// 包含重要库所在的 `db` 目录）。
-  static Future<void> _addDirectory(
-    Archive archive,
-    Directory dir,
-    String entryName, {
-    Directory? skipDirectory,
-  }) async {
-    if (!await dir.exists()) return;
-    // 目录本身也写一条：即使里面没有文件，备份包里也能看到这个文件夹。
-    archive.addFile(ArchiveFile.directory('$entryName/'));
-    final skipPath = skipDirectory?.path;
-    await for (final entity in dir.list(recursive: true, followLinks: false)) {
-      if (skipPath != null &&
-          (p.equals(skipPath, entity.path) ||
-              p.isWithin(skipPath, entity.path))) {
-        continue;
-      }
-      final relative = p
-          .relative(entity.path, from: dir.path)
-          .replaceAll('\\', '/');
-      if (entity is Directory) {
-        archive.addFile(ArchiveFile.directory('$entryName/$relative/'));
-        continue;
-      }
-      if (entity is! File) continue;
-      // 设置写盘时先落 `settings.json.tmp` 再改名：半成品没有备份价值
-      // （`.bak` 才是上一份完整设置），也别让它跟着还原回去。
-      if (entity.path.endsWith('.tmp')) continue;
-      final bytes = await entity.readAsBytes();
-      archive.addFile(ArchiveFile('$entryName/$relative', bytes.length, bytes));
-    }
+    // 打包放到后台 isolate：deflate 在整个配置目录（字体、插件脚本、
+    // 封面图）上跑几百毫秒到数秒，放主线程会让界面卡住。
+    final settingsPath = (await AppPaths.settingsDirectory()).path;
+    final pluginPath = (await AppPaths.pluginDirectory()).path;
+    final databasePath = databaseDir.path;
+    final job = _BackupJob(
+      directories: [
+        _BackupDirectoryRequest(settingsPath, settingDirEntry, databasePath),
+        _BackupDirectoryRequest(pluginPath, pluginDirEntry, null),
+      ],
+      files: [
+        _BackupFileEntry(playlistsEntry, playlistBytes),
+        _BackupFileEntry(playStatsEntry, progressBytes),
+      ],
+    );
+    return _runInBackground(() => _encodeBackup(job));
   }
 
   // ---------------------------------------------------------------- 还原
@@ -190,7 +151,9 @@ class BackupService {
     // 快照之后，内存里攒着的旧进度还会被写回库里。
     await AppDatabase.flushAll();
 
-    final archive = ZipDecoder().decodeBytes(bytes);
+    // 解压同样放到后台 isolate：inflate 整个配置目录（字体 / 封面图 /
+    // 插件脚本）是 CPU 密集操作，放主线程会卡住界面。
+    final entries = await _runInBackground(() => _decodeBackup(bytes));
 
     // 1) 设置 / 插件目录：覆盖还原
     //
@@ -215,22 +178,22 @@ class BackupService {
 
     // 新备份：`config/setting/*` + `config/plugin/*`。
     await _restoreDirectory(
-      archive,
+      entries,
       settingDirEntry,
       configDir,
       skipPrefixes: [skipDbPrefix],
     );
-    await _restoreDirectory(archive, pluginDirEntry, pluginDir);
+    await _restoreDirectory(entries, pluginDirEntry, pluginDir);
 
     // 老备份：`config/*` 直接就是设置文件，插件目录在包根 `plugin/*`。
     // 新格式的两个子目录已经还原过了，这里跳过，别把插件放进设置目录。
     await _restoreDirectory(
-      archive,
+      entries,
       legacyConfigDirEntry,
       configDir,
       skipPrefixes: [skipDbPrefix, 'setting', 'plugin'],
     );
-    await _restoreDirectory(archive, legacyPluginDirEntry, pluginDir);
+    await _restoreDirectory(entries, legacyPluginDirEntry, pluginDir);
 
     // 2) 还原出的 settings.json 要重新读进内存：不重载的话，此后任何一次
     //    设置写入都会用还原前的内存值把整个文件覆盖回去（还原白做）。
@@ -260,16 +223,16 @@ class BackupService {
     // 3) 收藏 / 已听进度在重要库里，单独从条目还原（老备份的收藏还在
     //    `config/playlists.json`，见 [_restorePlaylists]）；热榜配置现在就在
     //    刚还原的 settings.json 里，只有老备份的 `hotboards.json` 才需要这一步。
-    await _restoreHotBoards(archive);
-    await _restorePlaylists(archive);
-    await _restorePlayStats(archive);
+    await _restoreHotBoards(entries);
+    await _restorePlaylists(entries);
+    await _restorePlayStats(entries);
   }
 
   /// 还原备份包里的已听进度（老备份里的统计 / 排行字段忽略）。
-  static Future<void> _restorePlayStats(Archive archive) async {
-    ArchiveFile? entry;
-    for (final file in archive.files) {
-      if (file.isFile && file.name == playStatsEntry) {
+  static Future<void> _restorePlayStats(List<_RestoreEntry> entries) async {
+    _RestoreEntry? entry;
+    for (final file in entries) {
+      if (file.bytes != null && file.name == playStatsEntry) {
         entry = file;
         break;
       }
@@ -279,7 +242,7 @@ class BackupService {
     // 备份」把已有进度抹掉。
     if (entry == null) return;
     try {
-      final raw = utf8.decode(entry.content as List<int>);
+      final raw = utf8.decode(entry.bytes!);
       if (raw.trim().isEmpty) return;
       final decoded = jsonDecode(raw);
       if (decoded is! Map) return;
@@ -297,7 +260,7 @@ class BackupService {
   ///
   /// 优先用新备份里的顶层 `playlists.json` 条目；老备份没有这一条，收藏在
   /// `config/playlists.json`（已经随 config 目录还原到磁盘上了），直接读它。
-  static Future<void> _restorePlaylists(Archive archive) async {
+  static Future<void> _restorePlaylists(List<_RestoreEntry> entries) async {
     if (!AppDatabase.isPersistent) {
       // 数据库没能落盘（降级成内存库）：导入只写进内存，退出就没了。
       // 保留原文件，下次正常启动时会自动迁移。
@@ -305,9 +268,9 @@ class BackupService {
     }
     try {
       List<Map<String, dynamic>>? snapshot;
-      for (final file in archive.files) {
-        if (!file.isFile || file.name != playlistsEntry) continue;
-        final decoded = jsonDecode(utf8.decode(file.content as List<int>));
+      for (final file in entries) {
+        if (file.bytes == null || file.name != playlistsEntry) continue;
+        final decoded = jsonDecode(utf8.decode(file.bytes!));
         if (decoded is List) {
           snapshot = [
             for (final item in decoded)
@@ -333,17 +296,17 @@ class BackupService {
   ///
   /// 老包里的榜单带着歌曲，这里只把配置写进 settings.json，歌曲进页面再拉；
   /// 没有这个条目就保持现有配置不动。
-  static Future<void> _restoreHotBoards(Archive archive) async {
-    ArchiveFile? entry;
-    for (final file in archive.files) {
-      if (file.isFile && file.name == hotBoardsEntry) {
+  static Future<void> _restoreHotBoards(List<_RestoreEntry> entries) async {
+    _RestoreEntry? entry;
+    for (final file in entries) {
+      if (file.bytes != null && file.name == hotBoardsEntry) {
         entry = file;
         break;
       }
     }
     if (entry == null) return;
     try {
-      final raw = utf8.decode(entry.content as List<int>);
+      final raw = utf8.decode(entry.bytes!);
       if (raw.trim().isEmpty) return;
       await HotBoardStore().importJson(raw);
       debugPrint('[BackupService] 已还原热榜');
@@ -359,7 +322,7 @@ class BackupService {
   ///   打开的库）；
   /// - 老格式还原时跳过 `setting` / `plugin`（新格式的两个子目录）。
   static Future<void> _restoreDirectory(
-    Archive archive,
+    List<_RestoreEntry> entries,
     String entryName,
     Directory target, {
     Iterable<String> skipPrefixes = const [],
@@ -369,8 +332,9 @@ class BackupService {
         if (prefix.isNotEmpty) prefix.replaceAll('\\', '/'),
     ];
     await target.create(recursive: true);
-    for (final file in archive.files) {
-      if (!file.isFile) continue;
+    for (final file in entries) {
+      final content = file.bytes;
+      if (content == null) continue;
       if (!file.name.startsWith('$entryName/')) continue;
       final relative = file.name.substring(entryName.length + 1);
       if (relative.isEmpty || relative.contains('..')) continue;
@@ -379,7 +343,6 @@ class BackupService {
       )) {
         continue;
       }
-      final content = file.content;
       final dest = File(p.join(target.path, relative));
       await dest.parent.create(recursive: true);
       await dest.writeAsBytes(content, flush: true);
@@ -504,4 +467,105 @@ class _ConfigFileRefs {
 
   /// 导入字体的文件名。
   final Set<String> fontFiles;
+}
+
+/// 压缩包里的一条条目（目录的 [bytes] 为 null）。
+class _RestoreEntry {
+  const _RestoreEntry(this.name, this.bytes);
+
+  final String name;
+  final Uint8List? bytes;
+}
+
+/// 压缩 / 解压放后台 isolate；Web 没有 isolate，退回当前线程同步执行。
+Future<T> _runInBackground<T>(T Function() body) async {
+  if (kIsWeb) return body();
+  return Isolate.run(body);
+}
+
+/// 需要在后台 isolate 里读进包的目录。
+class _BackupDirectoryRequest {
+  const _BackupDirectoryRequest(this.path, this.entryName, this.skipPath);
+
+  final String path;
+  final String entryName;
+
+  /// 目录内要跳过的子目录（Android 的配置目录里嵌着重要库所在的 `db`）。
+  final String? skipPath;
+}
+
+/// 顶层快照文件（收藏 / 已听进度），内容在主 isolate 里序列化好再传进去。
+class _BackupFileEntry {
+  const _BackupFileEntry(this.name, this.bytes);
+
+  final String name;
+  final List<int> bytes;
+}
+
+class _BackupJob {
+  const _BackupJob({required this.directories, required this.files});
+
+  final List<_BackupDirectoryRequest> directories;
+  final List<_BackupFileEntry> files;
+}
+
+/// 读目录 + 压缩，全部在 isolate 内完成（目录遍历的大头是字体 / 图片文件）。
+Uint8List _encodeBackup(_BackupJob job) {
+  final archive = Archive();
+  for (final request in job.directories) {
+    _addDirectorySync(
+      archive,
+      Directory(request.path),
+      request.entryName,
+      skipPath: request.skipPath,
+    );
+  }
+  for (final file in job.files) {
+    archive.addFile(ArchiveFile(file.name, file.bytes.length, file.bytes));
+  }
+  return Uint8List.fromList(ZipEncoder().encode(archive));
+}
+
+/// 在 isolate 里一次解完整包：条目内容在这里就 inflate 成 byte，主 isolate
+/// 只负责写文件。
+List<_RestoreEntry> _decodeBackup(Uint8List bytes) {
+  final archive = ZipDecoder().decodeBytes(bytes);
+  return [
+    for (final file in archive.files)
+      _RestoreEntry(file.name, file.isFile ? file.content : null),
+  ];
+}
+
+/// 把目录里的文件加进压缩包（连同子目录条目一起写，空目录也保留）。
+///
+/// [skipPath] 用于跳过嵌在目录里的子目录（Android 的 config 目录里就
+/// 包含重要库所在的 `db` 目录）。
+void _addDirectorySync(
+  Archive archive,
+  Directory dir,
+  String entryName, {
+  String? skipPath,
+}) {
+  if (!dir.existsSync()) return;
+  // 目录本身也写一条：即使里面没有文件，备份包里也能看到这个文件夹。
+  archive.addFile(ArchiveFile.directory('$entryName/'));
+  for (final entity in dir.listSync(recursive: true, followLinks: false)) {
+    if (skipPath != null &&
+        (p.equals(skipPath, entity.path) || p.isWithin(skipPath, entity.path))) {
+      continue;
+    }
+    final relative = p
+        .relative(entity.path, from: dir.path)
+        .replaceAll('\\', '/');
+    if (entity is Directory) {
+      archive.addFile(ArchiveFile.directory('$entryName/$relative/'));
+      continue;
+    }
+    if (entity is! File) continue;
+    // 设置写盘时先落 `settings.json.tmp` 再改名：半成品没有备份价值
+    // （`.bak` 才是上一份完整设置），也别让它跟着还原回去。
+    if (entity.path.endsWith('.tmp')) continue;
+    final bytes = entity.readAsBytesSync();
+    archive.addFile(ArchiveFile('$entryName/$relative', bytes.length, bytes));
+  }
 }
