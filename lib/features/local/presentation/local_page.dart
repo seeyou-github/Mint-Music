@@ -241,13 +241,15 @@ class _LocalPageState extends ConsumerState<LocalPage>
   /// 当前展示的歌曲：按选中的文件夹过滤（「全部」时不过滤）。
   ///
   /// 过滤结果按「列表身份 + 文件夹」缓存：扫描进度、主题等高频 build 不该
-  /// 每次都对几千首歌重做一遍字符串处理。缓存有上限，按 LRU 淘汰。
+  /// 每次都对几千首歌重做一遍字符串处理。缓存有上限，按 LRU 淘汰。key 直接
+  /// 持有源列表引用（List 是身份相等），不用 identityHashCode：那个哈希在
+  /// 列表被回收后可能被新列表复用，导致命中到上一轮的过滤结果。
   static const int _maxVisibleSongsCache = 32;
-  static final Map<String, List<Song>> _visibleSongsCache = {};
+  static final Map<(List<Song>, String), List<Song>> _visibleSongsCache = {};
 
   List<Song> _visibleSongs(List<Song> songs, [String? folder]) {
     if (folder == null) return songs;
-    final key = '${identityHashCode(songs)}#${songs.length}#$folder';
+    final key = (songs, folder);
     final cached = _visibleSongsCache.remove(key);
     if (cached != null) {
       _visibleSongsCache[key] = cached;
