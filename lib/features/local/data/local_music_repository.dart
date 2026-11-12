@@ -6,6 +6,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:on_audio_query/on_audio_query.dart';
 import 'package:path/path.dart' as p;
+import 'package:sqflite/sqflite.dart' show ConflictAlgorithm;
 
 import '../../../core/storage/app_database.dart';
 import '../../../core/storage/app_preferences.dart';
@@ -89,6 +90,23 @@ class LocalMusicRepository {
   bool _isScanning = false;
   ScanProgressCallback? onScanProgress;
   BatchMatchProgressCallback? onBatchMatchProgress;
+
+  /// 索引的增量写标记：只把变化的行写进 `local_songs`。
+  ///
+  /// 以前每 flush 一次都 `DELETE FROM local_songs` 再全量插入，几千首歌
+  /// 每次都要重新序列化、重写整张表；现在只记录新增/修改/删除的 id。
+  final Set<String> _dirtySongIds = <String>{};
+  final Set<String> _deletedSongIds = <String>{};
+
+  void _markSongDirty(String id) {
+    _deletedSongIds.remove(id);
+    _dirtySongIds.add(id);
+  }
+
+  void _markSongDeleted(String id) {
+    _dirtySongIds.remove(id);
+    _deletedSongIds.add(id);
+  }
 
   /// 本地歌曲列表属于「丢了可以重新扫描」的高频数据，写入走合并延迟写，
   /// 避免扫描 / 匹配过程中反复写盘。
@@ -260,10 +278,16 @@ class LocalMusicRepository {
     await init();
     _scannedDirs.remove(dirPath);
     final normalized = dirPath.replaceAll('\\', '/');
-    _songsMap.removeWhere((_, s) {
+    final removedIds = <String>[];
+    _songsMap.removeWhere((id, s) {
       final fp = (s.filePath ?? '').replaceAll('\\', '/');
-      return fp.startsWith(normalized);
+      if (!fp.startsWith(normalized)) return false;
+      removedIds.add(id);
+      return true;
     });
+    for (final id in removedIds) {
+      _markSongDeleted(id);
+    }
     await _persistDirectories();
     await _flushIndex();
   }
@@ -282,19 +306,29 @@ class LocalMusicRepository {
     final normalizedDirs = [
       for (final dir in _scannedDirs) dir.replaceAll('\\', '/'),
     ];
-    _songsMap.removeWhere((_, song) {
+    final removedIds = <String>[];
+    _songsMap.removeWhere((id, song) {
       // 一个目录都不剩：整个本地歌曲索引清空。
-      if (normalizedDirs.isEmpty) return true;
+      if (normalizedDirs.isEmpty) {
+        removedIds.add(id);
+        return true;
+      }
       final fp = (song.filePath ?? '').replaceAll('\\', '/');
       // 没有文件路径就无法归属任何目录，同样清掉。
-      if (fp.isEmpty) return true;
+      if (fp.isEmpty) {
+        removedIds.add(id);
+        return true;
+      }
       // 与 scanAll 的目录过滤判据保持一致：不在任何现存目录下的歌删掉。
-      return !normalizedDirs.any((dir) => fp.startsWith(dir));
+      final belongs = normalizedDirs.any((dir) => fp.startsWith(dir));
+      if (!belongs) removedIds.add(id);
+      return !belongs;
     });
+    for (final id in removedIds) {
+      _markSongDeleted(id);
+    }
     await _persistDirectories();
     if (normalizedDirs.isEmpty) await _clearLegacyDirTable();
-    // _persistIndex 会先 DELETE FROM local_songs 再写当前 _songsMap，
-    // 所以这一步同时把数据库里的相关缓存清干净。
     await _flushIndex();
   }
 
@@ -464,10 +498,12 @@ class LocalMusicRepository {
           );
 
           final existing = _songsMap[id];
-          if (existing != null) {
-            newSongsMap[id] = _mergePreferFilled(existing, song);
-          } else {
-            newSongsMap[id] = song;
+          final merged = existing != null
+              ? _mergePreferFilled(existing, song)
+              : song;
+          newSongsMap[id] = merged;
+          if (existing == null || !_sameIndexedSong(existing, merged)) {
+            _markSongDirty(id);
           }
 
           processed++;
@@ -482,6 +518,9 @@ class LocalMusicRepository {
           }
         }
 
+        for (final id in _songsMap.keys) {
+          if (!newSongsMap.containsKey(id)) _markSongDeleted(id);
+        }
         _songsMap.clear();
         _songsMap.addAll(newSongsMap);
         await _flushIndex();
@@ -581,9 +620,13 @@ class LocalMusicRepository {
         );
 
         final existing = _songsMap[id];
-        newSongsMap[id] = existing != null
+        final merged = existing != null
             ? _mergePreferFilled(existing, song)
             : song;
+        newSongsMap[id] = merged;
+        if (existing == null || !_sameIndexedSong(existing, merged)) {
+          _markSongDirty(id);
+        }
 
         // 内嵌封面写入封面缓存，列表与播放页即可显示。
         final artwork = metadata.artwork;
@@ -603,6 +646,9 @@ class LocalMusicRepository {
         }
       }
 
+      for (final id in _songsMap.keys) {
+        if (!newSongsMap.containsKey(id)) _markSongDeleted(id);
+      }
       _songsMap.clear();
       _songsMap.addAll(newSongsMap);
       await _flushIndex();
@@ -665,6 +711,9 @@ class LocalMusicRepository {
 
   Future<void> clearIndex() async {
     await init();
+    for (final id in _songsMap.keys) {
+      _markSongDeleted(id);
+    }
     _songsMap.clear();
     await _flushIndex();
   }
@@ -683,6 +732,7 @@ class LocalMusicRepository {
         _songsMap[song.id] = song;
       }
     }
+    _markSongDirty(song.id);
     await _saveIndex();
   }
 
@@ -693,6 +743,7 @@ class LocalMusicRepository {
     final song = _songsMap[id];
     if (song == null) return false;
     _songsMap.remove(id);
+    _markSongDeleted(id);
     await _flushIndex();
 
     final filePath = song.filePath;
@@ -720,6 +771,7 @@ class LocalMusicRepository {
     for (final id in ids) {
       final song = _songsMap.remove(id);
       if (song == null) continue;
+      _markSongDeleted(id);
       removed++;
       final filePath = song.filePath;
       if (filePath != null && filePath.isNotEmpty) filePaths.add(filePath);
@@ -738,6 +790,15 @@ class LocalMusicRepository {
       }
     }
     return removed;
+  }
+
+  /// 两首歌写入 `local_songs` 后的数据是否完全一致（用于跳过无变化的行）。
+  ///
+  /// 直接比较瘦身后的持久化 JSON：字段和 `_persistIndex` 真正写进去的内容
+  /// 一一对应，以后给 [Song] 加字段也不会漏比较。
+  bool _sameIndexedSong(Song a, Song b) {
+    if (identical(a, b)) return true;
+    return jsonEncode(a.toPersistJson()) == jsonEncode(b.toPersistJson());
   }
 
   Song _mergePreferFilled(Song a, Song b) {
@@ -788,12 +849,19 @@ class LocalMusicRepository {
     _writer.schedule();
   }
 
-  /// 立刻把索引写入数据库（扫描完成 / 用户主动操作后调用）。
+  /// 两次 WAL checkpoint 的最小间隔。
   ///
-  /// 写完再 checkpoint 一次：应用退出时进程会被直接结束，不 checkpoint
-  /// 的话刚扫描出来的歌曲会丢（重启后本地页面是空的）。
+  /// WAL 里的提交本身是持久的，checkpoint 只是把页合并回主库；扫描 / 删除
+  /// 每次触发一次完全没必要。应用退出时 [AppDatabase.checkpointAll] 会兜底。
+  static const Duration _checkpointInterval = Duration(seconds: 30);
+  DateTime _lastCheckpointAt = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// 立刻把索引写入数据库（扫描完成 / 用户主动操作后调用）。
   Future<void> _flushIndex() async {
     await _writer.writeNow();
+    final now = DateTime.now();
+    if (now.difference(_lastCheckpointAt) < _checkpointInterval) return;
+    _lastCheckpointAt = now;
     await AppDatabase.checkpoint();
   }
 
@@ -810,29 +878,65 @@ class LocalMusicRepository {
     }
   }
 
+  /// 只写本轮变动的行：新增/修改走 upsert，删除按 id 批量删。
   Future<void> _persistIndex() async {
-    await _persistDirectories();
+    final dirty = <String, Song>{};
+    for (final id in _dirtySongIds) {
+      final song = _songsMap[id];
+      if (song != null) dirty[id] = song;
+    }
+    final deleted = Set<String>.of(_deletedSongIds);
+    if (dirty.isEmpty && deleted.isEmpty) return;
+
     final db = await AppDatabase.cacheDatabase();
-    final songs = _songsMap.values.toList();
     final now = DateTime.now().millisecondsSinceEpoch;
 
     await db.transaction((txn) async {
-      await txn.delete('local_songs');
-      final batch = txn.batch();
-      for (final song in songs) {
-        batch.insert('local_songs', {
-          'id': song.id,
-          'title': song.title,
-          'artist': song.artist,
-          'album': song.album,
-          'file_path': song.filePath ?? '',
-          'source': song.source ?? 'local',
-          'updated_at': now,
-          'data': jsonEncode(song.toPersistJson()),
-        });
+      if (deleted.isNotEmpty) {
+        // SQLite 的变量上限通常是 999，按 400 一批删。
+        final ids = deleted.toList();
+        const chunkSize = 400;
+        for (var i = 0; i < ids.length; i += chunkSize) {
+          final end = i + chunkSize > ids.length ? ids.length : i + chunkSize;
+          final chunk = ids.sublist(i, end);
+          await txn.delete(
+            'local_songs',
+            where: 'id IN (${List.filled(chunk.length, '?').join(',')})',
+            whereArgs: chunk,
+          );
+        }
       }
-      await batch.commit(noResult: true);
+      if (dirty.isNotEmpty) {
+        final batch = txn.batch();
+        for (final song in dirty.values) {
+          batch.insert(
+            'local_songs',
+            {
+              'id': song.id,
+              'title': song.title,
+              'artist': song.artist,
+              'album': song.album,
+              'file_path': song.filePath ?? '',
+              'source': song.source ?? 'local',
+              'updated_at': now,
+              'data': jsonEncode(song.toPersistJson()),
+            },
+            conflictAlgorithm: ConflictAlgorithm.replace,
+          );
+        }
+        await batch.commit(noResult: true);
+      }
     });
+
+    // 写入期间又被改过的歌保留 dirty 标记，下一轮再写，避免丢更新。
+    for (final entry in dirty.entries) {
+      if (identical(_songsMap[entry.key], entry.value)) {
+        _dirtySongIds.remove(entry.key);
+      }
+    }
+    for (final id in deleted) {
+      if (_songsMap[id] == null) _deletedSongIds.remove(id);
+    }
   }
 
   /// 首次启动：把旧设置文件里的扫描目录 / 本地歌曲列表导入数据库。
@@ -863,6 +967,10 @@ class LocalMusicRepository {
       }
 
       if (dirsJson.isNotEmpty || _songsMap.isNotEmpty) {
+        for (final id in _songsMap.keys) {
+          _markSongDirty(id);
+        }
+        await _persistDirectories();
         await _persistIndex();
         // 只有真正落盘了才删旧数据，避免降级模式下索引丢失。
         await AppDatabase.removeLegacyKey(_songsKey);
