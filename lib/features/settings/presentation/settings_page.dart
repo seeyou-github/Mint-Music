@@ -3425,7 +3425,8 @@ class _PlaybackContent extends ConsumerWidget {
           ),
         ],
       ),
-    );
+      // 保存 / 取消都在弹窗关闭前就读完了文本，路由移除后控制器不再被引用。
+    ).whenComplete(controller.dispose);
   }
 
   void _saveNewPreset(BuildContext context, String name) {
