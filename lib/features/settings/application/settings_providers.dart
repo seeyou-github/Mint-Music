@@ -704,10 +704,14 @@ final settingsInitProvider = FutureProvider<void>((ref) async {
   ref.read(blurBackgroundImageNamesProvider.notifier).state = mergedNames;
   ref.read(blurBackgroundSigmaProvider.notifier).state = svc
       .getBlurBackgroundSigma();
-  ref.read(blurBackgroundBrightnessProvider.notifier).state = svc
-      .getBlurBackgroundBrightness();
-  ref.read(backgroundSaturationProvider.notifier).state = svc
-      .getBackgroundSaturation();
+  ref.read(lightBlurBrightnessProvider.notifier).state = svc
+      .getBlurBackgroundBrightness(light: true);
+  ref.read(darkBlurBrightnessProvider.notifier).state = svc
+      .getBlurBackgroundBrightness(light: false);
+  ref.read(lightBackgroundSaturationProvider.notifier).state = svc
+      .getBackgroundSaturation(light: true);
+  ref.read(darkBackgroundSaturationProvider.notifier).state = svc
+      .getBackgroundSaturation(light: false);
   ref.read(blurBackgroundAutoDarkenProvider.notifier).state = svc
       .getBlurBackgroundAutoDarken();
   ref.read(songListHideCoverProvider.notifier).state = svc

@@ -285,15 +285,23 @@ class _BlurBackgroundPageState extends ConsumerState<BlurBackgroundPage> {
                           valueLabel: '${(brightness * 100).round()}%',
                           colors: colors,
                           onChanged: (v) {
+                            // 亮度浅色 / 深色各存一份，写进当前主题那套。
                             ref
                                     .read(
-                                      blurBackgroundBrightnessProvider.notifier,
+                                      blurBrightnessStateFor(
+                                        ref.read(isLightThemeActiveProvider),
+                                      ).notifier,
                                     )
                                     .state =
                                 v;
                           },
                           onChangeEnd: (v) => unawaited(
-                            _persist((s) => s.setBlurBackgroundBrightness(v)),
+                            _persist(
+                              (s) => s.setBlurBackgroundBrightness(
+                                v,
+                                light: ref.read(isLightThemeActiveProvider),
+                              ),
+                            ),
                           ),
                         ),
                         SettingDivider(colors: colors),

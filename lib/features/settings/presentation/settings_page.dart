@@ -851,6 +851,57 @@ const List<(String, String)> _presetColors = [
   ('#06B6D4', '蓝绿'),
 ];
 
+/// 浅色主题专用的「主题色」内置颜色。
+///
+/// 上面那套是按深色背景挑的高饱和亮色，压在浅灰底上会发飘、对比度也低，
+/// 所以浅色主题单独用一组更深的色。深色主题仍用 [_presetColors]。
+const List<(String, String)> _lightPresetColors = [
+  ('#127434', '深绿'),
+  ('#85591B', '深棕'),
+  ('#1A1C7B', '午夜蓝'),
+  ('#1F4685', '深海蓝'),
+  ('#3C1A89', '深紫'),
+  ('#107649', '墨绿'),
+  ('#085B6A', '深青'),
+];
+
+/// 浅色主题「字体颜色 / 第二字体颜色」的内置颜色。
+///
+/// 色相保持不变、整体压暗 60%：同一批颜色直接当正文色会糊在浅底上。
+/// 默认色（浅色的纯黑 / 暖灰黑）不在这个列表里，由面板里的「恢复默认」
+/// 圆圈表示，不受调暗影响。
+final List<(String, String)> _lightTextPresetColors = [
+  for (final item in _presetColors) (_darkenHex(item.$1, 0.4), item.$2),
+];
+
+/// 把 `#RRGGBB` 整体调暗：[factor] = 0.4 即每个通道 ×0.4（暗 60%），色相不变。
+String _darkenHex(String hex, double factor) {
+  final code = hex.replaceFirst('#', '');
+  final value = int.tryParse(code, radix: 16);
+  if (value == null || code.length != 6) return hex;
+  int channel(int shift) =>
+      (((value >> shift) & 0xFF) * factor).round().clamp(0, 255);
+  final darkened = (channel(16) << 16) | (channel(8) << 8) | channel(0);
+  return '#${darkened.toRadixString(16).padLeft(6, '0').toUpperCase()}';
+}
+
+/// 当前颜色不在这套内置色 / 自定义色里时，临时补一个进面板。
+///
+/// 浅色与深色各有一套内置色，切主题后当前值可能属于另一套（比如浅色主题下
+/// 还是深色那套的暖金）；不补的话面板上看起来「一个都没选中」。
+/// 当前值就是「默认色」时由「恢复默认」圆圈表示，调用方不会再补。
+List<(String, String)> _withCurrentPreset(
+  List<(String, String)> presets,
+  String currentHex,
+  Set<String> customColors,
+) {
+  final upper = currentHex.toUpperCase();
+  if (upper.isEmpty) return presets;
+  if (customColors.contains(upper)) return presets;
+  if (presets.any((item) => item.$1.toUpperCase() == upper)) return presets;
+  return [(currentHex, '当前'), ...presets];
+}
+
 /// 浅色模式「背景渐变」的内置组合（颜色列表 + 名称）。
 ///
 /// 第一项就是默认选中的那一套（见 [defaultLightBackgroundGradient]），
@@ -1238,6 +1289,8 @@ class _AppearanceContent extends ConsumerWidget {
             customProvider: customThemeColorsProvider,
             persistCurrent: (s, hex) => s.setThemePrimaryColor(hex),
             persistCustom: (s, list) => s.setCustomThemeColors(list),
+            // 浅色主题单独一套更深的色，深色主题仍用原来那套亮色。
+            presets: isLight ? _lightPresetColors : _presetColors,
           ),
         ),
         SettingDivider(colors: colors),
@@ -1260,6 +1313,8 @@ class _AppearanceContent extends ConsumerWidget {
           persistCustom: (s, list) => isLight
               ? s.setCustomFontColorsLight(list)
               : s.setCustomFontColorsDark(list),
+          // 浅色主题的文字色整体压暗 60%：亮色当正文色在浅底上看不清。
+          presets: isLight ? _lightTextPresetColors : _presetColors,
         ),
         SettingDivider(colors: colors),
         buildColorRow(
@@ -1283,6 +1338,7 @@ class _AppearanceContent extends ConsumerWidget {
           persistCustom: (s, list) => isLight
               ? s.setCustomSecondaryFontColorsLight(list)
               : s.setCustomSecondaryFontColorsDark(list),
+          presets: isLight ? _lightTextPresetColors : _presetColors,
         ),
         SettingDivider(colors: colors),
         SettingRow(
@@ -1404,11 +1460,12 @@ class _AppearanceContent extends ConsumerWidget {
           valueLabel: '${(backgroundSaturation * 100).round()}%',
           colors: colors,
           onChanged: (v) =>
-              ref.read(backgroundSaturationProvider.notifier).state = v,
+              ref.read(backgroundSaturationStateFor(isLight).notifier).state =
+                  v,
           onChangeEnd: (v) => unawaited(
             _doPersist(
               ProviderScope.containerOf(context),
-              (s) => s.setBackgroundSaturation(v),
+              (s) => s.setBackgroundSaturation(v, light: isLight),
             ),
           ),
         ),
@@ -1777,12 +1834,17 @@ class _AppearanceContent extends ConsumerWidget {
           final currentHex = ref.watch(currentProvider);
           final custom = ref.watch(customProvider);
           final customUpper = custom.map((e) => e.toUpperCase()).toSet();
-          final allColors = _mergeColors(presets, custom);
           // 「恢复默认」写入的是显式默认色，因此不能只看 empty。
           final resetUpper = resetValue.toUpperCase();
           final resetSelected = resetUpper.isEmpty
               ? currentHex.isEmpty
               : currentHex.toUpperCase() == resetUpper;
+          // 当前色不在这一套内置色里（切主题后常见）就临时补一个，
+          // 避免面板上一个都没选中；当前色就是默认色时由圆圈表示，不重复补。
+          final effectivePresets = (!showReset || !resetSelected)
+              ? _withCurrentPreset(presets, currentHex, customUpper)
+              : presets;
+          final allColors = _mergeColors(effectivePresets, custom);
 
           void apply(String hex) {
             ref.read(currentProvider.notifier).state = hex;

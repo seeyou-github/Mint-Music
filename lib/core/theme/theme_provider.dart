@@ -113,6 +113,40 @@ final isLightThemeActiveProvider = Provider<bool>((ref) {
   );
 });
 
+/// 当前主题模式生效的「高斯模糊背景图亮度」。
+///
+/// 浅色 / 深色各存一套（见 [lightBlurBrightnessProvider] /
+/// [darkBlurBrightnessProvider]）：浅色正文是深色、背景要够亮，深色反过来
+/// 要压暗，同一个值不可能两套都合适。切换主题时这里会自动换到另一套。
+final blurBackgroundBrightnessProvider = Provider<double>((ref) {
+  return ref.watch(isLightThemeActiveProvider)
+      ? ref.watch(lightBlurBrightnessProvider)
+      : ref.watch(darkBlurBrightnessProvider);
+});
+
+/// 当前主题模式生效的「主界面背景饱和度」。
+///
+/// 对两种背景模式都生效：
+///   - 背景渐变（内置 / 用户自建）直接调整渐变颜色；
+///   - 高斯模糊调整背景图本身；
+/// 控件底色都从背景主色派生，所以同样跟着这个系数走，不会出现「背景变灰、
+/// 卡片还是原色」。开启「主界面跟随封面变色」时，封面派生的渐变 / 封面
+/// 糊化背景也一样生效。
+final backgroundSaturationProvider = Provider<double>((ref) {
+  return ref.watch(isLightThemeActiveProvider)
+      ? ref.watch(lightBackgroundSaturationProvider)
+      : ref.watch(darkBackgroundSaturationProvider);
+});
+
+/// 当前主题模式对应的亮度状态（滑条写值用：要写进浅色还是深色那一套）。
+StateProvider<double> blurBrightnessStateFor(bool light) =>
+    light ? lightBlurBrightnessProvider : darkBlurBrightnessProvider;
+
+/// 当前主题模式对应的饱和度状态（滑条写值用）。
+StateProvider<double> backgroundSaturationStateFor(bool light) => light
+    ? lightBackgroundSaturationProvider
+    : darkBackgroundSaturationProvider;
+
 /// 主题模式 -> 持久化值。
 String themeModeToPref(ThemeMode mode) => switch (mode) {
   ThemeMode.light => 'light',

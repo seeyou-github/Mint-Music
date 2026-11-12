@@ -76,7 +76,9 @@ class AppBackgroundLayer extends ConsumerWidget {
       // 兜底背景铺的是用户自己的模糊图，压暗也按那张图的亮度算（不能拿封面
       // 主色来压，两张图亮度可能差很远）。
       final imageTint = ref.watch(backgroundBlurTintProvider);
-      final autoDarken = imageTint == null
+      // 浅色主题不压暗：它的正文是深色，压暗会和上面那层白纱互相抵消，
+      // 把「亮度 100%」直接吃掉。深色主题才需要压暗来保住白字。
+      final autoDarken = (lighten || imageTint == null)
           ? 0.0
           : blurAutoDarkenAlpha(
               luminance: imageTint.computeLuminance(),

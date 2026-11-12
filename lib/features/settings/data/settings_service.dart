@@ -16,6 +16,7 @@ class SettingsService {
   // -- theme --
   String getThemeMode() => _prefs.getString('theme_mode') ?? 'system';
   Future<void> setThemeMode(String v) => _prefs.setString('theme_mode', v);
+
   /// 旧版本的内置默认主题色（Spotify 绿）。
   static const String _legacyDefaultPrimaryColor = '#1DB954';
 
@@ -31,6 +32,7 @@ class SettingsService {
     }
     return saved;
   }
+
   Future<void> setThemePrimaryColor(String v) =>
       _prefs.setString('theme_primary_color', v);
 
@@ -216,6 +218,10 @@ class SettingsService {
   static const _blurSigmaKey = 'blur_background_sigma';
   static const _blurBrightnessKey = 'blur_background_brightness';
   static const _blurSaturationKey = 'blur_background_saturation';
+  static const _blurBrightnessLightKey = 'blur_background_brightness_light';
+  static const _blurBrightnessDarkKey = 'blur_background_brightness_dark';
+  static const _blurSaturationLightKey = 'blur_background_saturation_light';
+  static const _blurSaturationDarkKey = 'blur_background_saturation_dark';
   static const _blurAutoDarkenKey = 'blur_background_auto_darken';
 
   /// 背景颜色模式（`gradient` / `blur`）。
@@ -249,19 +255,40 @@ class SettingsService {
       _prefs.setDouble(_blurSigmaKey, v);
 
   /// 背景图亮度（1 = 原图）。
-  double getBlurBackgroundBrightness() =>
-      _prefs.getDouble(_blurBrightnessKey) ?? 0.3;
-  Future<void> setBlurBackgroundBrightness(double v) =>
-      _prefs.setDouble(_blurBrightnessKey, v);
-
-  /// 主界面背景饱和度（1 = 原样，渐变与高斯模糊都生效）。
   ///
-  /// 存储 key 沿用旧版 `blur_background_saturation`：它最早只作用于模糊图，
+  /// 浅色 / 深色各存一份：浅色主题正文是深色，背景图得够亮（默认 100%）；
+  /// 深色主题要压暗（默认 30%），同一个值两套不可能都合适。
+  double getBlurBackgroundBrightness({required bool light}) {
+    if (light) return _prefs.getDouble(_blurBrightnessLightKey) ?? 1;
+    // 旧版只有一份全局值：当作深色那套（当时就是按深色调校的），
+    // 浅色直接吃新默认值，不会被旧数据拖回 30%。
+    return _prefs.getDouble(_blurBrightnessDarkKey) ??
+        _prefs.getDouble(_blurBrightnessKey) ??
+        0.3;
+  }
+
+  Future<void> setBlurBackgroundBrightness(double v, {required bool light}) =>
+      _prefs.setDouble(
+        light ? _blurBrightnessLightKey : _blurBrightnessDarkKey,
+        v,
+      );
+
+  /// 主界面背景饱和度（1 = 原样，渐变与高斯模糊都生效），浅色 / 深色各一份。
+  ///
+  /// 存储 key 沿用旧版 `blur_background_saturation`（只作为深色的兜底）：
   /// 用户已有的取值不能因为改名丢掉。
-  double getBackgroundSaturation() =>
-      _prefs.getDouble(_blurSaturationKey) ?? 0.2;
-  Future<void> setBackgroundSaturation(double v) =>
-      _prefs.setDouble(_blurSaturationKey, v);
+  double getBackgroundSaturation({required bool light}) {
+    if (light) return _prefs.getDouble(_blurSaturationLightKey) ?? 0.1;
+    return _prefs.getDouble(_blurSaturationDarkKey) ??
+        _prefs.getDouble(_blurSaturationKey) ??
+        0.2;
+  }
+
+  Future<void> setBackgroundSaturation(double v, {required bool light}) =>
+      _prefs.setDouble(
+        light ? _blurSaturationLightKey : _blurSaturationDarkKey,
+        v,
+      );
 
   /// 亮图自动压暗强度（0 = 关闭）。
   double getBlurBackgroundAutoDarken() =>

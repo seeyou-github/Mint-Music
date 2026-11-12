@@ -49,18 +49,22 @@ final blurBackgroundImageNamesProvider = StateProvider<List<String>>(
 /// 模糊程度（高斯 sigma）：0 = 不模糊，越大越糊。
 final blurBackgroundSigmaProvider = StateProvider<double>((ref) => 40);
 
-/// 背景图亮度：1 = 原图，小于 1 压暗、大于 1 提亮。
-final blurBackgroundBrightnessProvider = StateProvider<double>((ref) => 0.3);
-
-/// 主界面背景饱和度：1 = 原样，0 = 灰度，大于 1 更艳。
+/// 背景图亮度（浅色主题）：1 = 原图，小于 1 压暗、大于 1 提亮。
 ///
-/// 对两种背景模式都生效：
-///   - 背景渐变（内置 / 用户自建）直接调整渐变颜色；
-///   - 高斯模糊调整背景图本身；
-/// 控件底色都从背景主色派生，所以同样跟着这个系数走，不会出现「背景变灰、
-/// 卡片还是原色」。开启「主界面跟随封面变色」时，封面派生的渐变 / 封面
-/// 糊化背景也一样生效。
-final backgroundSaturationProvider = StateProvider<double>((ref) => 0.2);
+/// 浅色主题正文是深色，背景图默认给足亮度（100%），否则整块背景发黑、
+/// 深色字糊在上面；深色主题反过来，用 [darkBlurBrightnessProvider] 的 30%。
+final lightBlurBrightnessProvider = StateProvider<double>((ref) => 1);
+
+/// 背景图亮度（深色主题）：默认 30%，白字压在照片上才看得清。
+final darkBlurBrightnessProvider = StateProvider<double>((ref) => 0.3);
+
+/// 主界面背景饱和度（浅色主题）：1 = 原样，0 = 灰度，大于 1 更艳。
+///
+/// 浅色主题默认只留 10% 的彩度（接近灰白），底色才不会抢文字的对比度。
+final lightBackgroundSaturationProvider = StateProvider<double>((ref) => 0.1);
+
+/// 主界面背景饱和度（深色主题）：默认 20%。
+final darkBackgroundSaturationProvider = StateProvider<double>((ref) => 0.2);
 
 /// 饱和度用的颜色矩阵（[s] = 1 时是单位矩阵）。
 ///
