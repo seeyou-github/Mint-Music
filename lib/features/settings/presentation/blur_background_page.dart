@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
@@ -14,6 +15,7 @@ import '../../../core/platform/app_paths.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/builtin_blur_backgrounds.dart';
 import '../../../core/theme/theme_provider.dart';
+import '../../../core/utils/image_downscale.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../application/appearance_providers.dart';
 import '../application/settings_providers.dart';
@@ -111,7 +113,18 @@ class _BlurBackgroundPageState extends ConsumerState<BlurBackgroundPage> {
       final sourcePath = picked?.files.single.path;
       if (sourcePath == null) return;
       final dir = await AppPaths.blurBackgroundDirectory();
-      final ext = p.extension(sourcePath).toLowerCase();
+      final source = File(sourcePath);
+      // 原图可能是 4K 照片：模糊后细节全被抹平，却要每次启动都解码成
+      // 几十 MB 的位图。导入时缩到 384px 重编码，主界面 / 预览都读小图。
+      Uint8List? downscaled;
+      try {
+        downscaled = await downscaleImageBytes(await source.readAsBytes());
+      } catch (e) {
+        debugPrint('[BlurBackground] 背景图压缩失败，保留原图: $e');
+      }
+      final ext = downscaled != null
+          ? '.png'
+          : p.extension(sourcePath).toLowerCase();
       // 文件名带时间戳，**不能**沿用固定名：Flutter 的图片缓存是按
       // `FileImage(路径)` 做 key 的，同名覆盖文件后组件拿到的还是上一张
       // 的解码结果（甚至更早那张），表现为「选了 C 却显示 A」。
@@ -119,7 +132,11 @@ class _BlurBackgroundPageState extends ConsumerState<BlurBackgroundPage> {
           '${_fileStem}_${DateTime.now().microsecondsSinceEpoch}'
           '${ext.isEmpty ? '.png' : ext}';
       final target = File(p.join(dir.path, name));
-      await File(sourcePath).copy(target.path);
+      if (downscaled != null) {
+        await target.writeAsBytes(downscaled, flush: true);
+      } else {
+        await source.copy(target.path);
+      }
       if (!mounted) return;
 
       final names = [...ref.read(blurBackgroundImageNamesProvider), name];
