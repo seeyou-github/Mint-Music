@@ -57,6 +57,7 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
     _userController.dispose();
     _passwordController.dispose();
     _deviceController.dispose();
+    _progressText.dispose();
     // 页面在还原过程中被关掉（用户切走）时，persist 的进度条不会自己消失，
     // 这里补一刀，免得它一直挂在底部。
     try {
@@ -311,12 +312,22 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
     setState(() => _busy = true);
     _showProgress(tr('正在下载并还原...'));
     try {
-      final downloadOp = SyncAttempt(_restoreAttempt);
+      // 下载耗时与包体积成正比：备份里连插件目录一起打，几十 MB 很常见，
+      // 固定的 1 分钟总超时会让「慢但没断」的下载被判失败。按体积估一个
+      // 下限（40KB/s），最少 3 分钟、最多 15 分钟。
+      final downloadOp = SyncAttempt(
+        _restoreAttempt,
+        overwriteTimeout: _downloadTimeoutFor(picked.size),
+      );
       final bytes = await downloadOp.run(
         WebDavService(
           config,
           cancelToken: downloadOp.cancelToken,
-        ).downloadBackup(picked.path),
+        ).downloadBackup(
+          picked.path,
+          expectedSize: picked.size > 0 ? picked.size : null,
+          onProgress: _paintDownloadProgress,
+        ),
       );
       await stopPlaybackForRestore(container);
       await BackupService.restoreBackup(bytes);
@@ -352,9 +363,47 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
   /// 最近一次显示进度用的 messenger：关闭进度 / 页面销毁时要靠它清队列。
   ScaffoldMessengerState? _messenger;
 
+  /// 进度提示里的当前文字。
+  ///
+  /// 做成可监听的值：下载几十 MB 的备份时按已下字节数刷新，否则底部那条
+  /// 「正在下载并还原...」会一动不动挂上几分钟，看着像卡死。
+  final ValueNotifier<String> _progressText = ValueNotifier<String>('');
+
+  /// 进度文字上一次刷新的时间：分片回调每秒可达数百次，节流到 200ms。
+  DateTime _lastProgressPaint = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// 下载备份的超时时长：按 40KB/s 估，最少 3 分钟、最多 15 分钟。
+  ///
+  /// 体积未知（服务器 PROPFIND 没给 size）时按 5 分钟算，够下一个几十 MB 的包。
+  static Duration _downloadTimeoutFor(int bytes) {
+    if (bytes <= 0) return const Duration(minutes: 5);
+    final estimate = Duration(
+      milliseconds: (bytes / (40 * 1024) * 1000).round(),
+    );
+    final total = const Duration(minutes: 3) + estimate;
+    if (total > const Duration(minutes: 15)) return const Duration(minutes: 15);
+    return total;
+  }
+
+  /// 把下载进度写进底部提示（节流，见 [_lastProgressPaint]）。
+  void _paintDownloadProgress(int received, int total) {
+    if (!mounted) return;
+    final now = DateTime.now();
+    if (now.difference(_lastProgressPaint).inMilliseconds < 200) return;
+    _lastProgressPaint = now;
+    final got = _formatSize(received);
+    if (total <= 0) {
+      _progressText.value = tr('正在下载备份 $got...');
+      return;
+    }
+    final percent = (received * 100 / total).clamp(0, 100).toStringAsFixed(0);
+    _progressText.value = tr('正在下载备份 $got / ${_formatSize(total)}（$percent%）');
+  }
+
   /// 显示一个不会自动消失的进度提示（上传 / 下载过程中用）。
   void _showProgress(String message) {
     if (!mounted) return;
+    _progressText.value = message;
     final colors = ref.read(themeColorsProvider);
     final messenger = ScaffoldMessenger.of(context);
     _messenger = messenger;
@@ -380,9 +429,12 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
             ),
             const SizedBox(width: AppSpacing.md),
             Expanded(
-              child: Text(
-                message,
-                style: TextStyle(color: colors.textPrimary, fontSize: 13),
+              child: ValueListenableBuilder<String>(
+                valueListenable: _progressText,
+                builder: (_, text, _) => Text(
+                  text,
+                  style: TextStyle(color: colors.textPrimary, fontSize: 13),
+                ),
               ),
             ),
           ],
@@ -422,9 +474,7 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
       // 随手改一个字段又把旧值写回去。
       if (mounted) _loadConfig();
     }
-    return pluginsReloaded
-        ? tr('还原完成，已重新加载音源')
-        : tr('还原完成；音源重载超时，重启应用后生效');
+    return pluginsReloaded ? tr('还原完成，已重新加载音源') : tr('还原完成；音源重载超时，重启应用后生效');
   }
 
   Future<bool> _showRetryDialog(String message) async {

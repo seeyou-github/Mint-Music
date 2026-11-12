@@ -1,10 +1,12 @@
 import 'dart:convert';
-import 'dart:io' show gzip;
+import 'dart:io' show File, FileMode, gzip;
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart' as dio;
+import 'package:path/path.dart' as p;
 import 'package:webdav_client/webdav_client.dart' as webdav;
 
+import '../platform/app_paths.dart';
 import '../security/local_field_codec.dart';
 
 /// 带可读原因的 WebDAV 异常。
@@ -360,10 +362,219 @@ class WebDavService {
     return result;
   }
 
-  /// 下载远端备份文件。
-  Future<Uint8List> downloadBackup(String path) async {
+  /// 下载备份时的「空闲超时」：连续这么久没收到任何字节才算卡住。
+  ///
+  /// dio 的 `receiveTimeout` 语义是「响应头 / 每两个数据块之间的最长间隔」，
+  /// 客户端级原来给的 30 秒对备份包来说太短：备份里连插件目录一起打包，几十 MB
+  /// 很常见，服务器只要在开头憋住半分钟，界面就会报
+  /// 「接收超时：… 响应过慢」。音频下载模块（`DownloadRepository`）用的是
+  /// 10 分钟，这里同样放宽；整次下载的总耗时由上层 `SyncAttempt` 兜底。
+  static const Duration downloadIdleTimeout = Duration(minutes: 2);
+
+  /// 单次下载最多尝试几次（含首次）：失败后断点续传重试。
+  static const int downloadMaxAttempts = 3;
+
+  /// 把远端文件流式下载到 [savePath]，失败自动重试并从断点续传。
+  ///
+  /// 不整包塞进内存再判断成败：直接落盘的好处是失败时已经收到的字节还在，
+  /// 下一次带 `Range` 接着下，不用把几十 MB 从头再来一遍。
+  Future<void> downloadToFile(
+    String path, {
+    required String savePath,
+    int? expectedSize,
+    void Function(int received, int total)? onProgress,
+  }) async {
     _requireConfigured();
-    return _readBytes(path);
+    final client = _buildClient();
+    final file = File(savePath);
+    Object? lastError;
+    for (var attempt = 1; attempt <= downloadMaxAttempts; attempt++) {
+      try {
+        // 只有重试时才续传：首次下载的临时文件名是新的，不会误用上次的残片。
+        var start = 0;
+        if (attempt > 1 && await file.exists()) {
+          start = await file.length();
+        }
+        if (expectedSize != null && expectedSize > 0 && start >= expectedSize) {
+          return;
+        }
+        await _downloadOnce(
+          client,
+          path,
+          file,
+          start,
+          expectedSize,
+          onProgress,
+        );
+        return;
+      } catch (e) {
+        lastError = e;
+        // 超时 / 用户取消：请求已经被 cancel 掉了，继续重试没有意义。
+        if (isCancelled) rethrow;
+        if (!_isRetryableDownloadError(e)) {
+          await _deleteQuietly(file);
+          rethrow;
+        }
+        if (attempt < downloadMaxAttempts) {
+          await Future<void>.delayed(Duration(milliseconds: 800 * attempt));
+        }
+      }
+    }
+    await _deleteQuietly(file);
+    if (lastError is WebDavException) throw lastError;
+    throw WebDavException('下载失败：${lastError ?? '未知错误'}');
+  }
+
+  /// 发一次 GET，把响应体按块写进 [file]。
+  ///
+  /// [start] > 0 时带上 `Range` 续传：服务器回 206 就追加写；回 200 说明它
+  /// 不支持断点续传 / 忽略了 Range，只能把文件截断从头写。
+  Future<void> _downloadOnce(
+    webdav.Client client,
+    String path,
+    File file,
+    int start,
+    int? expectedSize,
+    void Function(int received, int total)? onProgress,
+  ) async {
+    var target = path;
+    for (var redirects = 0; redirects <= 5; redirects++) {
+      final response = await client.c.req<dynamic>(
+        client,
+        'GET',
+        target,
+        cancelToken: _cancelToken,
+        optionsHandler: (options) {
+          options.responseType = dio.ResponseType.stream;
+          options.followRedirects = true;
+          // 状态码由下面统一判断，避免 404 被 Dio 转成无信息的 badResponse。
+          options.validateStatus = (status) => status != null;
+          // 只把「长时间一个字节都没有」当失败，整体耗时交给上层超时。
+          options.receiveTimeout = downloadIdleTimeout;
+          if (start > 0) {
+            options.headers = {...?options.headers, 'range': 'bytes=$start-'};
+          }
+        },
+      );
+      final status = response.statusCode ?? 0;
+
+      if (status >= 300 && status < 400) {
+        final location = response.headers.value('location');
+        _closeStreamBody(response.data);
+        if (location == null || location.isEmpty) {
+          throw WebDavException(
+            '服务器返回重定向（HTTP $status），但没有提供跳转地址',
+            statusCode: status,
+          );
+        }
+        final current = Uri.tryParse(target);
+        target = current?.resolve(location).toString() ?? location;
+        continue;
+      }
+
+      if (status != 200 && status != 206) {
+        _closeStreamBody(response.data);
+        if (status == 404) {
+          throw WebDavException('远端文件不存在（HTTP 404）', statusCode: 404);
+        }
+        final message = response.statusMessage;
+        throw WebDavException(
+          'HTTP $status${message == null || message.isEmpty ? '' : ' $message'}',
+          statusCode: status,
+        );
+      }
+
+      final body = response.data;
+      if (body is! dio.ResponseBody) {
+        throw const WebDavException('下载失败：服务器没有返回数据流');
+      }
+      final resume = status == 206 && start > 0;
+      final receivedBase = resume ? start : 0;
+      final contentLength =
+          int.tryParse(response.headers.value('content-length') ?? '') ?? 0;
+      final total =
+          expectedSize ??
+          (contentLength > 0 ? contentLength + receivedBase : 0);
+
+      final sink = file.openWrite(
+        mode: resume ? FileMode.writeOnlyAppend : FileMode.write,
+      );
+      var received = receivedBase;
+      try {
+        await for (final chunk in body.stream) {
+          sink.add(chunk);
+          received += chunk.length;
+          onProgress?.call(received, total);
+        }
+        await sink.flush();
+      } finally {
+        await sink.close();
+      }
+      return;
+    }
+    throw const WebDavException('下载失败：重定向次数过多');
+  }
+
+  void _closeStreamBody(Object? data) {
+    if (data is dio.ResponseBody) {
+      // `ResponseBody.close()` 是 dio 的内部成员，这里直接取消订阅，
+      // 效果一样：连接立刻释放，不会因为没读完响应体把 socket 一直挂着。
+      data.stream.listen(null, onError: (Object _) {}).cancel();
+    }
+  }
+
+  /// 这个错误还值不值得重试。
+  ///
+  /// 4xx（404 / 403 / 400…）说明是这条路径或权限本身有问题，再试也一样；
+  /// 超时、连接中断、5xx、408、429 都值得带 `Range` 再试一次。
+  bool _isRetryableDownloadError(Object error) {
+    if (error is WebDavException) {
+      final code = error.statusCode;
+      if (code == null) return true;
+      return code >= 500 || code == 408 || code == 429;
+    }
+    return true;
+  }
+
+  Future<void> _deleteQuietly(File file) async {
+    try {
+      if (await file.exists()) await file.delete();
+    } catch (_) {
+      // 删不掉就留给系统清理，不影响本次结果。
+    }
+  }
+
+  /// 下载远端备份文件。
+  ///
+  /// 先流式落到临时文件再读进内存：整包 `ResponseType.bytes` 时 dio 会在
+  /// 两个数据块之间套 30 秒的 receiveTimeout（见 [downloadIdleTimeout]），
+  /// 大备份包几乎必然报「接收超时」，而且失败只能从头再来。
+  Future<Uint8List> downloadBackup(
+    String path, {
+    int? expectedSize,
+    void Function(int received, int total)? onProgress,
+  }) async {
+    _requireConfigured();
+    final dir = await AppPaths.tempDirectory();
+    final temp = File(
+      p.join(
+        dir.path,
+        'webdav_restore_${DateTime.now().microsecondsSinceEpoch}.zip',
+      ),
+    );
+    try {
+      await downloadToFile(
+        path,
+        savePath: temp.path,
+        expectedSize: expectedSize,
+        onProgress: onProgress,
+      );
+      // 超时 / 主动取消后即使字节已经收完也不采用，避免半截包被当成成功。
+      if (isCancelled) throw const WebDavException('下载已取消');
+      return await temp.readAsBytes();
+    } finally {
+      await _deleteQuietly(temp);
+    }
   }
 
   /// 删除远端备份文件。

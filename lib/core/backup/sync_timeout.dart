@@ -10,7 +10,9 @@ import 'webdav_service.dart';
 ///
 /// 超时时长：首次尝试 1 分钟，之后每次重试 2 分钟（继续重试仍是 2 分钟）。
 class SyncAttempt {
-  SyncAttempt(this.attempt) : cancelToken = dio.CancelToken();
+  SyncAttempt(this.attempt, {Duration? overwriteTimeout})
+    : cancelToken = dio.CancelToken(),
+      _overwriteTimeout = overwriteTimeout;
 
   /// 首次尝试的超时。
   static const Duration firstTimeout = Duration(minutes: 1);
@@ -25,10 +27,13 @@ class SyncAttempt {
   /// 这是第几次尝试（1 = 用户刚点的那次，2 起是「重新同步」）。
   final int attempt;
 
+  /// 覆盖默认超时：下载备份这类耗时与文件大小成正比的操作用它单独放大。
+  final Duration? _overwriteTimeout;
+
   /// 本次尝试的取消令牌：一旦超时，所有带它的请求都会被取消。
   final dio.CancelToken cancelToken;
 
-  Duration get timeout => timeoutFor(attempt);
+  Duration get timeout => _overwriteTimeout ?? timeoutFor(attempt);
 
   bool get isCancelled => cancelToken.isCancelled;
 
@@ -47,10 +52,17 @@ class SyncAttempt {
       onTimeout: () {
         cancel();
         throw WebDavException(
-          '超时：${timeout.inMinutes} 分钟内没有完成，'
+          '超时：${_describe(timeout)}内没有完成，'
           '请检查网络或 WebDAV 服务器后重试',
         );
       },
     );
+  }
+
+  /// 超时时长的人话描述：放大到几分钟之后，不能再一律按「N 分钟内」播报。
+  static String _describe(Duration duration) {
+    if (duration.inSeconds < 60) return '${duration.inSeconds} 秒';
+    if (duration.inSeconds % 60 == 0) return '${duration.inMinutes} 分钟';
+    return '${duration.inMinutes} 分 ${duration.inSeconds % 60} 秒';
   }
 }
