@@ -1015,8 +1015,15 @@ class _LocalPageState extends ConsumerState<LocalPage>
   ///
   /// 选中了某个扫描目录时只是这个目录里没歌（歌曲可能还在别的目录），
   /// 不该再提示「暂无本地音乐」和扫描按钮，只说明当前目录为空。
+  ///
+  /// 一个扫描目录都没添加时同样不提示「暂无本地音乐」（还没扫过，说不上「暂无」）：
+  /// 只留引导文案，按钮改成「选择目录」直接去加目录。
   Widget _buildEmptyState(ThemeColors colors, {String? folder}) {
     final inFolder = folder != null;
+    final noDirectory =
+        !inFolder &&
+        (ref.watch(scannedDirectoriesProvider).valueOrNull ?? const <String>[])
+            .isEmpty;
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -1035,14 +1042,15 @@ class _LocalPageState extends ConsumerState<LocalPage>
             ),
           ),
           const SizedBox(height: AppSpacing.lg),
-          Text(
-            context.tr(inFolder ? '当前目录为空' : '暂无本地音乐'),
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w500,
-              color: colors.textPrimary,
+          if (!noDirectory)
+            Text(
+              context.tr(inFolder ? '当前目录为空' : '暂无本地音乐'),
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w500,
+                color: colors.textPrimary,
+              ),
             ),
-          ),
           if (!inFolder) ...[
             const SizedBox(height: AppSpacing.sm),
             Text(
@@ -1051,7 +1059,11 @@ class _LocalPageState extends ConsumerState<LocalPage>
             ),
             const SizedBox(height: AppSpacing.lg),
             GestureDetector(
-              onTap: _scanLibrary,
+              // 没有目录时扫描没有任何意义，直接引导去选目录（选完关闭
+              // 目录弹框会自动扫一次，见 _showDirModal）。
+              onTap: noDirectory
+                  ? () => _showDirModal(colors)
+                  : _scanLibrary,
               child: Container(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 24,
@@ -1064,7 +1076,7 @@ class _LocalPageState extends ConsumerState<LocalPage>
                   withBorder: true,
                 ),
                 child: Text(
-                  context.tr('扫描本地音乐'),
+                  context.tr(noDirectory ? '选择目录' : '扫描本地音乐'),
                   style: TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w500,
