@@ -374,21 +374,19 @@ final detailHeaderSurfaceProvider = Provider<Color>((ref) {
 
 /// 歌单 / 榜单 / 作者 / 专辑详情页顶栏实际铺的那层半透明底色。
 ///
-/// 顶栏以前在渐变模式下是不透明实心色，和下面直接铺在背景上的歌曲列表之间
-/// 有一条明显色差线，顶部看起来像单独贴上去的一截。这里把同一档底色压成
-/// 半透明，顶栏身后就是页面自己的背景（同一张渐变 / 同一张模糊图），上下
-/// 连成一片；模糊模式下 [detailHeaderSurfaceProvider] 本来就是半透明玻璃，
-/// 原样返回。
+/// 顶栏贴着页面顶部，身后就是背景渐变的最上段：这里直接用那个颜色、只留
+/// 很低的不透明度。渐变模式下和身后的背景几乎完全一致，模糊模式下也只是一
+/// 层很淡的同色调薄纱 —— 上下连成一片，不会再出现「顶部贴了一条明显更亮的
+/// 色块」的分界。
 ///
-/// 不直接用 [ThemeColors.surface]：高斯模糊下它是给卡片用的玻璃色，顶栏
-/// 需要更透一档，才不至于把照片纹理整块盖住。
+/// 不再沿用 [detailHeaderSurfaceProvider] 的 surface / 玻璃色：那一档是给
+/// 卡片、按钮用的，比背景亮得更多，铺满整条顶栏时色差很明显。
 final detailPageHeaderSurfaceProvider = Provider<Color>((ref) {
-  final surface = ref.watch(detailHeaderSurfaceProvider);
-  if (ref.watch(blurGlassEnabledProvider)) return surface;
+  final backdrop = ref.watch(backgroundGradientProvider).colors.first;
   final isLight = ref.watch(isLightThemeActiveProvider);
-  // 只留一半：颜色仍是「比背景亮一档」的派生色，透出来的背景把上下连起来，
-  // 又不至于让白字 / 黑字失去依托。
-  return surface.withValues(alpha: isLight ? 0.50 : 0.55);
+  // 只留一点点：模糊模式下照片的明暗会在顶栏与列表之间形成细微层次，
+  // 但远看仍是同一片背景。
+  return backdrop.withValues(alpha: isLight ? 0.20 : 0.24);
 });
 
 /// 底部迷你播放栏的底色。
