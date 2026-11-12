@@ -15,11 +15,9 @@ import '../../../shared/widgets/music_cover_image.dart';
 import '../../../shared/pagination/page_slicer.dart';
 import '../../../shared/widgets/load_more_footer.dart';
 import '../../../shared/widgets/page_bar.dart';
-import '../../../shared/widgets/source_name_tag.dart';
 import '../../../shared/widgets/song_action_sheet.dart';
 import '../../../shared/widgets/song_list_item.dart';
 import '../../../shared/widgets/song_selection.dart';
-import '../../plugin/application/plugin_providers.dart';
 import '../application/discover_providers.dart';
 import '../../../features/player/application/playback_context.dart';
 import '../../player/application/mini_player_visibility.dart';
@@ -519,7 +517,7 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
         AppSpacing.md + AppSpacing.sm,
       ),
       color: ref.watch(detailPageHeaderSurfaceProvider),
-      // 只给下限、不写死高度：名称 / 音源标签 / 操作按钮这三行在部分字体
+      // 只给下限、不写死高度：名称 / 操作按钮这两行在部分字体
       // （比如内置的思源宋体）或系统大字号下会比 72 高几像素，写死高度就会报
       // 「BOTTOM OVERFLOWED BY 5.0 PIXELS」。让它按内容自己撑开，
       // 封面仍然固定 headerHeight。
@@ -573,9 +571,9 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
               ),
             ),
             const SizedBox(width: AppSpacing.md),
-            // 第一行 名称 / 第二行 音源标签 / 第三行 操作按钮。
-            // 三行：名称 / 音源标签 / 操作按钮。高度不写死（见上方 ConstrainedBox），
-            // 内容比封面高时由外层撑开，不会溢出。
+            // 第一行 名称 / 第二行 操作按钮。
+            // 顶部不再显示音源标签（收藏页里同类详情页仍保留可切换的音源按钮）。
+            // 两行高度不写死（见上方 ConstrainedBox），内容比封面高时由外层撑开。
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -606,9 +604,7 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 2),
-                  _buildSourceNameTag(ref, colors, playlist),
-                  const SizedBox(height: 2),
+                  const SizedBox(height: AppSpacing.xs),
                   // 窄屏下「播放全部 / 收藏 / 更多」一行放不下，允许横向滚动。
                   SingleChildScrollView(
                     scrollDirection: Axis.horizontal,
@@ -666,21 +662,6 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
         ),
       ),
     );
-  }
-
-  /// 头部音源标签：显示歌单 / 榜单所属的音源（本地来源不显示）。
-  Widget _buildSourceNameTag(
-    WidgetRef ref,
-    ThemeColors colors,
-    dynamic playlist,
-  ) {
-    final source = (playlist.source as String?)?.trim() ?? '';
-    if (source.isEmpty || source == 'local') return const SizedBox.shrink();
-    final label = ref
-        .read(musicSourceManagerProvider)
-        .sourceDisplayName(source);
-    if (label.isEmpty) return const SizedBox.shrink();
-    return SourceNameTag(label: label, colors: colors, fontSize: 10);
   }
 
   Widget _buildActionButton(
