@@ -87,26 +87,44 @@ class AppPaths {
   ///
   /// 单元测试用 [debugRootOverride] 把它指到临时目录，避免测试往
   /// Flutter SDK 目录（`flutter_tester.exe` 所在处）里写 `AppData`。
+  ///
+  /// 根目录的**解析结果**做了缓存：Android 上 `getApplicationSupportDirectory()`
+  /// 是一次平台通道往返，而目录路径在进程生命周期内不会变（key 里带
+  /// [debugRootOverride]，测试切换覆盖目录时自动重解析）。存在性检查仍在
+  /// 每次调用时执行，外部删掉目录后下一次访问会照常重建。
   static Future<Directory> rootDirectory() async {
     final override = debugRootOverride;
+    final key = override ?? '';
+    final cached = _rootCache;
+    if (cached != null && _rootCacheKey == key) {
+      return _ensureDirectory(cached);
+    }
+    final resolved = await _resolveRootDirectory(override);
+    _rootCache = resolved;
+    _rootCacheKey = key;
+    return _ensureDirectory(resolved);
+  }
+
+  static Directory? _rootCache;
+  static String? _rootCacheKey;
+
+  static Future<Directory> _resolveRootDirectory(String? override) async {
     if (override != null && override.isNotEmpty) {
-      return _ensureDirectory(Directory(override));
+      return Directory(override);
     }
     if (Platform.isWindows) {
       final base = executableDirectory;
       if (base != null && base.isNotEmpty) {
-        return _ensureDirectory(Directory(p.join(base, rootFolderName)));
+        return Directory(p.join(base, rootFolderName));
       }
     }
     if (Platform.isAndroid) {
       // getApplicationSupportDirectory() 是 `<私有目录>/files`，上一级就是
       // `/data/data/<包名>`；`AppData` 直接建在这里（和 files / cache 同级）。
       final support = await getApplicationSupportDirectory();
-      return _ensureDirectory(
-        Directory(p.join(p.dirname(support.path), rootFolderName)),
-      );
+      return Directory(p.join(p.dirname(support.path), rootFolderName));
     }
-    return _ensureDirectory(await getApplicationSupportDirectory());
+    return getApplicationSupportDirectory();
   }
 
   /// 仅测试使用：覆盖数据根目录。正式运行时始终为 null。
