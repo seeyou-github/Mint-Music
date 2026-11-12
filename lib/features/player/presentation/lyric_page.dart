@@ -4,7 +4,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/l10n/l10n.dart';
-import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../shared/widgets/share_preview_dialog.dart';
 import '../application/playback_controller.dart';
@@ -120,7 +119,8 @@ class _LyricPageState extends ConsumerState<LyricPage> {
     }
 
     final activeColor = themeColors.primary;
-    final inactiveColor = Colors.white.withValues(alpha: 0.4);
+    // 未播放歌词跟随「第二文字颜色」：浅色主题下白 40% 几乎看不见。
+    final inactiveColor = themeColors.textSecondary;
     final hasYrc = lyricState.hasYrc;
     final baseFontSize = 35.0 * fontSizeScale;
     final transFontSize = 18.0 * fontSizeScale;
@@ -257,14 +257,13 @@ class _LyricPageState extends ConsumerState<LyricPage> {
                                       height: 36,
                                       decoration: BoxDecoration(
                                         shape: BoxShape.circle,
-                                        color: Colors.white.withValues(
-                                          alpha: 0.1,
-                                        ),
+                                        color: themeColors.textPrimary
+                                            .withValues(alpha: 0.1),
                                       ),
-                                      child: const Icon(
+                                      child: Icon(
                                         Icons.keyboard_arrow_down,
                                         size: 20,
-                                        color: Colors.white70,
+                                        color: themeColors.textSecondary,
                                       ),
                                     ),
                                   ),
@@ -301,6 +300,8 @@ class _LyricPageState extends ConsumerState<LyricPage> {
 
   Widget _buildLyricSongInfo(Song? song) {
     final isFavorite = _isSongFavorite(song);
+    // 歌词页透出全局背景：歌名 / 歌手 / 图标都跟随主题，不能写死白色。
+    final themeColors = ref.read(themeColorsProvider);
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 8),
@@ -313,10 +314,10 @@ class _LyricPageState extends ConsumerState<LyricPage> {
               children: [
                 Text(
                   song?.title ?? context.tr('未知歌曲'),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.w600,
-                    color: Colors.white,
+                    color: themeColors.textPrimary,
                   ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -326,7 +327,7 @@ class _LyricPageState extends ConsumerState<LyricPage> {
                   song?.artist ?? context.tr('未知歌手'),
                   style: TextStyle(
                     fontSize: 13,
-                    color: Colors.white.withValues(alpha: 0.6),
+                    color: themeColors.textSecondary,
                   ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -340,8 +341,8 @@ class _LyricPageState extends ConsumerState<LyricPage> {
               isFavorite ? Icons.favorite : Icons.favorite_border,
               size: 24,
               color: isFavorite
-                  ? AppColors.primary
-                  : Colors.white.withValues(alpha: 0.7),
+                  ? themeColors.primary
+                  : themeColors.textSecondary,
             ),
           ),
           IconButton(
@@ -349,7 +350,7 @@ class _LyricPageState extends ConsumerState<LyricPage> {
             icon: Icon(
               Icons.more_horiz,
               size: 24,
-              color: Colors.white.withValues(alpha: 0.7),
+              color: themeColors.textSecondary,
             ),
           ),
         ],
@@ -392,6 +393,8 @@ class _LyricPageState extends ConsumerState<LyricPage> {
 
   void _showMoreMenu(Song? song) {
     if (song == null) return;
+    // 弹层跟随主题：底色用实心 dialogSurface，文字 / 图标用主题文字色。
+    final themeColors = ref.read(themeColorsProvider);
     showModalBottomSheet(
       useRootNavigator: true,
       context: context,
@@ -402,7 +405,7 @@ class _LyricPageState extends ConsumerState<LyricPage> {
       backgroundColor: Colors.transparent,
       builder: (ctx) => Container(
         decoration: BoxDecoration(
-          color: AppColors.surface,
+          color: themeColors.dialogSurface,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
         ),
         child: SafeArea(
@@ -414,19 +417,19 @@ class _LyricPageState extends ConsumerState<LyricPage> {
                 width: 40,
                 height: 4,
                 decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.15),
+                  color: themeColors.textPrimary.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
               const SizedBox(height: 16),
               ListTile(
-                leading: const Icon(
+                leading: Icon(
                   Icons.playlist_add,
-                  color: AppColors.textSecondary,
+                  color: themeColors.textSecondary,
                 ),
                 title: Text(
                   context.tr('添加到歌单'),
-                  style: const TextStyle(color: AppColors.textPrimary),
+                  style: TextStyle(color: themeColors.textPrimary),
                 ),
                 onTap: () {
                   Navigator.pop(ctx);
@@ -434,13 +437,10 @@ class _LyricPageState extends ConsumerState<LyricPage> {
                 },
               ),
               ListTile(
-                leading: const Icon(
-                  Icons.speed,
-                  color: AppColors.textSecondary,
-                ),
+                leading: Icon(Icons.speed, color: themeColors.textSecondary),
                 title: Text(
                   context.tr('播放速度'),
-                  style: const TextStyle(color: AppColors.textPrimary),
+                  style: TextStyle(color: themeColors.textPrimary),
                 ),
                 onTap: () {
                   Navigator.pop(ctx);
@@ -448,13 +448,10 @@ class _LyricPageState extends ConsumerState<LyricPage> {
                 },
               ),
               ListTile(
-                leading: const Icon(
-                  Icons.share,
-                  color: AppColors.textSecondary,
-                ),
+                leading: Icon(Icons.share, color: themeColors.textSecondary),
                 title: Text(
                   context.tr('分享'),
-                  style: const TextStyle(color: AppColors.textPrimary),
+                  style: TextStyle(color: themeColors.textPrimary),
                 ),
                 onTap: () {
                   Navigator.pop(ctx);
@@ -471,6 +468,7 @@ class _LyricPageState extends ConsumerState<LyricPage> {
   }
 
   void _showSpeedPicker() {
+    final themeColors = ref.read(themeColorsProvider);
     final currentSpeed = ref.read(playbackSpeedProvider);
     const speeds = ['0.5x', '0.75x', '1.0x', '1.25x', '1.5x', '2.0x'];
     showModalBottomSheet(
@@ -483,7 +481,7 @@ class _LyricPageState extends ConsumerState<LyricPage> {
       backgroundColor: Colors.transparent,
       builder: (ctx) => Container(
         decoration: BoxDecoration(
-          color: AppColors.surface,
+          color: themeColors.dialogSurface,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
         ),
         child: SafeArea(
@@ -495,17 +493,17 @@ class _LyricPageState extends ConsumerState<LyricPage> {
                 width: 40,
                 height: 4,
                 decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.15),
+                  color: themeColors.textPrimary.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
               const SizedBox(height: 16),
               Text(
                 context.tr('播放速度'),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
-                  color: AppColors.textPrimary,
+                  color: themeColors.textPrimary,
                 ),
               ),
               const SizedBox(height: 12),
@@ -518,15 +516,15 @@ class _LyricPageState extends ConsumerState<LyricPage> {
                         ? Icons.radio_button_checked
                         : Icons.radio_button_unchecked,
                     color: isSelected
-                        ? AppColors.primary
-                        : AppColors.textSecondary,
+                        ? themeColors.primary
+                        : themeColors.textSecondary,
                   ),
                   title: Text(
                     label,
                     style: TextStyle(
                       color: isSelected
-                          ? AppColors.primary
-                          : AppColors.textPrimary,
+                          ? themeColors.primary
+                          : themeColors.textPrimary,
                     ),
                   ),
                   onTap: () {
@@ -569,7 +567,7 @@ class _LyricPageState extends ConsumerState<LyricPage> {
             final themeColors = sheetRef.watch(themeColorsProvider);
             return Container(
               decoration: BoxDecoration(
-                color: AppColors.surface,
+                color: themeColors.dialogSurface,
                 borderRadius: const BorderRadius.vertical(
                   top: Radius.circular(16),
                 ),
@@ -583,17 +581,17 @@ class _LyricPageState extends ConsumerState<LyricPage> {
                       width: 40,
                       height: 4,
                       decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.15),
+                        color: themeColors.textPrimary.withValues(alpha: 0.15),
                         borderRadius: BorderRadius.circular(2),
                       ),
                     ),
                     const SizedBox(height: 16),
                     Text(
                       context.tr('添加到歌单'),
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w600,
-                        color: AppColors.textPrimary,
+                        color: themeColors.textPrimary,
                       ),
                     ),
                     const SizedBox(height: 8),
@@ -602,7 +600,7 @@ class _LyricPageState extends ConsumerState<LyricPage> {
                       (playlist) => ListTile(
                         title: Text(
                           playlist.name,
-                          style: const TextStyle(color: AppColors.textPrimary),
+                          style: TextStyle(color: themeColors.textPrimary),
                         ),
                         onTap: () {
                           Navigator.pop(ctx);

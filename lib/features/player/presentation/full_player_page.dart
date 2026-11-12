@@ -661,6 +661,9 @@ class _PlayerHeader extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // 播放页透出全局背景：浅色主题下背景是浅色，图标 / 底色都必须跟随
+    // 主题文字色，不能再写死白色。
+    final colors = ref.watch(themeColorsProvider);
     // 顶部栏只保留「收起」与「切换歌词 / 封面」两个按钮，不再显示音源名称。
     return Padding(
       padding: EdgeInsets.only(
@@ -673,13 +676,13 @@ class _PlayerHeader extends ConsumerWidget {
           IconButton(
             onPressed: onBack,
             icon: Icon(Icons.keyboard_arrow_down, size: compact ? 24 : 28),
-            color: Colors.white.withValues(alpha: 0.6),
+            color: colors.textSecondary,
             padding: compact ? EdgeInsets.zero : null,
             constraints: compact
                 ? const BoxConstraints.tightFor(width: 32, height: 32)
                 : null,
             style: IconButton.styleFrom(
-              backgroundColor: Colors.white.withValues(alpha: 0.05),
+              backgroundColor: colors.textPrimary.withValues(alpha: 0.05),
             ),
           ),
           const Spacer(),
@@ -691,13 +694,13 @@ class _PlayerHeader extends ConsumerWidget {
                 currentPage == 0 ? Icons.lyrics : Icons.album,
                 size: compact ? 18 : 20,
               ),
-              color: Colors.white.withValues(alpha: 0.6),
+              color: colors.textSecondary,
               padding: compact ? EdgeInsets.zero : null,
               constraints: compact
                   ? const BoxConstraints.tightFor(width: 32, height: 32)
                   : null,
               style: IconButton.styleFrom(
-                backgroundColor: Colors.white.withValues(alpha: 0.05),
+                backgroundColor: colors.textPrimary.withValues(alpha: 0.05),
               ),
             ),
         ],
@@ -724,6 +727,7 @@ class _PlayerSourceTag extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     ref.watch(currentSongIdentityProvider);
+    final colors = ref.watch(themeColorsProvider);
     final song = ref.read(playbackControllerProvider).currentSong;
     final sourceId = (song?.displaySource ?? '').trim();
     // 太窄时放不下图标 + 文字，直接不显示（封面本身已经很小了）。
@@ -744,18 +748,16 @@ class _PlayerSourceTag extends ConsumerWidget {
           height: height,
           padding: const EdgeInsets.symmetric(horizontal: 8),
           decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.06),
+            color: colors.textPrimary.withValues(alpha: 0.06),
             borderRadius: BorderRadius.circular(AppRadius.xs),
-            border: Border.all(color: Colors.white.withValues(alpha: 0.28)),
+            border: Border.all(
+              color: colors.textPrimary.withValues(alpha: 0.28),
+            ),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(
-                Icons.music_note,
-                size: 12,
-                color: Colors.white.withValues(alpha: 0.7),
-              ),
+              Icon(Icons.music_note, size: 12, color: colors.textSecondary),
               const SizedBox(width: 3),
               Flexible(
                 child: Text(
@@ -765,7 +767,7 @@ class _PlayerSourceTag extends ConsumerWidget {
                   style: TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w500,
-                    color: Colors.white.withValues(alpha: 0.88),
+                    color: colors.textPrimary,
                   ),
                 ),
               ),
@@ -944,7 +946,8 @@ class _PlayerLyricsPage extends ConsumerWidget {
     final themeColors = ref.watch(themeColorsProvider);
 
     final activeColor = themeColors.primary;
-    final inactiveColor = Colors.white.withValues(alpha: 0.4);
+    // 未播放歌词跟随「第二文字颜色」：浅色主题下白 40% 几乎看不见。
+    final inactiveColor = themeColors.textSecondary;
     final hasYrc = lyricState.hasYrc;
     // 横屏（手机/平板）时歌词区更宽更矮，22pt 显得过小，统一放大。
     final layoutScale = landscape ? _landscapeLyricFontScale : 1.0;
@@ -962,7 +965,7 @@ class _PlayerLyricsPage extends ConsumerWidget {
           context.tr('加载歌词中...'),
           style: TextStyle(
             fontSize: 14,
-            color: Colors.white.withValues(alpha: 0.4),
+            color: themeColors.textSecondary,
             letterSpacing: 2,
           ),
         ),
@@ -1021,6 +1024,7 @@ class _PlayerLyricsPage extends ConsumerWidget {
   /// 没有歌词 / 歌词加载失败：提示下面给一个「搜索歌词」入口。
   Widget _buildEmptyState(BuildContext context, WidgetRef ref, String message) {
     final song = ref.read(playbackControllerProvider).currentSong;
+    final colors = ref.watch(themeColorsProvider);
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -1030,7 +1034,7 @@ class _PlayerLyricsPage extends ConsumerWidget {
             textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 14,
-              color: Colors.white.withValues(alpha: 0.4),
+              color: colors.textSecondary,
               letterSpacing: 2,
             ),
           ),
@@ -1045,13 +1049,14 @@ class _PlayerLyricsPage extends ConsumerWidget {
 }
 
 /// 歌词为空时的「搜索歌词」入口：打开搜索弹层，可换音源、改歌名 / 歌手。
-class _SearchLyricButton extends StatelessWidget {
+class _SearchLyricButton extends ConsumerWidget {
   const _SearchLyricButton({required this.song});
 
   final Song song;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final colors = ref.watch(themeColorsProvider);
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       child: GestureDetector(
@@ -1063,23 +1068,18 @@ class _SearchLyricButton extends StatelessWidget {
           ),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(AppRadius.full),
-            border: Border.all(color: Colors.white.withValues(alpha: 0.35)),
+            border: Border.all(
+              color: colors.textPrimary.withValues(alpha: 0.35),
+            ),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(
-                Icons.search,
-                size: 15,
-                color: Colors.white.withValues(alpha: 0.75),
-              ),
+              Icon(Icons.search, size: 15, color: colors.textSecondary),
               const SizedBox(width: AppSpacing.xs),
               Text(
                 context.tr('搜索歌词'),
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Colors.white.withValues(alpha: 0.75),
-                ),
+                style: TextStyle(fontSize: 12, color: colors.textSecondary),
               ),
             ],
           ),
@@ -1132,7 +1132,7 @@ class _PlayerSongInfo extends ConsumerWidget {
       song?.artist ?? context.tr('未知歌手'),
       style: TextStyle(
         fontSize: compact ? 13 : 14,
-        color: Colors.white.withValues(alpha: 0.6),
+        color: colors.textSecondary,
       ),
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
@@ -1293,7 +1293,7 @@ class _PlayerActions extends ConsumerWidget {
       width: compact ? 30 : 40,
       height: compact ? 30 : 40,
     );
-    final idleColor = Colors.white.withValues(alpha: 0.7);
+    final idleColor = themeColors.textSecondary;
 
     IconButton iconButton({
       required IconData icon,
@@ -1452,6 +1452,7 @@ class _InlineLyricLineState extends ConsumerState<_InlineLyricLine> {
 
   @override
   Widget build(BuildContext context) {
+    final colors = ref.watch(themeColorsProvider);
     final lyricState = ref.watch(lyricControllerProvider);
     final position = ref.watch(
       playbackControllerProvider.select((s) => s.position),
@@ -1479,7 +1480,9 @@ class _InlineLyricLineState extends ConsumerState<_InlineLyricLine> {
       overflow: TextOverflow.ellipsis,
       style: TextStyle(
         fontSize: widget.fontSize,
-        color: Colors.white.withValues(alpha: text.isEmpty ? 0.35 : 0.7),
+        color: text.isEmpty
+            ? colors.textSecondary.withValues(alpha: 0.7)
+            : colors.textSecondary,
       ),
     );
   }
@@ -1588,6 +1591,7 @@ class _AudioVisualizer extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final colors = ref.watch(themeColorsProvider);
     final isPlaying = ref.watch(
       playbackControllerProvider.select((state) => state.isPlaying),
     );
@@ -1613,7 +1617,7 @@ class _AudioVisualizer extends ConsumerWidget {
                     width: 3,
                     height: 6 + value.clamp(0.0, 1.0).toDouble() * 32,
                     decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.5),
+                      color: colors.textPrimary.withValues(alpha: 0.45),
                       borderRadius: BorderRadius.circular(2),
                     ),
                   ),

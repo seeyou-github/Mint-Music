@@ -121,6 +121,9 @@ class _PlayerProgressBarState extends ConsumerState<PlayerProgressBar> {
 
   void _showQualityPicker() {
     final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    // 弹出菜单用实心的 dialogSurface，并跟随主题文字色（原来写死深色底 + 白字，
+    // 浅色主题下和整体观感不一致）。
+    final colors = ref.read(themeColorsProvider);
     showMenu<String>(
       context: context,
       position: RelativeRect.fromLTRB(
@@ -130,7 +133,7 @@ class _PlayerProgressBarState extends ConsumerState<PlayerProgressBar> {
         overlay.size.height - 180,
       ),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      color: const Color(0xFF282828),
+      color: colors.dialogSurface,
       elevation: 8,
       items: widget.availableQualities.map((q) {
         final gated = widget.gatedQualities.contains(q);
@@ -153,10 +156,8 @@ class _PlayerProgressBarState extends ConsumerState<PlayerProgressBar> {
                     style: TextStyle(
                       fontSize: 13,
                       color: gated
-                          ? Colors.white.withValues(alpha: 0.35)
-                          : (active
-                                ? Colors.white
-                                : Colors.white.withValues(alpha: 0.7)),
+                          ? colors.textSecondary.withValues(alpha: 0.6)
+                          : (active ? colors.textPrimary : colors.textSecondary),
                       fontWeight: active ? FontWeight.w600 : FontWeight.normal,
                     ),
                   ),
@@ -166,8 +167,8 @@ class _PlayerProgressBarState extends ConsumerState<PlayerProgressBar> {
                       style: TextStyle(
                         fontSize: 10,
                         color: gated
-                            ? Colors.orange.withValues(alpha: 0.8)
-                            : Colors.white.withValues(alpha: 0.4),
+                            ? colors.warning.withValues(alpha: 0.9)
+                            : colors.textSecondary.withValues(alpha: 0.8),
                       ),
                     ),
                 ],
@@ -175,7 +176,7 @@ class _PlayerProgressBarState extends ConsumerState<PlayerProgressBar> {
               if (active)
                 Padding(
                   padding: const EdgeInsets.only(left: 8),
-                  child: Icon(Icons.check, size: 14, color: Colors.white),
+                  child: Icon(Icons.check, size: 14, color: colors.textPrimary),
                 ),
             ],
           ),
@@ -331,7 +332,7 @@ class _PlayerProgressBarState extends ConsumerState<PlayerProgressBar> {
                   ),
                   style: TextStyle(
                     fontSize: compact ? 11 : 12,
-                    color: Colors.white.withValues(alpha: 0.6),
+                    color: colors.textSecondary,
                     fontWeight: FontWeight.w500,
                     letterSpacing: 1,
                   ),
@@ -347,14 +348,14 @@ class _PlayerProgressBarState extends ConsumerState<PlayerProgressBar> {
                         vertical: 2,
                       ),
                       decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.1),
+                        color: colors.textPrimary.withValues(alpha: 0.08),
                         borderRadius: BorderRadius.circular(4),
                       ),
                       child: Text(
                         qualityLabel,
                         style: TextStyle(
                           fontSize: 11,
-                          color: Colors.white.withValues(alpha: 0.8),
+                          color: colors.textSecondary,
                           fontWeight: FontWeight.w500,
                         ),
                       ),
@@ -372,7 +373,7 @@ class _PlayerProgressBarState extends ConsumerState<PlayerProgressBar> {
                     _formatDuration(widget.duration),
                     style: TextStyle(
                       fontSize: compact ? 11 : 12,
-                      color: Colors.white.withValues(alpha: 0.6),
+                      color: colors.textSecondary,
                       fontWeight: FontWeight.w500,
                       letterSpacing: 1,
                     ),
@@ -499,7 +500,7 @@ class PlaybackControlRow extends StatelessWidget {
   }
 }
 
-class _ControlButton extends StatelessWidget {
+class _ControlButton extends ConsumerWidget {
   final IconData icon;
   final double size;
   final double boxSize;
@@ -515,17 +516,21 @@ class _ControlButton extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    // 上一首 / 下一首等控件跟随主题文字色：浅色主题下白色图标几乎看不见。
+    final colors = ref.watch(themeColorsProvider);
     return SizedBox(
       width: boxSize,
       height: boxSize,
       child: IconButton(
         onPressed: onPressed,
         icon: Icon(icon, size: size),
-        color: Colors.white.withValues(alpha: onPressed == null ? 0.28 : 0.7),
+        color: colors.textPrimary.withValues(
+          alpha: onPressed == null ? 0.28 : 0.85,
+        ),
         padding: EdgeInsets.zero,
         style: IconButton.styleFrom(
-          hoverColor: Colors.white.withValues(alpha: 0.1),
+          hoverColor: colors.textPrimary.withValues(alpha: 0.08),
         ),
       ),
     );
