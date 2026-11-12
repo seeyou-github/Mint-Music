@@ -238,13 +238,13 @@ class SettingsService {
 
   /// 模糊程度（高斯 sigma）。
   double getBlurBackgroundSigma() =>
-      _prefs.getDouble(_blurSigmaKey) ?? 30;
+      _prefs.getDouble(_blurSigmaKey) ?? 40;
   Future<void> setBlurBackgroundSigma(double v) =>
       _prefs.setDouble(_blurSigmaKey, v);
 
   /// 背景图亮度（1 = 原图）。
   double getBlurBackgroundBrightness() =>
-      _prefs.getDouble(_blurBrightnessKey) ?? 0.85;
+      _prefs.getDouble(_blurBrightnessKey) ?? 0.3;
   Future<void> setBlurBackgroundBrightness(double v) =>
       _prefs.setDouble(_blurBrightnessKey, v);
 
@@ -253,13 +253,13 @@ class SettingsService {
   /// 存储 key 沿用旧版 `blur_background_saturation`：它最早只作用于模糊图，
   /// 用户已有的取值不能因为改名丢掉。
   double getBackgroundSaturation() =>
-      _prefs.getDouble(_blurSaturationKey) ?? 1.0;
+      _prefs.getDouble(_blurSaturationKey) ?? 0.2;
   Future<void> setBackgroundSaturation(double v) =>
       _prefs.setDouble(_blurSaturationKey, v);
 
   /// 亮图自动压暗强度（0 = 关闭）。
   double getBlurBackgroundAutoDarken() =>
-      _prefs.getDouble(_blurAutoDarkenKey) ?? 0.7;
+      _prefs.getDouble(_blurAutoDarkenKey) ?? 1.8;
   Future<void> setBlurBackgroundAutoDarken(double v) =>
       _prefs.setDouble(_blurAutoDarkenKey, v);
 

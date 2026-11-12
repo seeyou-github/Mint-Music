@@ -47,10 +47,10 @@ final blurBackgroundImageNamesProvider = StateProvider<List<String>>(
 );
 
 /// 模糊程度（高斯 sigma）：0 = 不模糊，越大越糊。
-final blurBackgroundSigmaProvider = StateProvider<double>((ref) => 30);
+final blurBackgroundSigmaProvider = StateProvider<double>((ref) => 40);
 
 /// 背景图亮度：1 = 原图，小于 1 压暗、大于 1 提亮。
-final blurBackgroundBrightnessProvider = StateProvider<double>((ref) => 0.85);
+final blurBackgroundBrightnessProvider = StateProvider<double>((ref) => 0.3);
 
 /// 主界面背景饱和度：1 = 原样，0 = 灰度，大于 1 更艳。
 ///
@@ -60,7 +60,7 @@ final blurBackgroundBrightnessProvider = StateProvider<double>((ref) => 0.85);
 /// 控件底色都从背景主色派生，所以同样跟着这个系数走，不会出现「背景变灰、
 /// 卡片还是原色」。开启「主界面跟随封面变色」时，封面派生的渐变 / 封面
 /// 糊化背景也一样生效。
-final backgroundSaturationProvider = StateProvider<double>((ref) => 1.0);
+final backgroundSaturationProvider = StateProvider<double>((ref) => 0.2);
 
 /// 饱和度用的颜色矩阵（[s] = 1 时是单位矩阵）。
 ///
@@ -141,7 +141,7 @@ double effectiveBlurSaturation(double saturation, double colorfulness) {
 /// 用户的「亮度」是固定值，白底封面和暗色封面套同一档亮度时，前者会亮得
 /// 看不清白字、后者又太黑。这里再按图片自身的平均亮度补一层黑色：图片越亮
 /// 压得越多，暗图几乎不压。100% 对特别亮的图仍可能不够，允许拉到 200%。
-final blurBackgroundAutoDarkenProvider = StateProvider<double>((ref) => 0.7);
+final blurBackgroundAutoDarkenProvider = StateProvider<double>((ref) => 1.8);
 
 /// 按图片平均亮度算自动压暗的黑色不透明度。
 ///

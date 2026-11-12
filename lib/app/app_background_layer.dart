@@ -54,7 +54,7 @@ class AppBackgroundLayer extends ConsumerWidget {
     if (ref.watch(backgroundModeProvider) == BackgroundMode.blur) {
       final path = ref.watch(blurBackgroundImagePathProvider).valueOrNull;
       // 模糊程度 / 亮度就是「设置 → 外观设置 → 高斯模糊背景图」里那两个滑条
-      // （没动过时是默认值 30 / 0.85）。封面糊化背景也用这两个值，用户在设置里
+      // （没动过时是默认值 40 / 0.3）。封面糊化背景也用这两个值，用户在设置里
       // 调完能直接看到主界面跟着变。
       final sigma = ref.watch(blurBackgroundSigmaProvider);
       final brightness = ref.watch(blurBackgroundBrightnessProvider);
