@@ -6,6 +6,7 @@ import 'package:crypto/crypto.dart';
 import 'package:archive/archive.dart';
 import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
+import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_js/flutter_js.dart';
 import 'package:gbk_codec/gbk_codec.dart';
@@ -39,6 +40,22 @@ class JsEngineService {
   static const int _maxTimerDelayMilliseconds = 24 * 60 * 60 * 1000;
 
   static int _resultVarSeq = 0;
+
+  /// 插件桥接的调试日志。逐请求的日志在 release 下刷屏且拖慢解析，默认关掉。
+  static bool verboseLogging = kDebugMode;
+
+  static void _log(String message) {
+    if (verboseLogging) debugPrint(message);
+  }
+
+  /// 插件方法结果回调通道：JS 侧 Promise 完成时主动上报，省掉逐次 evaluate。
+  static const String _methodResultChannel = 'pluginMethodResult';
+
+  /// 兜底轮询间隔：回调是主路径，这里只在回调丢失时读一次状态。
+  static const Duration _methodFallbackInterval = Duration(milliseconds: 400);
+
+  /// 正在等待结果的插件调用（key = 每次调用唯一的 resultVar）。
+  final Map<String, Completer<_PluginMethodOutcome>> _pendingMethodCalls = {};
 
   /// 设置 / 清除插件请求的超时下限。传 zero 表示恢复「按插件自己的 timeout」。
   void setRequestTimeoutFloor(Duration floor) {
@@ -90,11 +107,12 @@ class JsEngineService {
     _runtime!.onMessage('lxZlib', _handleZlibRequest);
     _runtime!.onMessage('timerRequest', _handleTimerRequest);
     _runtime!.onMessage('timerCancel', _handleTimerCancel);
+    _runtime!.onMessage(_methodResultChannel, _handleMethodResult);
 
     _initialized = true;
     _runtimeFaulted = false;
 
-    print('[JsEngine] 初始化完成');
+    _log('[JsEngine] 初始化完成');
   }
 
   JavascriptRuntime get runtime {
@@ -171,13 +189,13 @@ class JsEngineService {
       try {
         return jsonDecode(args) as Map<String, dynamic>;
       } catch (e) {
-        print(
+        _log(
           '[JsEngine] _parseArgs jsonDecode失败: $e, input: ${args.length > 200 ? args.substring(0, 200) : args}',
         );
         rethrow;
       }
     }
-    print('[JsEngine] _parseArgs 未知类型: ${args.runtimeType}, value: $args');
+    _log('[JsEngine] _parseArgs 未知类型: ${args.runtimeType}, value: $args');
     throw ArgumentError('Cannot parse args of type ${args.runtimeType}');
   }
 
@@ -853,13 +871,13 @@ function __zlibRequest(action, data) {
           ';void 0;';
       final result = evaluate(wrapped);
       if (result.isError) {
-        print('[JsEngine] 注入 MusicFree 模块 $name 失败: ${result.stringResult}');
+        _log('[JsEngine] 注入 MusicFree 模块 $name 失败: ${result.stringResult}');
         _failedPluginModules.add(name);
         _loadedPluginModules.add(name);
         continue;
       }
       _loadedPluginModules.add(name);
-      print('[JsEngine] 已注入 MusicFree 模块: $name');
+      _log('[JsEngine] 已注入 MusicFree 模块: $name');
     }
   }
 
@@ -896,7 +914,7 @@ function __zlibRequest(action, data) {
 
   void _handleHttpRequest(dynamic args) {
     try {
-      print('[JsEngine] _handleHttpRequest 收到参数类型: ${args.runtimeType}');
+      _log('[JsEngine] _handleHttpRequest 收到参数类型: ${args.runtimeType}');
       final data = _parseArgs(args);
       final requestId = data['requestId'];
       final url = data['url'] as String;
@@ -913,10 +931,10 @@ function __zlibRequest(action, data) {
         reqId = 0;
       }
 
-      print('[JsEngine] HTTP请求: $url (requestId: $reqId)');
+      _log('[JsEngine] HTTP请求: $url (requestId: $reqId)');
       _executeHttpRequest(reqId, url, options).catchError((error, stackTrace) {
-        print('[JsEngine] _executeHttpRequest异步错误: $error');
-        print('[JsEngine] StackTrace: $stackTrace');
+        _log('[JsEngine] _executeHttpRequest异步错误: $error');
+        _log('[JsEngine] StackTrace: $stackTrace');
         try {
           final errorJson = jsonEncode({
             'body': jsonEncode({
@@ -930,8 +948,8 @@ function __zlibRequest(action, data) {
         } catch (_) {}
       });
     } catch (e, stackTrace) {
-      print('[JsEngine] Error handling HTTP request: $e');
-      print('[JsEngine] StackTrace: $stackTrace');
+      _log('[JsEngine] Error handling HTTP request: $e');
+      _log('[JsEngine] StackTrace: $stackTrace');
     }
   }
 
@@ -952,7 +970,7 @@ function __zlibRequest(action, data) {
 
       _executeCryptoRequest(reqId, algorithm, data);
     } catch (e) {
-      print('[JsEngine] Error handling crypto request: $e');
+      _log('[JsEngine] Error handling crypto request: $e');
     }
   }
 
@@ -973,7 +991,7 @@ function __zlibRequest(action, data) {
 
       _executeZlibRequest(reqId, action, data['data']?.toString() ?? '');
     } catch (e) {
-      print('[JsEngine] Error handling zlib request: $e');
+      _log('[JsEngine] Error handling zlib request: $e');
     }
   }
 
@@ -1017,7 +1035,7 @@ function __zlibRequest(action, data) {
       final resultStr = result is String ? result : jsonEncode(result);
       _resolveCryptoResult(requestId, resultStr);
     } catch (e) {
-      print('[JsEngine] Crypto request error: $e');
+      _log('[JsEngine] Crypto request error: $e');
       _resolveCryptoResult(requestId, data['data']?.toString() ?? '');
     }
   }
@@ -1071,7 +1089,7 @@ function __zlibRequest(action, data) {
       final encrypted = _bytesToBigInt(padded).modPow(exponent, modulus);
       return _bigIntToBytes(encrypted, keyLength);
     } catch (e) {
-      print('[JsEngine] RSA encrypt fallback: $e');
+      _log('[JsEngine] RSA encrypt fallback: $e');
       return plainBytes;
     }
   }
@@ -1178,7 +1196,7 @@ function __zlibRequest(action, data) {
       }
       _resolveZlibResult(requestId, true, base64Encode(output));
     } catch (e) {
-      print('[JsEngine] Zlib request error: $e');
+      _log('[JsEngine] Zlib request error: $e');
       _resolveZlibResult(requestId, false, e.toString());
     }
   }
@@ -1193,7 +1211,7 @@ function __zlibRequest(action, data) {
       evaluate("__resolveCryptoRequest($requestId, '$escaped')");
       _executePendingJob();
     } catch (e) {
-      print('[JsEngine] Error resolving crypto request $requestId: $e');
+      _log('[JsEngine] Error resolving crypto request $requestId: $e');
     }
   }
 
@@ -1207,7 +1225,7 @@ function __zlibRequest(action, data) {
       evaluate("__resolveZlibRequest($requestId, $success, '$escaped')");
       _executePendingJob();
     } catch (e) {
-      print('[JsEngine] Error resolving zlib request $requestId: $e');
+      _log('[JsEngine] Error resolving zlib request $requestId: $e');
     }
   }
 
@@ -1241,7 +1259,7 @@ function __zlibRequest(action, data) {
         try {
           bodyData = base64Decode(options['bodyBase64'] as String);
         } catch (e) {
-          print('[JsEngine] bodyBase64 解码失败: $e');
+          _log('[JsEngine] bodyBase64 解码失败: $e');
         }
       }
       if (options['form'] is Map && bodyData == null) {
@@ -1273,7 +1291,7 @@ function __zlibRequest(action, data) {
             : jsonEncode(bodyData);
       }
 
-      print('[JsEngine] 发起HTTP请求: $method $url');
+      _log('[JsEngine] 发起HTTP请求: $method $url');
 
       final response = await _dio.request(
         url,
@@ -1356,12 +1374,12 @@ function __zlibRequest(action, data) {
       });
 
       if (!includeBase64 && bodyText == null && bodyBytes.isNotEmpty) {
-        print(
+        _log(
           '[JsEngine] 大二进制响应已省略体: ${bodyBytes.length} 字节 '
           '(${contentType.isEmpty ? '未知类型' : contentType}) $url',
         );
       }
-      print('[JsEngine] HTTP请求成功: ${response.statusCode} $url');
+      _log('[JsEngine] HTTP请求成功: ${response.statusCode} $url');
       _resolveRequest(requestId, true, resultJson);
     } catch (e) {
       final isTimeout =
@@ -1376,7 +1394,7 @@ function __zlibRequest(action, data) {
         'statusCode': isTimeout ? 408 : 500,
         'headers': <String, String>{},
       });
-      print('[JsEngine] HTTP请求失败: $url - $e');
+      _log('[JsEngine] HTTP请求失败: $url - $e');
       _resolveRequest(requestId, true, resultJson);
     }
   }
@@ -1395,20 +1413,20 @@ function __zlibRequest(action, data) {
 
   void _resolveRequest(int requestId, bool success, String resultJson) {
     try {
-      print(
+      _log(
         '[JsEngine] _resolveRequest: requestId=$requestId, success=$success, resultJson长度=${resultJson.length}',
       );
       final escapedJson = _escapeForJsString(resultJson);
       final jsCode =
           "__resolveHttpRequest($requestId, $success, '$escapedJson')";
-      print('[JsEngine] 执行JS代码长度: ${jsCode.length}');
+      _log('[JsEngine] 执行JS代码长度: ${jsCode.length}');
       final evalResult = evaluate(jsCode);
-      print('[JsEngine] evaluate结果: ${evalResult.stringResult}');
+      _log('[JsEngine] evaluate结果: ${evalResult.stringResult}');
       _executePendingJob();
-      print('[JsEngine] 已解析请求 $requestId, _executePendingJob()已调用');
+      _log('[JsEngine] 已解析请求 $requestId, _executePendingJob()已调用');
     } catch (e, stackTrace) {
-      print('[JsEngine] Error resolving request $requestId: $e');
-      print('[JsEngine] StackTrace: $stackTrace');
+      _log('[JsEngine] Error resolving request $requestId: $e');
+      _log('[JsEngine] StackTrace: $stackTrace');
       try {
         final errorJson = jsonEncode({
           'body': jsonEncode({
@@ -1448,23 +1466,42 @@ function __zlibRequest(action, data) {
       final data = _parseArgs(args);
       final type = data['type']?.toString() ?? '';
       final noticeData = data['data'];
-      print('[PluginNotice] type=$type, data=$noticeData');
+      _log('[PluginNotice] type=$type, data=$noticeData');
       // Propagate update notices so the UI layer can react.
       if (type == 'update' && noticeData != null) {
-        print('[PluginNotice] Emitting update notice to stream');
+        _log('[PluginNotice] Emitting update notice to stream');
         _pluginNoticeController.add(data);
       }
     } catch (e) {
-      print('[JsEngine] Error handling plugin notice: $e');
+      _log('[JsEngine] Error handling plugin notice: $e');
     }
   }
 
   void _handlePluginLog(dynamic args) {
     try {
       final data = _parseArgs(args);
-      print('[PluginLog] [${data['level']}] ${data['message']}');
+      _log('[PluginLog] [${data['level']}] ${data['message']}');
     } catch (e) {
-      print('[JsEngine] Plugin log: $args');
+      _log('[JsEngine] Plugin log: $args');
+    }
+  }
+
+  /// JS 侧 Promise 完成时的回调入口。
+  void _handleMethodResult(dynamic args) {
+    try {
+      final data = _parseArgs(args);
+      final key = data['key']?.toString() ?? '';
+      if (key.isEmpty) return;
+      final completer = _pendingMethodCalls[key];
+      if (completer == null || completer.isCompleted) return;
+      completer.complete(
+        _PluginMethodOutcome(
+          status: data['status']?.toString() ?? 'resolved',
+          value: data['value']?.toString() ?? 'null',
+        ),
+      );
+    } catch (e) {
+      _log('[JsEngine] 插件方法回调解析失败: $e');
     }
   }
 
@@ -1472,139 +1509,152 @@ function __zlibRequest(action, data) {
     String methodExpression, {
     Duration timeout = const Duration(seconds: 30),
   }) async {
-    try {
-      // 并发调用时毫秒时间戳可能重复，追加自增序号保证轮询变量唯一，
-      // 避免并行调用互相覆盖结果状态。
-      final resultVar =
-          '__pmr_${DateTime.now().millisecondsSinceEpoch}_${_resultVarSeq++}';
+    // 并发调用时毫秒时间戳可能重复，追加自增序号保证结果变量唯一，
+    // 避免并行调用互相覆盖结果状态。
+    final resultVar =
+        '__pmr_${DateTime.now().millisecondsSinceEpoch}_${_resultVarSeq++}';
 
-      final wrappedCode =
-          '''
+    final wrappedCode =
+        '''
 var $resultVar = { __status: 'pending', __value: null };
-try {
-  var __promise_$resultVar = $methodExpression;
-  if (__promise_$resultVar && typeof __promise_$resultVar === 'object' && typeof __promise_$resultVar.then === 'function') {
-    __promise_$resultVar.then(function(result) {
-      try {
-        $resultVar.__status = 'resolved';
-        $resultVar.__value = JSON.stringify(result);
-      } catch(e) {
-        $resultVar.__status = 'resolved';
-        $resultVar.__value = result != null ? String(result) : 'null';
-      }
-    }, function(error) {
-      $resultVar.__status = 'rejected';
-      $resultVar.__value = (error && error.message) ? error.message : String(error);
-    });
-  } else {
-    $resultVar.__status = 'resolved';
+(function() {
+  function __notify(status, value) {
+    if ($resultVar.__status !== 'pending') return;
+    $resultVar.__status = status;
+    $resultVar.__value = value;
     try {
-      $resultVar.__value = __promise_$resultVar != null ? JSON.stringify(__promise_$resultVar) : 'null';
-    } catch(e) {
-      $resultVar.__value = __promise_$resultVar != null ? String(__promise_$resultVar) : 'null';
-    }
+      sendMessage('$_methodResultChannel', JSON.stringify({ key: '$resultVar', status: status, value: value }));
+    } catch(e) {}
   }
-} catch(e) {
-  $resultVar.__status = 'rejected';
-  $resultVar.__value = (e && e.message) ? e.message : String(e);
-}
+  try {
+    var __promise = $methodExpression;
+    if (__promise && typeof __promise === 'object' && typeof __promise.then === 'function') {
+      __promise.then(function(result) {
+        var __value;
+        try {
+          __value = JSON.stringify(result);
+        } catch(e) {
+          __value = result != null ? String(result) : 'null';
+        }
+        __notify('resolved', __value);
+      }, function(error) {
+        __notify('rejected', (error && error.message) ? error.message : String(error));
+      });
+    } else {
+      var __value2;
+      try {
+        __value2 = __promise != null ? JSON.stringify(__promise) : 'null';
+      } catch(e) {
+        __value2 = __promise != null ? String(__promise) : 'null';
+      }
+      __notify('resolved', __value2);
+    }
+  } catch(e) {
+    __notify('rejected', (e && e.message) ? e.message : String(e));
+  }
+})();
 ''';
 
+    final completer = Completer<_PluginMethodOutcome>();
+    _pendingMethodCalls[resultVar] = completer;
+    try {
       final wrappedEvalResult = evaluate(wrappedCode);
       if (wrappedEvalResult.isError) {
         // 方法表达式同步执行即失败（例如插件脚本递归过深触发 Dart 栈溢出），
         // 直接抛错而不是空转轮询到超时。
-        print(
+        _log(
           '[JsEngine] callPluginMethod 初始化失败: ${wrappedEvalResult.stringResult}',
         );
         throw Exception(wrappedEvalResult.stringResult);
       }
+      // 同步返回 / 已 resolve 的 Promise 的 then 回调要等 job 队列被推动，
+      // 先推一次，多数调用在这里就能拿到结果。
       _executePendingJob();
 
-      print('[JsEngine] callPluginMethod: 等待Promise解析... ($resultVar)');
-
-      final startTime = DateTime.now();
-      var pollCount = 0;
+      final deadline = DateTime.now().add(timeout);
+      var pollDelay = const Duration(milliseconds: 25);
+      var nextFallbackCheck = DateTime.now().add(_methodFallbackInterval);
       while (true) {
-        pollCount++;
-        _executePendingJob();
-
-        final statusResult = evaluate('$resultVar.__status');
-        if (statusResult.isError) {
-          throw Exception('插件 JS 运行时不可用: ${statusResult.stringResult}');
-        }
-        final status = statusResult.stringResult;
-
-        if (pollCount % 20 == 0) {
-          print(
-            '[JsEngine] callPluginMethod: 轮询 #$pollCount, status=$status, 已等待 ${DateTime.now().difference(startTime).inMilliseconds}ms',
-          );
+        try {
+          final outcome = await completer.future.timeout(pollDelay);
+          return _mapMethodOutcome(outcome);
+        } on TimeoutException {
+          // 回调还没来，继续兜底。
         }
 
-        if (status == 'resolved') {
-          final valueResult = evaluate('$resultVar.__value');
-          if (valueResult.isError) {
-            throw Exception('插件结果读取失败: ${valueResult.stringResult}');
-          }
-          final value = valueResult.stringResult;
+        // 回调是主路径，这里只负责把 QuickJS 的 job 队列推起来（插件的
+        // then 回调、定时器回调都靠它执行），不再每次都 evaluate 读状态。
+        if (!completer.isCompleted) _executePendingJob();
 
-          evaluate('$resultVar = null');
-
-          print(
-            '[JsEngine] callPluginMethod: Promise已解析, 结果长度: ${value.length}',
-          );
-
-          if (value == 'null' || value == 'undefined' || value.isEmpty) {
-            return null;
-          }
-
-          if (value.startsWith('"') && value.endsWith('"')) {
-            try {
-              final decoded = jsonDecode(value);
-              if (decoded is String) return decoded;
-              if (decoded is List || decoded is Map) {
-                return jsonEncode(decoded);
-              }
-            } catch (_) {}
-          }
-
-          try {
-            jsonDecode(value);
-            return value;
-          } catch (_) {
-            return value;
-          }
-        }
-
-        if (status == 'rejected') {
-          final valueResult = evaluate('$resultVar.__value');
-          if (valueResult.isError) {
-            throw Exception('插件错误读取失败: ${valueResult.stringResult}');
-          }
-          final value = valueResult.stringResult;
-
-          evaluate('$resultVar = null');
-
-          print('[JsEngine] callPluginMethod: Promise被拒绝: $value');
-
-          if (value.isNotEmpty && value != 'null') {
-            throw Exception(value);
-          }
-          return null;
-        }
-
-        if (DateTime.now().difference(startTime) > timeout) {
-          evaluate('$resultVar = null');
-          print('[JsEngine] callPluginMethod: 超时 ($timeout)');
+        if (DateTime.now().isAfter(deadline)) {
+          _log('[JsEngine] callPluginMethod: 超时 ($timeout)');
           throw TimeoutException('Plugin method timed out after $timeout');
         }
 
-        await Future.delayed(const Duration(milliseconds: 50));
+        // 兜底：回调消息万一没投递到，低频读一次状态。
+        if (!completer.isCompleted &&
+            DateTime.now().isAfter(nextFallbackCheck)) {
+          nextFallbackCheck = DateTime.now().add(_methodFallbackInterval);
+          final outcome = _readMethodStatus(resultVar);
+          if (outcome != null) return _mapMethodOutcome(outcome);
+        }
+
+        final nextMs = (pollDelay.inMilliseconds * 1.5).round();
+        pollDelay = Duration(milliseconds: nextMs > 200 ? 200 : nextMs);
       }
     } catch (e) {
-      print('[JsEngine] Error calling plugin method: $e');
+      _log('[JsEngine] Error calling plugin method: $e');
       rethrow;
+    } finally {
+      _pendingMethodCalls.remove(resultVar);
+      try {
+        evaluate('$resultVar = null');
+      } catch (_) {}
     }
+  }
+
+  /// 兜底读取 JS 里的结果状态；还在 pending 时返回 null。
+  _PluginMethodOutcome? _readMethodStatus(String resultVar) {
+    final statusResult = evaluate('$resultVar.__status');
+    if (statusResult.isError) {
+      throw Exception('插件 JS 运行时不可用: ${statusResult.stringResult}');
+    }
+    final status = statusResult.stringResult;
+    if (status != 'resolved' && status != 'rejected') return null;
+
+    final valueResult = evaluate('$resultVar.__value');
+    if (valueResult.isError) {
+      throw Exception('插件结果读取失败: ${valueResult.stringResult}');
+    }
+    return _PluginMethodOutcome(
+      status: status,
+      value: valueResult.stringResult,
+    );
+  }
+
+  String? _mapMethodOutcome(_PluginMethodOutcome outcome) {
+    final value = outcome.value;
+    if (outcome.status == 'rejected') {
+      _log('[JsEngine] callPluginMethod: Promise被拒绝: $value');
+      if (value.isNotEmpty && value != 'null') {
+        throw Exception(value);
+      }
+      return null;
+    }
+
+    if (value == 'null' || value == 'undefined' || value.isEmpty) {
+      return null;
+    }
+
+    // JSON.stringify 过的字符串会带着一层引号：剥掉交给上层的是原始字符串。
+    if (value.startsWith('"') && value.endsWith('"')) {
+      try {
+        final decoded = jsonDecode(value);
+        if (decoded is String) return decoded;
+        if (decoded is List || decoded is Map) return jsonEncode(decoded);
+      } catch (_) {}
+    }
+    return value;
   }
 
   void _handleTimerRequest(dynamic args) {
@@ -1625,7 +1675,7 @@ try {
       _timers.remove(timerId)?.cancel();
       _activeTimerIds.remove(timerId);
       if (_activeTimerIds.length >= _maxActiveTimers) {
-        print('[JsEngine] 忽略定时器 $timerId: 已达到 $_maxActiveTimers 个上限');
+        _log('[JsEngine] 忽略定时器 $timerId: 已达到 $_maxActiveTimers 个上限');
         return;
       }
 
@@ -1636,7 +1686,7 @@ try {
           : Timer(duration, () => _fireTimer(timerId, repeat: false));
       _timers[timerId] = timer;
     } catch (e) {
-      print('[JsEngine] 定时器创建失败: $e');
+      _log('[JsEngine] 定时器创建失败: $e');
     }
   }
 
@@ -1648,7 +1698,7 @@ try {
       _timers.remove(timerId)?.cancel();
       _activeTimerIds.remove(timerId);
     } catch (e) {
-      print('[JsEngine] 定时器取消失败: $e');
+      _log('[JsEngine] 定时器取消失败: $e');
     }
   }
 
@@ -1667,11 +1717,11 @@ try {
     try {
       final result = evaluate('__mintFireTimer($timerId)');
       if (result.isError) {
-        print('[JsEngine] 定时器回调失败: ${result.stringResult}');
+        _log('[JsEngine] 定时器回调失败: ${result.stringResult}');
       }
       _executePendingJob();
     } catch (e) {
-      print('[JsEngine] 定时器回调异常: $e');
+      _log('[JsEngine] 定时器回调异常: $e');
     }
   }
 
@@ -1697,6 +1747,14 @@ try {
     _initialized = false;
     _runtimeFaulted = false;
   }
+}
+
+/// 插件方法 Promise 的结果：`status` 为 resolved / rejected，`value` 是 JSON 文本。
+class _PluginMethodOutcome {
+  const _PluginMethodOutcome({required this.status, required this.value});
+
+  final String status;
+  final String value;
 }
 
 class _DerReader {
