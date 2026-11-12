@@ -267,7 +267,7 @@ final backgroundGradientProvider = Provider<BackgroundGradient>((ref) {
       // 派生的卡片、按钮、顶栏、菜单要一起变，否则背景和控件两个色调。
       // 浓度与背景图那层取同一份（封面按封面、用户图按用户图）。
       final saturation = effectiveBlurSaturation(
-        ref.watch(blurBackgroundSaturationProvider),
+        ref.watch(backgroundSaturationProvider),
         coverTint != null
             ? ref.watch(coverAccentColorfulnessProvider)
             : ref.watch(backgroundBlurColorfulnessProvider),
@@ -285,7 +285,16 @@ final backgroundGradientProvider = Provider<BackgroundGradient>((ref) {
   if (!isLight && ref.watch(coverBackgroundEnabledProvider)) {
     final accent = ref.watch(coverAccentColorProvider);
     if (accent != null) {
-      final colors = deriveBackgroundGradient(accent, isLight: false);
+      // 饱和度设置对封面派生的渐变同样生效；黑白 / 暗封面按浓度打折，
+      // 与模糊模式下封面糊化背景的口径一致。
+      final saturation = effectiveBlurSaturation(
+        ref.watch(backgroundSaturationProvider),
+        ref.watch(coverAccentColorfulnessProvider),
+      );
+      final colors = deriveBackgroundGradient(
+        applyBlurSaturation(accent, saturation),
+        isLight: false,
+      );
       // 跟随封面时固定叠 3 个光晕（位置 / 半径每次启动随机），
       // 让主界面不至于是一整片平铺的渐变。
       return BackgroundGradient(colors: colors, mid: colors[1], glowCount: 3);
@@ -302,13 +311,29 @@ final backgroundGradientProvider = Provider<BackgroundGradient>((ref) {
     final parsed = _parseOptionalColor(hex);
     if (parsed != null) picked.add(parsed);
   }
-  return resolveBackgroundGradient(
+  final gradient = resolveBackgroundGradient(
     picked: picked,
     fallback: isLight
         ? ThemeColors.light.background
         : ThemeColors.dark.background,
     direction: gradientDirectionFromTokens(tokens),
     glowCount: gradientGlowCountFromTokens(tokens),
+  );
+  // 内置 / 用户自建的渐变色也按饱和度设置调整：纯色没有噪点顾虑，直接用
+  // 滑条值（不打折），控件底色同样从调整后的中间色派生。
+  final saturation = ref
+      .watch(backgroundSaturationProvider)
+      .clamp(0.0, 2.0)
+      .toDouble();
+  if (saturation == 1.0) return gradient;
+  final colors = [
+    for (final color in gradient.colors) applyBlurSaturation(color, saturation),
+  ];
+  return BackgroundGradient(
+    colors: colors,
+    mid: colors[1],
+    direction: gradient.direction,
+    glowCount: gradient.glowCount,
   );
 });
 

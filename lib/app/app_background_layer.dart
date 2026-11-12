@@ -58,9 +58,9 @@ class AppBackgroundLayer extends ConsumerWidget {
       // 调完能直接看到主界面跟着变。
       final sigma = ref.watch(blurBackgroundSigmaProvider);
       final brightness = ref.watch(blurBackgroundBrightnessProvider);
-      // 饱和度 / 亮度都是「设置 → 高斯模糊背景图」里的滑条，用户图与封面
-      // 糊化背景共用（封面糊化本质也是同一张图铺满）。
-      final saturation = ref.watch(blurBackgroundSaturationProvider);
+      // 饱和度是「外观设置 → 背景颜色」里的全局滑条（渐变模式也生效），
+      // 用户图与封面糊化背景共用（封面糊化本质也是同一张图铺满）。
+      final saturation = ref.watch(backgroundSaturationProvider);
       // 图片本身很灰 / 很暗（黑白图、暗图）时饱和度调整自动减弱：这类图上
       // 硬拉饱和度只会把压缩噪点、色斑放大。封面那层按自己那张图的浓度算
       // （随图记录在 [_CoverBackdrop] 里），这里只算兜底背景（用户图）。
@@ -327,7 +327,7 @@ class _CoverBlurBackgroundState extends ConsumerState<_CoverBlurBackground> {
       ),
       key: const ValueKey<String>('cover-frozen'),
       saturation: effectiveBlurSaturation(
-        ref.watch(blurBackgroundSaturationProvider),
+        ref.watch(backgroundSaturationProvider),
         record.colorfulness,
       ),
       autoDarken: blurAutoDarkenAlpha(

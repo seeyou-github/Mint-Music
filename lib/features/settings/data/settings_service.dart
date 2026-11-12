@@ -248,10 +248,13 @@ class SettingsService {
   Future<void> setBlurBackgroundBrightness(double v) =>
       _prefs.setDouble(_blurBrightnessKey, v);
 
-  /// 背景图饱和度（1 = 原图）。
-  double getBlurBackgroundSaturation() =>
+  /// 主界面背景饱和度（1 = 原样，渐变与高斯模糊都生效）。
+  ///
+  /// 存储 key 沿用旧版 `blur_background_saturation`：它最早只作用于模糊图，
+  /// 用户已有的取值不能因为改名丢掉。
+  double getBackgroundSaturation() =>
       _prefs.getDouble(_blurSaturationKey) ?? 1.0;
-  Future<void> setBlurBackgroundSaturation(double v) =>
+  Future<void> setBackgroundSaturation(double v) =>
       _prefs.setDouble(_blurSaturationKey, v);
 
   /// 亮图自动压暗强度（0 = 关闭）。

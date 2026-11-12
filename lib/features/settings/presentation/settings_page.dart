@@ -1133,6 +1133,8 @@ class _AppearanceContent extends ConsumerWidget {
         : '背景渐变';
     final hasBlurImage =
         ref.watch(blurBackgroundImagePathProvider).valueOrNull != null;
+    // 背景饱和度：背景渐变、高斯模糊背景图（以及跟随封面）共用。
+    final backgroundSaturation = ref.watch(backgroundSaturationProvider);
     // 「歌曲列表不显示封面」开关（默认关闭）。
     final songListHideCover = ref.watch(songListHideCoverProvider);
 
@@ -1368,7 +1370,7 @@ class _AppearanceContent extends ConsumerWidget {
           SettingRow(
             icon: Icons.image_outlined,
             title: '高斯模糊背景图',
-            subtitle: '选一张图铺满主界面，可调模糊程度、亮度、饱和度与亮图压暗；未选择时沿用背景渐变',
+            subtitle: '选一张图铺满主界面，可调模糊程度、亮度与亮图压暗；未选择时沿用背景渐变',
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -1389,6 +1391,28 @@ class _AppearanceContent extends ConsumerWidget {
         else
           buildBackgroundGradientRow(),
         SettingDivider(colors: colors),
+        // 饱和度放在「跟随封面」上方：它是两种背景模式共用的调整，不是
+        // 模糊图专属；跟随封面时对封面派生的渐变 / 糊化背景也生效。
+        _SettingSlider(
+          icon: Icons.palette_outlined,
+          title: '饱和度',
+          subtitle: '背景渐变与高斯模糊背景图都生效：0 = 灰度，100% = 原样，最高 200%',
+          value: backgroundSaturation.clamp(0, 2),
+          min: 0,
+          max: 2,
+          divisions: 20,
+          valueLabel: '${(backgroundSaturation * 100).round()}%',
+          colors: colors,
+          onChanged: (v) =>
+              ref.read(backgroundSaturationProvider.notifier).state = v,
+          onChangeEnd: (v) => unawaited(
+            _doPersist(
+              ProviderScope.containerOf(context),
+              (s) => s.setBackgroundSaturation(v),
+            ),
+          ),
+        ),
+        SettingDivider(colors: colors),
         // 两种模式都有效：渐变模式下背景按封面主色派生，模糊模式下直接把
         // 当前歌曲封面糊成背景。仅深色主题生效——浅色主题背景要够亮，
         // 跟封面色会看不清文字。
@@ -1396,8 +1420,8 @@ class _AppearanceContent extends ConsumerWidget {
           icon: Icons.auto_awesome,
           title: '主界面跟随封面变色',
           subtitle: backgroundMode == BackgroundMode.blur
-              // 模糊程度 / 亮度 / 饱和度沿用「高斯模糊背景图」页里的滑条。
-              ? '播放歌曲时，主界面背景用当前歌曲封面做高斯模糊（模糊程度 / 亮度 / 饱和度沿用上面设置）'
+              // 模糊程度 / 亮度沿用「高斯模糊背景图」页里的滑条。
+              ? '播放歌曲时，主界面背景用当前歌曲封面做高斯模糊（模糊程度 / 亮度沿用上面的设置）'
               : '主界面背景按当前歌曲的封面色调变化',
           trailing: Switch(
             // 浅色主题下这个开关不生效：直接禁用（自动灰掉），也不显示为开启。
@@ -2457,6 +2481,9 @@ class _SettingSlider extends StatelessWidget {
   final int? divisions;
   final String valueLabel;
   final ValueChanged<double> onChanged;
+
+  /// 拖动结束：需要落盘时用，避免每动一像素就写一次设置。
+  final ValueChanged<double>? onChangeEnd;
   final ThemeColors colors;
 
   const _SettingSlider({
@@ -2469,6 +2496,7 @@ class _SettingSlider extends StatelessWidget {
     this.divisions,
     required this.valueLabel,
     required this.onChanged,
+    this.onChangeEnd,
     required this.colors,
   });
 
@@ -2518,6 +2546,7 @@ class _SettingSlider extends StatelessWidget {
             max: max,
             divisions: divisions,
             onChanged: onChanged,
+            onChangeEnd: onChangeEnd,
             activeColor: colors.primary,
             inactiveColor: colors.divider,
           ),

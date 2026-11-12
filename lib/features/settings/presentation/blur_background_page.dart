@@ -199,7 +199,9 @@ class _BlurBackgroundPageState extends ConsumerState<BlurBackgroundPage> {
     final selectedName = ref.watch(blurBackgroundImageNameProvider);
     final sigma = ref.watch(blurBackgroundSigmaProvider);
     final brightness = ref.watch(blurBackgroundBrightnessProvider);
-    final saturation = ref.watch(blurBackgroundSaturationProvider);
+    // 饱和度滑条已经移到「外观设置 → 背景颜色」里（渐变模式也生效），
+    // 这里只读它的值来画预览。
+    final saturation = ref.watch(backgroundSaturationProvider);
     final autoDarkenStrength = ref.watch(blurBackgroundAutoDarkenProvider);
     // 预览用用户图自己的平均亮度算自动压暗，和主界面同一套公式。
     final tint = ref.watch(blurBackgroundTintProvider).valueOrNull;
@@ -287,28 +289,6 @@ class _BlurBackgroundPageState extends ConsumerState<BlurBackgroundPage> {
                           },
                           onChangeEnd: (v) => unawaited(
                             _persist((s) => s.setBlurBackgroundBrightness(v)),
-                          ),
-                        ),
-                        SettingDivider(colors: colors),
-                        _BlurSlider(
-                          icon: Icons.palette_outlined,
-                          title: '饱和度',
-                          value: saturation.clamp(0, 2),
-                          min: 0,
-                          max: 2,
-                          divisions: 20,
-                          valueLabel: '${(saturation * 100).round()}%',
-                          colors: colors,
-                          onChanged: (v) {
-                            ref
-                                    .read(
-                                      blurBackgroundSaturationProvider.notifier,
-                                    )
-                                    .state =
-                                v;
-                          },
-                          onChangeEnd: (v) => unawaited(
-                            _persist((s) => s.setBlurBackgroundSaturation(v)),
                           ),
                         ),
                         SettingDivider(colors: colors),

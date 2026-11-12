@@ -52,10 +52,15 @@ final blurBackgroundSigmaProvider = StateProvider<double>((ref) => 30);
 /// 背景图亮度：1 = 原图，小于 1 压暗、大于 1 提亮。
 final blurBackgroundBrightnessProvider = StateProvider<double>((ref) => 0.85);
 
-/// 背景图饱和度：1 = 原图，0 = 灰度，大于 1 更艳。
+/// 主界面背景饱和度：1 = 原样，0 = 灰度，大于 1 更艳。
 ///
-/// 很多封面 / 照片颜色过浓，糊满整屏后刺眼；这里可以只降不升地往回收。
-final blurBackgroundSaturationProvider = StateProvider<double>((ref) => 1.0);
+/// 对两种背景模式都生效：
+///   - 背景渐变（内置 / 用户自建）直接调整渐变颜色；
+///   - 高斯模糊调整背景图本身；
+/// 控件底色都从背景主色派生，所以同样跟着这个系数走，不会出现「背景变灰、
+/// 卡片还是原色」。开启「主界面跟随封面变色」时，封面派生的渐变 / 封面
+/// 糊化背景也一样生效。
+final backgroundSaturationProvider = StateProvider<double>((ref) => 1.0);
 
 /// 饱和度用的颜色矩阵（[s] = 1 时是单位矩阵）。
 ///
