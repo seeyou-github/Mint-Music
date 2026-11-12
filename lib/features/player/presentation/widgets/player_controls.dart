@@ -554,12 +554,13 @@ class _PlayPauseButton extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final diameter = compact ? 54.0 : 64.0;
     final colors = ref.watch(themeColorsProvider);
-    // 浅色主题下主题色 15% 的圆底压在浅背景上几乎看不出来（像块脏印子），
-    // 干脆不铺底，和「上一首 / 下一首」一样只有图标；深色主题保留这圈淡底。
+    // 圆底始终保留（深色主题那圈淡底的观感），浅色主题换成深色实心圆：
+    // 浅色下主题色 15% 压在浅背景上几乎看不见，改用与「上一首 / 下一首」
+    // 图标同一色系（textPrimary）的深色，图标同时反白，才在深底上看得清。
     final isLight = ref.watch(isLightThemeActiveProvider);
-    final background = isLight
-        ? null
-        : colors.primary.withValues(alpha: 0.15);
+    final background = (isLight ? colors.textPrimary : colors.primary)
+        .withValues(alpha: isLight ? 0.85 : 0.15);
+    final iconColor = isLight ? colors.textOnPrimary : colors.primary;
     return GestureDetector(
       // 遵循 CeruMusic/Sollin-Music：加载期间禁用按钮，避免连点
       onTap: isLoading ? null : onPressed,
@@ -571,16 +572,14 @@ class _PlayPauseButton extends ConsumerWidget {
         decoration: BoxDecoration(
           color: background,
           shape: BoxShape.circle,
-          // 没有底色时不要投影：浅色背景上一个空投影看着像脏点。
-          boxShadow: background == null
-              ? const []
-              : [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.3),
-                    blurRadius: 16,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
+          // 浅色主题的底是深色实心圆，黑影压到 12% 只留一点立体感。
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: isLight ? 0.12 : 0.3),
+              blurRadius: isLight ? 12 : 16,
+              offset: Offset(0, isLight ? 2 : 4),
+            ),
+          ],
         ),
         child: isLoading
             ? Center(
@@ -589,14 +588,14 @@ class _PlayPauseButton extends ConsumerWidget {
                   height: compact ? 20 : 24,
                   child: CircularProgressIndicator(
                     strokeWidth: 2.5,
-                    color: colors.primary,
+                    color: iconColor,
                   ),
                 ),
               )
             : Icon(
                 isPlaying ? Icons.pause : Icons.play_arrow,
                 size: compact ? 26 : 32,
-                color: colors.primary,
+                color: iconColor,
               ),
       ),
     );
