@@ -11,8 +11,10 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 bool get useWideSongRowSpacing => !kIsWeb && io.Platform.isWindows;
 
 /// Windows 上「序号文字 / ⋮ 图标」到屏幕边缘的距离。
-/// 原来约 12dp，放大到 48dp（约 4 倍）；左右取同一个值，必然相等。
-const double wideSongRowEdge = 48.0;
+///
+/// 12dp（原紧凑值）→ 48dp（放宽 4 倍）→ 24dp（按需求在 48 的基础上减半）。
+/// 左右取同一个值，必然相等。
+const double wideSongRowEdge = 24.0;
 
 /// 序号列、「更多」按钮各自内部留的空白。
 ///
@@ -20,7 +22,7 @@ const double wideSongRowEdge = 48.0;
 /// 图标自带的 ≈12dp 内侧留白对应，保证左右视觉对称。
 const double wideSongIndexInset = 12.0;
 
-/// 行外侧 padding = 边缘距离 - 控件内侧留白 = 36dp。
+/// 行外侧 padding = 边缘距离 - 控件内侧留白 = 12dp。
 /// 左右都用它，序号左边距与「更多」按钮右边距始终相等。
 const double wideSongRowPadding = wideSongRowEdge - wideSongIndexInset;
 

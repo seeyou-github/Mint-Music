@@ -167,9 +167,9 @@ class SongListItem extends ConsumerWidget {
             ? colors.primary.withValues(alpha: 0.08)
             : Colors.transparent,
         child: Padding(
-          // Windows 上统一放大左右留白：行外侧 36dp + 序号列 / 更多按钮各
-          // 自带 12dp 内侧留白 = 序号文字与 ⋮ 距屏幕边缘都是 48dp（原 12dp
-          // 的 4 倍），左右严格对齐。其它平台沿用原来的紧凑布局：
+          // Windows 上统一放宽左右留白：行外侧 12dp + 序号列 / 更多按钮各
+          // 自带 12dp 内侧留白 = 序号文字与 ⋮ 距屏幕边缘都是 24dp，
+          // 左右严格对齐。其它平台沿用原来的紧凑布局：
           // 行左 12dp，行尾是「更多」按钮时不额外留白，靠按钮内部留白让
           // 三个点距屏幕右缘 ≈12dp。
           padding: EdgeInsets.only(
@@ -667,8 +667,8 @@ class SongListItem extends ConsumerWidget {
   /// 「更多」按钮的宽度：图标 20，左右各留 4。
   ///
   /// 三个点到按钮右缘 ≈12dp。非 Windows 上行尾内边距 0、行左 12dp，左右
-  /// 正好对齐；Windows 上行左右各 [wideSongRowPadding]（36dp），两侧再加
-  /// 这段 12dp，序号文字与 ⋮ 距屏幕边缘都是 48dp。
+  /// 正好对齐；Windows 上行左右各 [wideSongRowPadding]（12dp），两侧再加
+  /// 这段 12dp，序号文字与 ⋮ 距屏幕边缘都是 24dp。
   static const double _menuButtonWidth = 28;
 
   /// 「更多」按钮的高度（与行内其它元素居中对齐即可，撑满行高的点击区）。
