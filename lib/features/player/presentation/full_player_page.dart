@@ -11,7 +11,6 @@ import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
-import '../../../app/player_page_background.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../../../shared/widgets/fallback_cover_image.dart';
 import '../../../shared/widgets/source_name_tag.dart';
@@ -166,11 +165,13 @@ class _FullPlayerPageState extends ConsumerState<FullPlayerPage> {
         if (!didPop) _beginExit();
       },
       child: Scaffold(
+        // 背景直接透出 `MaterialApp.builder` 里那层全局背景：这一页是
+        // NoTransitionPage（路由没有转场，push 后立即 opaque），下层页面
+        // 已经离场，透明不会漏出内容。不再自己挂第二份 AppBackgroundLayer，
+        // 保证与主界面逐像素一致，也省掉一份常驻的全屏模糊。
+        backgroundColor: Colors.transparent,
         body: Stack(
           children: [
-            // 背景就是主界面那一层（同一个 AppBackgroundLayer）：
-            // 渐变 / 模糊图 / 跟随封面全都同源，也不额外压暗 / 叠蒙版。
-            const PlayerPageBackground(),
             // 手机横屏左栏是紧凑的「封面 + 控件」，没有留给频谱条的空间，
             // 否则它会横跨两栏压在播放控制上。
             if (audioVisualizer && !ResponsiveLayout.isPhoneLandscape(context))

@@ -16,7 +16,6 @@ import '../../settings/application/settings_providers.dart';
 import '../../library/application/playlist_providers.dart';
 import '../../library/domain/models/playlist.dart';
 import '../application/root_overlay_tracker.dart';
-import '../../../app/player_page_background.dart';
 import 'widgets/lyric_format_tag.dart';
 import 'widgets/lyric_scroll_view.dart';
 import 'widgets/player_controls.dart';
@@ -140,6 +139,9 @@ class _LyricPageState extends ConsumerState<LyricPage> {
       child: TickerMode(
         enabled: !_isLeaving,
         child: Scaffold(
+          // 与播放详情页一致：NoTransitionPage 路由立即 opaque，直接透出
+          // 全局那层背景，不再自己挂第二份 AppBackgroundLayer。
+          backgroundColor: Colors.transparent,
           body: GestureDetector(
             behavior: HitTestBehavior.translucent,
             onHorizontalDragEnd: (details) {
@@ -150,10 +152,6 @@ class _LyricPageState extends ConsumerState<LyricPage> {
             },
             child: Stack(
               children: [
-                // 背景就是主界面那一层（同一个 AppBackgroundLayer）：
-                // 渐变 / 模糊图 / 跟随封面全都同源，和播放详情页、主界面
-                // 是同一块背景，切页时不会看到「换了一块」。
-                const PlayerPageBackground(),
                 SafeArea(
                   child: Column(
                     children: [

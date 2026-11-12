@@ -17,7 +17,7 @@ import '../shared/widgets/music_cover_image.dart';
 ///
 /// 只记「哪首歌」不够：切歌时新封面还没下来，背景要保持画面完全不动，就得
 /// 把上一张图的字节直接留着画，而不是让各层再去磁盘 / 网络取一遍。
-/// 放在全局 provider 里还顺便解决了主界面、二级页、播放页各有一份背景层、
+/// 放在全局 provider 里还顺便解决了主界面、二级页转场副本各有一份背景层、
 /// 新建的那层拿不到上一张图的问题。
 class _CoverBackdrop {
   const _CoverBackdrop(
@@ -173,8 +173,8 @@ class _GradientBackground extends ConsumerWidget {
 /// 且饱和度、自动压暗已是最终值。从未取到过封面时退回 [fallback]（用户
 /// 添加的模糊图 / 渐变）。
 ///
-/// 「上一张封面」记在 provider 里而不是本组件的 State 里：主界面 / 二级页 /
-/// 播放页任意一层背景重建，都能立刻拿到同一张图，不用重新加载。
+/// 「上一张封面」记在 provider 里而不是本组件的 State 里：主界面 / 二级页
+/// 转场副本任意一层背景重建，都能立刻拿到同一张图，不用重新加载。
 class _CoverBlurBackground extends ConsumerStatefulWidget {
   const _CoverBlurBackground({
     required this.song,
@@ -211,7 +211,7 @@ class _CoverBlurBackgroundState extends ConsumerState<_CoverBlurBackground> {
 
   /// 已经分析过的封面：浓度 / 主色只算一次。
   ///
-  /// 主界面 / 二级页 / 播放页各有一层背景，同一份字节会被回调好几次；按
+  /// 主界面 / 二级页转场副本各有一层背景，同一份字节会被回调好几次；按
   /// 「封面 key + 字节身份」缓存，编辑标签换了封面字节也能重新算。
   static final Map<String, Future<CoverColorResult>> _coverAnalyses = {};
 
