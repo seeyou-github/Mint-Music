@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../player/domain/services/cover_color_extractor.dart';
 import '../data/radio_cover_cache.dart';
 import '../data/radio_store.dart';
 import '../domain/models/radio_station.dart';
@@ -10,6 +11,13 @@ export '../data/radio_store.dart' show RadioStore;
 export '../domain/models/radio_station.dart';
 
 final radioStoreProvider = Provider<RadioStore>((ref) => RadioStore());
+
+/// 电台封面的整体亮度（0..1），按封面地址缓存。
+///
+/// 深色模式下用来判断亮色封面要不要压一层黑；取不到时为 null（不压暗）。
+final radioCoverLuminanceProvider = FutureProvider.family<double?, String>(
+  (ref, source) => CoverColorExtractor.averageLuminanceFromUrl(source),
+);
 
 /// 电台数据（分类 + 电台列表）。
 ///

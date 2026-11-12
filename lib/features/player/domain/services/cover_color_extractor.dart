@@ -83,41 +83,43 @@ class CoverColorResult {
 }
 
 class CoverColorExtractor {
+  /// 把图片解码成原始 RGBA 字节；解码失败 / 超时返回 null。
+  static Future<Uint8List?> _rgbaBytes(ImageProvider imageProvider) async {
+    final imageStream = imageProvider.resolve(const ImageConfiguration());
+    final completer = Completer<ui.Image>();
+    late ImageStreamListener listener;
+    listener = ImageStreamListener(
+      (ImageInfo info, bool _) {
+        imageStream.removeListener(listener);
+        completer.complete(info.image);
+      },
+      onError: (error, stackTrace) {
+        imageStream.removeListener(listener);
+        completer.completeError(error, stackTrace);
+      },
+    );
+    imageStream.addListener(listener);
+
+    final image = await completer.future.timeout(
+      const Duration(seconds: 8),
+      onTimeout: () {
+        imageStream.removeListener(listener);
+        throw TimeoutException('Image decode timeout');
+      },
+    );
+
+    final byteData = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+    image.dispose();
+    return byteData?.buffer.asUint8List();
+  }
+
   static Future<CoverColorResult> extract(ImageProvider imageProvider) async {
     try {
-      final imageStream = imageProvider.resolve(const ImageConfiguration());
-      final completer = Completer<ui.Image>();
-      late ImageStreamListener listener;
-      listener = ImageStreamListener(
-        (ImageInfo info, bool _) {
-          imageStream.removeListener(listener);
-          completer.complete(info.image);
-        },
-        onError: (error, stackTrace) {
-          imageStream.removeListener(listener);
-          completer.completeError(error, stackTrace);
-        },
-      );
-      imageStream.addListener(listener);
-
-      final image = await completer.future.timeout(
-        const Duration(seconds: 8),
-        onTimeout: () {
-          imageStream.removeListener(listener);
-          throw TimeoutException('Image decode timeout');
-        },
-      );
-
-      final byteData = await image.toByteData(
-        format: ui.ImageByteFormat.rawRgba,
-      );
-      image.dispose();
-
-      if (byteData == null) {
+      final rgbaBytes = await _rgbaBytes(imageProvider);
+      if (rgbaBytes == null) {
         return CoverColorResult.defaultResult;
       }
 
-      final rgbaBytes = byteData.buffer.asUint8List();
       final (dominantArgb, colorfulness) = await compute(
         _extractDominantColor,
         rgbaBytes,
@@ -219,27 +221,80 @@ class CoverColorExtractor {
     }
   }
 
-  /// 从封面地址（网络 URL / 本地文件路径）提取主色。
-  ///
-  /// 歌单 / 专辑 / 作者 / 榜单详情页的顶栏背景用它，取色算法与播放页相同。
-  static Future<CoverColorResult> extractFromUrl(String? url) async {
-    if (url == null || url.isEmpty) return CoverColorResult.defaultResult;
+  /// 从封面地址（网络 URL / 本地文件路径）取出对应的 [ImageProvider]。
+  static Future<ImageProvider?> _providerForUrl(String? url) async {
+    if (url == null || url.isEmpty) return null;
     final lower = url.toLowerCase();
     if (lower.startsWith('http://') || lower.startsWith('https://')) {
-      return extract(
-        CachedNetworkImageProvider(url, cacheManager: AppImageCache.manager),
+      return CachedNetworkImageProvider(
+        url,
+        cacheManager: AppImageCache.manager,
       );
     }
     try {
       final file = File(url);
-      if (await file.exists()) return extract(FileImage(file));
+      if (await file.exists()) return FileImage(file);
     } catch (_) {}
-    return CoverColorResult.defaultResult;
+    return null;
+  }
+
+  /// 从封面地址（网络 URL / 本地文件路径）提取主色。
+  ///
+  /// 歌单 / 专辑 / 作者 / 榜单详情页的顶栏背景用它，取色算法与播放页相同。
+  static Future<CoverColorResult> extractFromUrl(String? url) async {
+    final provider = await _providerForUrl(url);
+    if (provider == null) return CoverColorResult.defaultResult;
+    return extract(provider);
+  }
+
+  /// 封面整体亮度（0..1）：所有不透明像素的感知亮度均值。
+  ///
+  /// 用于「亮色封面要不要压暗」这类视觉判断。探测时先把图缩到 [probeSize]
+  /// 见方再解码，开销和原图尺寸无关；取不到时返回 null。
+  static Future<double?> averageLuminanceFromUrl(
+    String? url, {
+    int probeSize = 96,
+  }) async {
+    try {
+      final provider = await _providerForUrl(url);
+      if (provider == null) return null;
+      final rgbaBytes = await _rgbaBytes(
+        ResizeImage(
+          provider,
+          width: probeSize,
+          height: probeSize,
+          allowUpscaling: false,
+        ),
+      );
+      if (rgbaBytes == null) return null;
+      return await compute(_averageLuminance, rgbaBytes);
+    } catch (_) {
+      return null;
+    }
   }
 
   static Color _blendWithWhite(Color color, double factor) {
     return Color.lerp(Colors.white, color, 1 - factor)!;
   }
+}
+
+/// 所有不透明像素的平均感知亮度（0..1）；全透明图按 0 处理。
+double _averageLuminance(Uint8List rgbaBytes) {
+  final pixelCount = rgbaBytes.length ~/ 4;
+  if (pixelCount == 0) return 0;
+  double sum = 0;
+  int count = 0;
+  for (int i = 0; i < pixelCount; i++) {
+    final offset = i * 4;
+    if (rgbaBytes[offset + 3] < 128) continue;
+    sum +=
+        (rgbaBytes[offset] * 299 +
+            rgbaBytes[offset + 1] * 587 +
+            rgbaBytes[offset + 2] * 114) /
+        (255 * 1000);
+    count++;
+  }
+  return count == 0 ? 0 : sum / count;
 }
 
 /// CeruMusic-style eager pre-computation: watches current song and

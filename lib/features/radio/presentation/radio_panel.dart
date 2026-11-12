@@ -1,6 +1,7 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
-import 'dart:ui' show ImageFilter;
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -334,6 +335,16 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
     // 浅色主题（黑字）时名称仍然看得清。
     final nameColor = colors.textPrimary;
     final scrimColor = _scrimColorFor(nameColor);
+    final coverSource = station.displayCover;
+    // 深色模式下亮色封面会盖过右上角菜单和歌名，压一层 30% 黑。正在播放的
+    // 卡片背景是当前歌曲的模糊封面（自带 42% 黑），不用再叠。
+    final dimCover =
+        currentSong == null &&
+        coverSource.isNotEmpty &&
+        !ref.watch(isLightThemeActiveProvider) &&
+        (ref.watch(radioCoverLuminanceProvider(coverSource)).valueOrNull ??
+                0) >=
+            _brightCoverLuminance;
     return _buildCardFrame(
       colors,
       child: InkWell(
@@ -347,7 +358,12 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
                 fallbackColor: colors.surfaceVariant,
               )
             else
-              _buildCover(colors, station.displayCover, fallback: Icons.radio),
+              _buildCover(
+                colors,
+                coverSource,
+                fallback: Icons.radio,
+                dim: dimCover,
+              ),
             Positioned(
               left: 0,
               right: 0,
@@ -476,6 +492,7 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
     ThemeColors colors,
     String source, {
     required IconData fallback,
+    bool dim = false,
   }) {
     final value = source.trim();
     if (value.isEmpty) {
@@ -484,23 +501,42 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
         child: Icon(fallback, size: 40, color: colors.textHint),
       );
     }
-    if (value.startsWith('http')) {
-      return Image.network(
-        value,
-        fit: BoxFit.cover,
-        errorBuilder: (_, _, _) => Container(
-          color: colors.surfaceVariant,
-          child: Icon(fallback, size: 40, color: colors.textHint),
-        ),
-      );
-    }
-    return Image.file(
-      File(value),
-      fit: BoxFit.cover,
-      errorBuilder: (_, _, _) => Container(
-        color: colors.surfaceVariant,
-        child: Icon(fallback, size: 40, color: colors.textHint),
-      ),
+    // 小图也要铺满整张卡片：显式给满尺寸 + cover 放大，并用高质量插值平滑
+    // 放大后的边缘，避免小尺寸封面在卡片里缩成一块或发糊。
+    Widget image(String path) => path.startsWith('http')
+        ? Image.network(
+            path,
+            width: double.infinity,
+            height: double.infinity,
+            fit: BoxFit.cover,
+            filterQuality: FilterQuality.high,
+            errorBuilder: (_, _, _) => _buildCoverFallback(colors, fallback),
+          )
+        : Image.file(
+            File(path),
+            width: double.infinity,
+            height: double.infinity,
+            fit: BoxFit.cover,
+            filterQuality: FilterQuality.high,
+            errorBuilder: (_, _, _) => _buildCoverFallback(colors, fallback),
+          );
+
+    final cover = image(value);
+    if (!dim) return cover;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        cover,
+        // 亮色封面压 30% 黑，保证右上角菜单和底部歌名仍然看得清。
+        ColoredBox(color: Colors.black.withValues(alpha: 0.3)),
+      ],
+    );
+  }
+
+  Widget _buildCoverFallback(ThemeColors colors, IconData fallback) {
+    return Container(
+      color: colors.surfaceVariant,
+      child: Icon(fallback, size: 40, color: colors.textHint),
     );
   }
 
@@ -681,6 +717,9 @@ Color _scrimColorFor(Color textColor) {
   return lightText ? Colors.black : Colors.white;
 }
 
+/// 深色模式下，封面平均亮度（0..1）达到这个值就压一层 30% 黑。
+const _brightCoverLuminance = 0.55;
+
 /// 电台卡片正在播放时的背景：当前歌曲封面 + 高斯模糊 + 黑色半透明遮罩。
 ///
 /// 这里只做一次静态栅格化（模糊层在 RepaintBoundary 里），不再有漂移光斑 /
@@ -707,7 +746,7 @@ class _RadioCardBackground extends StatelessWidget {
           Transform.scale(
             scale: 1.18,
             child: ImageFiltered(
-              imageFilter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+              imageFilter: ui.ImageFilter.blur(sigmaX: 14, sigmaY: 14),
               child: MusicCoverImage(
                 key: ValueKey('radio_card_bg_${song.id}'),
                 url: song.coverUrl,
