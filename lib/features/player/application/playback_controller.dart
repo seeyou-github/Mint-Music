@@ -1678,6 +1678,59 @@ class PlaybackController extends StateNotifier<PlaybackState> {
 
   // ==================== 下一首 / 上一首（照搬 CeruMusic 逻辑） ====================
 
+  // ==================== 随机播放（洗牌牌堆） ====================
+
+  final Random _shuffleRandom = Random();
+
+  /// 本轮还没抽过的队列索引，洗好序后逐张取用。
+  final List<int> _shuffleDeck = <int>[];
+
+  /// 生成当前牌堆时的队列指纹；队列增删 / 换歌单后牌堆作废，重新洗牌。
+  int _shuffleQueueSignature = 0;
+
+  int _queueSignature(List<Song> queue) => Object.hash(
+        queue.length,
+        Object.hashAll(queue.map((song) => song.id)),
+      );
+
+  void _reshuffleDeck(int length) {
+    _shuffleDeck
+      ..clear()
+      ..addAll(List<int>.generate(length, (index) => index))
+      ..shuffle(_shuffleRandom);
+  }
+
+  /// 抽下一首的随机索引。
+  ///
+  /// 原来的 `Random().nextInt(length)` 有两处毛病：可能直接抽中当前这首
+  /// （连播两遍同一首），也可能刚播过的歌没隔几首又出现。这里改成
+  /// 「洗牌牌堆」：一轮里每首歌只出现一次，取完再重洗，位置自然分散；
+  /// 取牌时跳过当前歌（含队列里同 id 的重复项）与黑名单歌曲。
+  int? _pickShuffleIndex(List<Song> queue, int currentIndex) {
+    final length = queue.length;
+    if (length <= 1) return null;
+
+    final signature = _queueSignature(queue);
+    if (signature != _shuffleQueueSignature) {
+      _shuffleQueueSignature = signature;
+      _shuffleDeck.clear();
+    }
+
+    final currentId = state.currentSong?.id;
+    // 最多翻两副牌：被跳过的歌仍留在队列里，牌堆取完会自动重洗。
+    for (var attempt = 0; attempt < length * 2; attempt++) {
+      if (_shuffleDeck.isEmpty) _reshuffleDeck(length);
+      final picked = _shuffleDeck.removeLast();
+      if (picked == currentIndex ||
+          (currentId != null && queue[picked].id == currentId) ||
+          _blocked(queue[picked])) {
+        continue;
+      }
+      return picked;
+    }
+    return null;
+  }
+
   /// 预选切歌目标，提交时复用索引，避免随机播放再次抽签。
   int? skipTargetIndex({required bool next}) {
     final queue = state.queue;
@@ -1690,9 +1743,12 @@ class PlaybackController extends StateNotifier<PlaybackState> {
       return currentIndex < 0 ? 0 : currentIndex;
     }
     final step = next ? 1 : -1;
-    final index = state.playMode == PlayMode.shuffle
-        ? Random().nextInt(queue.length)
-        : next
+    if (state.playMode == PlayMode.shuffle) {
+      // 牌堆里找不到可播放的歌（几乎全在黑名单）→ 退回顺序查找。
+      return _pickShuffleIndex(queue, currentIndex) ??
+          _nextPlayableIndex(currentIndex, step: step);
+    }
+    final index = next
         ? (currentIndex + 1) % queue.length
         : currentIndex <= 0
         ? queue.length - 1
