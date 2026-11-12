@@ -132,14 +132,28 @@ class QualitySizeFormatter {
     return null;
   }
 
+  /// 本地文件大小缓存：列表构建期会逐行调 [sizeText]，每次都 existsSync +
+  /// lengthSync 太重；文件大小在会话内基本不变，10 秒 TTL 足够刚下载完成的
+  /// 文件刷新显示。
+  static final _fileSizeCache = <String, (int?, DateTime)>{};
+  static const _fileSizeCacheTtl = Duration(seconds: 10);
+
   static int? _localFileSize(Song song) {
     final path = song.filePath ?? song.sourceUrl;
     if (path == null || path.startsWith('http')) return null;
+    final now = DateTime.now();
+    final cached = _fileSizeCache[path];
+    if (cached != null && now.difference(cached.$2) < _fileSizeCacheTtl) {
+      return cached.$1;
+    }
+    if (_fileSizeCache.length > 2000) _fileSizeCache.clear();
     try {
       final file = File(path);
-      if (!file.existsSync()) return null;
-      return file.lengthSync();
+      final size = file.existsSync() ? file.lengthSync() : null;
+      _fileSizeCache[path] = (size, now);
+      return size;
     } catch (_) {
+      _fileSizeCache[path] = (null, now);
       return null;
     }
   }
