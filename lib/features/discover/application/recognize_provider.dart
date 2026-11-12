@@ -128,6 +128,7 @@ class RecognizeNotifier extends StateNotifier<RecognizeState> {
       );
       if (!afpReady) {
         debugPrint('[Recognize] AFP 初始化失败');
+        _endSessionTimeout();
         state = state.copyWith(
           status: RecognizeStatus.failed,
           errorMessage: tr('音频指纹模块初始化失败，请重试'),
@@ -186,6 +187,7 @@ class RecognizeNotifier extends StateNotifier<RecognizeState> {
       });
     } catch (e) {
       debugPrint('[Recognize] startRecording failed: $e');
+      _endSessionTimeout();
       state = state.copyWith(
         status: RecognizeStatus.failed,
         errorMessage: tr('启动录音失败：$e'),
@@ -283,6 +285,7 @@ class RecognizeNotifier extends StateNotifier<RecognizeState> {
         onTimeout: () => false,
       );
       if (!afpReady) {
+        _endSessionTimeout();
         state = state.copyWith(
           status: RecognizeStatus.failed,
           errorMessage: tr('音频指纹模块初始化失败'),
@@ -298,6 +301,7 @@ class RecognizeNotifier extends StateNotifier<RecognizeState> {
       // 解码 WAV 并重采样
       final Float64List pcm64 = AudioProcessor.decodeWavToMonoFloat(bytes);
       if (pcm64.isEmpty) {
+        _endSessionTimeout();
         state = state.copyWith(
           status: RecognizeStatus.failed,
           errorMessage: tr('无法解码音频文件'),
@@ -318,6 +322,7 @@ class RecognizeNotifier extends StateNotifier<RecognizeState> {
       final fingerprint = await _afpService.generateFingerprint(pcm32);
 
       if (fingerprint == null) {
+        _endSessionTimeout();
         state = state.copyWith(
           status: RecognizeStatus.failed,
           errorMessage: tr('指纹生成失败'),
@@ -354,6 +359,7 @@ class RecognizeNotifier extends StateNotifier<RecognizeState> {
         errorMessage: tr('识别失败：$e'),
       );
     } finally {
+      _endSessionTimeout();
       _active = false;
     }
   }
