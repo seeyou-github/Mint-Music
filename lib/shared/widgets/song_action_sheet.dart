@@ -68,7 +68,7 @@ const double _sheetMaxHeightRatio = 0.85;
 /// 9/16 屏高（见 SDK 中 `_defaultScrollControlDisabledMaxHeightRatio`），
 /// 而这些弹层用的是 `Column(mainAxisSize: min)` + 固定子项，
 /// 高度一变就会溢出成黄黑斜条。
-class _ScrollableSheet extends StatelessWidget {
+class _ScrollableSheet extends ConsumerWidget {
   final String? title;
 
   /// 标题下方的内容，超出时自动滚动。
@@ -77,11 +77,13 @@ class _ScrollableSheet extends StatelessWidget {
   const _ScrollableSheet({required this.children, this.title});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    // 这类二级弹层也要跟随主题：原来写死深色底 + 白字，浅色主题下成异类。
+    final colors = ref.watch(themeColorsProvider);
     return Container(
-      decoration: const BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      decoration: BoxDecoration(
+        color: colors.dialogSurface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
       ),
       child: SafeArea(
         top: false,
@@ -97,7 +99,7 @@ class _ScrollableSheet extends StatelessWidget {
                 width: 40,
                 height: 4,
                 decoration: BoxDecoration(
-                  color: AppColors.divider,
+                  color: colors.divider,
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
@@ -106,10 +108,10 @@ class _ScrollableSheet extends StatelessWidget {
                 Text(
                   title!,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w600,
-                    color: AppColors.textPrimary,
+                    color: colors.textPrimary,
                   ),
                 ),
               ],
@@ -468,6 +470,9 @@ class SongActionSheet extends ConsumerStatefulWidget {
 }
 
 class _SongActionSheetState extends ConsumerState<SongActionSheet> {
+  /// 当前主题色：弹层内的文字 / 分割线统一用它，避免写死深色主题的值。
+  ThemeColors get _colors => ref.read(themeColorsProvider);
+
   bool _isFavorited = false;
 
   @override
@@ -501,7 +506,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
     final bottomPadding = MediaQuery.of(context).padding.bottom;
 
     // Compact mode (player menu) uses always-dark colors matching the play queue window.
-    // Full mode (song context menu) uses the theme-provided colors.
+    // Full mode (song context menu) uses the theme-provided _colors.
     final colors = widget.compactMode
         ? ThemeColors.darkWithPrimary(AppColors.primary)
         : themeColors;
@@ -510,7 +515,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
       decoration: BoxDecoration(
         // Compact mode (player menu) uses always-dark surface matching the play queue.
         // Full mode (song context menu) uses the themed surface (white in light theme).
-        color: widget.compactMode ? AppColors.surface : colors.dialogSurface,
+        color: widget.compactMode ? AppColors.surface : _colors.dialogSurface,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
       ),
       child: SafeArea(
@@ -526,7 +531,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                   width: 40,
                   height: 4,
                   decoration: BoxDecoration(
-                    color: AppColors.divider,
+                    color: _colors.divider,
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
@@ -537,8 +542,8 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                 Divider(
                   height: 1,
                   color: widget.compactMode
-                      ? AppColors.divider
-                      : colors.divider,
+                      ? _colors.divider
+                      : _colors.divider,
                 ),
                 // --- Compact mode (player menu: 4 options matching play queue style) ---
                 if (widget.compactMode) ...[
@@ -607,8 +612,8 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                       icon: Icons.remove_circle_outline,
                       label: context.tr('移除'),
                       onTap: widget.onRemove!,
-                      iconColor: colors.error,
-                      labelColor: colors.error,
+                      iconColor: _colors.error,
+                      labelColor: _colors.error,
                     ),
                   if (widget.showDelete && widget.onDelete != null)
                     _buildActionItem(
@@ -616,8 +621,8 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                       icon: Icons.delete_outline,
                       label: context.tr('删除'),
                       onTap: widget.onDelete!,
-                      iconColor: colors.error,
-                      labelColor: colors.error,
+                      iconColor: _colors.error,
+                      labelColor: _colors.error,
                     ),
                   if (widget.showEditTag)
                     _buildActionItem(
@@ -730,12 +735,12 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
             Icon(
               Icons.format_list_bulleted,
               size: 20,
-              color: colors.textSecondary,
+              color: _colors.textSecondary,
             ),
             const SizedBox(width: AppSpacing.md),
             Text(
               '$label：',
-              style: TextStyle(fontSize: 15, color: colors.textSecondary),
+              style: TextStyle(fontSize: 15, color: _colors.textSecondary),
             ),
             Expanded(
               child: Text(
@@ -744,12 +749,12 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   fontSize: 15,
-                  color: valueColor ?? colors.textPrimary,
+                  color: valueColor ?? _colors.textPrimary,
                 ),
               ),
             ),
             if (showChevron)
-              Icon(Icons.chevron_right, size: 18, color: colors.textHint),
+              Icon(Icons.chevron_right, size: 18, color: _colors.textHint),
           ],
         ),
       ),
@@ -783,7 +788,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
       value: _sourceLabel(type, ctx.id),
       onTap: clickable ? _openSource : null,
       showChevron: clickable,
-      valueColor: clickable ? colors.primary : colors.textHint,
+      valueColor: clickable ? _colors.primary : _colors.textHint,
     );
   }
 
@@ -947,13 +952,13 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
         ),
         child: Row(
           children: [
-            Icon(icon, size: 22, color: iconColor ?? colors.textSecondary),
+            Icon(icon, size: 22, color: iconColor ?? _colors.textSecondary),
             const SizedBox(width: AppSpacing.md),
             Text(
               label,
               style: TextStyle(
                 fontSize: 15,
-                color: labelColor ?? colors.textPrimary,
+                color: labelColor ?? _colors.textPrimary,
               ),
             ),
           ],
@@ -988,18 +993,18 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
         ),
         child: Row(
           children: [
-            Icon(Icons.lyrics_outlined, size: 22, color: colors.textSecondary),
+            Icon(Icons.lyrics_outlined, size: 22, color: _colors.textSecondary),
             const SizedBox(width: AppSpacing.md),
             Expanded(
               child: Text(
                 context.tr('桌面歌词'),
-                style: TextStyle(fontSize: 15, color: colors.textPrimary),
+                style: TextStyle(fontSize: 15, color: _colors.textPrimary),
               ),
             ),
             Switch(
               value: enabled,
               onChanged: (_) => toggle(),
-              activeThumbColor: colors.primary,
+              activeThumbColor: _colors.primary,
             ),
           ],
         ),
@@ -1031,7 +1036,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
           icon: Icons.block,
           label: context.tr(widget.compactMode ? '歌曲添加到黑名单' : '添加到黑名单'),
           onTap: () => unawaited(notifier.addSong(song)),
-          iconColor: colors.error,
+          iconColor: _colors.error,
         ),
       );
     } else if (songListed) {
@@ -1094,14 +1099,14 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
             Icon(
               _isFavorited ? Icons.favorite : Icons.favorite_border,
               size: 22,
-              color: _isFavorited ? Colors.red : colors.textSecondary,
+              color: _isFavorited ? Colors.red : _colors.textSecondary,
             ),
             const SizedBox(width: AppSpacing.md),
             Text(
               context.tr(_isFavorited ? '已收藏' : '收藏'),
               style: TextStyle(
                 fontSize: 15,
-                color: _isFavorited ? Colors.red : colors.textPrimary,
+                color: _isFavorited ? Colors.red : _colors.textPrimary,
               ),
             ),
           ],
@@ -1123,11 +1128,11 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
         ),
         child: Row(
           children: [
-            Icon(Icons.speed, size: 22, color: colors.textSecondary),
+            Icon(Icons.speed, size: 22, color: _colors.textSecondary),
             const SizedBox(width: AppSpacing.md),
             Text(
               context.tr('倍速'),
-              style: TextStyle(fontSize: 15, color: colors.textPrimary),
+              style: TextStyle(fontSize: 15, color: _colors.textPrimary),
             ),
           ],
         ),
@@ -1227,11 +1232,11 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
         ),
         child: Row(
           children: [
-            Icon(Icons.search, size: 22, color: colors.textSecondary),
+            Icon(Icons.search, size: 22, color: _colors.textSecondary),
             const SizedBox(width: AppSpacing.md),
             Text(
               context.tr('搜索歌词'),
-              style: TextStyle(fontSize: 15, color: colors.textSecondary),
+              style: TextStyle(fontSize: 15, color: _colors.textSecondary),
             ),
           ],
         ),
@@ -1256,11 +1261,11 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
         ),
         child: Row(
           children: [
-            Icon(Icons.lyrics, size: 22, color: colors.textSecondary),
+            Icon(Icons.lyrics, size: 22, color: _colors.textSecondary),
             const SizedBox(width: AppSpacing.md),
             Text(
               context.tr('歌词设置'),
-              style: TextStyle(fontSize: 15, color: colors.textSecondary),
+              style: TextStyle(fontSize: 15, color: _colors.textSecondary),
             ),
           ],
         ),
@@ -1310,11 +1315,11 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                       });
                     },
                   ),
-                  const Divider(
+                  Divider(
                     height: 1,
                     indent: 16,
                     endIndent: 16,
-                    color: AppColors.divider,
+                    color: _colors.divider,
                   ),
                   // 字体大小
                   _fontSettingRow(
@@ -1328,11 +1333,11 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                       });
                     },
                   ),
-                  const Divider(
+                  Divider(
                     height: 1,
                     indent: 16,
                     endIndent: 16,
-                    color: AppColors.divider,
+                    color: _colors.divider,
                   ),
                   // 字重
                   _fontSettingRow(
@@ -1373,7 +1378,6 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
     String value,
     VoidCallback onTap,
   ) {
-    final colors = c.read(themeColorsProvider);
     return InkWell(
       onTap: onTap,
       child: Padding(
@@ -1386,15 +1390,15 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
             Expanded(
               child: Text(
                 title,
-                style: TextStyle(fontSize: 15, color: colors.textPrimary),
+                style: TextStyle(fontSize: 15, color: _colors.textPrimary),
               ),
             ),
             Text(
               value,
-              style: TextStyle(fontSize: 13, color: colors.textSecondary),
+              style: TextStyle(fontSize: 13, color: _colors.textSecondary),
             ),
             const SizedBox(width: 4),
-            Icon(Icons.chevron_right, size: 18, color: colors.textSecondary),
+            Icon(Icons.chevron_right, size: 18, color: _colors.textSecondary),
           ],
         ),
       ),
@@ -1441,7 +1445,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                 style: TextStyle(
                   color: f == currentLabel
                       ? AppColors.primary
-                      : AppColors.textPrimary,
+                      : _colors.textPrimary,
                 ),
               ),
               trailing: f == currentLabel
@@ -1496,9 +1500,9 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                       children: [
                         Text(
                           '${(rate * 100).toInt()}%',
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 14,
-                            color: AppColors.textPrimary,
+                            color: _colors.textPrimary,
                           ),
                         ),
                         Expanded(
@@ -1566,7 +1570,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                       width: 40,
                       height: 4,
                       decoration: BoxDecoration(
-                        color: AppColors.divider,
+                        color: _colors.divider,
                         borderRadius: BorderRadius.circular(2),
                       ),
                     ),
@@ -1576,7 +1580,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                       style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w600,
-                        color: AppColors.textPrimary,
+                        color: _colors.textPrimary,
                       ),
                     ),
                     const SizedBox(height: 12),
@@ -1588,7 +1592,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                           style: TextStyle(
                             color: v == current
                                 ? AppColors.primary
-                                : AppColors.textPrimary,
+                                : _colors.textPrimary,
                           ),
                         ),
                         trailing: v == current
@@ -1782,7 +1786,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                             width: 40,
                             height: 4,
                             decoration: BoxDecoration(
-                              color: AppColors.divider,
+                              color: _colors.divider,
                               borderRadius: BorderRadius.circular(2),
                             ),
                           ),
@@ -1792,7 +1796,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                             style: TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.w600,
-                              color: AppColors.textPrimary,
+                              color: _colors.textPrimary,
                             ),
                           ),
                           const SizedBox(height: AppSpacing.sm),
@@ -1802,7 +1806,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                               padding: const EdgeInsets.all(AppSpacing.xl),
                               child: Text(
                                 ctx.tr('暂无歌单'),
-                                style: TextStyle(color: AppColors.textHint),
+                                style: TextStyle(color: _colors.textHint),
                               ),
                             )
                           else
@@ -1810,19 +1814,19 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                               (Playlist playlist) => ListTile(
                                 leading: Icon(
                                   Icons.queue_music,
-                                  color: AppColors.textSecondary,
+                                  color: _colors.textSecondary,
                                 ),
                                 title: Text(
                                   playlist.name,
                                   style: TextStyle(
-                                    color: AppColors.textPrimary,
+                                    color: _colors.textPrimary,
                                   ),
                                 ),
                                 trailing: Text(
                                   ctx.tr('${playlist.songCount}首'),
                                   style: TextStyle(
                                     fontSize: 12,
-                                    color: AppColors.textHint,
+                                    color: _colors.textHint,
                                   ),
                                 ),
                                 onTap: () async {
