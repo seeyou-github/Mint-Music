@@ -465,7 +465,8 @@ class _SidebarProgressBarState extends State<_SidebarProgressBar> {
                   height: _trackHeight,
                   child: DecoratedBox(
                     decoration: BoxDecoration(
-                      color: colors.divider,
+                      // 未播放部分：主题色 10% 底。
+                      color: colors.primary.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(_trackHeight / 2),
                     ),
                   ),

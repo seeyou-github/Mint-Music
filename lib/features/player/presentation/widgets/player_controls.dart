@@ -268,7 +268,8 @@ class _PlayerProgressBarState extends ConsumerState<PlayerProgressBar> {
                         height: barHeight,
                         child: Container(
                           decoration: BoxDecoration(
-                            color: colors.divider,
+                            // 未播放部分：主题色 10% 底，和侧栏进度条同一口径。
+                            color: colors.primary.withValues(alpha: 0.1),
                             borderRadius: BorderRadius.circular(3),
                           ),
                         ),
