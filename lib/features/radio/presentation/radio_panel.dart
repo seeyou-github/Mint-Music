@@ -257,44 +257,12 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
                         color: colors.textPrimary.withValues(alpha: 0.9),
                       ),
               ),
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: Container(
-                padding: const EdgeInsets.fromLTRB(
-                  AppSpacing.sm,
-                  12,
-                  AppSpacing.sm,
-                  AppSpacing.sm,
-                ),
-                // 背景变为模糊封面后需要压一层底部渐变，保证名称仍然清晰。
-                decoration: currentSong == null
-                    ? null
-                    : BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: [
-                            Colors.transparent,
-                            _scrimColorFor(
-                              colors.textPrimary,
-                            ).withValues(alpha: 0.65),
-                          ],
-                        ),
-                      ),
-                child: Text(
-                  context.tr('随机电台'),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    // 名称跟随「外观设置 → 字体颜色」。
-                    color: colors.textPrimary,
-                  ),
-                ),
-              ),
+            // 背景为模糊封面时名称下面垫半透明色带，避免封面与字色接近时看不清。
+            _buildNameOverlay(
+              context.tr('随机电台'),
+              textColor: colors.textPrimary,
+              scrimColor: _scrimColorFor(colors.textPrimary),
+              showBar: currentSong != null,
             ),
             if (isCurrent) _buildNowPlayingBadge(colors, isPlaying: isPlaying),
             if (starting)
@@ -364,38 +332,11 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
                 fallback: Icons.radio,
                 dim: dimCover,
               ),
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: Container(
-                padding: const EdgeInsets.fromLTRB(
-                  AppSpacing.sm,
-                  12,
-                  AppSpacing.sm,
-                  AppSpacing.sm,
-                ),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      Colors.transparent,
-                      scrimColor.withValues(alpha: 0.65),
-                    ],
-                  ),
-                ),
-                child: Text(
-                  station.name,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: nameColor,
-                  ),
-                ),
-              ),
+            _buildNameOverlay(
+              station.name,
+              textColor: nameColor,
+              scrimColor: scrimColor,
+              showBar: true,
             ),
             Positioned(
               top: 2,
@@ -421,6 +362,63 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
               ),
           ],
         ),
+      ),
+    );
+  }
+
+  /// 卡片底部的电台名称。
+  ///
+  /// 封面颜色和文字接近时（浅底配浅字 / 深底配深字）单靠渐变看不清，
+  /// 所以在名称下面垫一条通栏的半透明色带；色带按字色明暗反向取色
+  /// （[scrimColor]，深色字配白色带、浅色字配黑色带）。色带上方留一段
+  /// 渐变，避免半透明条在封面上切出硬边。
+  Widget _buildNameOverlay(
+    String name, {
+    required Color textColor,
+    required Color scrimColor,
+    required bool showBar,
+  }) {
+    final barColor = scrimColor.withValues(alpha: 0.55);
+    return Positioned(
+      left: 0,
+      right: 0,
+      bottom: 0,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (showBar)
+            Container(
+              height: 20,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [scrimColor.withValues(alpha: 0), barColor],
+                ),
+              ),
+            ),
+          Container(
+            padding: EdgeInsets.fromLTRB(
+              AppSpacing.sm,
+              showBar ? AppSpacing.xs : AppSpacing.md,
+              AppSpacing.sm,
+              AppSpacing.sm,
+            ),
+            color: showBar ? barColor : null,
+            child: Text(
+              name,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                // 名称跟随「外观设置 → 字体颜色」。
+                color: textColor,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
