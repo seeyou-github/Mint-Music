@@ -1126,7 +1126,7 @@ class _LocalPlaylistDetailPageState
             Icon(
               Icons.music_off,
               size: 48,
-              color: colors.textHint.withValues(alpha: 0.3),
+              color: colors.textHint,
             ),
             const SizedBox(height: AppSpacing.md),
             Text(context.tr('歌单为空'), style: TextStyle(color: colors.textHint)),
@@ -1217,7 +1217,7 @@ class _LocalPlaylistDetailPageState
             Icon(
               Icons.music_off,
               size: 48,
-              color: colors.textHint.withValues(alpha: 0.3),
+              color: colors.textHint,
             ),
             const SizedBox(height: AppSpacing.md),
             Text(
@@ -1232,7 +1232,7 @@ class _LocalPlaylistDetailPageState
                 context.tr('在发现页搜索歌曲并添加到歌单'),
                 style: TextStyle(
                   fontSize: 12,
-                  color: colors.textHint.withValues(alpha: 0.6),
+                  color: colors.textHint,
                 ),
               ),
             ],

@@ -183,7 +183,7 @@ class LibraryPage extends ConsumerWidget {
           Icon(
             Icons.library_music,
             size: 64,
-            color: colors.textHint.withValues(alpha: 0.3),
+            color: colors.textHint,
           ),
           const SizedBox(height: AppSpacing.md),
           Text(
@@ -195,7 +195,7 @@ class LibraryPage extends ConsumerWidget {
             context.tr('点击上方"新建歌单"开始创建'),
             style: TextStyle(
               fontSize: 13,
-              color: colors.textHint.withValues(alpha: 0.6),
+              color: colors.textHint,
             ),
           ),
         ],

@@ -719,7 +719,7 @@ class _ArtistUpdatePageState extends ConsumerState<ArtistUpdatePage> {
             Icon(
               Icons.cloud_off,
               size: 44,
-              color: colors.textHint.withValues(alpha: 0.5),
+              color: colors.textHint,
             ),
             const SizedBox(height: AppSpacing.md),
             Text(

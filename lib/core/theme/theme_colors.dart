@@ -65,7 +65,12 @@ class ThemeColors {
   });
 
   /// 复制并覆盖文字颜色（设置里的「字体颜色」「第二字体颜色」）。
+  ///
+  /// [textHint] 不再是一份写死的灰：它由「第二文字颜色」派生（混 28% 向面板
+  /// 底色），所以占位符、说明文字、空状态图标会跟着用户选的第二文字颜色走。
+  /// 原来固定 #999999，浅色主题下压在浅底上对比度只有 2.4:1，基本看不清。
   ThemeColors copyWithTextColors({Color? textPrimary, Color? textSecondary}) {
+    final secondary = textSecondary ?? this.textSecondary;
     return ThemeColors(
       primary: primary,
       primaryLight: primaryLight,
@@ -78,8 +83,10 @@ class ThemeColors {
       dialogSurface: dialogSurface,
       dialogSurfaceVariant: dialogSurfaceVariant,
       textPrimary: textPrimary ?? this.textPrimary,
-      textSecondary: textSecondary ?? this.textSecondary,
-      textHint: textHint,
+      textSecondary: secondary,
+      textHint: textSecondary == null
+          ? textHint
+          : _hintFrom(secondary, dialogSurface),
       textOnPrimary: textOnPrimary,
       error: error,
       success: success,
@@ -92,6 +99,11 @@ class ThemeColors {
       shadow: shadow,
     );
   }
+
+  /// 「提示级」文字色：由「第二文字颜色」往面板底色方向混 28%，比正文淡一档
+  /// 但仍然看得清；用户改第二文字颜色时自动跟着变。
+  static Color _hintFrom(Color secondary, Color surface) =>
+      Color.alphaBlend(secondary.withValues(alpha: 0.72), surface);
 
   /// 复制并覆盖背景颜色（设置里的「背景颜色」）。
   ///
@@ -206,7 +218,11 @@ class ThemeColors {
       dialogSurfaceVariant: const Color(0xFFF3F1EC),
       textPrimary: const Color(0xFF000000),
       textSecondary: const Color(0xFF3A3933),
-      textHint: const Color(0xFF999999),
+      // 提示级颜色由第二文字颜色派生，不再写死 #999999（浅底上几乎看不见）。
+      textHint: _hintFrom(
+        const Color(0xFF3A3933),
+        const Color(0xFFEAE7DF),
+      ),
       textOnPrimary: const Color(0xFFFFFFFF),
       error: const Color(0xFFE91429),
       success: primary,
@@ -234,7 +250,7 @@ class ThemeColors {
       dialogSurfaceVariant: const Color(0xFF3F3F4C),
       textPrimary: const Color(0xFFFFFFFF),
       textSecondary: const Color(0xFF9D9D9D),
-      textHint: const Color(0xFF727272),
+      textHint: _hintFrom(const Color(0xFF9D9D9D), const Color(0xFF33333E)),
       textOnPrimary: const Color(0xFFFFFFFF),
       error: const Color(0xFFE91429),
       success: primary,

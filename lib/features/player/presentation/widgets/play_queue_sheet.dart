@@ -157,6 +157,8 @@ class _PlayQueueSheetContentState
     final primary = ref.watch(
       themeColorsProvider.select((colors) => colors.primary),
     );
+    // 副标题 / 图标色跟随「第二文字颜色」（AppColors 那套是写死的深色主题值）。
+    final queueColors = ref.watch(themeColorsProvider);
 
     // 弹层开着的时候切歌（自动下一首 / 外部点播）：同样把新的当前歌曲滚进
     // 可视区，否则看到的一直是打开弹层时那一首。
@@ -177,7 +179,8 @@ class _PlayQueueSheetContentState
     final hideCover = ref.watch(songListHideCoverProvider);
     return Container(
       decoration: BoxDecoration(
-        color: AppColors.surface,
+        // 跟随主题：写死 AppColors.surface 时，浅色主题下这个队列弹层是黑的。
+        color: queueColors.dialogSurface,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
       ),
       child: SafeArea(
@@ -200,17 +203,17 @@ class _PlayQueueSheetContentState
                       children: [
                         Text(
                           context.tr('播放队列'),
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 18,
                             fontWeight: FontWeight.bold,
-                            color: AppColors.textPrimary,
+                            color: queueColors.textPrimary,
                           ),
                         ),
                         Row(
                           children: [
                             Text(
                               context.tr('${queue.length}首'),
-                              style: const TextStyle(color: AppColors.textHint),
+                              style: TextStyle(color: queueColors.textHint),
                             ),
                             const SizedBox(width: 16),
                             GestureDetector(
@@ -233,7 +236,7 @@ class _PlayQueueSheetContentState
                       child: Center(
                         child: Text(
                           context.tr('播放队列为空'),
-                          style: const TextStyle(color: AppColors.textHint),
+                          style: TextStyle(color: queueColors.textHint),
                         ),
                       ),
                     )
@@ -282,7 +285,7 @@ class _PlayQueueSheetContentState
                                               softWrap: false,
                                               style: TextStyle(
                                                 fontSize: 11,
-                                                color: AppColors.textHint,
+                                                color: queueColors.textHint,
                                               ),
                                             ),
                                           ),
@@ -295,7 +298,7 @@ class _PlayQueueSheetContentState
                                       height: 44,
                                       decoration: BoxDecoration(
                                         borderRadius: BorderRadius.circular(8),
-                                        color: AppColors.surfaceVariant,
+                                        color: queueColors.surfaceVariant,
                                       ),
                                       child: ClipRRect(
                                         borderRadius: BorderRadius.circular(8),
@@ -310,7 +313,7 @@ class _PlayQueueSheetContentState
                                             size: 20,
                                             color: isCurrent
                                                 ? primary
-                                                : AppColors.textHint,
+                                                : queueColors.textHint,
                                           ),
                                         ),
                                       ),
@@ -326,12 +329,12 @@ class _PlayQueueSheetContentState
                                 fontWeight: FontWeight.w500,
                                 color: blocked
                                     // 黑名单歌曲名颜色更浅
-                                    ? AppColors.textPrimary.withValues(
+                                    ? queueColors.textPrimary.withValues(
                                         alpha: 0.45,
                                       )
                                     : (isCurrent
                                           ? primary
-                                          : AppColors.textPrimary),
+                                          : queueColors.textPrimary),
                               ),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
@@ -366,13 +369,13 @@ class _PlayQueueSheetContentState
                                     '${queueSong.artist} - ${queueSong.album}',
                                     style: TextStyle(
                                       fontSize: 12,
+                                      // 跟随「外观设置 → 第二文字颜色」，不再用
+                                      // 写死的深色主题灰。
                                       color: blocked
-                                          ? AppColors.textHint.withValues(
-                                              alpha: 0.7,
-                                            )
+                                          ? queueColors.textHint
                                           : (isCurrent
                                                 ? primary.withValues(alpha: 0.7)
-                                                : AppColors.textHint),
+                                                : queueColors.textHint),
                                     ),
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
@@ -387,10 +390,10 @@ class _PlayQueueSheetContentState
                                     color: primary,
                                   )
                                 : IconButton(
-                                    icon: const Icon(
+                                    icon: Icon(
                                       Icons.close,
                                       size: 18,
-                                      color: AppColors.textHint,
+                                      color: queueColors.textHint,
                                     ),
                                     onPressed: () {
                                       // 不关闭弹层：就地删除并继续，

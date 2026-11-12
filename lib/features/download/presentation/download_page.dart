@@ -304,7 +304,7 @@ class DownloadPage extends ConsumerWidget {
           Icon(
             Icons.download_outlined,
             size: 48,
-            color: colors.textHint.withValues(alpha: 0.5),
+            color: colors.textHint,
           ),
           const SizedBox(height: AppSpacing.md),
           Text(

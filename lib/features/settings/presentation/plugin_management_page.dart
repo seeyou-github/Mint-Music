@@ -2645,7 +2645,7 @@ class _PluginCredentialSectionState
                     context.tr('凭据会包含在备份文件中，请勿分享备份'),
                     style: TextStyle(
                       fontSize: 10,
-                      color: colors.textHint.withValues(alpha: 0.8),
+                      color: colors.textHint,
                     ),
                   ),
                 ),

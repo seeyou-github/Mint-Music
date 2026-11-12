@@ -125,7 +125,7 @@ class LoadErrorView extends StatelessWidget {
             Icon(
               Icons.cloud_off_outlined,
               size: 40,
-              color: colors.textHint.withValues(alpha: 0.7),
+              color: colors.textHint,
             ),
             const SizedBox(height: AppSpacing.md),
             Text(

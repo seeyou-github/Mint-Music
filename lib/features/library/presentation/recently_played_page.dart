@@ -256,7 +256,7 @@ class _EmptyState extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 64, color: colors.textHint.withValues(alpha: 0.3)),
+          Icon(icon, size: 64, color: colors.textHint),
           const SizedBox(height: AppSpacing.md),
           Text(title, style: TextStyle(fontSize: 15, color: colors.textHint)),
           if (subtitle != null) ...[
@@ -265,7 +265,7 @@ class _EmptyState extends StatelessWidget {
               subtitle!,
               style: TextStyle(
                 fontSize: 12,
-                color: colors.textHint.withValues(alpha: 0.7),
+                color: colors.textHint,
               ),
             ),
           ],

@@ -97,7 +97,12 @@ class AppTheme {
     bottomNavigationBarTheme: BottomNavigationBarThemeData(
       backgroundColor: Color(0xFFF5F5F5),
       selectedItemColor: primary,
-      unselectedItemColor: Color(0xFF999999),
+      // 未选中项也跟着「第二文字颜色」：写死 #999999 时改设置它不动，
+      // 浅色主题下对比度只有 2.8:1。
+      unselectedItemColor: Color.alphaBlend(
+        (textSecondary ?? const Color(0xFF3A3933)).withValues(alpha: 0.75),
+        const Color(0xFFF5F5F5),
+      ),
       type: BottomNavigationBarType.fixed,
       elevation: 0,
       selectedLabelStyle: TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
@@ -148,7 +153,14 @@ class AppTheme {
         horizontal: AppSpacing.lg,
         vertical: AppSpacing.md,
       ),
-      hintStyle: const TextStyle(color: Color(0xFF999999)),
+      // 占位符跟着「第二文字颜色」走：写死 #999999 时，用户改了第二文字颜色
+      // 这些提示文字也不变，浅色主题下淡到看不清。
+      hintStyle: TextStyle(
+        color: Color.alphaBlend(
+          (textSecondary ?? const Color(0xFF3A3933)).withValues(alpha: 0.62),
+          const Color(0xFFFFFFFF),
+        ),
+      ),
     ),
     dividerTheme: const DividerThemeData(
       color: Color(0xFFE5E5E5),
@@ -162,7 +174,14 @@ class AppTheme {
       overlayColor: primary.withValues(alpha: 0.12),
       trackHeight: 3,
     ),
-    iconTheme: const IconThemeData(color: Color(0xFF666666), size: 24),
+    // 默认图标色也跟着「第二文字颜色」：写死 #666666 时用户改了字色它不动。
+    iconTheme: IconThemeData(
+      color: Color.alphaBlend(
+        (textSecondary ?? const Color(0xFF3A3933)).withValues(alpha: 0.85),
+        const Color(0xFFEAE7DF),
+      ),
+      size: 24,
+    ),
     floatingActionButtonTheme: FloatingActionButtonThemeData(
       backgroundColor: primary,
       foregroundColor: _onPrimary,
@@ -342,7 +361,12 @@ class AppTheme {
         horizontal: AppSpacing.lg,
         vertical: AppSpacing.md,
       ),
-      hintStyle: const TextStyle(color: AppColors.darkTextSecondary),
+      hintStyle: TextStyle(
+        color: Color.alphaBlend(
+          (textSecondary ?? const Color(0xFF9D9D9D)).withValues(alpha: 0.72),
+          AppColors.darkSurface,
+        ),
+      ),
     ),
     floatingActionButtonTheme: FloatingActionButtonThemeData(
       backgroundColor: primaryLight,
