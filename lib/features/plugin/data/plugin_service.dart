@@ -948,6 +948,9 @@ class PluginService {
     try {
       final plugins = await loadPlugins();
       var changed = false;
+      // 先扫一遍找出缺图标的插件，再并发下载：串行时每个 15 秒超时，
+      // 插件一多这一步能拖上分钟级。
+      final pendingIndexes = <int>[];
       for (var i = 0; i < plugins.length; i++) {
         var plugin = plugins[i];
         // 老插件（装插件时还没记 iconUrl）从运行中的宿主补一次：
@@ -962,13 +965,24 @@ class PluginService {
         final current = plugin.iconPath;
         if (current != null &&
             current.isNotEmpty &&
-            File(current).existsSync()) {
+            await File(current).exists()) {
           continue;
         }
-        final path = await _cachePluginIcon(plugin);
-        if (path != null && path != current) {
-          plugins[i] = plugin.copyWith(iconPath: path);
-          changed = true;
+        pendingIndexes.add(i);
+      }
+
+      const concurrency = 4;
+      for (var start = 0; start < pendingIndexes.length; start += concurrency) {
+        final batch = pendingIndexes.skip(start).take(concurrency).toList();
+        final paths = await Future.wait(
+          batch.map((i) => _cachePluginIcon(plugins[i])),
+        );
+        for (var j = 0; j < batch.length; j++) {
+          final path = paths[j];
+          if (path != null && path != plugins[batch[j]].iconPath) {
+            plugins[batch[j]] = plugins[batch[j]].copyWith(iconPath: path);
+            changed = true;
+          }
         }
       }
       if (changed) await savePlugins(plugins);
