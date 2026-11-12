@@ -17,6 +17,7 @@ import '../../../core/utils/scroll_locate.dart';
 import '../../../shared/widgets/song_action_sheet.dart';
 import '../../../shared/widgets/song_index_width.dart';
 import '../../../shared/widgets/song_row_hover.dart';
+import '../../../shared/widgets/song_favorite_heart.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../../../shared/widgets/song_selection.dart';
 import '../application/local_providers.dart';
@@ -1849,12 +1850,6 @@ class _LocalSongItem extends ConsumerWidget {
     );
     final isPlaying = playingId == song.id;
     final blocked = ref.watch(blacklistProvider).isBlocked(song);
-    // 收藏红心：与「我的收藏」/ 自建歌单 / 最近播放等列表保持一致，已收藏的
-    // 本地歌曲同样显示红心（本地歌曲可能按文件路径才认得出收藏，见
-    // [FavoriteSongs.favoriteIdOf]）。
-    final favoriteId = ref.watch(
-      favoriteSongsProvider.select((favorites) => favorites.favoriteIdOf(song)),
-    );
 
     // 与歌单详情页 SongListItem 的 InkWell 用同一个 hover 颜色
     // （深色主题白 4% / 浅色主题黑 4%）；本地列表没有 InkWell，由
@@ -2006,19 +2001,9 @@ class _LocalSongItem extends ConsumerWidget {
                   ],
                 ),
               ),
-              // 收藏红心：放在时长左侧，与其它歌曲列表的位置一致。
-              if (!selectionMode && favoriteId != null)
-                GestureDetector(
-                  // 只负责取消收藏：吃掉点击，避免冒泡成整行的「播放」。
-                  onTap: () => ref
-                      .read(playlistsProvider.notifier)
-                      .removeSongFromPlaylist('__favorites__', favoriteId),
-                  behavior: HitTestBehavior.opaque,
-                  child: const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-                    child: Icon(Icons.favorite, size: 14, color: Colors.red),
-                  ),
-                ),
+              // 收藏红心：放在时长左侧，与其它歌曲列表一致；悬停时出现空心，
+              // 点一下直接收藏，已收藏则实心。
+              if (!selectionMode) SongFavoriteHeart(song: song),
               if (song.duration > 0)
                 Text(
                   song.displayDuration,

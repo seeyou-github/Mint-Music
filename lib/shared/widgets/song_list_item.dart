@@ -9,7 +9,6 @@ import '../../core/theme/app_spacing.dart';
 import '../../core/theme/theme_provider.dart';
 import '../../features/blacklist/application/blacklist_providers.dart';
 import '../../features/discover/presentation/song_parts_navigation.dart';
-import '../../features/library/application/playlist_providers.dart';
 import '../../features/player/application/play_progress_providers.dart';
 import '../../features/player/domain/models/song.dart';
 import '../../features/settings/application/settings_providers.dart';
@@ -20,6 +19,8 @@ import '../../features/plugin/domain/plugin_types.dart';
 import '../../features/plugin/application/plugin_providers.dart';
 import 'music_cover_image.dart';
 import 'song_index_width.dart';
+import 'song_row_hover.dart';
+import 'song_favorite_heart.dart';
 import 'source_name_tag.dart';
 import 'song_action_sheet.dart';
 
@@ -57,10 +58,11 @@ class SongListItem extends ConsumerWidget {
   /// 下载管理等列表不需要这个标记。
   final bool showPlayedTag;
 
-  /// 是否在「已听 N」右侧、时长左侧显示收藏红心。
+  /// 是否在时长左侧显示「已收藏」的常驻实心红心。
   ///
-  /// 红心只在歌曲已被收藏时出现，点击直接取消收藏。所有浏览类列表（歌单 /
-  /// 专辑 / 作者 / 榜单详情）都打开它，同一首歌在哪里都能看到收藏状态。
+  /// 悬停时的收藏红心（空心 / 实心）不受它限制，所有列表都有；这一项只决定
+  /// 鼠标移开后已收藏的歌曲要不要继续显示红心。收藏的第三方歌单 / 专辑 /
+  /// 作者传 false，避免在那里提供取消收藏入口。
   final bool showFavoriteHeart;
 
   final VoidCallback? onTap;
@@ -152,7 +154,7 @@ class SongListItem extends ConsumerWidget {
             }
             _defaultOnTap(context);
           };
-    return InkWell(
+    return SongRowHover(child: InkWell(
       onTap: effectiveTap,
       onLongPress: onLongPress,
       // 歌曲行不要点击效果：水波纹 + 按下高亮都是纯装饰，长列表里每次点击
@@ -206,7 +208,7 @@ class SongListItem extends ConsumerWidget {
           ),
         ),
       ),
-    );
+    ));
   }
 
   /// 序号列宽度：按最大序号位数自适应；多选模式至少留出勾选框的位置。
@@ -489,9 +491,13 @@ class SongListItem extends ConsumerWidget {
     final playedTag = showPlayedTag && !selectionMode
         ? _buildPlayedTag(colors, context, ref, compact: !narrow)
         : null;
-    final heart = showFavoriteHeart && !selectionMode
-        ? _buildFavoriteHeart(ref)
-        : null;
+    // 悬停时在时长左侧给出收藏入口（空心 / 实心），多选模式下不显示。
+    final heart = selectionMode
+        ? null
+        : SongFavoriteHeart(
+            song: song,
+            showWhenFavorited: showFavoriteHeart,
+          );
     final vipTag = _buildVipTag(colors, compact: !narrow);
     final partsTag = _buildPartsTag(colors, compact: !narrow);
     final duration = showDuration && !selectionMode
@@ -574,29 +580,6 @@ class SongListItem extends ConsumerWidget {
             color: colors.primary,
           ),
         ),
-      ),
-    );
-  }
-
-  /// 收藏红心：只在当前歌曲已收藏时出现，点击直接取消收藏。
-  ///
-  /// 用 select 只订阅「这一首是否在收藏里」，其它歌曲增删不会重建本行。
-  /// 取消收藏用 [FavoriteSongs.favoriteIdOf] 返回的 id：本地歌曲在收藏里
-  /// 可能存着旧 id（按文件路径才认得出），用本行 id 会删不掉。
-  Widget? _buildFavoriteHeart(WidgetRef ref) {
-    final favoriteId = ref.watch(
-      favoriteSongsProvider.select((favorites) => favorites.favoriteIdOf(song)),
-    );
-    if (favoriteId == null) return null;
-    return GestureDetector(
-      // 只负责取消收藏：吃掉点击，避免冒泡到整行的「播放」手势。
-      onTap: () => ref
-          .read(playlistsProvider.notifier)
-          .removeSongFromPlaylist('__favorites__', favoriteId),
-      behavior: HitTestBehavior.opaque,
-      child: const Padding(
-        padding: EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-        child: Icon(Icons.favorite, size: 14, color: Colors.red),
       ),
     );
   }
