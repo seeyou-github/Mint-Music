@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:isolate';
 
 import 'package:flutter/foundation.dart';
 import 'package:sqflite/sqflite.dart';
@@ -550,21 +551,26 @@ class PlaylistRepository {
       'playlist_songs',
       orderBy: 'playlist_id ASC, sort_order ASC',
     );
-    final songsByPlaylist = <String, List<Song>>{};
-    for (final row in songRows) {
-      final data = AppDatabase.decodeMap(row['data']);
-      if (data.isEmpty) continue;
-      songsByPlaylist
-          .putIfAbsent('${row['playlist_id']}', () => [])
-          .add(Song.fromJson(data));
-    }
-    return [
-      for (final row in rows)
-        _playlistFromRow(row, songsByPlaylist['${row['id']}'] ?? const []),
-    ];
+    // 逐行 jsonDecode + 构建 Song 对象是纯 CPU 解析，几千首歌的收藏库在
+    // 主 isolate 能跑几十上百毫秒，挪到后台 isolate（行数据是基本类型，
+    // 可以直接跨 isolate 传）。
+    return Isolate.run(() {
+      final songsByPlaylist = <String, List<Song>>{};
+      for (final row in songRows) {
+        final data = AppDatabase.decodeMap(row['data']);
+        if (data.isEmpty) continue;
+        songsByPlaylist
+            .putIfAbsent('${row['playlist_id']}', () => [])
+            .add(Song.fromJson(data));
+      }
+      return [
+        for (final row in rows)
+          _playlistFromRow(row, songsByPlaylist['${row['id']}'] ?? const []),
+      ];
+    });
   }
 
-  Playlist _playlistFromRow(Map<String, Object?> row, List<Song> songs) {
+  static Playlist _playlistFromRow(Map<String, Object?> row, List<Song> songs) {
     final data = AppDatabase.decodeMap(row['data']);
     if (data.isNotEmpty) {
       final json = {...data, 'songs': const <dynamic>[]};
