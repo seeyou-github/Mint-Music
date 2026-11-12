@@ -8,7 +8,13 @@ import '../../../../shared/services/config_image_store.dart';
 class RadioCoverCache {
   const RadioCoverCache._();
 
-  static const ConfigImageStore _store = ConfigImageStore('radio_covers');
+  /// 封面缓存目录名（`config/setting/radio_covers`）。
+  ///
+  /// 备份还原后清理「已被覆盖、不再引用」的旧封面时要按目录判断，这里对外
+  /// 暴露一份，避免别处再写一遍字面量。
+  static const String directoryName = 'radio_covers';
+
+  static const ConfigImageStore _store = ConfigImageStore(directoryName);
 
   /// 缓存封面，返回本地路径；失败返回 null。
   static Future<String?> cache(String source) => _store.cache(source);

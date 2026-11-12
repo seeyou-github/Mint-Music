@@ -9,10 +9,15 @@ import 'package:path/path.dart' as p;
 import '../platform/app_paths.dart';
 import '../storage/app_database.dart';
 import '../storage/app_preferences.dart';
+import '../theme/app_font_manager.dart';
+import '../theme/builtin_blur_backgrounds.dart';
 import '../../features/discover/data/hot_board_store.dart';
 import '../../features/player/data/play_progress_store.dart';
 import '../../features/library/data/playlist_repository.dart';
 import '../../features/library/data/playlist_store.dart';
+import '../../features/radio/data/radio_cover_cache.dart';
+import '../../features/radio/data/radio_store.dart';
+import '../../features/settings/data/settings_service.dart';
 
 /// 备份 / 还原服务。
 ///
@@ -36,6 +41,9 @@ import '../../features/library/data/playlist_store.dart';
 /// - 用备份里的 `config/setting` / `config/plugin` **覆盖**现有目录；
 /// - 有 `playlists.json` / `playstats.json` 时把它们写回数据库；老备份的收藏
 ///   还在 `config/playlists.json` 里、热榜还在 `hotboards.json` 里，也照样能还原；
+/// - 覆盖只写备份包里的文件、不删旧文件：还原后把**还原前在用、还原后不再
+///   引用**的电台封面 / 模糊背景图 / 导入字体从 `config/setting` 删掉，避免
+///   留下没人再引用的垃圾文件；
 /// - **不改动 `temp` 目录**：播放记录、歌词 / 封面 / 歌曲缓存等临时数据
 ///   保持原样，还原后仍然可用。
 class BackupService {
@@ -197,6 +205,12 @@ class BackupService {
         ? 'db'
         : dbRelative.replaceAll('\\', '/');
 
+    // 还原只覆盖备份包里的文件，不会删旧文件。先记下还原前还在引用的封面 /
+    // 背景图 / 字体，还原完再对比：只有「还原前在用、还原后不再引用」的文件
+    // 才删，备份包自己带的文件不受影响。
+    final prefs = await AppPreferences.getInstance();
+    final refsBefore = await _readConfigFileRefs(prefs);
+
     // 新备份：`config/setting/*` + `config/plugin/*`。
     await _restoreDirectory(
       archive,
@@ -218,10 +232,27 @@ class BackupService {
 
     // 2) 还原出的 settings.json 要重新读进内存：不重载的话，此后任何一次
     //    设置写入都会用还原前的内存值把整个文件覆盖回去（还原白做）。
+    var settingsReloaded = false;
     try {
-      await (await AppPreferences.getInstance()).reload();
+      await prefs.reload();
+      settingsReloaded = true;
     } catch (e) {
       debugPrint('[BackupService] 重载设置失败: $e');
+    }
+
+    // 2.1) 被还原覆盖掉的旧封面 / 背景图 / 字体：从配置目录删掉。
+    //      设置没重载成功时不删——读到的还是还原前的引用，判断不可靠。
+    if (settingsReloaded) {
+      try {
+        final refsAfter = await _readConfigFileRefs(prefs);
+        await _removeOverwrittenConfigFiles(
+          refsBefore,
+          refsAfter,
+          settingsDir: configDir,
+        );
+      } catch (e) {
+        debugPrint('[BackupService] 清理旧配置图片 / 字体失败: $e');
+      }
     }
 
     // 3) 收藏 / 已听进度在重要库里，单独从条目还原（老备份的收藏还在
@@ -352,4 +383,123 @@ class BackupService {
       await dest.writeAsBytes(content, flush: true);
     }
   }
+
+  /// 读出当前设置里引用的、保存在配置目录内的文件。
+  ///
+  /// 三个来源都是「还原会整体覆盖」的数据：
+  /// - 自定义电台的封面缓存（`radio_covers`，存的是绝对路径）；
+  /// - 高斯模糊的背景图（`background_pic`，只存文件名）；
+  /// - 用户导入的外部字体（`fonts`，只存文件名）。
+  static Future<_ConfigFileRefs> _readConfigFileRefs(
+    AppPreferences prefs,
+  ) async {
+    final radioCovers = <String>{};
+    try {
+      final data = await RadioStore().load();
+      for (final station in data.stations) {
+        final path = station.coverPath?.trim() ?? '';
+        if (path.isNotEmpty) radioCovers.add(path);
+      }
+    } catch (_) {}
+
+    final settings = SettingsService(prefs);
+    final blurImages = <String>{
+      ...settings.getBlurBackgroundImages(),
+      // 单独存过选中项（列表之外的兜底）：一并算作在用。
+      if (settings.getBlurBackgroundImage().trim().isNotEmpty)
+        settings.getBlurBackgroundImage().trim(),
+    };
+
+    final fontFiles = <String>{
+      for (final font in AppFontManager.savedFonts(prefs)) font.fileName.trim(),
+    }..removeWhere((name) => name.isEmpty);
+
+    return _ConfigFileRefs(
+      radioCovers: radioCovers,
+      blurImages: blurImages,
+      fontFiles: fontFiles,
+    );
+  }
+
+  /// 删掉还原前引用、还原后不再引用的配置图片 / 字体文件。
+  ///
+  /// 电台封面按**文件名**对比：备份里的 `coverPath` 是制作备份那台机器的
+  /// 绝对路径，换安装目录还原后路径必然对不上，但缓存文件名（源的 md5）
+  /// 不变，同名文件要保留。背景图和字体本来就只存文件名。
+  static Future<void> _removeOverwrittenConfigFiles(
+    _ConfigFileRefs before,
+    _ConfigFileRefs after, {
+    required Directory settingsDir,
+  }) async {
+    // 电台封面：只处理确实位于 radio_covers 下的旧引用，避免误删用户
+    // 手填到别处的原始图片。
+    final radioDir = Directory(
+      p.join(settingsDir.path, RadioCoverCache.directoryName),
+    );
+    final beforeCoverNames = <String>{
+      for (final path in before.radioCovers)
+        if (p.isWithin(radioDir.path, path)) p.basename(path),
+    };
+    final afterCoverNames = <String>{
+      for (final path in after.radioCovers) p.basename(path),
+    };
+    for (final name in beforeCoverNames.difference(afterCoverNames)) {
+      if (!_isPlainFileName(name)) continue;
+      await _deleteFileQuietly(File(p.join(radioDir.path, name)));
+    }
+
+    // 模糊背景图：新位置在 background_pic，旧版直接放在设置目录根下。
+    final blurDirs = [
+      p.join(settingsDir.path, AppPaths.backgroundPicFolderName),
+      settingsDir.path,
+    ];
+    for (final name in before.blurImages.difference(after.blurImages)) {
+      if (!_isPlainFileName(name)) continue;
+      // 内置图不允许删除，下次启动也会补回来。
+      if (builtinBlurBackgroundNames.contains(name)) continue;
+      for (final dir in blurDirs) {
+        await _deleteFileQuietly(File(p.join(dir, name)));
+      }
+    }
+
+    // 导入字体：字体目录里的文件。
+    final fontDir = await AppPaths.fontDirectory();
+    for (final name in before.fontFiles.difference(after.fontFiles)) {
+      if (!_isPlainFileName(name)) continue;
+      await _deleteFileQuietly(File(p.join(fontDir.path, name)));
+    }
+  }
+}
+
+/// 是否是单纯的文件名（不含目录、不是 `.` / `..`）。
+bool _isPlainFileName(String name) =>
+    name.isNotEmpty &&
+    name != '.' &&
+    name != '..' &&
+    p.basename(name) == name;
+
+Future<void> _deleteFileQuietly(File file) async {
+  try {
+    if (await file.exists()) await file.delete();
+  } catch (_) {
+    // 文件被占用 / 权限不足时保留，不影响还原结果。
+  }
+}
+
+/// 还原前 / 后从设置里读到的、配置目录内的文件引用。
+class _ConfigFileRefs {
+  const _ConfigFileRefs({
+    required this.radioCovers,
+    required this.blurImages,
+    required this.fontFiles,
+  });
+
+  /// 自定义电台封面缓存的绝对路径。
+  final Set<String> radioCovers;
+
+  /// 高斯模糊背景图文件名。
+  final Set<String> blurImages;
+
+  /// 导入字体的文件名。
+  final Set<String> fontFiles;
 }

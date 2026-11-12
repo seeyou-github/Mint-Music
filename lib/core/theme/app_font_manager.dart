@@ -86,6 +86,26 @@ class AppFontManager {
   /// 已导入的字体列表。
   List<AppFont> get fonts => List.unmodifiable(_fonts);
 
+  /// 设置里保存的字体清单（不检查文件、不注册引擎）。
+  ///
+  /// 备份还原时用它对比还原前后仍在使用的字体文件，清理被覆盖掉的旧字体。
+  static List<AppFont> savedFonts(AppPreferences prefs) {
+    final raw = prefs.getStringList(_listKey) ?? const <String>[];
+    final fonts = <AppFont>[];
+    for (final item in raw) {
+      try {
+        final decoded = jsonDecode(item);
+        if (decoded is Map) {
+          final font = AppFont.fromJson(Map<String, dynamic>.from(decoded));
+          if (font.fileName.trim().isNotEmpty) fonts.add(font);
+        }
+      } catch (_) {
+        // 单条损坏跳过，和 [load] 保持一致。
+      }
+    }
+    return fonts;
+  }
+
   /// 当前选中的字体族（null = 使用默认字体）。
   String? get selectedFamily => _selectedFamily;
 
