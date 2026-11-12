@@ -228,15 +228,29 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
     final isPlaying = ref.watch(
       playbackControllerProvider.select((state) => state.isPlaying),
     );
+    final config = ref.watch(
+      radioProvider.select((data) => data.randomStation),
+    );
     // 正在播放随机电台时，卡片背景换成当前歌曲的模糊封面。
     final currentSong = isCurrent
         ? ref.watch(
             playbackControllerProvider.select((state) => state.currentSong),
           )
         : null;
+    // 设置过封面就用自己的封面，否则还是原来的「随机」图标。
+    final coverSource = currentSong == null ? (config?.displayCover ?? '') : '';
+    final dimCover =
+        currentSong == null &&
+        coverSource.isNotEmpty &&
+        !ref.watch(isLightThemeActiveProvider) &&
+        (ref.watch(radioCoverLuminanceProvider(coverSource)).valueOrNull ??
+                0) >=
+            _brightCoverLuminance;
     // 底色与「新增电台」控件一致：同样用 colors.surface，不再单独从主界面
     // 背景渐变派生，避免随机电台在这一排卡片里显得特殊。
     final background = colors.surface;
+    // 有封面（或正在播放的模糊封面）时，名称底下垫色带、菜单按钮换白色。
+    final onBackdrop = currentSong != null || coverSource.isNotEmpty;
     return _buildCardFrame(
       colors,
       child: InkWell(
@@ -246,6 +260,13 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
           children: [
             if (currentSong != null)
               _RadioCardBackground(song: currentSong, fallbackColor: background)
+            else if (coverSource.isNotEmpty)
+              _buildCover(
+                colors,
+                coverSource,
+                fallback: Icons.shuffle,
+                dim: dimCover,
+              )
             else
               Container(
                 decoration: BoxDecoration(color: background),
@@ -262,7 +283,16 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
               context.tr('随机电台'),
               textColor: colors.textPrimary,
               scrimColor: _scrimColorFor(colors.textPrimary),
-              showBar: currentSong != null,
+              showBar: onBackdrop,
+            ),
+            Positioned(
+              top: 2,
+              right: 2,
+              child: _buildRandomMenu(
+                colors,
+                onBackdrop: onBackdrop,
+                hasConfig: config != null,
+              ),
             ),
             if (isCurrent) _buildNowPlayingBadge(colors, isPlaying: isPlaying),
             if (starting)
@@ -573,6 +603,50 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
     );
   }
 
+  /// 随机电台卡片右上角的菜单：编辑 / 重置。
+  Widget _buildRandomMenu(
+    ThemeColors colors, {
+    required bool onBackdrop,
+    required bool hasConfig,
+  }) {
+    // 封面 / 模糊背景上必须用白色，纯色底上跟随字体颜色。
+    final iconColor = onBackdrop
+        ? Colors.white.withValues(alpha: 0.9)
+        : colors.textPrimary.withValues(alpha: 0.8);
+    return PopupMenuButton<String>(
+      icon: Icon(Icons.more_vert, size: 18, color: iconColor),
+      color: colors.dialogSurface,
+      tooltip: context.tr('更多'),
+      onSelected: (value) {
+        if (value == 'edit') {
+          _openRandomEditor();
+        } else if (value == 'reset') {
+          _confirmResetRandom();
+        }
+      },
+      itemBuilder: (context) => [
+        PopupMenuItem(
+          value: 'edit',
+          child: Text(
+            context.tr('编辑电台'),
+            style: TextStyle(color: colors.textPrimary, fontSize: 14),
+          ),
+        ),
+        PopupMenuItem(
+          value: 'reset',
+          enabled: hasConfig,
+          child: Text(
+            context.tr('重置电台'),
+            style: TextStyle(
+              color: hasConfig ? colors.error : colors.textHint,
+              fontSize: 14,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildAddCard(ThemeColors colors) {
     return GestureDetector(
       onTap: () => _openEditor(),
@@ -614,6 +688,60 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
         ),
       );
     }
+  }
+
+  Future<void> _openRandomEditor() async {
+    final saved = await showRadioEditor(
+      context,
+      station: ref.read(radioProvider).randomStation,
+      randomMode: true,
+    );
+    if (saved == true && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(context.tr('电台已保存')),
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  /// 重置随机电台：删封面 + 清空音源 / 歌单分类 / 搜索关键词。
+  Future<void> _confirmResetRandom() async {
+    final colors = ref.read(themeColorsProvider);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: colors.dialogSurface,
+        title: Text(
+          context.tr('重置电台'),
+          style: TextStyle(fontSize: 17, color: colors.textPrimary),
+        ),
+        content: Text(
+          context.tr('重置后会删除随机电台的封面，并清空音源、歌单分类和搜索歌单关键词。'),
+          style: TextStyle(fontSize: 14, color: colors.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(
+              context.tr('取消'),
+              style: TextStyle(color: colors.textHint),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(
+              context.tr('重置'),
+              style: TextStyle(color: colors.error),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await ref.read(radioProvider.notifier).resetRandomStation();
   }
 
   Future<void> _confirmRemoveStation(RadioStation station) async {

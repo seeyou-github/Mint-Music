@@ -16,25 +16,38 @@ import '../application/radio_providers.dart';
 import 'radio_category_manager_sheet.dart';
 
 /// 打开「新增 / 编辑电台」页面，保存成功返回 true。
+///
+/// [randomMode] 为 true 时编辑内置「随机电台」：名称 / 分类不可改，
+/// 封面与音源 / 歌单分类 / 关键词全部可选。
 Future<bool?> showRadioEditor(
   BuildContext context, {
   RadioStation? station,
   String? categoryId,
+  bool randomMode = false,
 }) {
   return Navigator.of(context, rootNavigator: true).push<bool>(
     MaterialPageRoute(
       fullscreenDialog: true,
-      builder: (_) =>
-          RadioEditPage(station: station, initialCategoryId: categoryId),
+      builder: (_) => RadioEditPage(
+        station: station,
+        initialCategoryId: categoryId,
+        randomMode: randomMode,
+      ),
     ),
   );
 }
 
 class RadioEditPage extends ConsumerStatefulWidget {
-  const RadioEditPage({super.key, this.station, this.initialCategoryId});
+  const RadioEditPage({
+    super.key,
+    this.station,
+    this.initialCategoryId,
+    this.randomMode = false,
+  });
 
   final RadioStation? station;
   final String? initialCategoryId;
+  final bool randomMode;
 
   @override
   ConsumerState<RadioEditPage> createState() => _RadioEditPageState();
@@ -69,11 +82,15 @@ class _RadioEditPageState extends ConsumerState<RadioEditPage> {
 
   bool get _isEditing => widget.station != null;
 
+  /// 正在编辑内置的「随机电台」。
+  bool get _isRandomMode => widget.randomMode;
+
   @override
   void initState() {
     super.initState();
-    // 默认选中发现页当前音源，省得每次都要手动勾。
-    if (_sources.isEmpty) {
+    // 默认选中发现页当前音源，省得每次都要手动勾。随机电台没选音源时
+    // 本来就跟随发现页当前音源，不用替用户勾上。
+    if (_sources.isEmpty && !_isRandomMode) {
       final fallback = ref.read(discoverSourceIdProvider);
       final available = ref
           .read(discoverSupportedSourcesProvider)
@@ -140,24 +157,26 @@ class _RadioEditPageState extends ConsumerState<RadioEditPage> {
                   ),
                   children: [
                     _buildCoverSection(colors),
-                    const SizedBox(height: AppSpacing.lg),
-                    _buildSection(
-                      colors,
-                      title: context.tr('电台名称'),
-                      child: TextField(
-                        controller: _nameController,
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: colors.textPrimary,
-                        ),
-                        decoration: _fieldDecoration(
-                          colors,
-                          hint: context.tr('给电台起个名字'),
+                    if (!_isRandomMode) ...[
+                      const SizedBox(height: AppSpacing.lg),
+                      _buildSection(
+                        colors,
+                        title: context.tr('电台名称'),
+                        child: TextField(
+                          controller: _nameController,
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: colors.textPrimary,
+                          ),
+                          decoration: _fieldDecoration(
+                            colors,
+                            hint: context.tr('给电台起个名字'),
+                          ),
                         ),
                       ),
-                    ),
-                    const SizedBox(height: AppSpacing.lg),
-                    _buildCategorySection(colors, categories),
+                      const SizedBox(height: AppSpacing.lg),
+                      _buildCategorySection(colors, categories),
+                    ],
                     const SizedBox(height: AppSpacing.lg),
                     _buildSourceSection(colors, sources),
                     const SizedBox(height: AppSpacing.lg),
@@ -166,7 +185,11 @@ class _RadioEditPageState extends ConsumerState<RadioEditPage> {
                     _buildKeywordSection(colors),
                     const SizedBox(height: AppSpacing.lg),
                     Text(
-                      context.tr('歌单分类和搜索关键词至少填一个；两个都填时随机挑一种取歌。'),
+                      context.tr(
+                        _isRandomMode
+                            ? '全部可选：不选音源时跟随发现页当前音源；歌单分类和搜索关键词都不填时，在所有分类里随机取歌。'
+                            : '歌单分类和搜索关键词至少填一个；两个都填时随机挑一种取歌。',
+                      ),
                       style: TextStyle(fontSize: 12, color: colors.textHint),
                     ),
                   ],
@@ -194,7 +217,11 @@ class _RadioEditPageState extends ConsumerState<RadioEditPage> {
           ),
           Expanded(
             child: Text(
-              context.tr(_isEditing ? '编辑电台' : '新增电台'),
+              context.tr(
+                _isRandomMode
+                    ? '编辑随机电台'
+                    : (_isEditing ? '编辑电台' : '新增电台'),
+              ),
               style: TextStyle(
                 fontSize: 17,
                 fontWeight: FontWeight.bold,
@@ -290,7 +317,11 @@ class _RadioEditPageState extends ConsumerState<RadioEditPage> {
     return _buildSection(
       colors,
       title: context.tr('电台封面'),
-      subtitle: context.tr('必填：可以选本地图片，也可以填网络图片地址'),
+      subtitle: context.tr(
+        _isRandomMode
+            ? '可选：可以选本地图片，也可以填网络图片地址'
+            : '必填：可以选本地图片，也可以填网络图片地址',
+      ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -359,7 +390,11 @@ class _RadioEditPageState extends ConsumerState<RadioEditPage> {
     if (value.isEmpty) {
       return Container(
         color: colors.surfaceVariant,
-        child: Icon(Icons.radio, size: 32, color: colors.textHint),
+        child: Icon(
+          _isRandomMode ? Icons.shuffle : Icons.radio,
+          size: 32,
+          color: colors.textHint,
+        ),
       );
     }
     if (value.startsWith('http')) {
@@ -779,34 +814,44 @@ class _RadioEditPageState extends ConsumerState<RadioEditPage> {
   Future<void> _save() async {
     final name = _nameController.text.trim();
     final cover = _coverSource.trim();
-    if (name.isEmpty) {
-      _toast(context.tr('请填写电台名称'));
-      return;
-    }
-    if (cover.isEmpty) {
-      _toast(context.tr('请设置电台封面'));
-      return;
-    }
-    if (_tags.isEmpty && _keywords.isEmpty) {
-      _toast(context.tr('歌单分类和搜索关键词至少填一个'));
-      return;
+    // 随机电台的名称 / 分类是内置的，封面和取歌条件也都可选，不用校验。
+    if (!_isRandomMode) {
+      if (name.isEmpty) {
+        _toast(context.tr('请填写电台名称'));
+        return;
+      }
+      if (cover.isEmpty) {
+        _toast(context.tr('请设置电台封面'));
+        return;
+      }
+      if (_tags.isEmpty && _keywords.isEmpty) {
+        _toast(context.tr('歌单分类和搜索关键词至少填一个'));
+        return;
+      }
     }
     setState(() => _saving = true);
     try {
       final now = DateTime.now();
       final station = RadioStation(
-        id: widget.station?.id ?? 'radio_${now.millisecondsSinceEpoch}',
-        name: name,
+        id: _isRandomMode
+            ? RadioStation.randomId
+            : (widget.station?.id ?? 'radio_${now.millisecondsSinceEpoch}'),
+        name: _isRandomMode ? '随机电台' : name,
         coverUrl: cover,
         coverPath: widget.station?.coverPath,
-        categoryId: _categoryId,
+        categoryId: _isRandomMode ? RadioCategory.allId : _categoryId,
         sourceIds: _sources.toList(growable: false),
         tags: _tags.values.toList(growable: false),
         keywords: List.of(_keywords),
         createTime: widget.station?.createTime ?? now,
         updateTime: now,
       );
-      await ref.read(radioProvider.notifier).saveStation(station);
+      final notifier = ref.read(radioProvider.notifier);
+      if (_isRandomMode) {
+        await notifier.saveRandomStation(station);
+      } else {
+        await notifier.saveStation(station);
+      }
       if (!mounted) return;
       Navigator.of(context).pop(true);
     } catch (e) {

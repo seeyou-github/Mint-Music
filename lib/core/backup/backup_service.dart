@@ -365,6 +365,8 @@ class BackupService {
         final path = station.coverPath?.trim() ?? '';
         if (path.isNotEmpty) radioCovers.add(path);
       }
+      final randomCover = data.randomStation?.coverPath?.trim() ?? '';
+      if (randomCover.isNotEmpty) radioCovers.add(randomCover);
     } catch (_) {}
 
     final settings = SettingsService(prefs);

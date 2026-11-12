@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -10,8 +11,8 @@ import '../../player/application/playback_context.dart';
 import '../../player/application/playback_controller.dart';
 import '../../player/domain/models/playback_state.dart';
 import '../../plugin/application/plugin_providers.dart';
-import '../domain/models/radio_station.dart';
 import 'radio_engine.dart';
+import 'radio_providers.dart';
 
 export 'radio_engine.dart' show RadioException;
 
@@ -35,13 +36,13 @@ class RadioSession {
   final String name;
   final String cover;
 
-  /// 是否是内置的「随机电台」（没有配置，完全随机）。
+  /// 是否是内置的「随机电台」（可以带封面 / 音源 / 分类等可选配置）。
   final bool isRandom;
 
   /// 随机电台开始时快照的音源：主页切音源不影响电台。
   final String randomSourceId;
 
-  /// 电台自定义的配置（随机电台为 null）。
+  /// 电台的配置（随机电台为它自己的可选配置，没配过就是 null）。
   final RadioStation? station;
 
   /// 当前用来补歌的歌单（界面上显示「来自哪个歌单」）。
@@ -127,25 +128,46 @@ class RadioSessionController extends Notifier<RadioSession?> {
     return {...used, ...batch.usedPlaylistIds};
   }
 
+  /// 按电台配置（音源 / 歌单分类 / 搜索关键词）取一批歌。
+  ///
+  /// [fallbackSource]：配置里没选音源时用它（发现页当前音源）。
+  Future<RadioBatch> _configuredBatch(
+    RadioEngine engine,
+    RadioStation config, {
+    required String fallbackSource,
+    required int minCount,
+    Set<String> excludePlaylistIds = const <String>{},
+    Set<String> excludeIds = const <String>{},
+  }) async {
+    final sources = engine.usableSources(
+      configured: config.sourceIds,
+      fallback: [fallbackSource],
+    );
+    if (sources.isEmpty) {
+      throw const RadioException('电台配置的音源都不可用，请重新选择音源');
+    }
+    return engine.nextBatch(
+      sourceIds: sources,
+      tags: config.tags,
+      keywords: config.keywords,
+      minCount: minCount,
+      songsPerPlaylist: songsPerPlaylist,
+      excludePlaylistIds: excludePlaylistIds,
+      excludeIds: excludeIds,
+    );
+  }
+
   /// 开始一个自定义电台。
   Future<void> startStation(RadioStation station) async {
     if (!station.hasSongSource) {
       throw const RadioException('这个电台还没有设置歌单分类或搜索关键词');
     }
     final engine = _engine;
-    final sources = engine.usableSources(
-      configured: station.sourceIds,
-      fallback: [ref.read(discoverSourceIdProvider)],
-    );
-    if (sources.isEmpty) {
-      throw const RadioException('电台配置的音源都不可用，请重新选择音源');
-    }
-    final batch = await engine.nextBatch(
-      sourceIds: sources,
-      tags: station.tags,
-      keywords: station.keywords,
+    final batch = await _configuredBatch(
+      engine,
+      station,
+      fallbackSource: ref.read(discoverSourceIdProvider),
       minCount: refillCount,
-      songsPerPlaylist: songsPerPlaylist,
     );
     if (batch.isEmpty) {
       throw const RadioException('没有随机到可播放的歌曲，请稍后重试');
@@ -174,18 +196,29 @@ class RadioSessionController extends Notifier<RadioSession?> {
   /// 开始内置的「随机电台」。
   ///
   /// [sourceId] 由调用方快照传入（发现页当前音源），之后主页切音源不影响它。
+  /// 随机电台可以在设置里带封面 / 音源 / 歌单分类 / 关键词；什么都没配时
+  /// 就是完全随机（所有分类里随机）。
   Future<void> startRandom({required String sourceId}) async {
     final engine = _engine;
+    final config = ref.read(radioProvider).randomStation;
     final sources = engine.usableSources(
-      configured: const [],
+      configured: config?.sourceIds ?? const [],
       fallback: [sourceId],
     );
     if (sources.isEmpty) {
       throw const RadioException('当前没有可用的音源，无法开始随机电台');
     }
-    final source = sources.first;
+    // 每次随机挑一个可用音源，多音源时不会总是同一个。
+    final source = sources[Random().nextInt(sources.length)];
     // 先来 3 首开始播放，后面按「未播放 < 10 就补 20 首」继续。
-    final batch = await engine.randomSongs(sourceId: source, minCount: 3);
+    final batch = config != null && config.hasSongSource
+        ? await _configuredBatch(
+            engine,
+            config,
+            fallbackSource: sourceId,
+            minCount: 3,
+          )
+        : await engine.randomSongs(sourceId: source, minCount: 3);
     if (batch.isEmpty) {
       throw const RadioException('随机不到可播放的歌曲，请稍后重试');
     }
@@ -198,8 +231,9 @@ class RadioSessionController extends Notifier<RadioSession?> {
     state = RadioSession(
       stationId: RadioStation.randomId,
       name: '随机电台',
-      cover: '',
+      cover: config?.displayCover ?? '',
       isRandom: true,
+      station: config,
       randomSourceId: source,
       playlistId: batch.playlistId,
       playlistSource: batch.playlistSource,
@@ -250,31 +284,38 @@ class RadioSessionController extends Notifier<RadioSession?> {
           .toSet();
       RadioBatch batch;
       if (session.isRandom) {
-        // 随机电台：同样每个歌单只取 3 首，跨歌单凑够一批；
-        // 本次电台用过的歌单、已经播过的歌都不再取。
-        batch = await engine.randomSongs(
-          sourceId: session.randomSourceId,
-          minCount: refillCount,
-          songsPerPlaylist: songsPerPlaylist,
-          excludePlaylistIds: session.usedPlaylistIds,
-          excludeIds: existing,
-        );
+        final config = session.station;
+        // 配了歌单分类 / 关键词：按配置补；没配就是原来的「所有分类里随机」。
+        if (config != null && config.hasSongSource) {
+          batch = await _configuredBatch(
+            engine,
+            config,
+            fallbackSource: session.randomSourceId,
+            minCount: refillCount,
+            excludePlaylistIds: session.usedPlaylistIds,
+            excludeIds: existing,
+          );
+        } else {
+          // 随机电台：同样每个歌单只取 3 首，跨歌单凑够一批；
+          // 本次电台用过的歌单、已经播过的歌都不再取。
+          batch = await engine.randomSongs(
+            sourceId: session.randomSourceId,
+            minCount: refillCount,
+            songsPerPlaylist: songsPerPlaylist,
+            excludePlaylistIds: session.usedPlaylistIds,
+            excludeIds: existing,
+          );
+        }
       } else {
         final station = session.station;
         if (station == null) return;
-        final sources = engine.usableSources(
-          configured: station.sourceIds,
-          fallback: [ref.read(discoverSourceIdProvider)],
-        );
-        if (sources.isEmpty) return;
         // 每个歌单最多取 3 首、跨歌单凑够一批；本次电台用过的歌单全部避开，
         // 不会一直停留在同一个歌单里。
-        batch = await engine.nextBatch(
-          sourceIds: sources,
-          tags: station.tags,
-          keywords: station.keywords,
+        batch = await _configuredBatch(
+          engine,
+          station,
+          fallbackSource: ref.read(discoverSourceIdProvider),
           minCount: refillCount,
-          songsPerPlaylist: songsPerPlaylist,
           excludePlaylistIds: session.usedPlaylistIds,
           excludeIds: existing,
         );

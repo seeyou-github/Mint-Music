@@ -88,7 +88,7 @@ class RadioNotifier extends Notifier<RadioData> {
         else
           station,
     ];
-    state = RadioData(categories: categories, stations: stations);
+    state = state.copyWith(categories: categories, stations: stations);
     await _persist();
   }
 
@@ -138,9 +138,40 @@ class RadioNotifier extends Notifier<RadioData> {
     } else {
       stations.add(saved);
     }
-    state = RadioData(categories: state.categories, stations: stations);
+    state = state.copyWith(stations: stations);
     await _persist();
     return index >= 0 ? stations[index] : saved;
+  }
+
+  /// 保存内置「随机电台」的可选配置（封面会先缓存到本地）。
+  Future<RadioStation> saveRandomStation(RadioStation station) async {
+    final previous = state.randomStation;
+    var saved = station;
+    final source = station.coverUrl.trim();
+    if (source.isEmpty) {
+      // 没设封面（或封面被清空）：不能沿用上一次的缓存文件。
+      saved = station.copyWith(clearCoverPath: true);
+    } else {
+      final cached = await RadioCoverCache.cache(source);
+      if (cached != null) saved = station.copyWith(coverPath: cached);
+    }
+    final old = previous?.coverPath?.trim() ?? '';
+    final keep = saved.coverPath?.trim() ?? '';
+    if (old.isNotEmpty && old != keep) {
+      await RadioCoverCache.remove(old);
+    }
+    state = state.copyWith(randomStation: saved);
+    await _persist();
+    return saved;
+  }
+
+  /// 重置随机电台：删除封面，并清空音源 / 歌单分类 / 搜索关键词设置。
+  Future<void> resetRandomStation() async {
+    final old = state.randomStation;
+    if (old == null) return;
+    state = state.copyWith(clearRandomStation: true);
+    await _persist();
+    await RadioCoverCache.remove(old.coverPath);
   }
 
   Future<void> removeStation(String id) async {
@@ -154,7 +185,7 @@ class RadioNotifier extends Notifier<RadioData> {
       }
     }
     if (removed == null) return;
-    state = RadioData(categories: state.categories, stations: stations);
+    state = state.copyWith(stations: stations);
     await _persist();
     await RadioCoverCache.remove(removed.coverPath);
   }
@@ -167,12 +198,12 @@ class RadioNotifier extends Notifier<RadioData> {
     if (newIndex < 0 || newIndex > stations.length) return;
     final moved = stations.removeAt(oldIndex);
     stations.insert(newIndex, moved);
-    state = RadioData(categories: state.categories, stations: stations);
+    state = state.copyWith(stations: stations);
     await _persist();
   }
 }
 
 extension RadioDataX on RadioData {
   RadioData copyWithCategories(List<RadioCategory> categories) =>
-      RadioData(categories: categories, stations: stations);
+      copyWith(categories: categories);
 }

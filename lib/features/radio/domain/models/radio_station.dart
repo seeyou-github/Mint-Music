@@ -183,11 +183,21 @@ class RadioStation {
 
 /// 电台数据（分类 + 电台）。
 class RadioData {
-  const RadioData({this.categories = const [], this.stations = const []});
+  const RadioData({
+    this.categories = const [],
+    this.stations = const [],
+    this.randomStation,
+  });
 
   /// 用户自建的分类（「全部」是内置的，不在这里）。
   final List<RadioCategory> categories;
   final List<RadioStation> stations;
+
+  /// 内置「随机电台」的可选配置（封面 / 音源 / 歌单分类 / 关键词）。
+  ///
+  /// 为空表示完全随机：没有封面，也不限制音源与歌单范围。
+  /// 它不在 [stations] 里，电台列表只把它当成固定的第一张卡片。
+  final RadioStation? randomStation;
 
   List<RadioStation> stationsIn(String categoryId) {
     if (categoryId == RadioCategory.allId) return stations;
@@ -196,14 +206,39 @@ class RadioData {
         .toList(growable: false);
   }
 
+  RadioData copyWith({
+    List<RadioCategory>? categories,
+    List<RadioStation>? stations,
+    RadioStation? randomStation,
+    bool clearRandomStation = false,
+  }) {
+    return RadioData(
+      categories: categories ?? this.categories,
+      stations: stations ?? this.stations,
+      randomStation: clearRandomStation
+          ? null
+          : (randomStation ?? this.randomStation),
+    );
+  }
+
   Map<String, dynamic> toJson() => {
     'categories': categories.map((e) => e.toJson()).toList(),
     'stations': stations.map((e) => e.toJson()).toList(),
+    if (randomStation != null) 'randomStation': randomStation!.toJson(),
   };
 
   factory RadioData.fromJson(Map<String, dynamic> json) {
     final rawCategories = json['categories'];
     final rawStations = json['stations'];
+    final rawRandom = json['randomStation'];
+    RadioStation? randomStation;
+    if (rawRandom is Map) {
+      final parsed = RadioStation.fromJson(
+        Map<String, dynamic>.from(rawRandom),
+      );
+      // id 必须是随机电台的固定 id，避免旧数据 / 手改配置混进一个普通电台。
+      if (parsed.isRandom) randomStation = parsed;
+    }
     return RadioData(
       categories: rawCategories is List
           ? rawCategories
@@ -221,6 +256,7 @@ class RadioData {
                 .where((e) => e.id.isNotEmpty)
                 .toList(growable: false)
           : const [],
+      randomStation: randomStation,
     );
   }
 }
