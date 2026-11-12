@@ -1,9 +1,14 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path/path.dart' as p;
 import '../../../core/l10n/l10n.dart';
-import '../../local/application/local_providers.dart';
+import '../../local/data/local_metadata_reader.dart';
+import '../../player/domain/models/song.dart';
 import '../../settings/application/settings_providers.dart';
 import '../../plugin/application/plugin_providers.dart';
 import '../data/download_repository.dart';
@@ -30,11 +35,7 @@ final downloadNotificationProvider = StateProvider<DownloadNotification?>(
 final downloadRepositoryProvider = Provider<DownloadRepository>((ref) {
   final repo = DownloadRepository();
 
-  // 当下载目录变化时，自动注册到本地音乐扫描器
-  repo.onDirectoryChanged = (dir) {
-    final localRepo = ref.read(localMusicRepositoryProvider);
-    localRepo.addDirectory(dir);
-  };
+  // 下载目录不会被自动加进本地页的扫描目录：扫描哪些目录完全由用户决定。
 
   // 异步初始化下载器（恢复任务 + 读取下载目录）。
   //
@@ -184,6 +185,115 @@ final downloadTasksProvider = StreamProvider<List<DownloadTask>>((ref) {
   final repo = ref.watch(downloadRepositoryProvider);
   return repo.taskStream;
 });
+
+/// 下载目录里扫描到的一个本地音频文件。
+class DownloadDirSong {
+  const DownloadDirSong({
+    required this.song,
+    required this.size,
+    required this.modifiedAt,
+  });
+
+  final Song song;
+
+  /// 文件大小（字节），列表右侧显示。
+  final int size;
+
+  /// 文件修改时间，用来把最新下载的文件排在前面。
+  final int modifiedAt;
+}
+
+/// 下载目录里现存的本地音频文件。
+///
+/// autoDispose：每次进入下载页都会重新扫描（离开页面即销毁），这样用户
+/// 在应用外往下载目录里放 / 删了文件，下次进来能直接反映出来。
+/// 历史下载任务只存在内存里，重启后列表是空的，这些扫描结果就是「已下载
+/// 的歌曲」的来源。
+final downloadDirSongsProvider =
+    FutureProvider.autoDispose<List<DownloadDirSong>>((ref) async {
+      final dir = ref.watch(downloadDirProvider).trim();
+      if (dir.isEmpty) return const [];
+      final directory = Directory(dir);
+      if (!await directory.exists()) return const [];
+
+      final filePaths = <String>[];
+      try {
+        await for (final entity in directory.list(
+          recursive: true,
+          followLinks: false,
+        )) {
+          if (entity is File && LocalMetadataReader.isAudioFile(entity.path)) {
+            filePaths.add(entity.path);
+          }
+        }
+      } catch (e) {
+        debugPrint('[Download] 扫描下载目录失败: $e');
+        return const [];
+      }
+
+      final songs = <DownloadDirSong>[];
+      for (final filePath in filePaths) {
+        try {
+          final stat = await File(filePath).stat();
+          final metadata = await LocalMetadataReader.read(filePath);
+          final fileName = p.basenameWithoutExtension(filePath);
+          final title = (metadata.title?.isNotEmpty ?? false)
+              ? metadata.title!
+              : fileName;
+          final artist = (metadata.artist?.isNotEmpty ?? false)
+              ? metadata.artist!
+              : '未知艺术家';
+          final album = (metadata.album?.isNotEmpty ?? false)
+              ? metadata.album!
+              : '未知专辑';
+          final embeddedLyric = metadata.lyrics?.trim() ?? '';
+
+          songs.add(
+            DownloadDirSong(
+              song: Song(
+                id: _localSongId(filePath),
+                title: title,
+                artist: artist,
+                album: album,
+                duration: metadata.durationSeconds ?? 0,
+                source: 'local',
+                filePath: filePath,
+                sourceUrl: filePath,
+                hasCover: metadata.artwork != null,
+                coverKey: _localCoverKey(filePath),
+                year: metadata.year,
+                genre: metadata.genre,
+                comment: metadata.comment,
+                hasLyric: embeddedLyric.isNotEmpty,
+              ),
+              size: stat.size,
+              modifiedAt: stat.modified.millisecondsSinceEpoch,
+            ),
+          );
+        } catch (e) {
+          debugPrint('[Download] 读取下载文件失败: $filePath - $e');
+        }
+      }
+
+      // 新下载的文件排前面。
+      songs.sort((a, b) => b.modifiedAt.compareTo(a.modifiedAt));
+      return songs;
+    });
+
+/// 本地歌曲 id / 封面缓存 key 的生成方式与本地音乐扫描保持一致，
+/// 这样同一首歌在本地页与下载页显示同样的封面、共享播放记录。
+String _localSongId(String filePath) {
+  final normalized = filePath.replaceAll('\\', '/');
+  return md5.convert(utf8.encode(normalized)).toString().substring(0, 16);
+}
+
+String _localCoverKey(String filePath) {
+  final normalized = filePath.replaceAll('\\', '/');
+  return md5
+      .convert(utf8.encode('cover_$normalized'))
+      .toString()
+      .substring(0, 16);
+}
 
 final downloadSearchQueryProvider = StateProvider<String>((ref) => '');
 

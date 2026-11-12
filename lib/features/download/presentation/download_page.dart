@@ -29,6 +29,9 @@ class DownloadPage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final colors = ref.watch(themeColorsProvider);
     final tasksAsync = ref.watch(downloadTasksProvider);
+    // 每次进入页面重新扫描下载目录：历史下载任务只存在内存里，重启后
+    // 已下载的歌曲要靠这次扫描显示在列表里。
+    final dirSongsAsync = ref.watch(downloadDirSongsProvider);
 
     return Scaffold(
       backgroundColor: Colors.transparent,
@@ -45,12 +48,29 @@ class DownloadPage extends ConsumerWidget {
             Expanded(
               child: tasksAsync.when(
                 data: (tasks) {
-                  if (tasks.isEmpty) {
-                    return _buildEmptyState(context, colors);
-                  }
                   // 所有任务按下载时间倒序（最新的在最上面）。
                   final sorted = [...tasks]
                     ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+                  // 已有任务记录的文件不再重复显示；扫描结果排在所有任务
+                  // （正在下载 / 已暂停 / 失败 / 已完成）后面。
+                  final taskPaths = {
+                    for (final task in sorted) _normalizePath(task.filePath),
+                  }..remove('');
+                  final dirSongs = (dirSongsAsync.valueOrNull ?? const [])
+                      .where(
+                        (item) => !taskPaths.contains(
+                          _normalizePath(item.song.filePath ?? ''),
+                        ),
+                      )
+                      .toList();
+
+                  if (sorted.isEmpty && dirSongs.isEmpty) {
+                    if (dirSongsAsync.isLoading) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+                    return _buildEmptyState(context, colors);
+                  }
+                  final itemCount = sorted.length + dirSongs.length;
                   return ListView.builder(
                     padding: const EdgeInsets.fromLTRB(
                       AppSpacing.lg,
@@ -58,14 +78,23 @@ class DownloadPage extends ConsumerWidget {
                       AppSpacing.lg,
                       AppSpacing.xxxl,
                     ),
-                    itemCount: sorted.length,
+                    itemCount: itemCount,
                     addAutomaticKeepAlives: false,
                     addRepaintBoundaries: true,
-                    itemBuilder: (context, index) => _DownloadTaskItem(
-                      task: sorted[index],
-                      index: index,
-                      maxIndex: sorted.length,
-                    ),
+                    itemBuilder: (context, index) {
+                      if (index < sorted.length) {
+                        return _DownloadTaskItem(
+                          task: sorted[index],
+                          index: index,
+                          maxIndex: itemCount,
+                        );
+                      }
+                      return _DownloadDirSongItem(
+                        item: dirSongs[index - sorted.length],
+                        index: index,
+                        maxIndex: itemCount,
+                      );
+                    },
                   );
                 },
                 loading: () => const Center(child: CircularProgressIndicator()),
@@ -724,15 +753,6 @@ class _DownloadTaskItemState extends ConsumerState<_DownloadTaskItem> {
     );
   }
 
-  String _formatSize(int bytes) {
-    if (bytes < 1024) return '$bytes B';
-    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    if (bytes < 1024 * 1024 * 1024) {
-      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
-    }
-    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
-  }
-
   String _formatSpeed(double bytesPerSec) {
     if (bytesPerSec <= 0) return '-';
     if (bytesPerSec < 1024) return '${bytesPerSec.toStringAsFixed(0)} B/s';
@@ -742,4 +762,159 @@ class _DownloadTaskItemState extends ConsumerState<_DownloadTaskItem> {
     if (kb < 1023.95) return '${kb.toStringAsFixed(1)} KB/s';
     return '${(bytesPerSec / (1024 * 1024)).toStringAsFixed(1)} MB/s';
   }
+}
+
+/// 下载目录里扫描到的本地歌曲（没有对应的下载任务记录，例如重启后）。
+///
+/// 外观与「下载完成」的任务一致：点击播放，右侧显示文件大小与删除按钮；
+/// 删除只删文件，不涉及任务记录（本来也没有）。
+class _DownloadDirSongItem extends ConsumerWidget {
+  const _DownloadDirSongItem({
+    required this.item,
+    required this.index,
+    required this.maxIndex,
+  });
+
+  final DownloadDirSong item;
+  final int index;
+  final int maxIndex;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final colors = ref.watch(themeColorsProvider);
+
+    return SongListItem(
+      song: item.song,
+      index: index,
+      maxIndex: maxIndex,
+      showQuality: false,
+      showDuration: false,
+      showMenuButton: false,
+      onTap: () => _play(context, ref),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.insert_drive_file_outlined,
+            size: 13,
+            color: colors.textHint,
+          ),
+          const SizedBox(width: 4),
+          Text(
+            _formatSize(item.size),
+            style: TextStyle(fontSize: 12, color: colors.textHint),
+          ),
+          const SizedBox(width: AppSpacing.xs),
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+            icon: Icon(Icons.delete_outline, size: 19, color: colors.error),
+            tooltip: context.tr('删除'),
+            onPressed: () => _confirmDelete(context, ref, colors),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _play(BuildContext context, WidgetRef ref) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final missingMessage = context.tr('文件不存在');
+    final path = item.song.filePath ?? '';
+    var exists = false;
+    try {
+      exists = await File(path).exists();
+    } catch (_) {
+      exists = false;
+    }
+    if (!exists) {
+      // 扫描后被外部删除：刷新列表并提示，避免点了没反应。
+      ref.invalidate(downloadDirSongsProvider);
+      _showMessage(messenger, missingMessage);
+      return;
+    }
+    await ref
+        .read(playbackControllerProvider.notifier)
+        .setQueue([item.song], startIndex: 0);
+  }
+
+  void _confirmDelete(
+    BuildContext context,
+    WidgetRef ref,
+    ThemeColors colors,
+  ) {
+    final messenger = ScaffoldMessenger.of(context);
+    final deletedMessage = context.tr('已删除下载文件');
+    final failedMessage = context.tr('删除失败');
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: colors.dialogSurface,
+        title: Text(
+          context.tr('删除下载文件'),
+          style: TextStyle(color: colors.textPrimary),
+        ),
+        content: Text(
+          context.tr('确定要删除《${item.song.title}》的下载文件吗？'),
+          style: TextStyle(color: colors.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(
+              context.tr('取消'),
+              style: TextStyle(color: colors.textHint),
+            ),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              var deleted = false;
+              try {
+                await File(item.song.filePath ?? '').delete();
+                deleted = true;
+              } catch (e) {
+                debugPrint('[Download] 删除下载文件失败: $e');
+              }
+              ref.invalidate(downloadDirSongsProvider);
+              _showMessage(
+                messenger,
+                deleted ? deletedMessage : failedMessage,
+              );
+            },
+            child: Text(
+              context.tr('删除'),
+              style: TextStyle(color: colors.error),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showMessage(ScaffoldMessengerState messenger, String message) {
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.grey[800],
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+}
+
+/// 路径比较：任务记录的路径与扫描结果的分隔符 / 大小写可能不一致，
+/// 统一成 `/` 小写再比，避免同一首歌被重复显示。
+String _normalizePath(String path) =>
+    path.replaceAll('\\', '/').toLowerCase();
+
+String _formatSize(int bytes) {
+  if (bytes < 1024) return '$bytes B';
+  if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+  if (bytes < 1024 * 1024 * 1024) {
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
+  return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
 }

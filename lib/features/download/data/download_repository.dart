@@ -110,7 +110,6 @@ class DownloadRepository {
   bool _dirFromSettings = false;
   bool _wifiOnly = false;
   UrlFetcher? _urlFetcher;
-  void Function(String dirPath)? onDirectoryChanged;
   final TagWriteService _tagWriteService = TagWriteService();
   TagWriteOptionsFetcher? _tagWriteOptionsFetcher;
   LyricFetcher? _lyricFetcher;
@@ -165,7 +164,6 @@ class DownloadRepository {
         _downloadDir = await _readPersistedDownloadDir();
       }
     }
-    onDirectoryChanged?.call(_downloadDir);
     if (wifiOnly != null) _wifiOnly = wifiOnly;
     if (maxConcurrent != null) _maxConcurrent = maxConcurrent;
 
@@ -286,7 +284,6 @@ class DownloadRepository {
       _dirFromSettings = true;
       // 下载目录改变后，未完成的任务改写到新目录，避免重试时继续写旧位置。
       _retargetUnfinishedTasks();
-      onDirectoryChanged?.call(_downloadDir);
     }
     if (wifiOnly != null) _wifiOnly = wifiOnly;
     if (maxConcurrent != null) {
