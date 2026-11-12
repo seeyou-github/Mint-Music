@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -12,6 +13,7 @@ import '../../../core/l10n/l10n.dart';
 import '../../../core/platform/android_app_version.dart';
 import '../../../core/platform/download_paths.dart';
 import '../../../core/platform/windows_file_version.dart';
+import '../../../core/theme/builtin_blur_backgrounds.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../plugin/application/plugin_providers.dart';
 import '../../plugin/domain/plugin_types.dart';
@@ -673,15 +675,33 @@ final settingsInitProvider = FutureProvider<void>((ref) async {
       .getCoverBackground();
   // 背景颜色模式：背景渐变 / 高斯模糊（默认），以及模糊图相关的三项。
   ref.read(backgroundModeProvider.notifier).state = svc.getBackgroundMode();
-  final blurImageName = svc.getBlurBackgroundImage();
-  ref.read(blurBackgroundImageNameProvider.notifier).state = blurImageName;
+  // 背景图：安装包内置 4 张，先确保它们复制进设置目录，再和用户自己加的图
+  // 合并成列表（内置的排前面）。文件被删掉时下次启动会补回来。
+  var blurImageName = svc.getBlurBackgroundImage();
   // 多图列表：老版本只存了一张图的文件名，升级后把它补进列表，否则设置页
   // 里一张图都不显示、主界面其实还在用那张图。
   var blurImageNames = svc.getBlurBackgroundImages();
   if (blurImageNames.isEmpty && blurImageName.trim().isNotEmpty) {
     blurImageNames = [blurImageName];
   }
-  ref.read(blurBackgroundImageNamesProvider.notifier).state = blurImageNames;
+  final builtinNames = await ensureBuiltinBlurBackgrounds();
+  final mergedNames = [
+    ...builtinNames,
+    ...blurImageNames.where((name) => !builtinNames.contains(name)),
+  ];
+  if (!listEquals(mergedNames, blurImageNames)) {
+    await svc.setBlurBackgroundImages(mergedNames);
+  }
+  // 从没选过背景图的（新装 / 老版本没配过）默认用内置的 1.jpg；
+  // 用户主动清空过的话保持清空，继续用背景渐变。
+  if (blurImageName.trim().isEmpty &&
+      !svc.hasBlurBackgroundSelection() &&
+      builtinNames.isNotEmpty) {
+    blurImageName = builtinNames.first;
+    await svc.setBlurBackgroundImage(blurImageName);
+  }
+  ref.read(blurBackgroundImageNameProvider.notifier).state = blurImageName;
+  ref.read(blurBackgroundImageNamesProvider.notifier).state = mergedNames;
   ref.read(blurBackgroundSigmaProvider.notifier).state = svc
       .getBlurBackgroundSigma();
   ref.read(blurBackgroundBrightnessProvider.notifier).state = svc

@@ -1370,7 +1370,7 @@ class _AppearanceContent extends ConsumerWidget {
           SettingRow(
             icon: Icons.image_outlined,
             title: '高斯模糊背景图',
-            subtitle: '选一张图铺满主界面，可调模糊程度、亮度与亮图压暗；未选择时沿用背景渐变',
+            subtitle: '内置 4 张图，也可以自己添加；可调模糊程度、亮度与亮图压暗；未选择时沿用背景渐变',
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
               children: [

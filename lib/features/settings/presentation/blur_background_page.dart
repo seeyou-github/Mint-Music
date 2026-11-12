@@ -12,6 +12,7 @@ import '../../../app/app_page_background.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/platform/app_paths.dart';
 import '../../../core/theme/app_spacing.dart';
+import '../../../core/theme/builtin_blur_backgrounds.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import '../application/appearance_providers.dart';
@@ -21,8 +22,9 @@ import 'settings_page.dart';
 
 /// 「设置 → 外观设置 → 背景颜色模式 = 高斯模糊」时显示的背景图设置页。
 ///
-/// 用户可以上传多张图，点缩略图切换当前背景；主界面把选中的图高斯模糊后
-/// 铺满，模糊程度 / 亮度 / 亮图自动压暗实时预览。图片会**复制进设置目录**
+/// 安装包内置 4 张图（默认用 1.jpg），用户也可以再上传多张；点缩略图切换
+/// 当前背景，内置图不可删除。主界面把选中的图高斯模糊后铺满，模糊程度 /
+/// 亮度 / 亮图自动压暗实时预览。图片会**复制进设置目录**
 /// （`config/setting`），备份还原时跟着走，设置里只存文件名，换设备 / 换安装
 /// 目录也能对应上。
 class BlurBackgroundPage extends ConsumerStatefulWidget {
@@ -151,7 +153,10 @@ class _BlurBackgroundPageState extends ConsumerState<BlurBackgroundPage> {
   }
 
   /// 删除一张背景图；删的是当前选中的那张时，自动切到剩下的第一张。
+  ///
+  /// 内置图片不允许删除（下次启动也会被补回来），这里再兜一层。
   Future<void> _deleteImage(String name) async {
+    if (builtinBlurBackgroundNames.contains(name)) return;
     final names = [...ref.read(blurBackgroundImageNamesProvider)]..remove(name);
     ref.read(blurBackgroundImageNamesProvider.notifier).state = names;
     await _persist((svc) => svc.setBlurBackgroundImages(names));
@@ -337,7 +342,7 @@ class _BlurBackgroundPageState extends ConsumerState<BlurBackgroundPage> {
     return SettingGroup(
       title: '背景图',
       subtitle:
-          '点击图片切换背景，右上角按钮删除；图片保存在 config/setting/background_pic，备份还原时一起带走',
+          '点击图片切换背景；前 4 张是内置图（不可删除），右上角按钮只删除自己添加的图',
       colors: colors,
       children: [
         Wrap(
@@ -348,6 +353,7 @@ class _BlurBackgroundPageState extends ConsumerState<BlurBackgroundPage> {
               _BlurImageTile(
                 path: dir == null ? null : p.join(dir, name),
                 selected: name == selectedName,
+                deletable: !builtinBlurBackgroundNames.contains(name),
                 colors: colors,
                 onTap: () => unawaited(_selectImage(name)),
                 onDelete: () => unawaited(_deleteImage(name)),
@@ -477,6 +483,7 @@ class _BlurImageTile extends StatelessWidget {
   const _BlurImageTile({
     required this.path,
     required this.selected,
+    this.deletable = true,
     required this.colors,
     required this.onTap,
     required this.onDelete,
@@ -486,6 +493,7 @@ class _BlurImageTile extends StatelessWidget {
 
   final String? path;
   final bool selected;
+  final bool deletable;
   final ThemeColors colors;
   final VoidCallback onTap;
   final VoidCallback onDelete;
@@ -533,22 +541,27 @@ class _BlurImageTile extends StatelessWidget {
                 ),
               ),
             ),
-            Positioned(
-              top: 4,
-              right: 4,
-              child: GestureDetector(
-                onTap: onDelete,
-                child: Container(
-                  width: 22,
-                  height: 22,
-                  decoration: const BoxDecoration(
-                    color: Color(0xFFE5484D),
-                    shape: BoxShape.circle,
+            if (deletable)
+              Positioned(
+                top: 4,
+                right: 4,
+                child: GestureDetector(
+                  onTap: onDelete,
+                  child: Container(
+                    width: 22,
+                    height: 22,
+                    decoration: const BoxDecoration(
+                      color: Color(0xFFE5484D),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.close,
+                      size: 14,
+                      color: Colors.white,
+                    ),
                   ),
-                  child: const Icon(Icons.close, size: 14, color: Colors.white),
                 ),
               ),
-            ),
           ],
         ),
       ),

@@ -230,6 +230,12 @@ class SettingsService {
   Future<void> setBlurBackgroundImage(String name) =>
       _prefs.setString(_blurImageKey, name);
 
+  /// 用户是否设置过背景图（包括主动清空成空串）。
+  ///
+  /// 用来区分「从没选过」（可以默认用内置的 1.jpg）和「主动清空」（保持不
+  /// 使用图片、退回背景渐变）。
+  bool hasBlurBackgroundSelection() => _prefs.containsKey(_blurImageKey);
+
   /// 设置目录里保存的全部背景图文件名（用户可上传多张）。
   List<String> getBlurBackgroundImages() =>
       _prefs.getStringList(_blurImagesKey) ?? const [];
