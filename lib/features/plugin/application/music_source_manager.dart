@@ -91,6 +91,16 @@ class _LruCache<K, V> {
     return value;
   }
 
+  /// 是否存在某 key（含缓存的 null 值）；命中的非 null 条目顺带刷新位置。
+  bool containsKey(K key) {
+    final value = _entries[key];
+    if (value != null) {
+      _entries.remove(key);
+      _entries[key] = value;
+    }
+    return _entries.containsKey(key);
+  }
+
   void operator []=(K key, V value) {
     _entries.remove(key);
     _entries[key] = value;
@@ -3113,7 +3123,8 @@ class MusicSourceManager {
   /// 专辑发行年份缓存：`音源|专辑id → 年份`。
   ///
   /// 「歌曲信息对比」会随着切换候选反复问年份，同一张专辑只查一次。
-  static final Map<String, int?> _albumYearCache = <String, int?>{};
+  /// 用带条数上限的 LRU（含负缓存：查不到年份也记下来，避免反复打网络）。
+  static final _LruCache<String, int?> _albumYearCache = _LruCache(200);
 
   /// 取一首歌的发行年份。
   ///
