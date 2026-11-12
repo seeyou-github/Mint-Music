@@ -554,13 +554,17 @@ class _PlayPauseButton extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final diameter = compact ? 54.0 : 64.0;
     final colors = ref.watch(themeColorsProvider);
-    // 圆底始终保留（深色主题那圈淡底的观感），浅色主题换成深色实心圆：
-    // 浅色下主题色 15% 压在浅背景上几乎看不见，改用与「上一首 / 下一首」
-    // 图标同一色系（textPrimary）的深色，图标同时反白，才在深底上看得清。
+    // 圆底始终保留（深色主题那圈淡底的观感），浅色主题换成深灰实心圆：
+    // 浅色下主题色 15% 压在浅背景上几乎看不见，改用深灰；图标直接用当前
+    // 背景色，看起来像从背景里镂出来的，不再是一块近黑圆贴白三角。
     final isLight = ref.watch(isLightThemeActiveProvider);
-    final background = (isLight ? colors.textPrimary : colors.primary)
-        .withValues(alpha: isLight ? 0.85 : 0.15);
-    final iconColor = isLight ? colors.textOnPrimary : colors.primary;
+    final background = isLight
+        ? Color.alphaBlend(
+            colors.textPrimary.withValues(alpha: 0.65),
+            colors.background,
+          )
+        : colors.primary.withValues(alpha: 0.15);
+    final iconColor = isLight ? colors.background : colors.primary;
     return GestureDetector(
       // 遵循 CeruMusic/Sollin-Music：加载期间禁用按钮，避免连点
       onTap: isLoading ? null : onPressed,
