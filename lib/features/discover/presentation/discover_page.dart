@@ -8,6 +8,7 @@ import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:permission_handler/permission_handler.dart';
+import '../../../core/constants/app_routes.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/app_surface.dart';
@@ -1076,6 +1077,11 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
                       final hasDiscoverContent = ref
                           .read(musicSourceManagerProvider)
                           .sourceHasDiscoverContent(sourceId);
+                      // 一个音源都没装时，别再解释「该音源不提供歌单和榜单」，
+                      // 直接给出安装入口。
+                      final noSource = ref
+                          .watch(discoverSupportedSourcesProvider)
+                          .isEmpty;
                       return Center(
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
@@ -1087,12 +1093,38 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
                             ),
                             const SizedBox(height: AppSpacing.md),
                             Text(
-                              hasDiscoverContent
+                              noSource
+                                  ? context.tr('没有音源，请先安装')
+                                  : hasDiscoverContent
                                   ? context.tr('暂无歌单数据')
                                   : context.tr('该音源不提供歌单和榜单'),
                               style: TextStyle(color: colors.textHint),
                             ),
-                            if (hasDiscoverContent) ...[
+                            if (noSource) ...[
+                              const SizedBox(height: AppSpacing.md),
+                              OutlinedButton.icon(
+                                onPressed: () =>
+                                    context.go(AppRoutes.pluginManagement),
+                                // 文字主题色 + 主题色 15% 底 + 主题色半透明描边，
+                                // 与设置页 / 热榜空状态里的描边按钮保持同一套风格。
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: colors.primary,
+                                  backgroundColor: colors.primary.withValues(
+                                    alpha: 0.15,
+                                  ),
+                                  side: BorderSide(
+                                    color: colors.primary.withValues(
+                                      alpha: 0.5,
+                                    ),
+                                  ),
+                                ),
+                                icon: const Icon(
+                                  Icons.extension_outlined,
+                                  size: 18,
+                                ),
+                                label: Text(context.tr('安装音源')),
+                              ),
+                            ] else if (hasDiscoverContent) ...[
                               const SizedBox(height: AppSpacing.md),
                               TextButton(
                                 onPressed: () => _loadPlaylists(),
