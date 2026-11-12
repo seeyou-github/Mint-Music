@@ -2644,8 +2644,11 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
           playbackControllerProvider.select((state) => state.currentSong?.id),
         ) ==
         song.id;
-    // 不再按行做深浅交错：整张榜单卡片沿用外层 floatingSurfaceDecoration
-    // 的 colors.surface 底色，与「新增电台」控件一致。
+    // 深浅交错：奇数行（1、3、5…）比卡片底色稍暗，偶数行沿用卡片底色。
+    // 只压 6% 黑，避免整列看起来像斑马纹，只是让行与行之间有隐约的层次。
+    final rowBackground = index.isEven
+        ? Color.lerp(colors.surface, Colors.black, 0.06)
+        : null;
     final title = Text(
       song.title,
       maxLines: 1,
@@ -2662,6 +2665,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
       child: Container(
         height: isTopThree ? 58 : 44,
         padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+        color: rowBackground,
         child: Row(
           children: [
             SizedBox(
