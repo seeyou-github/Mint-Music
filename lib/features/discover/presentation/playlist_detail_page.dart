@@ -604,7 +604,10 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
                       ),
                     ],
                   ),
-                  const SizedBox(height: AppSpacing.xs),
+                  // 名称与下面这排按钮的垂直间距：原来只有 4dp，两行贴得太紧；
+                  // 放到 12dp 之后名称和按钮分得开，两行合起来仍低于封面
+                  // （72dp），顶栏高度不变，列表位置也不会被推下去。
+                  const SizedBox(height: AppSpacing.md),
                   // 窄屏下「播放全部 / 收藏 / 更多」一行放不下，允许横向滚动。
                   SingleChildScrollView(
                     scrollDirection: Axis.horizontal,
