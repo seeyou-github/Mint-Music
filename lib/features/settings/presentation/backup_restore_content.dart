@@ -310,6 +310,7 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
       return;
     }
     setState(() => _busy = true);
+    _resetDownloadSpeed();
     _showProgress(tr('正在下载并还原...'));
     try {
       // 下载耗时与包体积成正比：备份里连插件目录一起打，几十 MB 很常见，
@@ -372,6 +373,24 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
   /// 进度文字上一次刷新的时间：分片回调每秒可达数百次，节流到 200ms。
   DateTime _lastProgressPaint = DateTime.fromMillisecondsSinceEpoch(0);
 
+  /// 本次下载的速度计时：从第一个数据块开始算，用于「平均每秒多少」。
+  final Stopwatch _downloadWatch = Stopwatch();
+
+  /// 速度基准字节数：断点续传时从续传点起算，不把已落盘的部分算成本次流量。
+  int _downloadSpeedBase = 0;
+
+  /// 是否已经在计时（第一次收到数据块时置位）。
+  bool _downloadCounting = false;
+
+  /// 开始一次新的下载：把速度基准清掉，避免上一次还原的数字被继承。
+  void _resetDownloadSpeed() {
+    _downloadWatch
+      ..reset()
+      ..stop();
+    _downloadSpeedBase = 0;
+    _downloadCounting = false;
+  }
+
   /// 下载备份的超时时长：按 40KB/s 估，最少 3 分钟、最多 15 分钟。
   ///
   /// 体积未知（服务器 PROPFIND 没给 size）时按 5 分钟算，够下一个几十 MB 的包。
@@ -391,13 +410,45 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
     final now = DateTime.now();
     if (now.difference(_lastProgressPaint).inMilliseconds < 200) return;
     _lastProgressPaint = now;
+
+    // 第一次回调 / 服务端忽略 Range 从头重下（字节数回退）时重置基准，
+    // 否则算出来的是负数或把上一轮的字节算进这一轮。
+    if (!_downloadCounting || received < _downloadSpeedBase) {
+      _downloadSpeedBase = received;
+      _downloadWatch
+        ..reset()
+        ..start();
+      _downloadCounting = true;
+    }
+    // 不足 1 秒的读数会被第一个分片带飞，先不显示，等窗口够长再说。
+    final elapsedMs = _downloadWatch.elapsedMilliseconds;
+    final speed = elapsedMs >= 1000
+        ? (received - _downloadSpeedBase) * 1000 / elapsedMs
+        : 0.0;
+    final speedLabel = _formatSpeed(speed);
     final got = _formatSize(received);
+
     if (total <= 0) {
-      _progressText.value = tr('正在下载备份 $got...');
+      _progressText.value = speedLabel.isEmpty
+          ? tr('正在下载备份 $got...')
+          : tr('正在下载备份 $got · $speedLabel');
       return;
     }
     final percent = (received * 100 / total).clamp(0, 100).toStringAsFixed(0);
-    _progressText.value = tr('正在下载备份 $got / ${_formatSize(total)}（$percent%）');
+    final sizeLabel = '$got / ${_formatSize(total)}（$percent%）';
+    _progressText.value = speedLabel.isEmpty
+        ? tr('正在下载备份 $sizeLabel')
+        : tr('正在下载备份 $sizeLabel · $speedLabel');
+  }
+
+  /// 速度文案（如 `1.2 MB/s`）：还看不出速度时返回空串，不显示占位的 `-`。
+  static String _formatSpeed(double bytesPerSec) {
+    if (bytesPerSec <= 0) return '';
+    if (bytesPerSec < 1024) return '${bytesPerSec.toStringAsFixed(0)} B/s';
+    final kb = bytesPerSec / 1024;
+    // 四舍五入后可能到 1024.0，提前进位到 MB/s，避免出现「1024.0 KB/s」。
+    if (kb < 1023.95) return '${kb.toStringAsFixed(1)} KB/s';
+    return '${(bytesPerSec / (1024 * 1024)).toStringAsFixed(1)} MB/s';
   }
 
   /// 显示一个不会自动消失的进度提示（上传 / 下载过程中用）。
