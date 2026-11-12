@@ -25,7 +25,8 @@ class JsEngineService {
   final Set<int> _activeTimerIds = <int>{};
   final Set<int> _repeatTimerIds = <int>{};
 
-  /// 定时器回调的秒级限流窗口，防止多个定时器叠加成事件风暴。
+  /// 周期定时器回调的秒级限流窗口，防止多个 setInterval 叠加成事件风暴。
+  /// 一次性定时器不参与限流，避免回调被直接丢弃。
   DateTime? _timerFireWindowStart;
   int _timerFireCount = 0;
   bool _timerFireThrottled = false;
@@ -1479,8 +1480,8 @@ function __zlibRequest(action, data) {
   /// evaluate 写入，最后在 JS 侧 join 成完整串再交给 `__resolveHttpRequest`。
   ///
   /// 正确性依据：[_escapeForJsString] 是逐字符替换（`\`、`'`、换行等各自
-  /// 独立映射为固定序列），把原始响应体在任意位置切块后逐块转义，拼接结果
-  /// 与整体转义完全一致，所以可以放心按原始长度切块。
+  /// 独立映射为固定序列），拼接结果与整体转义一致。切点还要避开代理对，
+  /// 否则半个字符单独转 UTF-8 会变成 U+FFFD。
   Future<void> _resolveRequestChunked(
     int requestId,
     bool success,
@@ -1491,14 +1492,18 @@ function __zlibRequest(action, data) {
       '长度=${resultJson.length}, 块大小=$_httpChunkChars',
     );
     evaluate('(__httpChunks = __httpChunks || {})[$requestId] = [];');
-    for (
-      var offset = 0;
-      offset < resultJson.length;
-      offset += _httpChunkChars
-    ) {
-      final end = math.min(offset + _httpChunkChars, resultJson.length);
+    var offset = 0;
+    while (offset < resultJson.length) {
+      var end = math.min(offset + _httpChunkChars, resultJson.length);
+      // 切点落在低代理上说明切开了代理对（emoji / 生僻字）：往前退一个码元，
+      // 否则孤立代理转 UTF-8 时会变成 U+FFFD，拼回去的数据就坏了。
+      if (end < resultJson.length &&
+          (resultJson.codeUnitAt(end) & 0xFC00) == 0xDC00) {
+        end--;
+      }
       final escaped = _escapeForJsString(resultJson.substring(offset, end));
       evaluate("(__httpChunks[$requestId]).push('$escaped');");
+      offset = end;
       // 块与块之间让出一次事件循环，主线程不至于被连续的大编译占满。
       await Future<void>.delayed(Duration.zero);
     }
@@ -1796,21 +1801,24 @@ var $resultVar = { __status: 'pending', __value: null };
       _activeTimerIds.remove(timerId);
       _repeatTimerIds.remove(timerId);
     }
-    // 秒级熔断：即使插件开了多个短间隔定时器，也不让回调把主 isolate 打满。
-    final now = DateTime.now();
-    final windowStart = _timerFireWindowStart;
-    if (windowStart == null ||
-        now.difference(windowStart) >= const Duration(seconds: 1)) {
-      _timerFireWindowStart = now;
-      _timerFireCount = 0;
-      _timerFireThrottled = false;
-    }
-    if (++_timerFireCount > _maxTimerFiresPerSecond) {
-      if (!_timerFireThrottled) {
-        _timerFireThrottled = true;
-        _log('[JsEngine] 定时器回调过密，已限流');
+    // 秒级熔断：只限周期定时器，一次性的回调丢了就永远丢了（插件常用
+    // setTimeout 做异步回落），宁可放过也不吞。
+    if (repeat) {
+      final now = DateTime.now();
+      final windowStart = _timerFireWindowStart;
+      if (windowStart == null ||
+          now.difference(windowStart) >= const Duration(seconds: 1)) {
+        _timerFireWindowStart = now;
+        _timerFireCount = 0;
+        _timerFireThrottled = false;
       }
-      return;
+      if (++_timerFireCount > _maxTimerFiresPerSecond) {
+        if (!_timerFireThrottled) {
+          _timerFireThrottled = true;
+          _log('[JsEngine] 定时器回调过密，已限流');
+        }
+        return;
+      }
     }
     try {
       final result = evaluate('__mintFireTimer($timerId)');
