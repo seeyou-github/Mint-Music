@@ -1285,9 +1285,11 @@ class _AppearanceContent extends ConsumerWidget {
             context,
             colors,
             title: '选择主题色',
-            currentProvider: themePrimaryColorProvider,
+            // 主题色浅色 / 深色各存一份：这里读写当前主题那一套。
+            currentProvider: themePrimaryColorStateFor(isLight),
             customProvider: customThemeColorsProvider,
-            persistCurrent: (s, hex) => s.setThemePrimaryColor(hex),
+            persistCurrent: (s, hex) =>
+                s.setThemePrimaryColor(hex, light: isLight),
             persistCustom: (s, list) => s.setCustomThemeColors(list),
             // 浅色主题单独一套更深的色，深色主题仍用原来那套亮色。
             presets: isLight ? _lightPresetColors : _presetColors,

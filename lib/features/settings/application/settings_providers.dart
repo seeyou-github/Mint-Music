@@ -643,8 +643,11 @@ final settingsInitProvider = FutureProvider<void>((ref) async {
   ref.read(themeModeProvider.notifier).state = themeModeFromPref(
     svc.getThemeMode(),
   );
-  ref.read(themePrimaryColorProvider.notifier).state = svc
-      .getThemePrimaryColor();
+  // 主题色浅色 / 深色各一套：切主题时各用各的，不再互相串色。
+  ref.read(lightThemePrimaryColorProvider.notifier).state = svc
+      .getThemePrimaryColorLight();
+  ref.read(darkThemePrimaryColorProvider.notifier).state = svc
+      .getThemePrimaryColorDark();
   ref.read(lightThemeFontColorProvider.notifier).state = svc
       .getThemeFontColorLight();
   ref.read(darkThemeFontColorProvider.notifier).state = svc

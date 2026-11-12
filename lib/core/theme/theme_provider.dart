@@ -16,15 +16,40 @@ export 'theme_colors.dart';
 /// 应用主题模式：浅色 / 深色 / 跟随系统。
 final themeModeProvider = StateProvider<ThemeMode>((ref) => ThemeMode.system);
 
-/// 「主题色」的默认值（暖金）。
+/// 「主题色」的默认值（暖金，深色主题用）。
 ///
-/// 外观设置里内置颜色的**第一个**就是它，新装 / 没保存过主题色时用的也是
-/// 它；改这里要同步设置存储（`SettingsService.getThemePrimaryColor`）的兜底值。
+/// 外观设置里深色内置颜色的**第一个**就是它，新装 / 没保存过主题色时用的也是
+/// 它；改这里要同步设置存储（`SettingsService.getThemePrimaryColorDark`）的兜底值。
 const String defaultThemePrimaryColor = '#DBB580';
 
-final themePrimaryColorProvider = StateProvider<String>(
+/// 浅色模式「主题色」的默认值：内置浅色主题色的第一个（深绿）。
+///
+/// 深色那套亮色压在浅灰底上会发飘、对比度也低，所以浅色主题单独一套；
+/// 没单独选过时用这个，而不是沿用深色主题的颜色。
+/// 要同步设置存储（`SettingsService.getThemePrimaryColorLight`）的兜底值。
+const String defaultLightThemePrimaryColor = '#127434';
+
+/// 浅色 / 深色各自的「主题色」。
+///
+/// 以前只有一个全局主题色，切到浅色主题后仍然是深色那套颜色（暖金在浅底上
+/// 几乎看不清）。现在按主题模式分开存，切换时各用各的。
+final lightThemePrimaryColorProvider = StateProvider<String>(
+  (ref) => defaultLightThemePrimaryColor,
+);
+final darkThemePrimaryColorProvider = StateProvider<String>(
   (ref) => defaultThemePrimaryColor,
 );
+
+/// 当前主题模式生效的「主题色」。
+final themePrimaryColorProvider = Provider<String>((ref) {
+  return ref.watch(isLightThemeActiveProvider)
+      ? ref.watch(lightThemePrimaryColorProvider)
+      : ref.watch(darkThemePrimaryColorProvider);
+});
+
+/// 当前主题模式对应的主题色状态（选色面板写值用）。
+StateProvider<String> themePrimaryColorStateFor(bool light) =>
+    light ? lightThemePrimaryColorProvider : darkThemePrimaryColorProvider;
 
 /// 深色模式「字体颜色」的默认值（低饱和的米灰黄）。
 const String defaultThemeFontColor = '#C4BEA4';

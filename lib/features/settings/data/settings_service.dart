@@ -20,21 +20,39 @@ class SettingsService {
   /// 旧版本的内置默认主题色（Spotify 绿）。
   static const String _legacyDefaultPrimaryColor = '#1DB954';
 
-  /// 主题色：没保存过用默认的暖金。
+  /// 旧版只有一份的主题色，只用于迁移读取（归深色主题那套）。
+  static const String _primaryColorKey = 'theme_primary_color';
+  static const String _primaryColorLightKey = 'theme_primary_color_light';
+  static const String _primaryColorDarkKey = 'theme_primary_color_dark';
+
+  /// 深色模式「主题色」：没保存过时沿用旧版单键，再兜底暖金。
   ///
   /// 早期版本的默认是 Spotify 绿，没改过主题色的用户（配置里还是这个值）
   /// 跟着新默认换成暖金；自己选过的颜色不受影响。
-  String getThemePrimaryColor() {
-    final saved = _prefs.getString('theme_primary_color');
-    if (saved == null) return defaultThemePrimaryColor;
-    if (saved.trim().toUpperCase() == _legacyDefaultPrimaryColor) {
+  String getThemePrimaryColorDark() {
+    final saved = _prefs.getString(_primaryColorDarkKey);
+    if (saved != null) return saved;
+    final legacy = _prefs.getString(_primaryColorKey);
+    if (legacy == null) return defaultThemePrimaryColor;
+    if (legacy.trim().toUpperCase() == _legacyDefaultPrimaryColor) {
       return defaultThemePrimaryColor;
     }
-    return saved;
+    return legacy;
   }
 
-  Future<void> setThemePrimaryColor(String v) =>
-      _prefs.setString('theme_primary_color', v);
+  /// 浅色模式「主题色」：没单独存过就用内置浅色主题色的第一个（深绿）。
+  ///
+  /// 旧版那一份主题色是给深色主题挑的（暖金 / 用户自选），浅色主题不沿用：
+  /// 沿用的话切到浅色主题还是深色那套颜色，在浅底上几乎看不清。
+  String getThemePrimaryColorLight() =>
+      _prefs.getString(_primaryColorLightKey) ??
+      defaultLightThemePrimaryColor;
+
+  Future<void> setThemePrimaryColor(String v, {required bool light}) =>
+      _prefs.setString(
+        light ? _primaryColorLightKey : _primaryColorDarkKey,
+        v,
+      );
 
   // -- theme font colors（浅色 / 深色各一套） --
   static const _fontColorLightKey = 'theme_font_color_light';
