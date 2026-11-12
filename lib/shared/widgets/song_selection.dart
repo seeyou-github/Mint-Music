@@ -421,14 +421,16 @@ Future<void> showBatchDownloadSheet(
     return;
   }
 
+  // 弹层跟随主题：原来写死深色块 + 白字，浅色主题下文字看不清。
+  final colors = ref.read(themeColorsProvider);
   final quality = await showModalBottomSheet<String>(
     context: context,
     useRootNavigator: true,
     backgroundColor: Colors.transparent,
     builder: (ctx) => SafeArea(
       child: Container(
-        decoration: const BoxDecoration(
-          color: Color(0xFF1E1E1E),
+        decoration: BoxDecoration(
+          color: colors.dialogSurface,
           borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
         ),
         child: Column(
@@ -439,23 +441,26 @@ Future<void> showBatchDownloadSheet(
               width: 40,
               height: 4,
               decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.15),
+                color: colors.textPrimary.withValues(alpha: 0.15),
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
             const SizedBox(height: AppSpacing.md),
             Text(
               ctx.tr('选择下载音质'),
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.w600,
-                color: Colors.white,
+                color: colors.textPrimary,
               ),
             ),
             const SizedBox(height: AppSpacing.sm),
             ...qualities.map(
               (q) => ListTile(
-                title: Text(q, style: const TextStyle(color: Colors.white)),
+                title: Text(
+                  q,
+                  style: TextStyle(color: colors.textPrimary),
+                ),
                 onTap: () => Navigator.pop(ctx, q),
               ),
             ),

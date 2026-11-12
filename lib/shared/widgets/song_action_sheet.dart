@@ -247,9 +247,10 @@ class SongActionSheet extends ConsumerStatefulWidget {
   ///
   /// 播放页顶部的下载按钮直接调用这个（不经过 ActionSheet）。
   static void showDownloadQualityPicker(BuildContext context, Song song) {
-    final manager = ProviderScope.containerOf(
-      context,
-    ).read(musicSourceManagerProvider);
+    final container = ProviderScope.containerOf(context);
+    final manager = container.read(musicSourceManagerProvider);
+    // 弹层底色 / 文字跟随主题：原来写死深色块 + 白字，浅色主题下和整体不一致。
+    final themeColors = container.read(themeColorsProvider);
     // 数据源歌曲的 source 是数据源插件（不提供播放），下载音质要看真正
     // 出面解析地址的那个播放源。
     final sourceId =
@@ -265,7 +266,7 @@ class SongActionSheet extends ConsumerStatefulWidget {
       useRootNavigator: true,
       context: context,
       sheetAnimationStyle: _sheetAnimationStyle,
-      backgroundColor: AppColors.surface,
+      backgroundColor: themeColors.dialogSurface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
@@ -286,7 +287,7 @@ class SongActionSheet extends ConsumerStatefulWidget {
                     width: 40,
                     height: 4,
                     decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.15),
+                      color: themeColors.textPrimary.withValues(alpha: 0.15),
                       borderRadius: BorderRadius.circular(2),
                     ),
                   ),
@@ -296,7 +297,7 @@ class SongActionSheet extends ConsumerStatefulWidget {
                     style: TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.w600,
-                      color: Colors.white,
+                      color: themeColors.textPrimary,
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -1144,6 +1145,8 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
     WidgetRef ref,
   ) async {
     final currentSpeed = ref.read(playbackSpeedProvider);
+    // 弹层是主题色的：文字 / 图标跟随主题，不能再用固定深色主题的白字。
+    final colors = ref.read(themeColorsProvider);
     const speeds = ['0.5x', '0.75x', '1.0x', '1.25x', '1.5x', '2.0x'];
     showModalBottomSheet(
       useRootNavigator: true,
@@ -1162,12 +1165,12 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                 isSelected
                     ? Icons.radio_button_checked
                     : Icons.radio_button_unchecked,
-                color: isSelected ? AppColors.primary : AppColors.textSecondary,
+                color: isSelected ? colors.primary : colors.textSecondary,
               ),
               title: Text(
                 label,
                 style: TextStyle(
-                  color: isSelected ? AppColors.primary : AppColors.textPrimary,
+                  color: isSelected ? colors.primary : colors.textPrimary,
                 ),
               ),
               onTap: () {
@@ -1370,6 +1373,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
     String value,
     VoidCallback onTap,
   ) {
+    final colors = c.read(themeColorsProvider);
     return InkWell(
       onTap: onTap,
       child: Padding(
@@ -1382,22 +1386,15 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
             Expanded(
               child: Text(
                 title,
-                style: const TextStyle(
-                  fontSize: 15,
-                  color: AppColors.textPrimary,
-                ),
+                style: TextStyle(fontSize: 15, color: colors.textPrimary),
               ),
             ),
             Text(
               value,
-              style: const TextStyle(fontSize: 13, color: AppColors.textHint),
+              style: TextStyle(fontSize: 13, color: colors.textSecondary),
             ),
             const SizedBox(width: 4),
-            const Icon(
-              Icons.chevron_right,
-              size: 18,
-              color: AppColors.textHint,
-            ),
+            Icon(Icons.chevron_right, size: 18, color: colors.textSecondary),
           ],
         ),
       ),
