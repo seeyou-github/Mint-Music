@@ -27,7 +27,10 @@ class _DownloadListData {
 
 /// 排序 / 去重放进带缓存的 provider：任务流或扫描结果不变时，主题、窗口
 /// 尺寸等引起的 build 不会再把整表重排一遍。
-final _downloadListProvider = Provider<_DownloadListData>((ref) {
+///
+/// 必须是 autoDispose：它 watch 的目录扫描结果是 autoDispose 的，常驻版本会
+/// 一直持有订阅，导致「每次进入页面重新扫描」失效、扫描结果整场会话不释放。
+final _downloadListProvider = Provider.autoDispose<_DownloadListData>((ref) {
   final tasks =
       ref.watch(downloadTasksProvider).valueOrNull ?? const <DownloadTask>[];
   final scanned = ref.watch(downloadDirSongsProvider).valueOrNull ??
