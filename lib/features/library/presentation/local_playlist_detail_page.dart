@@ -1284,6 +1284,11 @@ class _LocalPlaylistDetailPageState
                       maxIndex: _sortedSongs.length,
                       isPlaying: isPlaying,
                       showPlayedTag: true,
+                      // 我的收藏 / 自建歌单里的歌可能来自不同音源，逐首显示
+                      // 所属音源标签（与搜索页歌曲分类的 SongListItem 同款）。
+                      // 收藏的第三方歌单 / 专辑 / 作者绑定统一音源，顶部已有
+                      // 可切换的音源按钮，列表里不再逐首标注。
+                      showSource: playlist.showsFavoriteHeart,
                       // 收藏的第三方歌单 / 专辑 / 作者不提供取消收藏入口。
                       showFavoriteHeart: playlist.showsFavoriteHeart,
                       selectionMode: selecting,
