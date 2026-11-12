@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
@@ -409,114 +410,66 @@ class LocalMusicRepository {
         );
 
         final newSongsMap = <String, Song>{};
-        int processed = 0;
+        var processed = 0;
+        void report({bool force = false}) {
+          if (!force && processed % 20 != 0) return;
+          final progress = ScanProgress(
+            processed: processed,
+            total: total,
+            running: true,
+          );
+          onScanProgress?.call(progress);
+          onProgress?.call(progress);
+        }
 
+        // 第一遍：文件没改过的直接复用索引，不打开文件；其余的收集起来，
+        // 交给后台 isolate 批量解析，避免几千个文件的标签 / 封面解析卡住 UI。
+        final pendingPaths = <String>[];
+        final pendingAudio = <String, SongModel>{};
         for (final audio in musicSongs) {
           final filePath = audio.data;
-          if (filePath.isEmpty) {
+          if (filePath.isEmpty || _isOutsideScannedDirs(filePath)) {
             processed++;
+            report();
             continue;
           }
-
-          final shouldFilter = _scannedDirs.isNotEmpty
-              ? !_scannedDirs.any((dir) {
-                  final normalized = filePath.replaceAll('\\', '/');
-                  final normalizedDir = dir.replaceAll('\\', '/');
-                  return normalized.startsWith(normalizedDir);
-                })
-              : false;
-
-          if (shouldFilter) {
-            processed++;
-            continue;
-          }
-
-          // MediaStore 只提供标题 / 歌手 / 专辑 / 时长，年份、流派、注释、
-          // 内嵌歌词、内嵌封面它都不给。不在这里补读一次文件标签，索引里这几个
-          // 字段就永远是空的——表现是「文件明明带封面 / 年代 / 歌词，匹配歌曲页
-          // 却显示 -，按『封面 有』筛选也筛不出来（反而出现在『无封面』里），
-          // 编辑标签页还显示成无封面」；而列表能显示封面是因为封面图是走
-          // MediaStore 单独取的，跟索引里的 hasCover 是两回事。
-          //
-          // 只在用户主动扫描时发生（进度条照常走），不是每次启动都读。
-          final metadata = await LocalMetadataReader.read(filePath);
 
           final id = _genId(filePath);
-          final title = audio.title.isNotEmpty
-              ? audio.title
-              : ((metadata.title?.isNotEmpty ?? false)
-                    ? metadata.title!
-                    : p.basenameWithoutExtension(filePath));
-          final rawArtist = audio.artist ?? '';
-          final artist = rawArtist.isEmpty || rawArtist == '<unknown>'
-              ? ((metadata.artist?.isNotEmpty ?? false)
-                    ? metadata.artist!
-                    : '未知艺术家')
-              : rawArtist;
-          final rawAlbum = audio.album ?? '';
-          // MediaStore 对没有专辑标签的文件（通话录音、下载的音频…）会拿
-          // **所在文件夹名**当专辑（这里是 `Call Recordings`），看着像专辑信息，
-          // 其实文件里根本没写。文件标签里读到专辑就以标签为准；标签里没有时，
-          // 只有 MediaStore 给的值不像文件夹名才采用，否则按「无专辑」处理，
-          // 与桌面端（读不到标签就是「未知专辑」）保持一致。
-          final tagAlbum = metadata.album?.trim() ?? '';
-          final mediaAlbum = rawAlbum.trim();
-          final album = tagAlbum.isNotEmpty
-              ? tagAlbum
-              : (mediaAlbum.isEmpty ||
-                        mediaAlbum == '<unknown>' ||
-                        _isFolderNameFallback(mediaAlbum, filePath)
-                    ? '未知专辑'
-                    : mediaAlbum);
-          final duration = (audio.duration ?? 0) ~/ 1000;
-
-          // 内嵌歌词：记下「有没有」「是不是逐字」，快速匹配页据此筛选，
-          // 不用为了看状态把每个文件再读一遍。
-          final embeddedLyric = metadata.lyrics?.trim() ?? '';
-          final hasEmbeddedLyric = embeddedLyric.isNotEmpty;
-          final hasEmbeddedWordLyric =
-              hasEmbeddedLyric && detectWordLyricFormat(embeddedLyric) != null;
-
-          final song = Song(
-            id: id,
-            title: title,
-            artist: artist,
-            album: album,
-            duration: duration > 0 ? duration : 0,
-            source: 'local',
-            filePath: filePath,
-            sourceUrl: filePath,
-            hasCover: metadata.artwork != null,
-            coverKey: _genCoverKey(filePath),
-            mediaStoreId: audio.id,
-            bitrate: _inferBitrateFromExtension(filePath),
-            year: metadata.year,
-            genre: metadata.genre,
-            comment: metadata.comment,
-            hasLyric: hasEmbeddedLyric,
-            hasWordLyric: hasEmbeddedWordLyric,
-          );
-
           final existing = _songsMap[id];
-          final merged = existing != null
-              ? _mergePreferFilled(existing, song)
-              : song;
-          newSongsMap[id] = merged;
-          if (existing == null || !_sameIndexedSong(existing, merged)) {
-            _markSongDirty(id);
+          final stamp = audio.dateModified;
+          if (existing != null &&
+              existing.mediaStoreId == audio.id &&
+              stamp != null &&
+              existing.fileModified == stamp) {
+            // 文件没变：不读标签，但仍用 MediaStore 的最新标题 / 歌手 / 专辑
+            // 重新组装一次（曲库数据被系统刷新时也能跟上）。
+            final merged = _songFromMediaStore(audio, null, existing);
+            newSongsMap[id] = merged;
+            if (!_sameIndexedSong(existing, merged)) _markSongDirty(id);
+            processed++;
+            report();
+            continue;
           }
-
-          processed++;
-          if (processed % 20 == 0 || processed == total) {
-            final progress = ScanProgress(
-              processed: processed,
-              total: total,
-              running: true,
-            );
-            onScanProgress?.call(progress);
-            onProgress?.call(progress);
-          }
+          pendingPaths.add(filePath);
+          pendingAudio[filePath] = audio;
         }
+
+        await _forEachMetadataBatch(pendingPaths, (batch) async {
+          for (final entry in batch.entries) {
+            final audio = pendingAudio[entry.key];
+            if (audio == null) continue;
+            final id = _genId(entry.key);
+            final existing = _songsMap[id];
+            final merged = _songFromMediaStore(audio, entry.value, existing);
+            newSongsMap[id] = merged;
+            if (existing == null || !_sameIndexedSong(existing, merged)) {
+              _markSongDirty(id);
+            }
+            processed++;
+            report();
+          }
+        });
+        report(force: true);
 
         for (final id in _songsMap.keys) {
           if (!newSongsMap.containsKey(id)) _markSongDeleted(id);
@@ -577,74 +530,69 @@ class LocalMusicRepository {
       final newSongsMap = <String, Song>{};
       var processed = 0;
       final coverCache = CoverCacheService();
-
-      for (final filePath in files) {
-        final metadata = await LocalMetadataReader.read(filePath);
-        final id = _genId(filePath);
-        final fileName = p.basenameWithoutExtension(filePath);
-
-        final title = (metadata.title?.isNotEmpty ?? false)
-            ? metadata.title!
-            : fileName;
-        final artist = (metadata.artist?.isNotEmpty ?? false)
-            ? metadata.artist!
-            : '未知艺术家';
-        final album = (metadata.album?.isNotEmpty ?? false)
-            ? metadata.album!
-            : '未知专辑';
-
-        // 内嵌歌词：记下「有没有」「是不是逐字」，快速匹配页据此筛选，
-        // 不用为了看状态把每个文件再读一遍。
-        final embeddedLyric = metadata.lyrics?.trim() ?? '';
-        final hasEmbeddedLyric = embeddedLyric.isNotEmpty;
-        final hasEmbeddedWordLyric =
-            hasEmbeddedLyric && detectWordLyricFormat(embeddedLyric) != null;
-
-        final song = Song(
-          id: id,
-          title: title,
-          artist: artist,
-          album: album,
-          duration: metadata.durationSeconds ?? 0,
-          source: 'local',
-          filePath: filePath,
-          sourceUrl: filePath,
-          hasCover: metadata.artwork != null,
-          coverKey: _genCoverKey(filePath),
-          bitrate: _inferBitrateFromExtension(filePath),
-          year: metadata.year,
-          genre: metadata.genre,
-          comment: metadata.comment,
-          hasLyric: hasEmbeddedLyric,
-          hasWordLyric: hasEmbeddedWordLyric,
+      void report({bool force = false}) {
+        if (!force && processed % 10 != 0) return;
+        final progress = ScanProgress(
+          processed: processed,
+          total: total,
+          running: true,
         );
-
-        final existing = _songsMap[id];
-        final merged = existing != null
-            ? _mergePreferFilled(existing, song)
-            : song;
-        newSongsMap[id] = merged;
-        if (existing == null || !_sameIndexedSong(existing, merged)) {
-          _markSongDirty(id);
-        }
-
-        // 内嵌封面写入封面缓存，列表与播放页即可显示。
-        final artwork = metadata.artwork;
-        if (artwork != null && artwork.isNotEmpty) {
-          unawaited(coverCache.putArtwork(id, artwork));
-        }
-
-        processed++;
-        if (processed % 10 == 0 || processed == total) {
-          final progress = ScanProgress(
-            processed: processed,
-            total: total,
-            running: true,
-          );
-          onScanProgress?.call(progress);
-          onProgress?.call(progress);
-        }
+        onScanProgress?.call(progress);
+        onProgress?.call(progress);
       }
+
+      // 先比文件修改时间：没改过的直接复用索引；变过 / 新增的才解析标签。
+      final pendingPaths = <String>[];
+      final pendingStamps = <String, int>{};
+      for (final filePath in files) {
+        final id = _genId(filePath);
+        final existing = _songsMap[id];
+        int? stamp;
+        try {
+          stamp = (await File(filePath).stat()).modified.millisecondsSinceEpoch;
+        } catch (_) {
+          stamp = null;
+        }
+        if (existing != null && stamp != null && existing.fileModified == stamp) {
+          newSongsMap[id] = existing;
+          processed++;
+          report();
+          continue;
+        }
+        pendingPaths.add(filePath);
+        if (stamp != null) pendingStamps[filePath] = stamp;
+      }
+
+      await _forEachMetadataBatch(pendingPaths, (batch) async {
+        for (final entry in batch.entries) {
+          final filePath = entry.key;
+          final metadata = entry.value;
+          final id = _genId(filePath);
+          final existing = _songsMap[id];
+          final fresh = _songFromDesktopFile(
+            filePath,
+            metadata,
+            pendingStamps[filePath],
+          );
+          final merged = existing != null
+              ? _mergePreferFilled(existing, fresh)
+              : fresh;
+          newSongsMap[id] = merged;
+          if (existing == null || !_sameIndexedSong(existing, merged)) {
+            _markSongDirty(id);
+          }
+
+          // 内嵌封面写入封面缓存，列表与播放页即可显示；缓存被清理时
+          // MusicCoverImage 会按需从文件重新提取。
+          final artwork = metadata.artwork;
+          if (artwork != null && artwork.isNotEmpty) {
+            unawaited(coverCache.putArtwork(id, artwork));
+          }
+          processed++;
+          report();
+        }
+      });
+      report(force: true);
 
       for (final id in _songsMap.keys) {
         if (!newSongsMap.containsKey(id)) _markSongDeleted(id);
@@ -792,6 +740,145 @@ class LocalMusicRepository {
     return removed;
   }
 
+  /// 文件是否不在任何已设置的扫描目录下。
+  bool _isOutsideScannedDirs(String filePath) {
+    if (_scannedDirs.isEmpty) return false;
+    final normalized = filePath.replaceAll('\\', '/');
+    return !_scannedDirs.any(
+      (dir) => normalized.startsWith(dir.replaceAll('\\', '/')),
+    );
+  }
+
+  /// 用 MediaStore 的字段 + 文件标签（可能为 null，表示文件没变、没重新解析）
+  /// 组装歌曲，并与索引里的旧条目合并。
+  Song _songFromMediaStore(
+    SongModel audio,
+    LocalAudioMetadata? metadata,
+    Song? existing,
+  ) {
+    final filePath = audio.data;
+    final id = _genId(filePath);
+    final title = audio.title.isNotEmpty
+        ? audio.title
+        : ((metadata?.title?.isNotEmpty ?? false)
+              ? metadata!.title!
+              : p.basenameWithoutExtension(filePath));
+    final rawArtist = audio.artist ?? '';
+    final artist = rawArtist.isEmpty || rawArtist == '<unknown>'
+        ? ((metadata?.artist?.isNotEmpty ?? false)
+              ? metadata!.artist!
+              : '未知艺术家')
+        : rawArtist;
+    final rawAlbum = audio.album ?? '';
+    // MediaStore 对没有专辑标签的文件（通话录音、下载的音频…）会拿
+    // **所在文件夹名**当专辑。文件标签里读到专辑就以标签为准；标签里没有时，
+    // 只有 MediaStore 给的值不像文件夹名才采用，否则按「无专辑」处理。
+    final tagAlbum = metadata?.album?.trim() ?? '';
+    final mediaAlbum = rawAlbum.trim();
+    final album = tagAlbum.isNotEmpty
+        ? tagAlbum
+        : (mediaAlbum.isEmpty ||
+                  mediaAlbum == '<unknown>' ||
+                  _isFolderNameFallback(mediaAlbum, filePath)
+              ? '未知专辑'
+              : mediaAlbum);
+    final duration = (audio.duration ?? 0) ~/ 1000;
+
+    // 内嵌歌词：记下「有没有」「是不是逐字」，快速匹配页据此筛选，
+    // 不用为了看状态把每个文件再读一遍。
+    final embeddedLyric = metadata?.lyrics?.trim() ?? '';
+    final hasEmbeddedLyric = embeddedLyric.isNotEmpty;
+    final hasEmbeddedWordLyric =
+        hasEmbeddedLyric && detectWordLyricFormat(embeddedLyric) != null;
+
+    final song = Song(
+      id: id,
+      title: title,
+      artist: artist,
+      album: album,
+      duration: duration > 0 ? duration : 0,
+      source: 'local',
+      filePath: filePath,
+      sourceUrl: filePath,
+      hasCover: metadata?.artwork != null,
+      coverKey: _genCoverKey(filePath),
+      mediaStoreId: audio.id,
+      fileModified: audio.dateModified,
+      bitrate: _inferBitrateFromExtension(filePath),
+      year: metadata?.year,
+      genre: metadata?.genre,
+      comment: metadata?.comment,
+      hasLyric: hasEmbeddedLyric,
+      hasWordLyric: hasEmbeddedWordLyric,
+    );
+    return existing != null ? _mergePreferFilled(existing, song) : song;
+  }
+
+  /// 桌面端：用解析到的文件标签组装歌曲。
+  Song _songFromDesktopFile(
+    String filePath,
+    LocalAudioMetadata metadata,
+    int? fileModified,
+  ) {
+    final fileName = p.basenameWithoutExtension(filePath);
+    final title = (metadata.title?.isNotEmpty ?? false)
+        ? metadata.title!
+        : fileName;
+    final artist = (metadata.artist?.isNotEmpty ?? false)
+        ? metadata.artist!
+        : '未知艺术家';
+    final album = (metadata.album?.isNotEmpty ?? false)
+        ? metadata.album!
+        : '未知专辑';
+
+    final embeddedLyric = metadata.lyrics?.trim() ?? '';
+    final hasEmbeddedLyric = embeddedLyric.isNotEmpty;
+    final hasEmbeddedWordLyric =
+        hasEmbeddedLyric && detectWordLyricFormat(embeddedLyric) != null;
+
+    return Song(
+      id: _genId(filePath),
+      title: title,
+      artist: artist,
+      album: album,
+      duration: metadata.durationSeconds ?? 0,
+      source: 'local',
+      filePath: filePath,
+      sourceUrl: filePath,
+      hasCover: metadata.artwork != null,
+      coverKey: _genCoverKey(filePath),
+      fileModified: fileModified,
+      bitrate: _inferBitrateFromExtension(filePath),
+      year: metadata.year,
+      genre: metadata.genre,
+      comment: metadata.comment,
+      hasLyric: hasEmbeddedLyric,
+      hasWordLyric: hasEmbeddedWordLyric,
+    );
+  }
+
+  /// 在后台 isolate 里分批解析标签，逐批回调（每批约 12 个文件）。
+  Future<void> _forEachMetadataBatch(
+    List<String> paths,
+    Future<void> Function(Map<String, LocalAudioMetadata> batch) onBatch,
+  ) async {
+    if (paths.isEmpty) return;
+    final receive = ReceivePort();
+    final isolate = await Isolate.spawn(
+      _metadataBatchWorker,
+      _MetadataBatchRequest(receive.sendPort, paths),
+    );
+    try {
+      await for (final message in receive) {
+        if (message == null) break;
+        await onBatch(message as Map<String, LocalAudioMetadata>);
+      }
+    } finally {
+      receive.close();
+      isolate.kill(priority: Isolate.immediate);
+    }
+  }
+
   /// 两首歌写入 `local_songs` 后的数据是否完全一致（用于跳过无变化的行）。
   ///
   /// 直接比较瘦身后的持久化 JSON：字段和 `_persistIndex` 真正写进去的内容
@@ -837,6 +924,7 @@ class LocalMusicRepository {
       channels: a.channels ?? b.channels,
       year: a.year ?? b.year,
       mediaStoreId: a.mediaStoreId ?? b.mediaStoreId,
+      fileModified: b.fileModified ?? a.fileModified,
       genre: a.genre ?? b.genre,
       comment: a.comment ?? b.comment,
       hasLyric: a.hasLyric || b.hasLyric,
@@ -980,4 +1068,33 @@ class LocalMusicRepository {
       debugPrint('[LocalMusic] 迁移旧索引失败: $e');
     }
   }
+}
+
+class _MetadataBatchRequest {
+  const _MetadataBatchRequest(this.port, this.paths);
+
+  final SendPort port;
+  final List<String> paths;
+}
+
+/// 后台解析标签的入口：每解析完一小批就发回主 isolate。
+///
+/// 一批只保留 12 个文件的封面字节，避免几千张封面同时驻留在内存里；
+/// 主 isolate 收到一批就立刻组装歌曲并释放。
+void _metadataBatchWorker(_MetadataBatchRequest request) async {
+  const batchSize = 12;
+  final paths = request.paths;
+  for (var i = 0; i < paths.length; i += batchSize) {
+    final end = i + batchSize > paths.length ? paths.length : i + batchSize;
+    final batch = <String, LocalAudioMetadata>{};
+    for (final path in paths.sublist(i, end)) {
+      try {
+        batch[path] = await LocalMetadataReader.read(path);
+      } catch (_) {
+        batch[path] = const LocalAudioMetadata();
+      }
+    }
+    request.port.send(batch);
+  }
+  request.port.send(null);
 }

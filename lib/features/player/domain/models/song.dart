@@ -110,6 +110,13 @@ class Song {
   final int? channels;
   final int? year;
   final int? mediaStoreId;
+
+  /// 本地文件的修改时间（MediaStore 的 `date_modified` / 桌面端 mtime）。
+  ///
+  /// 重新扫描时用它判断文件有没有变过：没变就复用索引里已有的元数据，
+  /// 不再打开文件重新解析标签和封面。
+  final int? fileModified;
+
   final String? hash;
   final Map<String, dynamic>? lx;
   final Map<String, String>? sourceHeaders;
@@ -185,6 +192,7 @@ class Song {
     this.channels,
     this.year,
     this.mediaStoreId,
+    this.fileModified,
     this.hash,
     this.lx,
     this.sourceHeaders,
@@ -271,6 +279,7 @@ class Song {
     int? channels,
     int? year,
     int? mediaStoreId,
+    int? fileModified,
     String? hash,
     Map<String, dynamic>? lx,
     Map<String, String>? sourceHeaders,
@@ -311,6 +320,7 @@ class Song {
       channels: channels ?? this.channels,
       year: clearYear ? null : year ?? this.year,
       mediaStoreId: mediaStoreId ?? this.mediaStoreId,
+      fileModified: fileModified ?? this.fileModified,
       hash: hash ?? this.hash,
       lx: lx ?? this.lx,
       sourceHeaders: clearSourceHeaders
@@ -387,6 +397,7 @@ class Song {
       'channels': channels,
       'year': year,
       'mediaStoreId': mediaStoreId,
+      'fileModified': fileModified,
       'hash': hash,
       'lx': _sanitizeLx(lx),
       'sourceHeaders': sourceHeaders,
@@ -565,6 +576,7 @@ class Song {
       channels: json['channels'],
       year: json['year'],
       mediaStoreId: json['mediaStoreId'],
+      fileModified: (json['fileModified'] as num?)?.toInt(),
       hash: json['hash'],
       lx: json['lx'] is Map ? Map<String, dynamic>.from(json['lx']) : null,
       sourceHeaders: json['sourceHeaders'] is Map
