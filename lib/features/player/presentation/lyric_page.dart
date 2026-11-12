@@ -377,28 +377,15 @@ class _LyricPageState extends ConsumerState<LyricPage> {
     playlistsAsync.whenData((playlists) {
       final fav = playlists.where((p) => p.id == '__favorites__').firstOrNull;
       final isFavorited = fav?.songs.any((s) => s.id == song.id) ?? false;
+      // 红心的实心 / 空心状态就是反馈，成功不再弹提示。
       if (isFavorited) {
         ref
             .read(playlistsProvider.notifier)
             .removeSongFromPlaylist('__favorites__', song.id);
-        if (mounted)
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(context.tr('已取消收藏')),
-              duration: const Duration(seconds: 1),
-            ),
-          );
       } else {
         ref
             .read(playlistsProvider.notifier)
             .addSongToPlaylist('__favorites__', song);
-        if (mounted)
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(context.tr('已添加到我的收藏')),
-              duration: const Duration(seconds: 1),
-            ),
-          );
       }
     });
   }

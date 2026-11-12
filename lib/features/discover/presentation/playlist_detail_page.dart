@@ -363,7 +363,6 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
     await ref
         .read(playlistsProvider.notifier)
         .addSongsToPlaylist('__favorites__', selected);
-    if (mounted) _showMessage('已收藏 ${selected.length} 首');
   }
 
   void _batchDownload(List<Song> songs) {
@@ -1228,7 +1227,6 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
       _favoriting = false;
       _isFavorited = true;
     });
-    _showMessage('已收藏到我的歌单');
   }
 
   void _removeFromFavorites() async {
@@ -1246,14 +1244,5 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
     setState(() {
       _isFavorited = false;
     });
-
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(context.tr('已取消收藏')),
-          duration: Duration(seconds: 2),
-        ),
-      );
-    }
   }
 }

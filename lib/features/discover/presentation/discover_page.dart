@@ -2595,7 +2595,6 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
               meta: {'discoverId': board.id, 'type': 'discover_playlist'},
             ),
           );
-      if (mounted) _showMessage(context.tr('已收藏到我的歌单'));
     } catch (e) {
       if (mounted) {
         _showMessage(

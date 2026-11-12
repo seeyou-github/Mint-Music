@@ -1185,7 +1185,6 @@ class _LocalPageState extends ConsumerState<LocalPage>
     await ref
         .read(playlistsProvider.notifier)
         .addSongsToPlaylist('__favorites__', selected);
-    if (mounted) _showMessage('已收藏 ${selected.length} 首');
   }
 
   Future<void> _confirmDeleteSelected(List<Song> songs) async {

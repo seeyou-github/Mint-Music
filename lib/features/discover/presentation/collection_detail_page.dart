@@ -272,8 +272,6 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
     final notifier = ref.read(playlistsProvider.notifier);
     if (existing != null) {
       await notifier.deletePlaylist(existing.id);
-      if (!mounted) return;
-      _toast(context.tr('已取消收藏'));
       return;
     }
 
@@ -317,7 +315,6 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
     }
     if (!mounted) return;
     setState(() => _favoriting = false);
-    _toast(context.tr('已收藏到「收藏」'));
   }
 
   /// 收藏前把其余歌曲页全部取回来：收藏里存的是完整专辑 / 作者作品。

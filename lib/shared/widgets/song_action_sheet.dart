@@ -1714,26 +1714,16 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
   }
 
   void _toggleFavorite() {
+    // 成功与否都不弹提示：按钮本身的实心 / 空心状态就是反馈，失败由
+    // playlistsProvider 自己报错。
     if (_isFavorited) {
       ref
           .read(playlistsProvider.notifier)
           .removeSongFromPlaylist('__favorites__', widget.song.id);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(context.tr('已取消收藏')),
-          duration: const Duration(seconds: 1),
-        ),
-      );
     } else {
       ref
           .read(playlistsProvider.notifier)
           .addSongToPlaylist('__favorites__', widget.song);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(context.tr('已收藏')),
-          duration: const Duration(seconds: 1),
-        ),
-      );
     }
     _checkFavorited();
   }

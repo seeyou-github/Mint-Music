@@ -129,7 +129,6 @@ class _LocalPlaylistDetailPageState
     await ref
         .read(playlistsProvider.notifier)
         .addSongsToPlaylist('__favorites__', selected);
-    if (mounted) _showMessage('已收藏 ${selected.length} 首');
   }
 
   /// 批量从歌单移除：一次性写盘（逐首 removeSongFromPlaylist 会写 N 次）。
