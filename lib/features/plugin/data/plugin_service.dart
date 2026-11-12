@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:io';
 import 'package:dio/dio.dart';
+import 'package:crypto/crypto.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:path/path.dart' as p;
@@ -1120,6 +1121,10 @@ class PluginService {
       if (await sourceFile.exists()) {
         await sourceFile.delete();
       }
+      final convertedCache = File('${file.path}.converted.js');
+      if (await convertedCache.exists()) {
+        await convertedCache.delete();
+      }
     }
 
     // 图标缓存也一起删掉（icons/<插件id>.png），避免残留
@@ -1381,7 +1386,29 @@ class PluginService {
       return _PreparedPluginCode(code: code);
     }
 
-    final convertedCode = LxPluginConverter().convert(originalCode);
+    // 转换结果按源码 hash 磁盘缓存：LxPluginConverter 要对全文跑 8 轮
+    // 正则替换，混淆大脚本每次启动都重转一遍很浪费（转换是纯函数，同一
+    // 份源码结果永远一致）。缓存文件第一行存源码 hash，源码变了自动失效。
+    final sourceHash = sha1.convert(utf8.encode(originalCode)).toString();
+    final convertedCache = File('${file.path}.converted.js');
+    String? convertedCode;
+    if (await convertedCache.exists()) {
+      try {
+        final cached = await convertedCache.readAsString();
+        final sep = cached.indexOf('\n');
+        if (sep > 0 && cached.substring(0, sep) == sourceHash) {
+          convertedCode = cached.substring(sep + 1);
+        }
+      } catch (_) {}
+    }
+
+    final fromCache = convertedCode != null;
+    convertedCode ??= LxPluginConverter().convert(originalCode);
+    if (!fromCache) {
+      try {
+        await convertedCache.writeAsString('$sourceHash\n$convertedCode');
+      } catch (_) {}
+    }
     if (convertedCode != code) {
       await file.writeAsString(convertedCode);
       print('[PluginService] migrated legacy LX plugin: ${plugin.name}');
