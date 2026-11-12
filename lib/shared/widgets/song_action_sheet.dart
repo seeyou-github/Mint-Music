@@ -1769,11 +1769,14 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
               final playlistList = currentPlaylists
                   .where((p) => p.id != '__favorites__')
                   .toList();
+              // 只能用弹层自己的 [sheetRef] 取色：这里的 State 已经随着歌曲
+              // 菜单 pop 被销毁，再走 `_colors`（`ref.read`）会在弹层重建时
+              // 抛「Cannot use ref after dispose」，整块内容变成空白灰框。
               return Container(
                 decoration: BoxDecoration(
                   // 底色跟随主题：原来写死深色，浅色主题下弹框是黑的、文字是
                   // 主题的深色字，糊成一团。
-                  color: _colors.dialogSurface,
+                  color: themeColors.dialogSurface,
                   borderRadius: const BorderRadius.vertical(
                     top: Radius.circular(16),
                   ),
@@ -1791,7 +1794,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                             width: 40,
                             height: 4,
                             decoration: BoxDecoration(
-                              color: _colors.divider,
+                              color: themeColors.divider,
                               borderRadius: BorderRadius.circular(2),
                             ),
                           ),
@@ -1801,7 +1804,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                             style: TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.w600,
-                              color: _colors.textPrimary,
+                              color: themeColors.textPrimary,
                             ),
                           ),
                           const SizedBox(height: AppSpacing.sm),
@@ -1811,7 +1814,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                               padding: const EdgeInsets.all(AppSpacing.xl),
                               child: Text(
                                 ctx.tr('暂无歌单'),
-                                style: TextStyle(color: _colors.textHint),
+                                style: TextStyle(color: themeColors.textHint),
                               ),
                             )
                           else
@@ -1819,19 +1822,19 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                               (Playlist playlist) => ListTile(
                                 leading: Icon(
                                   Icons.queue_music,
-                                  color: _colors.textSecondary,
+                                  color: themeColors.textSecondary,
                                 ),
                                 title: Text(
                                   playlist.name,
                                   style: TextStyle(
-                                    color: _colors.textPrimary,
+                                    color: themeColors.textPrimary,
                                   ),
                                 ),
                                 trailing: Text(
                                   ctx.tr('${playlist.songCount}首'),
                                   style: TextStyle(
                                     fontSize: 12,
-                                    color: _colors.textHint,
+                                    color: themeColors.textHint,
                                   ),
                                 ),
                                 onTap: () async {
