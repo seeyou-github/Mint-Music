@@ -2184,13 +2184,17 @@ class _AddPluginSheetState extends State<_AddPluginSheet> {
       );
 
       if (!mounted) {
-        // 弹层已经被关掉（用户切走了分类），结果仍然要告诉他。
-        messenger.showSnackBar(
-          SnackBar(
-            content: Text(_batchResultMessage(result)),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
+        // 弹层已经被关掉（用户切走了分类），失败原因仍然要告诉他；
+        // 全部装成功时不弹「已安装 N 个插件」。
+        final message = _batchResultMessage(result);
+        if (message != null) {
+          messenger.showSnackBar(
+            SnackBar(
+              content: Text(message),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
         return;
       }
 
@@ -2208,14 +2212,16 @@ class _AddPluginSheetState extends State<_AddPluginSheet> {
     }
   }
 
-  /// 批量 / 订阅安装完成：关掉弹层并弹出汇总提示。
+  /// 批量 / 订阅安装完成：关掉弹层；只有出了问题时才弹汇总提示。
   ///
   /// pop 之后 context 就不能用了，文案和 messenger 都要先取好。
+  /// 全部装成功时插件卡片上就能看到新插件，不再提示「已安装 N 个插件」。
   void _finishBatchInstall(PluginBatchInstallResult result) {
     final message = _batchResultMessage(result);
     final hasFailure = result.hasFailure;
     final messenger = ScaffoldMessenger.of(context);
     Navigator.pop(context);
+    if (message == null) return;
     messenger.showSnackBar(
       SnackBar(
         content: Text(message),
@@ -2225,15 +2231,13 @@ class _AddPluginSheetState extends State<_AddPluginSheet> {
     );
   }
 
-  /// 批量安装结果的一句话摘要。
+  /// 批量安装结果的一句话摘要：只报失败 / 需单独处理的部分。
   ///
-  /// 用全局 [tr] 而不是 `context.tr`：弹层被关掉之后 context 已经失效，
-  /// 但结果还是要能提示。
-  String _batchResultMessage(PluginBatchInstallResult result) {
+  /// 全部成功时返回 null（不弹提示）；一个插件都没装上也返回提示，避免用户
+  /// 以为点下去没反应。用全局 [tr] 而不是 `context.tr`：弹层被关掉之后
+  /// context 已经失效，但失败原因还是要能提示。
+  String? _batchResultMessage(PluginBatchInstallResult result) {
     final parts = <String>[];
-    if (result.installed.isNotEmpty) {
-      parts.add(tr('已安装 ${result.installed.length} 个插件'));
-    }
     if (result.failed.isNotEmpty) {
       final first = result.failed.first;
       parts.add(tr('${result.failed.length} 个失败（${first.$1}：${first.$2}）'));
@@ -2241,7 +2245,9 @@ class _AddPluginSheetState extends State<_AddPluginSheet> {
     if (result.unknownType > 0) {
       parts.add(tr('${result.unknownType} 个无法识别格式，请单独添加'));
     }
-    if (parts.isEmpty) return tr('未安装任何插件');
+    if (parts.isEmpty) {
+      return result.installed.isEmpty ? tr('未安装任何插件') : null;
+    }
     return parts.join('；');
   }
 
