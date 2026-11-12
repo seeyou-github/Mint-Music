@@ -250,10 +250,13 @@ class BackupService {
     // 备份」把已有进度抹掉。
     if (entry == null) return;
     try {
-      final raw = utf8.decode(entry.bytes!);
-      if (raw.trim().isEmpty) return;
-      // 快照可能有几千首歌，解码同样放后台 isolate。
-      final decoded = await _runInBackground(() => jsonDecode(raw));
+      final bytes = entry.bytes!;
+      // 快照可能有几千首歌：UTF-8 解码和 jsonDecode 都放后台，别只挪一半。
+      final decoded = await _runInBackground(() {
+        final raw = utf8.decode(bytes);
+        if (raw.trim().isEmpty) return null;
+        return jsonDecode(raw);
+      });
       if (decoded is! Map) return;
       final progress = decoded['progress'];
       if (progress is! List || progress.isEmpty) return;
