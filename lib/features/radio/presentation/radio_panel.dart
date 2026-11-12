@@ -233,9 +233,9 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
             playbackControllerProvider.select((state) => state.currentSong),
           )
         : null;
-    // 底色不用主题色，跟随主界面背景：与歌单详情页顶栏同一取色方式，
-    // 取背景渐变顶部色派生，保证卡片始终比身后的背景略亮一档。
-    final background = ref.watch(detailHeaderSurfaceProvider);
+    // 底色与「新增电台」控件一致：同样用 colors.surface，不再单独从主界面
+    // 背景渐变派生，避免随机电台在这一排卡片里显得特殊。
+    final background = colors.surface;
     return _buildCardFrame(
       colors,
       child: InkWell(
