@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 import 'package:archive/archive.dart';
@@ -944,7 +945,7 @@ function __zlibRequest(action, data) {
             'statusCode': 500,
             'headers': <String, String>{},
           });
-          _resolveRequest(reqId, true, errorJson);
+          return _resolveRequest(reqId, true, errorJson);
         } catch (_) {}
       });
     } catch (e, stackTrace) {
@@ -1380,7 +1381,7 @@ function __zlibRequest(action, data) {
         );
       }
       _log('[JsEngine] HTTP请求成功: ${response.statusCode} $url');
-      _resolveRequest(requestId, true, resultJson);
+      await _resolveRequest(requestId, true, resultJson);
     } catch (e) {
       final isTimeout =
           e is DioException &&
@@ -1395,7 +1396,7 @@ function __zlibRequest(action, data) {
         'headers': <String, String>{},
       });
       _log('[JsEngine] HTTP请求失败: $url - $e');
-      _resolveRequest(requestId, true, resultJson);
+      await _resolveRequest(requestId, true, resultJson);
     }
   }
 
@@ -1411,23 +1412,41 @@ function __zlibRequest(action, data) {
     return data;
   }
 
-  void _resolveRequest(int requestId, bool success, String resultJson) {
+  /// 超过该字符数的响应体改走分块传输（约两个分块即触发）。
+  static const int _httpChunkThresholdChars = 256 * 1024;
+
+  /// 分块传输时每次 evaluate 写入 JS 的最大字符数。QuickJS 编译字面量的
+  /// 成本随长度超线性增长，把 MB 级响应切成百 KB 级小块，单次编译峰值
+  /// 大幅下降，块与块之间还能让出主线程。
+  static const int _httpChunkChars = 128 * 1024;
+
+  Future<void> _resolveRequest(
+    int requestId,
+    bool success,
+    String resultJson,
+  ) async {
     try {
       _log(
         '[JsEngine] _resolveRequest: requestId=$requestId, success=$success, resultJson长度=${resultJson.length}',
       );
-      final escapedJson = _escapeForJsString(resultJson);
-      final jsCode =
-          "__resolveHttpRequest($requestId, $success, '$escapedJson')";
-      _log('[JsEngine] 执行JS代码长度: ${jsCode.length}');
-      final evalResult = evaluate(jsCode);
-      _log('[JsEngine] evaluate结果: ${evalResult.stringResult}');
-      _executePendingJob();
-      _log('[JsEngine] 已解析请求 $requestId, _executePendingJob()已调用');
+      if (resultJson.length > _httpChunkThresholdChars) {
+        await _resolveRequestChunked(requestId, success, resultJson);
+      } else {
+        final escapedJson = _escapeForJsString(resultJson);
+        final jsCode =
+            "__resolveHttpRequest($requestId, $success, '$escapedJson')";
+        _log('[JsEngine] 执行JS代码长度: ${jsCode.length}');
+        final evalResult = evaluate(jsCode);
+        _log('[JsEngine] evaluate结果: ${evalResult.stringResult}');
+        _executePendingJob();
+        _log('[JsEngine] 已解析请求 $requestId, _executePendingJob()已调用');
+      }
     } catch (e, stackTrace) {
       _log('[JsEngine] Error resolving request $requestId: $e');
       _log('[JsEngine] StackTrace: $stackTrace');
       try {
+        // 分块中途失败的话清掉半成品，避免 JS 侧残留无用数据。
+        evaluate('if (typeof __httpChunks !== "undefined") { __httpChunks[$requestId] = void 0; }');
         final errorJson = jsonEncode({
           'body': jsonEncode({
             'error': 'ResolveError',
@@ -1441,6 +1460,42 @@ function __zlibRequest(action, data) {
         _executePendingJob();
       } catch (_) {}
     }
+  }
+
+  /// 大响应分块传输：先把块数组建在 `globalThis.__httpChunks` 上，逐块
+  /// evaluate 写入，最后在 JS 侧 join 成完整串再交给 `__resolveHttpRequest`。
+  ///
+  /// 正确性依据：[_escapeForJsString] 是逐字符替换（`\`、`'`、换行等各自
+  /// 独立映射为固定序列），把原始响应体在任意位置切块后逐块转义，拼接结果
+  /// 与整体转义完全一致，所以可以放心按原始长度切块。
+  Future<void> _resolveRequestChunked(
+    int requestId,
+    bool success,
+    String resultJson,
+  ) async {
+    _log(
+      '[JsEngine] 大响应分块传输: requestId=$requestId, '
+      '长度=${resultJson.length}, 块大小=$_httpChunkChars',
+    );
+    evaluate('(__httpChunks = __httpChunks || {})[$requestId] = [];');
+    for (
+      var offset = 0;
+      offset < resultJson.length;
+      offset += _httpChunkChars
+    ) {
+      final end = math.min(offset + _httpChunkChars, resultJson.length);
+      final escaped = _escapeForJsString(resultJson.substring(offset, end));
+      evaluate("(__httpChunks[$requestId]).push('$escaped');");
+      // 块与块之间让出一次事件循环，主线程不至于被连续的大编译占满。
+      await Future<void>.delayed(Duration.zero);
+    }
+    final evalResult = evaluate(
+      '__resolveHttpRequest('
+      '$requestId, $success, (__httpChunks[$requestId] || []).join("")); '
+      '__httpChunks[$requestId] = void 0;',
+    );
+    _log('[JsEngine] 分块解析完成: ${evalResult.stringResult}');
+    _executePendingJob();
   }
 
   String _escapeForJsString(String input) {
