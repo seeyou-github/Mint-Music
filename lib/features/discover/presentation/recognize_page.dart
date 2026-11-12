@@ -26,10 +26,20 @@ class _RecognizePageState extends ConsumerState<RecognizePage> {
   bool _wasPlayingBefore = false;
   bool _starting = false;
 
+  /// 页面退出时不要再 read 一次 provider：autoDispose 的 provider 可能已经
+  /// 被标记销毁，read 会重新创建一个实例。持有这里的引用即可。
+  late final RecognizeNotifier _recognizeNotifier;
+
+  @override
+  void initState() {
+    super.initState();
+    _recognizeNotifier = ref.read(recognizeProvider.notifier);
+  }
+
   @override
   void dispose() {
     _timer?.cancel();
-    unawaited(ref.read(recognizeProvider.notifier).cancelRecording());
+    unawaited(_recognizeNotifier.cancelRecording());
     _resumePlaybackIfNeeded(force: true);
     super.dispose();
   }

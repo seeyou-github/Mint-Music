@@ -8,6 +8,27 @@ import 'package:flutter/scheduler.dart';
 import '../../../../core/l10n/l10n.dart';
 import '../../domain/models/lyric_line.dart';
 
+/// 当前应高亮的行号；歌词按时间递增，用二分而不是线性扫描。
+///
+/// 全屏歌词（逐帧）和桌面歌词条（每 200ms）都要定位当前行，抽成公共函数
+/// 避免两处各写一遍 O(n) 查找。
+int activeLyricIndexFor(List<LyricLine> lines, int timeMs) {
+  if (lines.isEmpty) return -1;
+  var lo = 0;
+  var hi = lines.length - 1;
+  var result = 0;
+  while (lo <= hi) {
+    final mid = (lo + hi) >> 1;
+    if (lines[mid].startTimeMs <= timeMs) {
+      result = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return result;
+}
+
 class LyricScrollView extends StatefulWidget {
   final List<LyricLine> lines;
   final int currentTimeMs;
@@ -102,6 +123,10 @@ class _LyricScrollViewState extends State<LyricScrollView>
   int _activeSignature = 0;
   int _anchorPositionMs = 0;
   int _anchorWallMs = 0;
+
+  /// 歌词渐隐遮罩的 shader：视口尺寸不变时复用，避免每次重绘都新建渐变。
+  ui.Shader? _fadeShader;
+  Rect? _fadeShaderBounds;
 
   @override
   void initState() {
@@ -311,26 +336,9 @@ class _LyricScrollViewState extends State<LyricScrollView>
   }
 
   /// 当前应高亮的行号；还没到第一句时按第一行算。
-  ///
-  /// 歌词按时间递增，用二分而不是 `lastIndexWhere`：这个函数每帧都会调用，
-  /// 长歌词（几百行）下线性扫描是白白烧 CPU。
-  int _activeIndexFor(int timeMs) {
-    final lines = widget.lines;
-    if (lines.isEmpty) return -1;
-    var lo = 0;
-    var hi = lines.length - 1;
-    var result = 0;
-    while (lo <= hi) {
-      final mid = (lo + hi) >> 1;
-      if (lines[mid].startTimeMs <= timeMs) {
-        result = mid;
-        lo = mid + 1;
-      } else {
-        hi = mid - 1;
-      }
-    }
-    return result;
-  }
+  /// 具体实现见 [activeLyricIndexFor]，与桌面歌词条共用同一套二分。
+  int _activeIndexFor(int timeMs) =>
+      activeLyricIndexFor(widget.lines, timeMs);
 
   int _activeScrollTargetIndex() {
     if (widget.lines.isEmpty) return -1;
@@ -561,74 +569,83 @@ class _LyricScrollViewState extends State<LyricScrollView>
     final activeIndex = _activeIndexFor(_clock.timeMs);
     return Stack(
       children: [
-        ShaderMask(
-          shaderCallback: (bounds) {
-            return const LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                Colors.transparent,
-                Colors.white,
-                Colors.white,
-                Colors.transparent,
-              ],
-              stops: [0, _fadeTopStop, _fadeBottomStop, 1],
-            ).createShader(bounds);
-          },
-          blendMode: BlendMode.dstIn,
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final viewportHeight = constraints.maxHeight;
-              final verticalPadding = viewportHeight * 0.45;
-
-              return ScrollConfiguration(
-                // 桌面平台默认会给可滚动区域套一层 Scrollbar：歌词自动滚动时
-                // 右侧那条垂直滚动条会跟着一直跳，这里直接关掉（只关滚动条，
-                // 滚动本身仍然可用）。
-                behavior: ScrollConfiguration.of(
-                  context,
-                ).copyWith(scrollbars: false),
-                child: ListView.builder(
-                  controller: _scrollController,
-                  physics: const BouncingScrollPhysics(),
-                  cacheExtent: viewportHeight,
-                  addAutomaticKeepAlives: false,
-                  addRepaintBoundaries: true,
-                  padding: EdgeInsets.only(
-                    top: verticalPadding,
-                    bottom: viewportHeight - verticalPadding,
-                  ),
-                  itemCount: widget.lines.length,
-                  itemBuilder: (context, index) {
-                    final isActive = index == activeIndex;
-                    return _LyricLineWidget(
-                      key: _lineKeys[index],
-                      line: widget.lines[index],
-                      clock: _clock,
-                      staticTimeMs: _clock.timeMs,
-                      isActive: isActive,
-                      activeIndex: activeIndex,
-                      index: index,
-                      activeColor: widget.activeColor,
-                      inactiveColor: widget.inactiveColor,
-                      mainFontSize: widget.mainFontSize * rate,
-                      transFontSize: widget.transFontSize * rate,
-                      romanFontSize: widget.romanFontSize * rate,
-                      enableBlur: widget.enableBlur,
-                      userScrolling: _userScrolling,
-                      enableScale: widget.enableScale,
-                      showTranslation: widget.showTranslation,
-                      showRoman: widget.showRoman,
-                      centerAlign: widget.centerAlign,
-                      hasYrc: widget.hasYrc,
-                      isPlaying: widget.isPlaying,
-                      fontFamily: widget.fontFamily,
-                      fontWeight: widget.fontWeight,
-                    );
-                  },
-                ),
-              );
+        // dstIn 会对整个视口做一次离屏合成：包一层 RepaintBoundary，把父级
+        // 重绘挡在外面；shader 按视口尺寸缓存，省掉每次重绘都新建渐变。
+        RepaintBoundary(
+          child: ShaderMask(
+            shaderCallback: (bounds) {
+              final cached = _fadeShader;
+              if (cached != null && _fadeShaderBounds == bounds) return cached;
+              final shader = const LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Colors.transparent,
+                  Colors.white,
+                  Colors.white,
+                  Colors.transparent,
+                ],
+                stops: [0, _fadeTopStop, _fadeBottomStop, 1],
+              ).createShader(bounds);
+              _fadeShaderBounds = bounds;
+              _fadeShader = shader;
+              return shader;
             },
+            blendMode: BlendMode.dstIn,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final viewportHeight = constraints.maxHeight;
+                final verticalPadding = viewportHeight * 0.45;
+
+                return ScrollConfiguration(
+                  // 桌面平台默认会给可滚动区域套一层 Scrollbar：歌词自动滚动时
+                  // 右侧那条垂直滚动条会跟着一直跳，这里直接关掉（只关滚动条，
+                  // 滚动本身仍然可用）。
+                  behavior: ScrollConfiguration.of(
+                    context,
+                  ).copyWith(scrollbars: false),
+                  child: ListView.builder(
+                    controller: _scrollController,
+                    physics: const BouncingScrollPhysics(),
+                    cacheExtent: viewportHeight,
+                    addAutomaticKeepAlives: false,
+                    addRepaintBoundaries: true,
+                    padding: EdgeInsets.only(
+                      top: verticalPadding,
+                      bottom: viewportHeight - verticalPadding,
+                    ),
+                    itemCount: widget.lines.length,
+                    itemBuilder: (context, index) {
+                      final isActive = index == activeIndex;
+                      return _LyricLineWidget(
+                        key: _lineKeys[index],
+                        line: widget.lines[index],
+                        clock: _clock,
+                        staticTimeMs: _clock.timeMs,
+                        isActive: isActive,
+                        activeIndex: activeIndex,
+                        index: index,
+                        activeColor: widget.activeColor,
+                        inactiveColor: widget.inactiveColor,
+                        mainFontSize: widget.mainFontSize * rate,
+                        transFontSize: widget.transFontSize * rate,
+                        romanFontSize: widget.romanFontSize * rate,
+                        enableBlur: widget.enableBlur,
+                        userScrolling: _userScrolling,
+                        enableScale: widget.enableScale,
+                        showTranslation: widget.showTranslation,
+                        showRoman: widget.showRoman,
+                        centerAlign: widget.centerAlign,
+                        hasYrc: widget.hasYrc,
+                        isPlaying: widget.isPlaying,
+                        fontFamily: widget.fontFamily,
+                        fontWeight: widget.fontWeight,
+                      );
+                    },
+                  ),
+                );
+              },
+            ),
           ),
         ),
         // 正在播放的歌词位置不再显示「时间 + 横线」与播放图标标志。

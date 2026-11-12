@@ -31,9 +31,9 @@ class CoverCacheService {
   /// 获取磁盘缓存目录（跟随「设置 - 存储管理 - 缓存目录」）
   Future<Directory> _getCacheDir() async {
     final cached = _cacheDir;
-    if (cached != null &&
-        _cacheRoot == CachePaths.root &&
-        await cached.exists()) {
+    // 不再每次 stat 目录：缓存目录被外部删掉时，读取会抛
+    // FileSystemException，写入侧（_writeToDisk / ensureDiskFile）负责重建。
+    if (cached != null && _cacheRoot == CachePaths.root) {
       return cached;
     }
     final dir = await CachePaths.subDirectory(CachePaths.localSongsImageCache);
@@ -72,14 +72,14 @@ class CoverCacheService {
     // 2. 磁盘缓存命中
     try {
       final path = await _diskPath(songId);
-      final file = File(path);
-      if (await file.exists()) {
-        final bytes = await file.readAsBytes();
-        if (bytes.isNotEmpty) {
-          _putMemCache(songId, bytes);
-          return bytes;
-        }
+      // 直接读：先 exists() 会多一次系统调用，滚动列表时几千首就是几千次。
+      final bytes = await File(path).readAsBytes();
+      if (bytes.isNotEmpty) {
+        _putMemCache(songId, bytes);
+        return bytes;
       }
+    } on FileSystemException {
+      // 缓存文件不存在 / 目录被删：正常情况，继续走下面的提取流程。
     } catch (e) {
       debugPrint('[CoverCache] 磁盘读取失败 $songId: $e');
     }
@@ -119,17 +119,19 @@ class CoverCacheService {
   Future<String?> ensureDiskFile(String songId, {int? mediaStoreId}) async {
     final path = await _diskPath(songId);
     try {
-      final file = File(path);
-      if (await file.exists() && await file.length() > 0) return path;
+      // 一次 length() 就够判断「已有有效文件」；不存在会抛
+      // FileSystemException，不需要先 exists() 再 length()。
+      if (await File(path).length() > 0) return path;
+    } on FileSystemException {
+      // 尚未落盘，继续往下补写。
     } catch (_) {}
 
     final bytes = await getArtwork(songId, mediaStoreId: mediaStoreId);
     if (bytes == null || bytes.isEmpty) return null;
     try {
       final file = File(path);
-      if (!await file.exists() || await file.length() == 0) {
-        await file.writeAsBytes(bytes, flush: true);
-      }
+      await file.parent.create(recursive: true);
+      await file.writeAsBytes(bytes, flush: true);
       return path;
     } catch (e) {
       debugPrint('[CoverCache] 封面落盘失败 $songId: $e');
@@ -165,7 +167,10 @@ class CoverCacheService {
   Future<void> _writeToDisk(String songId, Uint8List bytes) async {
     try {
       final path = await _diskPath(songId);
-      await File(path).writeAsBytes(bytes, flush: false);
+      final file = File(path);
+      // _getCacheDir 不再每次校验目录存在，写入侧负责兜底重建。
+      await file.parent.create(recursive: true);
+      await file.writeAsBytes(bytes, flush: false);
     } catch (e) {
       debugPrint('[CoverCache] 磁盘写入失败 $songId: $e');
     }

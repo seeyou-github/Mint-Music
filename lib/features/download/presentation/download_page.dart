@@ -17,6 +17,35 @@ import '../data/download_repository.dart';
 import '../domain/models/download_task.dart';
 import 'widgets/download_progress_info.dart';
 
+/// 下载页展示用的派生数据：任务倒序 + 扫描结果按路径去重。
+class _DownloadListData {
+  const _DownloadListData(this.sortedTasks, this.dirSongs);
+
+  final List<DownloadTask> sortedTasks;
+  final List<DownloadDirSong> dirSongs;
+}
+
+/// 排序 / 去重放进带缓存的 provider：任务流或扫描结果不变时，主题、窗口
+/// 尺寸等引起的 build 不会再把整表重排一遍。
+final _downloadListProvider = Provider<_DownloadListData>((ref) {
+  final tasks =
+      ref.watch(downloadTasksProvider).valueOrNull ?? const <DownloadTask>[];
+  final scanned = ref.watch(downloadDirSongsProvider).valueOrNull ??
+      const <DownloadDirSong>[];
+  final sorted = [...tasks]
+    ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+  final taskPaths = <String>{
+    for (final task in sorted) _normalizePath(task.filePath),
+  }..remove('');
+  final dirSongs = scanned
+      .where(
+        (item) =>
+            !taskPaths.contains(_normalizePath(item.song.filePath ?? '')),
+      )
+      .toList();
+  return _DownloadListData(sorted, dirSongs);
+});
+
 /// 下载管理页。
 ///
 /// 不再按「进行中 / 已完成 / 失败」分类，所有任务按下载时间倒序放在同一个
@@ -32,6 +61,7 @@ class DownloadPage extends ConsumerWidget {
     // 每次进入页面重新扫描下载目录：历史下载任务只存在内存里，重启后
     // 已下载的歌曲要靠这次扫描显示在列表里。
     final dirSongsAsync = ref.watch(downloadDirSongsProvider);
+    final listData = ref.watch(_downloadListProvider);
 
     return Scaffold(
       backgroundColor: Colors.transparent,
@@ -47,22 +77,10 @@ class DownloadPage extends ConsumerWidget {
             ),
             Expanded(
               child: tasksAsync.when(
-                data: (tasks) {
-                  // 所有任务按下载时间倒序（最新的在最上面）。
-                  final sorted = [...tasks]
-                    ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
-                  // 已有任务记录的文件不再重复显示；扫描结果排在所有任务
-                  // （正在下载 / 已暂停 / 失败 / 已完成）后面。
-                  final taskPaths = {
-                    for (final task in sorted) _normalizePath(task.filePath),
-                  }..remove('');
-                  final dirSongs = (dirSongsAsync.valueOrNull ?? const [])
-                      .where(
-                        (item) => !taskPaths.contains(
-                          _normalizePath(item.song.filePath ?? ''),
-                        ),
-                      )
-                      .toList();
+                data: (_) {
+                  // 派生数据来自 _downloadListProvider（带缓存），这里只消费。
+                  final sorted = listData.sortedTasks;
+                  final dirSongs = listData.dirSongs;
 
                   if (sorted.isEmpty && dirSongs.isEmpty) {
                     if (dirSongsAsync.isLoading) {

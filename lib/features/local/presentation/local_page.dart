@@ -239,9 +239,34 @@ class _LocalPageState extends ConsumerState<LocalPage>
   }
 
   /// 当前展示的歌曲：按选中的文件夹过滤（「全部」时不过滤）。
-  List<Song> _visibleSongs(List<Song> songs, [String? folder]) => folder == null
-      ? songs
-      : songs.where((s) => _isInFolder(s, folder)).toList();
+  ///
+  /// 过滤结果按「列表身份 + 文件夹」缓存：扫描进度、主题等高频 build 不该
+  /// 每次都对几千首歌重做一遍字符串处理。缓存有上限，按 LRU 淘汰。
+  static const int _maxVisibleSongsCache = 32;
+  static final Map<String, List<Song>> _visibleSongsCache = {};
+
+  List<Song> _visibleSongs(List<Song> songs, [String? folder]) {
+    if (folder == null) return songs;
+    final key = '${identityHashCode(songs)}#${songs.length}#$folder';
+    final cached = _visibleSongsCache.remove(key);
+    if (cached != null) {
+      _visibleSongsCache[key] = cached;
+      return cached;
+    }
+    // 文件夹路径只规范化一次，别在每首歌上重复 replaceAll / toLowerCase。
+    final normalized = folder.replaceAll('\\', '/').toLowerCase();
+    final prefix = normalized.isEmpty
+        ? null
+        : (normalized.endsWith('/') ? normalized : '$normalized/');
+    final result = prefix == null
+        ? <Song>[]
+        : songs.where((s) => _isInFolder(s, prefix)).toList();
+    _visibleSongsCache[key] = result;
+    while (_visibleSongsCache.length > _maxVisibleSongsCache) {
+      _visibleSongsCache.remove(_visibleSongsCache.keys.first);
+    }
+    return result;
+  }
 
   void _locateCurrentSong() {
     final playbackState = ref.read(playbackControllerProvider);
@@ -843,12 +868,10 @@ class _LocalPageState extends ConsumerState<LocalPage>
   }
 
   /// 歌曲是否位于指定文件夹内。
-  bool _isInFolder(Song song, String folder) {
+  /// [dirPrefix] 由 [_visibleSongs] 预先规范化好（小写 + `/` 结尾）。
+  bool _isInFolder(Song song, String dirPrefix) {
     final filePath = (song.filePath ?? '').replaceAll('\\', '/').toLowerCase();
-    var dir = folder.replaceAll('\\', '/').toLowerCase();
-    if (dir.isEmpty) return false;
-    if (!dir.endsWith('/')) dir = '$dir/';
-    return filePath.startsWith(dir);
+    return filePath.startsWith(dirPrefix);
   }
 
   Widget _buildSearchBar(ThemeColors colors) {

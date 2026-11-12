@@ -380,7 +380,28 @@ class _CoverPreviewState extends State<_CoverPreview> {
   static const double _size = 132;
 
   /// 分辨率缓存（url / 本地封面 → 「宽 × 高」），换候选时不用重复下载解码。
+  /// Dart 的 Map 保序：命中时挪到末尾、超上限淘汰最旧，避免候选越刷越多
+  /// 时缓存无界增长。
+  static const int _maxResolutionCache = 200;
   static final Map<String, String> _resolutionCache = {};
+
+  /// 网络封面下载复用同一个 Dio，避免每个候选都新建连接池。
+  static final Dio _resolutionDio = Dio();
+
+  static String? _cachedResolution(String key) {
+    final value = _resolutionCache.remove(key);
+    if (value == null) return null;
+    _resolutionCache[key] = value;
+    return value;
+  }
+
+  static void _cacheResolution(String key, String value) {
+    _resolutionCache.remove(key);
+    _resolutionCache[key] = value;
+    while (_resolutionCache.length > _maxResolutionCache) {
+      _resolutionCache.remove(_resolutionCache.keys.first);
+    }
+  }
 
   String? _resolution;
 
@@ -408,7 +429,7 @@ class _CoverPreviewState extends State<_CoverPreview> {
 
   Future<void> _loadResolution() async {
     final key = _cacheKey;
-    final cached = _resolutionCache[key];
+    final cached = _cachedResolution(key);
     if (cached != null) {
       if (mounted && key == _cacheKey) {
         setState(() => _resolution = cached);
@@ -420,7 +441,7 @@ class _CoverPreviewState extends State<_CoverPreview> {
       Uint8List? bytes;
       final url = widget.song.coverUrl ?? '';
       if (url.isNotEmpty) {
-        final response = await Dio().get<List<int>>(
+        final response = await _resolutionDio.get<List<int>>(
           url,
           options: Options(responseType: ResponseType.bytes),
         );
@@ -433,12 +454,21 @@ class _CoverPreviewState extends State<_CoverPreview> {
         );
       }
       if (bytes == null || bytes.isEmpty) return;
-      final codec = await ui.instantiateImageCodec(bytes);
-      final frame = await codec.getNextFrame();
-      final text = '${frame.image.width} × ${frame.image.height}';
-      _resolutionCache[key] = text;
-      if (!mounted) return;
-      if (key == _cacheKey) setState(() => _resolution = text);
+      ui.Codec? codec;
+      ui.FrameInfo? frame;
+      try {
+        codec = await ui.instantiateImageCodec(bytes);
+        frame = await codec.getNextFrame();
+        final text = '${frame.image.width} × ${frame.image.height}';
+        _cacheResolution(key, text);
+        if (!mounted) return;
+        if (key == _cacheKey) setState(() => _resolution = text);
+      } finally {
+        // 只需要宽高：解码出的原图和 codec 用完立刻释放，否则每浏览一个
+        // 候选就漏一张高清图的原生内存。
+        frame?.image.dispose();
+        codec?.dispose();
+      }
     } catch (_) {
       // 分辨率拿不到（下载失败 / 解码失败）就不显示，不影响封面本身。
     }

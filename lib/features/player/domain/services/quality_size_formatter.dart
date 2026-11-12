@@ -132,28 +132,37 @@ class QualitySizeFormatter {
     return null;
   }
 
-  /// 本地文件大小缓存：列表构建期会逐行调 [sizeText]，每次都 existsSync +
-  /// lengthSync 太重；文件大小在会话内基本不变，10 秒 TTL 足够刚下载完成的
-  /// 文件刷新显示。
+  /// 本地文件大小缓存：列表构建期会逐行调 [sizeText]。这里保持同步 API
+  /// （build 里直接取字符串），但把 existsSync + lengthSync 两次系统调用
+  /// 合并成一次 statSync，并延长 TTL、加 LRU 上限。
   static final _fileSizeCache = <String, (int?, DateTime)>{};
-  static const _fileSizeCacheTtl = Duration(seconds: 10);
+  static const _fileSizeCacheTtl = Duration(seconds: 30);
+  static const _maxFileSizeCache = 2000;
+
+  static void _cacheFileSize(String path, int? size, DateTime now) {
+    _fileSizeCache.remove(path);
+    _fileSizeCache[path] = (size, now);
+    while (_fileSizeCache.length > _maxFileSizeCache) {
+      _fileSizeCache.remove(_fileSizeCache.keys.first);
+    }
+  }
 
   static int? _localFileSize(Song song) {
     final path = song.filePath ?? song.sourceUrl;
     if (path == null || path.startsWith('http')) return null;
     final now = DateTime.now();
-    final cached = _fileSizeCache[path];
-    if (cached != null && now.difference(cached.$2) < _fileSizeCacheTtl) {
-      return cached.$1;
+    final cached = _fileSizeCache.remove(path);
+    if (cached != null) {
+      _fileSizeCache[path] = cached; // LRU：命中挪到末尾
+      if (now.difference(cached.$2) < _fileSizeCacheTtl) return cached.$1;
     }
-    if (_fileSizeCache.length > 2000) _fileSizeCache.clear();
     try {
-      final file = File(path);
-      final size = file.existsSync() ? file.lengthSync() : null;
-      _fileSizeCache[path] = (size, now);
+      final stat = File(path).statSync();
+      final size = stat.type == FileSystemEntityType.file ? stat.size : null;
+      _cacheFileSize(path, size, now);
       return size;
     } catch (_) {
-      _fileSizeCache[path] = (null, now);
+      _cacheFileSize(path, null, now);
       return null;
     }
   }

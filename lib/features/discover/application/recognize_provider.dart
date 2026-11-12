@@ -64,15 +64,27 @@ class RecognizeNotifier extends StateNotifier<RecognizeState> {
   final RecognizeRepository _repository = RecognizeRepository();
   StreamSubscription? _recordSub;
   Timer? _timer;
+  Timer? _globalTimeout;
   bool _active = false;
   bool _processing = false;
   bool _wasPlaying = false;
   List<RecognizeResult> _accumulatedResults = [];
 
+  /// 每轮识别的代号。旧的 30 秒超时回调靠它判断自己是否已经过期，
+  /// 不会把用户取消后重新发起的那一轮误停。
+  int _sessionGeneration = 0;
+
   static const int _maxDuration = 15;
   static const int _sliceDurationMs = 3000;
 
   RecognizeNotifier() : super(const RecognizeState());
+
+  /// 结束一轮会话的超时保护：代号推进 + 取消 Timer。
+  void _endSessionTimeout() {
+    _sessionGeneration++;
+    _globalTimeout?.cancel();
+    _globalTimeout = null;
+  }
 
   /// 音频指纹服务（桌面端需要用它创建 WebView 宿主）。
   AudioFingerprintService get fingerprintService => _afpService;
@@ -93,6 +105,8 @@ class RecognizeNotifier extends StateNotifier<RecognizeState> {
   /// 开始录音识别（对标 CeruMusic start()）
   Future<void> startRecording() async {
     if (_active) return;
+    _endSessionTimeout();
+    final generation = _sessionGeneration;
     _active = true;
     _accumulatedResults = [];
 
@@ -163,12 +177,12 @@ class RecognizeNotifier extends StateNotifier<RecognizeState> {
         }
       });
 
-      // 全局超时保护
-      Future.delayed(const Duration(seconds: 30), () {
-        if (_active) {
-          debugPrint('[Recognize] GLOBAL TIMEOUT: force stopping');
-          _forceStop();
-        }
+      // 全局超时保护：持有 Timer 句柄，并用会话代号判断自己是否已过期，
+      // 避免上一轮的回调把取消后重新发起的识别误停。
+      _globalTimeout = Timer(const Duration(seconds: 30), () {
+        if (generation != _sessionGeneration || !_active) return;
+        debugPrint('[Recognize] GLOBAL TIMEOUT: force stopping');
+        _forceStop();
       });
     } catch (e) {
       debugPrint('[Recognize] startRecording failed: $e');
@@ -355,6 +369,8 @@ class RecognizeNotifier extends StateNotifier<RecognizeState> {
       return;
     }
 
+    // 这一轮已经结束：撤掉 30 秒保险丝，别让过期回调还挂在事件循环里。
+    _endSessionTimeout();
     _active = false;
     _processing = false;
     _timer?.cancel();
@@ -434,6 +450,7 @@ class RecognizeNotifier extends StateNotifier<RecognizeState> {
   }
 
   void _forceStop() {
+    _endSessionTimeout();
     _active = false;
     _processing = false;
     _timer?.cancel();
@@ -447,6 +464,7 @@ class RecognizeNotifier extends StateNotifier<RecognizeState> {
   }
 
   Future<void> cancelRecording() async {
+    _endSessionTimeout();
     _active = false;
     _processing = false;
     _timer?.cancel();
@@ -460,6 +478,7 @@ class RecognizeNotifier extends StateNotifier<RecognizeState> {
   }
 
   void backToInitial() {
+    _endSessionTimeout();
     _active = false;
     _accumulatedResults = [];
     state = const RecognizeState();
@@ -501,6 +520,7 @@ class RecognizeNotifier extends StateNotifier<RecognizeState> {
 
   @override
   void dispose() {
+    _endSessionTimeout();
     _timer?.cancel();
     _recordSub?.cancel();
     _processor.dispose();
@@ -509,7 +529,8 @@ class RecognizeNotifier extends StateNotifier<RecognizeState> {
   }
 }
 
+/// 识曲页退出后自动释放 WebView / WASM / 录音器，不再常驻到进程结束。
 final recognizeProvider =
-    StateNotifierProvider<RecognizeNotifier, RecognizeState>((ref) {
+    StateNotifierProvider.autoDispose<RecognizeNotifier, RecognizeState>((ref) {
       return RecognizeNotifier();
     });

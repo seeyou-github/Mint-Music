@@ -120,10 +120,18 @@ class BackupService {
     // 收藏也单独导出（在重要库里，不在 config 目录内）。即使为空也写一份，
     // 让备份包的条目固定，方便查看 / 比对。
     final playlists = await PlaylistRepository().exportAll();
-    final playlistBytes = utf8.encode(jsonEncode(playlists));
     // 已听进度导出成一份逻辑快照（统计 / 排行已移除）。
     final progress = await PlayProgressStore.exportSnapshot();
-    final progressBytes = utf8.encode(jsonEncode(progress));
+    // 大 JSON 的序列化也放后台：收藏几千首时 jsonEncode 会在主线程卡上
+    // 几十到上百毫秒，以前只有 deflate 被挪进了 isolate。
+    final snapshots = await _runInBackground(
+      () => <String, List<int>>{
+        'playlists': utf8.encode(jsonEncode(playlists)),
+        'progress': utf8.encode(jsonEncode(progress)),
+      },
+    );
+    final playlistBytes = snapshots['playlists']!;
+    final progressBytes = snapshots['progress']!;
 
     // 打包放到后台 isolate：deflate 在整个配置目录（字体、插件脚本、
     // 封面图）上跑几百毫秒到数秒，放主线程会让界面卡住。
@@ -244,7 +252,8 @@ class BackupService {
     try {
       final raw = utf8.decode(entry.bytes!);
       if (raw.trim().isEmpty) return;
-      final decoded = jsonDecode(raw);
+      // 快照可能有几千首歌，解码同样放后台 isolate。
+      final decoded = await _runInBackground(() => jsonDecode(raw));
       if (decoded is! Map) return;
       final progress = decoded['progress'];
       if (progress is! List || progress.isEmpty) return;
@@ -270,7 +279,10 @@ class BackupService {
       List<Map<String, dynamic>>? snapshot;
       for (final file in entries) {
         if (file.bytes == null || file.name != playlistsEntry) continue;
-        final decoded = jsonDecode(utf8.decode(file.bytes!));
+        final bytes = file.bytes!;
+        final decoded = await _runInBackground(
+          () => jsonDecode(utf8.decode(bytes)),
+        );
         if (decoded is List) {
           snapshot = [
             for (final item in decoded)

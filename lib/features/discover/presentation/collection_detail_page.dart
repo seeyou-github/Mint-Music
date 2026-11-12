@@ -349,23 +349,48 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
 
     page = _page;
     var isEnd = _isEnd;
+    // 兜底改成「连续 N 页没有有效新增」：插件不报 isEnd / total、甚至忽略
+    // page 参数反复返回同一批歌时，也不会一直翻下去。
+    var staleStreak = 0;
+    Set<String> previousPageIds = <String>{};
+    var lastRequestedPage = page;
     while (!isEnd) {
       page += 1;
+      // 页码必须单调递增，被改写过的请求序列不可信。
+      if (page <= lastRequestedPage) break;
+      lastRequestedPage = page;
       final detail = await _fetch(page);
+      final pageIds = <String>{};
+      var duplicates = 0;
       var added = 0;
       for (final song in detail.songs) {
-        if (seen.add(song.id)) {
-          all.add(song);
-          added += 1;
+        // 本页内重复、或之前已经收过的 id，都算重复数据。
+        if (!pageIds.add(song.id) || seen.contains(song.id)) {
+          duplicates++;
+          continue;
         }
+        seen.add(song.id);
+        all.add(song);
+        added++;
       }
+      final duplicateRatio = detail.songs.isEmpty
+          ? 1.0
+          : duplicates / detail.songs.length;
+      // 相邻两页返回完全同一批 id：服务端忽略了 page，页码其实没推进。
+      final pageNotAdvanced = previousPageIds.isNotEmpty &&
+          pageIds.isNotEmpty &&
+          pageIds.length == previousPageIds.length &&
+          pageIds.every((id) => previousPageIds.contains(id));
+      previousPageIds = pageIds;
+
       isEnd =
           detail.isEnd || (detail.total != null && all.length >= detail.total!);
-      if (added == 0) {
-        // 插件可能把整页不可播放的歌曲过滤成空页；连续几页没新歌就当作到底。
-        if (++emptyStreak >= 5) break;
+      // 无有效新增 = 一首新歌都没有、整页几乎全是重复 id（>= 90%），
+      // 或这一页和上一页是同一批数据。
+      if (added == 0 || duplicateRatio >= 0.9 || pageNotAdvanced) {
+        if (++staleStreak >= 5) break;
       } else {
-        emptyStreak = 0;
+        staleStreak = 0;
       }
     }
     return all;

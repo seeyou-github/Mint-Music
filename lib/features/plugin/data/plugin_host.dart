@@ -261,7 +261,10 @@ class PluginHost {
           if (sourceCount > 0) break;
           if (now.isAfter(staticSourceWait)) break;
         }
-        await Future.delayed(const Duration(milliseconds: 100));
+        // JS 侧目前靠 __lxInited / sources 轮询上报，100ms 一轮会在导入插件
+        // 期间持续同步求值、拖慢界面。放宽到 250ms；等 JS 侧改成主动通知后
+        // 这个循环可以直接换成等待通知。
+        await Future.delayed(const Duration(milliseconds: 250));
       }
       _isLxAdapter = isLxAdapter;
       print('[PluginHost] 插件初始化完成，解析到 $sourceCount 个源');

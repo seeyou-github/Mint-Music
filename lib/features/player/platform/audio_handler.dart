@@ -20,6 +20,11 @@ class MusicAudioHandler extends BaseAudioHandler
   DateTime? _lastPositionBroadcast;
   static const _positionBroadcastInterval = Duration(milliseconds: 200);
 
+  /// 上次真正广播出去的播放状态：两条流都会调 [_broadcastState]，用它把
+  /// 200ms 内的重复进度事件合并掉。
+  bool? _lastBroadcastPlaying;
+  AudioProcessingState? _lastBroadcastProcessingState;
+
   Stream<Duration> get positionStream => _player.positionStream;
   Stream<Duration> get bufferedPositionStream => _player.bufferedPositionStream;
   Stream<PlayerState> get playerStateStream => _player.playerStateStream;
@@ -87,15 +92,9 @@ class MusicAudioHandler extends BaseAudioHandler
       _broadcastState();
     });
 
-    _player.positionStream.listen((position) {
-      final now = DateTime.now();
-      if (_lastPositionBroadcast == null ||
-          now.difference(_lastPositionBroadcast!) >=
-              _positionBroadcastInterval) {
-        _lastPositionBroadcast = now;
-        _broadcastState();
-      }
-    });
+    // 两条流都调 _broadcastState()：节流 / 去重统一放在那里，避免各自
+    // 计时后叠加重复广播。
+    _player.positionStream.listen((_) => _broadcastState());
 
     _player.durationStream.listen((duration) {
       if (duration != null && duration > Duration.zero) {
@@ -139,6 +138,8 @@ class MusicAudioHandler extends BaseAudioHandler
       // 换源瞬间新队列 / 媒体项可能还没写进来（setAudioSource 先于 queue.add
       // 的路径），此时不要广播 idle，保持通知原样即可。
       if (Platform.isAndroid && _switchingSourceCount > 0) return;
+      _lastBroadcastPlaying = null;
+      _lastBroadcastProcessingState = null;
       playbackState.add(_emptyPlaybackState);
       return;
     }
@@ -147,6 +148,21 @@ class MusicAudioHandler extends BaseAudioHandler
     // 真正的停止走 stop() / clearMediaSession()，它们不经过换源路径，
     // idle 广播仍然照常生效。Windows 不接 audio_service，行为完全不变。
     var processingState = _mapProcessingState(_player.processingState);
+    final now = DateTime.now();
+    final playing = _player.playing;
+    // playbackEventStream 与 positionStream 都调这里；状态没变且 200ms 内
+    // 已经推过一次，就跳过这次纯进度事件，避免通知栏 / 媒体会话重复刷新。
+    final stateChanged = playing != _lastBroadcastPlaying ||
+        processingState != _lastBroadcastProcessingState;
+    if (!stateChanged &&
+        _lastPositionBroadcast != null &&
+        now.difference(_lastPositionBroadcast!) <
+            _positionBroadcastInterval) {
+      return;
+    }
+    _lastPositionBroadcast = now;
+    _lastBroadcastPlaying = playing;
+    _lastBroadcastProcessingState = processingState;
     if (Platform.isAndroid &&
         _switchingSourceCount > 0 &&
         processingState == AudioProcessingState.idle) {

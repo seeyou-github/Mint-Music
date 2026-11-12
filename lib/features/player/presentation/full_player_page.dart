@@ -930,11 +930,7 @@ class _PlayerLyricsPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final lyricState = ref.watch(lyricControllerProvider);
-    final position = ref.watch(
-      playbackControllerProvider.select((s) => s.position),
-    );
     final seekPreview = ref.watch(seekPreviewPositionProvider);
-    final lyricPosition = seekPreview ?? position;
     final isPlaying = ref.watch(
       playbackControllerProvider.select((s) => s.isAudible),
     );
@@ -980,29 +976,40 @@ class _PlayerLyricsPage extends ConsumerWidget {
     return Stack(
       children: [
         Positioned.fill(
-          child: LyricScrollView(
-            lines: lyricState.lines,
-            currentTimeMs: lyricPosition.inMilliseconds,
-            isPlaying: isPlaying,
-            isSeekPreview: seekPreview != null,
-            hasYrc: hasYrc,
-            activeColor: activeColor,
-            inactiveColor: inactiveColor,
-            mainFontSize: baseFontSize,
-            transFontSize: transFontSize,
-            romanFontSize: romanFontSize,
-            fontSizeRate: watchFontRate,
-            showTranslation: showTranslation,
-            showRoman: showRoman,
-            enableBlur: enableBlur,
-            enableScale: enableScale,
-            centerAlign: lyricCenterAlign,
-            fontFamily: watchFontFamily,
-            fontWeight: watchFontWeight,
-            onSeek: (startTimeMs) {
-              ref
-                  .read(playbackControllerProvider.notifier)
-                  .seek(Duration(milliseconds: startTimeMs));
+          // 进度订阅收窄到歌词子树：以前整页 watch(position)，每 200ms 连
+          // 主题、格式标签、Stack 一起重建。歌词内部本来就有 Ticker 逐帧
+          // 推进，这里只负责把外部进度喂给它的时钟做校正。
+          child: Consumer(
+            builder: (context, ref, _) {
+              final position = ref.watch(
+                playbackControllerProvider.select((s) => s.position),
+              );
+              final lyricPosition = seekPreview ?? position;
+              return LyricScrollView(
+                lines: lyricState.lines,
+                currentTimeMs: lyricPosition.inMilliseconds,
+                isPlaying: isPlaying,
+                isSeekPreview: seekPreview != null,
+                hasYrc: hasYrc,
+                activeColor: activeColor,
+                inactiveColor: inactiveColor,
+                mainFontSize: baseFontSize,
+                transFontSize: transFontSize,
+                romanFontSize: romanFontSize,
+                fontSizeRate: watchFontRate,
+                showTranslation: showTranslation,
+                showRoman: showRoman,
+                enableBlur: enableBlur,
+                enableScale: enableScale,
+                centerAlign: lyricCenterAlign,
+                fontFamily: watchFontFamily,
+                fontWeight: watchFontWeight,
+                onSeek: (startTimeMs) {
+                  ref
+                      .read(playbackControllerProvider.notifier)
+                      .seek(Duration(milliseconds: startTimeMs));
+                },
+              );
             },
           ),
         ),
@@ -1462,10 +1469,8 @@ class _InlineLyricLineState extends ConsumerState<_InlineLyricLine> {
 
     final lines = lyricState.lines;
     final positionMs = position.inMilliseconds;
-    var index = lines.isEmpty
-        ? -1
-        : lines.lastIndexWhere((line) => line.startTimeMs <= positionMs);
-    if (index < 0 && lines.isNotEmpty) index = 0;
+    // 与全屏歌词共用二分查找：几百行歌词下每 200ms 线性扫一遍太浪费。
+    final index = activeLyricIndexFor(lines, positionMs);
     final text = index >= 0 ? lines[index].plainText.trim() : '';
     // 还在取词（含歌词不属于当前歌的瞬间）时不要说「暂无歌词」，
     // 否则切歌瞬间会闪一下「暂无歌词」。

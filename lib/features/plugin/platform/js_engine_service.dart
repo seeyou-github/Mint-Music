@@ -20,8 +20,15 @@ import 'package:pointycastle/export.dart' as pc;
 class JsEngineService {
   JavascriptRuntime? _runtime;
   late final Dio _dio;
+  HttpClient? _httpClient;
   final Map<int, Timer> _timers = {};
   final Set<int> _activeTimerIds = <int>{};
+  final Set<int> _repeatTimerIds = <int>{};
+
+  /// 定时器回调的秒级限流窗口，防止多个定时器叠加成事件风暴。
+  DateTime? _timerFireWindowStart;
+  int _timerFireCount = 0;
+  bool _timerFireThrottled = false;
 
   bool _initialized = false;
   bool _runtimeFaulted = false;
@@ -37,7 +44,13 @@ class JsEngineService {
   static const String _environment = 'nodejs';
   static const int _quickJsTimeoutMilliseconds = 5000;
   static const int _maxActiveTimers = 256;
-  static const int _minTimerDelayMilliseconds = 1;
+  // 一次性定时器低于一帧没有意义；插件写 setTimeout(fn, 0) 时原来 1ms 的
+  // 下限会让主 isolate 每秒执行上千次 JS 求值。
+  static const int _minTimerDelayMilliseconds = 16;
+  // 周期定时器更危险（setInterval 永不自停），单独设 100ms 下限与数量上限。
+  static const int _minRepeatTimerDelayMilliseconds = 100;
+  static const int _maxRepeatTimers = 8;
+  static const int _maxTimerFiresPerSecond = 120;
   static const int _maxTimerDelayMilliseconds = 24 * 60 * 60 * 1000;
 
   static int _resultVarSeq = 0;
@@ -66,10 +79,10 @@ class JsEngineService {
   Future<void> init() async {
     if (_initialized) return;
 
-    final httpClient = HttpClient()..badCertificateCallback = (_, _, _) => true;
+    _httpClient = HttpClient()..badCertificateCallback = (_, _, _) => true;
     _dio = Dio()
       ..httpClientAdapter = IOHttpClientAdapter(
-        createHttpClient: () => httpClient,
+        createHttpClient: () => _httpClient!,
       )
       ..options = BaseOptions(
         // 插件请求可能很慢（第三方脚本解析地址要十几秒），连接 / 接收超时
@@ -1627,7 +1640,9 @@ var $resultVar = { __status: 'pending', __value: null };
       _executePendingJob();
 
       final deadline = DateTime.now().add(timeout);
-      var pollDelay = const Duration(milliseconds: 25);
+      // 轮询只用来推 QuickJS 的 job 队列：25ms 起会在插件 Promise 迟迟不
+      // 返回时持续占用主 isolate，放宽到 50ms 起、上限仍是 200ms。
+      var pollDelay = const Duration(milliseconds: 50);
       var nextFallbackCheck = DateTime.now().add(_methodFallbackInterval);
       while (true) {
         try {
@@ -1723,18 +1738,28 @@ var $resultVar = { __status: 'pending', __value: null };
       final requestedDelay = data['delay'] is num
           ? (data['delay'] as num).round()
           : int.tryParse(data['delay']?.toString() ?? '') ?? 0;
+      final minDelay = repeat
+          ? _minRepeatTimerDelayMilliseconds
+          : _minTimerDelayMilliseconds;
       final delay = requestedDelay
-          .clamp(_minTimerDelayMilliseconds, _maxTimerDelayMilliseconds)
+          .clamp(minDelay, _maxTimerDelayMilliseconds)
           .toInt();
 
       _timers.remove(timerId)?.cancel();
       _activeTimerIds.remove(timerId);
+      _repeatTimerIds.remove(timerId);
       if (_activeTimerIds.length >= _maxActiveTimers) {
         _log('[JsEngine] 忽略定时器 $timerId: 已达到 $_maxActiveTimers 个上限');
         return;
       }
+      // setInterval 永不自停，单独限量，避免插件开一堆心跳把主线程占满。
+      if (repeat && _repeatTimerIds.length >= _maxRepeatTimers) {
+        _log('[JsEngine] 忽略周期定时器 $timerId: 已达到 $_maxRepeatTimers 个上限');
+        return;
+      }
 
       _activeTimerIds.add(timerId);
+      if (repeat) _repeatTimerIds.add(timerId);
       final duration = Duration(milliseconds: delay);
       final timer = repeat
           ? Timer.periodic(duration, (_) => _fireTimer(timerId, repeat: true))
@@ -1752,6 +1777,7 @@ var $resultVar = { __status: 'pending', __value: null };
       if (timerId == null) return;
       _timers.remove(timerId)?.cancel();
       _activeTimerIds.remove(timerId);
+      _repeatTimerIds.remove(timerId);
     } catch (e) {
       _log('[JsEngine] 定时器取消失败: $e');
     }
@@ -1768,6 +1794,23 @@ var $resultVar = { __status: 'pending', __value: null };
     if (!repeat) {
       _timers.remove(timerId);
       _activeTimerIds.remove(timerId);
+      _repeatTimerIds.remove(timerId);
+    }
+    // 秒级熔断：即使插件开了多个短间隔定时器，也不让回调把主 isolate 打满。
+    final now = DateTime.now();
+    final windowStart = _timerFireWindowStart;
+    if (windowStart == null ||
+        now.difference(windowStart) >= const Duration(seconds: 1)) {
+      _timerFireWindowStart = now;
+      _timerFireCount = 0;
+      _timerFireThrottled = false;
+    }
+    if (++_timerFireCount > _maxTimerFiresPerSecond) {
+      if (!_timerFireThrottled) {
+        _timerFireThrottled = true;
+        _log('[JsEngine] 定时器回调过密，已限流');
+      }
+      return;
     }
     try {
       final result = evaluate('__mintFireTimer($timerId)');
@@ -1796,7 +1839,13 @@ var $resultVar = { __status: 'pending', __value: null };
     }
     _timers.clear();
     _activeTimerIds.clear();
+    _repeatTimerIds.clear();
     _pluginNoticeController.close();
+    // Dio / HttpClient 持有连接池和 socket，插件反复安装、卸载、重载会重建
+    // 所有 engine，不关会在进程里累积文件句柄。
+    if (_initialized) _dio.close(force: true);
+    _httpClient?.close(force: true);
+    _httpClient = null;
     _runtime?.dispose();
     _runtime = null;
     _initialized = false;

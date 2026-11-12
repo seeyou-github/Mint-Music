@@ -215,7 +215,33 @@ class _CoverBlurBackgroundState extends ConsumerState<_CoverBlurBackground> {
   ///
   /// 主界面 / 二级页转场副本各有一层背景，同一份字节会被回调好几次；按
   /// 「封面 key + 字节身份」缓存，编辑标签换了封面字节也能重新算。
+  static const int _maxCoverAnalyses = 96;
   static final Map<String, Future<CoverColorResult>> _coverAnalyses = {};
+
+  /// 取色结果按 key 复用；命中时挪到末尾，超过上限淘汰最久没用的，
+  /// 避免长听后这张表只增不减（底层取色器自己有 96 条 LRU，这层以前没有）。
+  static Future<CoverColorResult> _coverAnalysis(
+    String key,
+    Uint8List bytes,
+  ) {
+    final cached = _coverAnalyses.remove(key);
+    if (cached != null) {
+      _coverAnalyses[key] = cached;
+      return cached;
+    }
+    final future = CoverColorExtractor.extract(
+      ResizeImage(
+        MemoryImage(bytes),
+        width: _kCoverAnalysisWidth,
+        allowUpscaling: false,
+      ),
+    );
+    _coverAnalyses[key] = future;
+    while (_coverAnalyses.length > _maxCoverAnalyses) {
+      _coverAnalyses.remove(_coverAnalyses.keys.first);
+    }
+    return future;
+  }
 
   /// 这张封面已经真的加载出来可以显示了：从这一刻起背景才切到它。
   ///
@@ -236,15 +262,7 @@ class _CoverBlurBackgroundState extends ConsumerState<_CoverBlurBackground> {
       return;
     }
 
-    final analysis =
-        _coverAnalyses['$key#${identityHashCode(bytes)}'] ??= CoverColorExtractor
-            .extract(
-              ResizeImage(
-                MemoryImage(bytes),
-                width: _kCoverAnalysisWidth,
-                allowUpscaling: false,
-              ),
-            );
+    final analysis = _coverAnalysis('$key#${identityHashCode(bytes)}', bytes);
     final result = await analysis;
 
     if (!mounted) return;
