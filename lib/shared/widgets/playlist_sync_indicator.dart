@@ -47,11 +47,16 @@ class PlaylistSyncIndicator extends ConsumerWidget {
   ) {
     final failed = status.phase == PlaylistSyncPhase.failed;
     final success = status.phase == PlaylistSyncPhase.success;
+    // 「自动同步」开关也会在设置写盘后备份配置，和歌单同步共用这条提示，
+    // 只是文案换成「设置」。
+    final backup = status.kind == PlaylistSyncKind.backup;
     final label = failed
-        ? context.tr('歌单同步失败：${status.message ?? ''}')
+        ? (backup
+              ? context.tr('设置同步失败：${status.message ?? ''}')
+              : context.tr('歌单同步失败：${status.message ?? ''}'))
         : success
-        ? context.tr('歌单同步完成')
-        : context.tr('正在同步歌单…');
+        ? (backup ? context.tr('设置同步完成') : context.tr('歌单同步完成'))
+        : (backup ? context.tr('正在同步设置…') : context.tr('正在同步歌单…'));
 
     return Center(
       // Material：这个提示浮在路由之上，没有 Scaffold 提供默认文字样式，

@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../features/settings/application/settings_providers.dart';
 import 'backup_service.dart';
+import 'playlist_sync_status.dart';
 import 'sync_timeout.dart';
 import 'webdav_service.dart';
 
@@ -91,11 +92,17 @@ class AutoBackup {
       }
     }
     _running = true;
+    // 设置变更触发的自动备份在窗口底部给出提示：生成备份包 + 上传可能
+    // 要几秒，静默执行会让用户以为设置没生效 / 不知道正在写远端。
+    final status = container.read(playlistSyncStatusProvider.notifier);
+    status.start(kind: PlaylistSyncKind.backup);
     try {
       await _upload(container.read(webDavConfigProvider));
       _lastRunAt = DateTime.now();
+      status.succeed(kind: PlaylistSyncKind.backup);
     } catch (e) {
       debugPrint('[AutoBackup] 自动备份失败: $e');
+      status.fail(describeWebDavError(e), kind: PlaylistSyncKind.backup);
     } finally {
       _running = false;
       if (_pending) {

@@ -17,14 +17,26 @@ enum PlaylistSyncPhase {
   failed,
 }
 
-/// 歌单同步状态。
+/// 同步的内容：歌单，还是「自动同步」里的设置 / 插件备份。
+///
+/// 两者共用窗口底部的一条提示，只是文案不同。
+enum PlaylistSyncKind { playlist, backup }
+
+/// 同步状态。
 class PlaylistSyncStatus {
-  const PlaylistSyncStatus({this.phase = PlaylistSyncPhase.idle, this.message});
+  const PlaylistSyncStatus({
+    this.phase = PlaylistSyncPhase.idle,
+    this.message,
+    this.kind = PlaylistSyncKind.playlist,
+  });
 
   final PlaylistSyncPhase phase;
 
   /// 失败原因（[phase] 为 failed 时有值）。
   final String? message;
+
+  /// 这次提示对应的是歌单同步还是设置备份。
+  final PlaylistSyncKind kind;
 
   bool get isVisible => phase != PlaylistSyncPhase.idle;
 
@@ -42,27 +54,31 @@ class PlaylistSyncStatusNotifier extends StateNotifier<PlaylistSyncStatus> {
   Timer? _hideTimer;
 
   /// 同步开始。
-  void start() {
+  void start({PlaylistSyncKind kind = PlaylistSyncKind.playlist}) {
     _hideTimer?.cancel();
     _hideTimer = null;
-    state = const PlaylistSyncStatus(phase: PlaylistSyncPhase.syncing);
+    state = PlaylistSyncStatus(phase: PlaylistSyncPhase.syncing, kind: kind);
   }
 
   /// 同步成功：显示 2 秒后自动隐藏。
-  void succeed() {
+  void succeed({PlaylistSyncKind kind = PlaylistSyncKind.playlist}) {
     _hideTimer?.cancel();
-    state = const PlaylistSyncStatus(phase: PlaylistSyncPhase.success);
+    state = PlaylistSyncStatus(phase: PlaylistSyncPhase.success, kind: kind);
     _hideTimer = Timer(const Duration(seconds: 2), () {
       if (mounted) state = PlaylistSyncStatus.idle;
     });
   }
 
   /// 同步失败：显示 4 秒后自动隐藏。
-  void fail(String message) {
+  void fail(
+    String message, {
+    PlaylistSyncKind kind = PlaylistSyncKind.playlist,
+  }) {
     _hideTimer?.cancel();
     state = PlaylistSyncStatus(
       phase: PlaylistSyncPhase.failed,
       message: message,
+      kind: kind,
     );
     _hideTimer = Timer(const Duration(seconds: 4), () {
       if (mounted) state = PlaylistSyncStatus.idle;
