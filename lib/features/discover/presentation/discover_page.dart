@@ -1650,16 +1650,20 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
       child: Icon(Icons.queue_music, size: 32, color: colors.textHint),
     );
     if (cover.isEmpty) return fallback();
+    // 卡片格子约 180px，按 400px（2x + 余量）限解码尺寸：用户自选的本地
+    // 封面可能是几千像素的照片，原尺寸解码一张就是几十 MB 位图。
     if (cover.startsWith('http')) {
       return Image.network(
         cover,
         fit: BoxFit.cover,
+        cacheWidth: 400,
         errorBuilder: (_, _, _) => fallback(),
       );
     }
     return Image.file(
       File(cover),
       fit: BoxFit.cover,
+      cacheWidth: 400,
       errorBuilder: (_, _, _) => fallback(),
     );
   }
