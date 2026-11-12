@@ -210,7 +210,7 @@ class CoverCacheService {
   Future<bool> hasDiskCache(String songId) async {
     try {
       final path = await _diskPath(songId);
-      return File(path).existsSync();
+      return await File(path).exists();
     } catch (_) {
       return false;
     }
