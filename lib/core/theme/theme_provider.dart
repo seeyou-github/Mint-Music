@@ -203,7 +203,7 @@ final baseThemeColorsProvider = Provider<ThemeColors>((ref) {
 ///
 /// 打开后主界面背景由「当前歌曲封面主色」派生，算法与播放详情页背景
 /// 完全相同（见 [deriveBackgroundGradient]）；浅色主题下忽略这个开关。
-final coverBackgroundEnabledProvider = StateProvider<bool>((ref) => true);
+final coverBackgroundEnabledProvider = StateProvider<bool>((ref) => false);
 
 /// 高斯模糊模式下，背景是否改成「当前播放歌曲的封面糊化」。
 ///
