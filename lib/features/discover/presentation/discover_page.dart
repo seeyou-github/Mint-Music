@@ -963,6 +963,8 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
         );
       }).toList(),
     ).then((selectedId) {
+      // 菜单开着期间页面可能已被销毁（快速切页），ref/context 不能再碰。
+      if (!mounted) return;
       if (selectedId != null && selectedId != currentSourceId) {
         ref.read(discoverSourceIdProvider.notifier).state = selectedId;
         // 用户最后切换的音源即成为默认音源。
