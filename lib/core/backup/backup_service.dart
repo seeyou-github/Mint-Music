@@ -108,6 +108,8 @@ class BackupService {
     // 不 flush 的话，最近 15 秒内的播放数据不会进备份包。
     await AppDatabase.flushAll();
     await AppDatabase.checkpointAll();
+    // 设置现在是防抖写盘，备份前必须结算，否则刚改的设置不会进包。
+    await AppPreferences.maybeInstance?.flushNow();
 
     final archive = Archive();
     // 设置目录（`AppData\config\setting`）打成包里的 `config/setting`，

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -265,7 +266,23 @@ class AppPreferences {
     return _flush();
   }
 
-  /// 把内存中的设置写回磁盘。
+  /// 连续写入的合并窗口。
+  ///
+  /// 滑杆拖动时每秒会产生几十次设置变更，每次都 `jsonEncode` 整个 settings.json
+  /// 再刷盘（还带 4 次文件系统操作）没有必要：停手 250ms 后只落盘最后一次。
+  /// 退出 / 备份前用 [flushNow] 强制结算。
+  static const Duration _writeDebounce = Duration(milliseconds: 250);
+
+  Timer? _debounce;
+  Completer<bool>? _flushCompleter;
+
+  /// 串行化写盘：同一时刻只允许一个 `_writeFile` 在跑。
+  ///
+  /// 以前两次写入并发时都会去动同一个 `.tmp`，Windows 上 rename 可能失败，
+  /// 于是某一次设置变更会悄悄丢掉。
+  Future<bool> _writeQueue = Future<bool>.value(true);
+
+  /// 把内存中的设置写回磁盘（防抖合并 + 串行）。
   Future<bool> _flush() {
     final file = _file;
     if (file == null) return Future.value(true);
@@ -273,7 +290,43 @@ class AppPreferences {
     // 插件、热榜、电台、扫描目录、字体等最终都写 settings.json，挂在这里就能
     // 一次性覆盖所有触发源。
     onWrite?.call();
-    return _writeFile(file, _values);
+    final completer = _flushCompleter ??= Completer<bool>();
+    _debounce?.cancel();
+    _debounce = Timer(_writeDebounce, () {
+      _debounce = null;
+      unawaited(_commit());
+    });
+    return completer.future;
+  }
+
+  /// 立即把待写入的设置落盘（退出应用 / 备份前调用）。
+  Future<bool> flushNow() async {
+    _debounce?.cancel();
+    _debounce = null;
+    if (_flushCompleter != null) {
+      await _commit();
+    }
+    return _writeQueue;
+  }
+
+  Future<void> _commit() async {
+    final completer = _flushCompleter;
+    if (completer == null) return;
+    // 先取出本轮 completer：写入期间新的变更会建新的 completer，
+    // 并排在本轮之后，不会被这次写入吞掉。
+    _flushCompleter = null;
+
+    final file = _file;
+    if (file == null) {
+      if (!completer.isCompleted) completer.complete(true);
+      return;
+    }
+
+    final snapshot = Map<String, Object>.of(_values);
+    final queued = _writeQueue.then((_) => _writeFile(file, snapshot));
+    _writeQueue = queued.catchError((_) => false);
+    final ok = await queued.catchError((_) => false);
+    if (!completer.isCompleted) completer.complete(ok);
   }
 
   /// 设置写盘时的回调（启动流程注入「自动同步」的备份调度器）。

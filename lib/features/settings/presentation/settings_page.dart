@@ -71,6 +71,15 @@ void _persistDouble(
   unawaited(_doPersist(container, saveFn));
 }
 
+/// 滑杆拖动中只改内存态，松手（`onChangeEnd`）再落盘。
+void _previewDouble(
+  BuildContext context,
+  StateProvider<double> provider,
+  double value,
+) {
+  ProviderScope.containerOf(context).read(provider.notifier).state = value;
+}
+
 void _persistInt(
   BuildContext context,
   StateProvider<int> provider,
@@ -2443,6 +2452,12 @@ class _AppearanceContent extends ConsumerWidget {
     void update(DesktopLyricSettings Function(DesktopLyricSettings) fn) =>
         updateDesktopLyricSettings(ref.read, fn);
 
+    // 拖动中只改内存态，松手再落盘，避免每帧重写 settings.json。
+    void preview(DesktopLyricSettings Function(DesktopLyricSettings) fn) {
+      final notifier = ref.read(desktopLyricSettingsProvider.notifier);
+      notifier.state = fn(notifier.state);
+    }
+
     return SettingGroup(
       title: '桌面歌词',
       colors: colors,
@@ -2456,7 +2471,8 @@ class _AppearanceContent extends ConsumerWidget {
           divisions: 34,
           valueLabel: '${s.fontSize.round()}',
           colors: colors,
-          onChanged: (v) => update((cur) => cur.copyWith(fontSize: v)),
+          onChanged: (v) => preview((cur) => cur.copyWith(fontSize: v)),
+          onChangeEnd: (v) => update((cur) => cur.copyWith(fontSize: v)),
         ),
         SettingDivider(colors: colors),
         SettingRow(
@@ -2525,7 +2541,8 @@ class _AppearanceContent extends ConsumerWidget {
           divisions: 20,
           valueLabel: '${(s.strokeWidth * 100).round()}%',
           colors: colors,
-          onChanged: (v) => update((cur) => cur.copyWith(strokeWidth: v)),
+          onChanged: (v) => preview((cur) => cur.copyWith(strokeWidth: v)),
+          onChangeEnd: (v) => update((cur) => cur.copyWith(strokeWidth: v)),
         ),
       ],
     );
@@ -3710,7 +3727,12 @@ class _PlaybackContent extends ConsumerWidget {
                   max: 12,
                   divisions: 48,
                   activeColor: colors.primary,
-                  onChanged: (v) => _persistDouble(
+                  onChanged: (v) => _previewDouble(
+                    context,
+                    bassBoostGainProvider,
+                    v,
+                  ),
+                  onChangeEnd: (v) => _persistDouble(
                     context,
                     bassBoostGainProvider,
                     v,
@@ -3866,7 +3888,12 @@ class _PlaybackContent extends ConsumerWidget {
                   max: 1,
                   divisions: 40,
                   activeColor: colors.primary,
-                  onChanged: (v) => _persistDouble(
+                  onChanged: (v) => _previewDouble(
+                    context,
+                    balanceValueProvider,
+                    v,
+                  ),
+                  onChangeEnd: (v) => _persistDouble(
                     context,
                     balanceValueProvider,
                     v,

@@ -170,6 +170,9 @@ class _AppLifecycleFlushState extends State<_AppLifecycleFlush>
         state == AppLifecycleState.detached ||
         state == AppLifecycleState.hidden) {
       unawaited(AppDatabase.flushAll());
+      // 设置是防抖落盘，切后台时把还没到点的写入结算掉。
+      final prefs = AppPreferences.maybeInstance;
+      if (prefs != null) unawaited(prefs.flushNow());
     }
   }
 
@@ -192,6 +195,9 @@ class _AppLifecycleFlushState extends State<_AppLifecycleFlush>
     try {
       await AppDatabase.flushAll()
           .then((_) => AppDatabase.checkpointAll())
+          .timeout(const Duration(seconds: 2));
+      await AppPreferences.maybeInstance
+          ?.flushNow()
           .timeout(const Duration(seconds: 2));
     } catch (e) {
       debugPrint('[App] 退出前落盘失败或超时: $e');
