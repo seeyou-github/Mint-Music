@@ -229,7 +229,9 @@ class _ArtistUpdatePageState extends ConsumerState<ArtistUpdatePage> {
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxHeight: 360),
             child: ListView.separated(
-              shrinkWrap: true,
+              // 新增作品可能跨多页、上百首：条目多时交给 360 的高度懒加载，
+              // shrinkWrap 会一次性构建全部行；条目少时保持按内容收高。
+              shrinkWrap: missing.length <= 6,
               itemCount: missing.length,
               separatorBuilder: (_, _) =>
                   Divider(height: 1, color: colors.divider),
