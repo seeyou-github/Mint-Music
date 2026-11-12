@@ -857,7 +857,13 @@ class _LyricLineWidget extends StatelessWidget {
 
     final animatedLine = RepaintBoundary(
       child: AnimatedOpacity(
-        duration: const Duration(milliseconds: 500),
+        // 换行时这一行会立刻从「已播放色」切成「未播放色」（白色 40%），
+        // 若透明度还用 500ms 从 1.0 淡到 0.25，就会先闪一下白字、再慢慢
+        // 变成灰色。失活这一步直接跳到最终透明度，颜色一步到位变灰；
+        // 只有新成为当前行的那一行才做淡入。
+        duration: isActive
+            ? const Duration(milliseconds: 500)
+            : Duration.zero,
         curve: Curves.easeOutCubic,
         opacity: opacity,
         child: AnimatedScale(
