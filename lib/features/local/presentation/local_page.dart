@@ -16,6 +16,7 @@ import '../../../core/utils/responsive_layout.dart';
 import '../../../core/utils/scroll_locate.dart';
 import '../../../shared/widgets/song_action_sheet.dart';
 import '../../../shared/widgets/song_index_width.dart';
+import '../../../shared/widgets/song_row_hover.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../../../shared/widgets/song_selection.dart';
 import '../application/local_providers.dart';
@@ -1855,7 +1856,11 @@ class _LocalSongItem extends ConsumerWidget {
       favoriteSongsProvider.select((favorites) => favorites.favoriteIdOf(song)),
     );
 
-    return SizedBox(
+    // 与歌单详情页 SongListItem 的 InkWell 用同一个 hover 颜色
+    // （深色主题白 4% / 浅色主题黑 4%）；本地列表没有 InkWell，由
+    // SongRowHover 补上这层悬浮反馈。
+    final hoverColor = Theme.of(context).hoverColor;
+    return SongRowHover(hoverColor: hoverColor, child: SizedBox(
       // 固定行高，保证 itemExtent 与实际布局一致
       height: itemExtent,
       child: GestureDetector(
@@ -2045,7 +2050,7 @@ class _LocalSongItem extends ConsumerWidget {
           ),
         ),
       ),
-    );
+    ));
   }
 
   /// 黑名单标签（与在线歌曲列表同款，显示在歌手名左侧）。
