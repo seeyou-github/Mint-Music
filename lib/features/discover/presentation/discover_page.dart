@@ -23,6 +23,7 @@ import '../../../shared/widgets/page_bar.dart';
 import '../../../shared/widgets/load_more_footer.dart';
 import '../../../shared/widgets/source_icon.dart';
 import '../../../shared/widgets/song_index_width.dart';
+import '../../../shared/widgets/song_row_hover.dart';
 import '../application/discover_providers.dart';
 import '../application/hot_board_providers.dart';
 import '../domain/models/hot_board.dart';
@@ -2655,7 +2656,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
         color: isCurrent ? colors.primary : colors.textPrimary,
       ),
     );
-    return GestureDetector(
+    final row = GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: () => unawaited(_playHotSong(board, index)),
       child: Container(
@@ -2717,6 +2718,12 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
           ],
         ),
       ),
+    );
+    // 鼠标悬浮底色：用歌单详情页那一套（InkWell 默认的 hoverColor）。
+    // 这里行是 GestureDetector，没有 Material 可挂 ink，由 SongRowHover 自己铺。
+    return SongRowHover(
+      hoverColor: Theme.of(context).hoverColor,
+      child: row,
     );
   }
 
