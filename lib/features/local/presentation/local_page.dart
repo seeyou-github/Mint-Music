@@ -1496,11 +1496,11 @@ class _LocalPageState extends ConsumerState<LocalPage>
               child: SafeArea(
                 top: false,
                 child: Padding(
+                  // 只留安全区 / 键盘高度。原来这里额外加了 72，底部那排
+                  // 按钮就会浮在弹窗边缘上方一截，看着像没贴底。
                   padding: EdgeInsets.only(
                     bottom:
-                        MediaQuery.of(context).viewInsets.bottom +
-                        bottomPadding +
-                        72,
+                        MediaQuery.of(context).viewInsets.bottom + bottomPadding,
                   ),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
