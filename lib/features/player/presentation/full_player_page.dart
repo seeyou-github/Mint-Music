@@ -1113,13 +1113,16 @@ class _PlayerSongInfo extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     ref.watch(currentSongIdentityProvider);
     final song = ref.read(playbackControllerProvider).currentSong;
+    // 歌曲名跟随「设置 → 外观设置 → 字体颜色」，不再写死白色：
+    // 浅色主题 / 浅色背景上白字会看不清。
+    final colors = ref.watch(themeColorsProvider);
 
     final title = Text(
       song?.title ?? context.tr('未知歌曲'),
       style: TextStyle(
         fontSize: compact ? 18 : 20,
         fontWeight: FontWeight.w600,
-        color: Colors.white,
+        color: colors.textPrimary,
       ),
       maxLines: 1,
       overflow: TextOverflow.ellipsis,

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/l10n/l10n.dart';
+import '../../../../core/theme/theme_provider.dart';
 import '../../domain/models/play_mode.dart';
 import '../../domain/models/song.dart';
 import '../../../local/application/local_providers.dart';
@@ -203,6 +204,8 @@ class _PlayerProgressBarState extends ConsumerState<PlayerProgressBar> {
   @override
   Widget build(BuildContext context) {
     final compact = widget.compact;
+    // 进度条配色与侧栏播放器一致：轨道用分隔线色，已播放部分 / 滑块用主题色。
+    final colors = ref.watch(themeColorsProvider);
     // 本地文件只有一个「音源」，读真实码率显示，切换音质没有意义。
     final song = widget.currentSong;
     final isLocal = song?.source == 'local';
@@ -265,7 +268,7 @@ class _PlayerProgressBarState extends ConsumerState<PlayerProgressBar> {
                         height: barHeight,
                         child: Container(
                           decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.2),
+                            color: colors.divider,
                             borderRadius: BorderRadius.circular(3),
                           ),
                         ),
@@ -275,11 +278,11 @@ class _PlayerProgressBarState extends ConsumerState<PlayerProgressBar> {
                         child: Container(
                           width: progressWidth,
                           decoration: BoxDecoration(
-                            color: Colors.white,
+                            color: colors.primary,
                             borderRadius: BorderRadius.circular(3),
                             boxShadow: [
                               BoxShadow(
-                                color: Colors.white.withValues(alpha: 0.3),
+                                color: colors.primary.withValues(alpha: 0.35),
                                 blurRadius: 10,
                               ),
                             ],
@@ -293,11 +296,14 @@ class _PlayerProgressBarState extends ConsumerState<PlayerProgressBar> {
                           child: Container(
                             width: 12,
                             height: 12,
-                            decoration: const BoxDecoration(
-                              color: Colors.white,
+                            decoration: BoxDecoration(
+                              color: colors.primary,
                               shape: BoxShape.circle,
                               boxShadow: [
-                                BoxShadow(color: Colors.white24, blurRadius: 4),
+                                BoxShadow(
+                                  color: colors.primary.withValues(alpha: 0.4),
+                                  blurRadius: 4,
+                                ),
                               ],
                             ),
                           ),
@@ -525,7 +531,7 @@ class _ControlButton extends StatelessWidget {
   }
 }
 
-class _PlayPauseButton extends StatelessWidget {
+class _PlayPauseButton extends ConsumerWidget {
   final bool isPlaying;
   final bool isLoading;
   final bool compact;
@@ -539,8 +545,11 @@ class _PlayPauseButton extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final diameter = compact ? 54.0 : 64.0;
+    // 底色用主题色 15%（与选中胶囊同一档），图标也用主题色，深色 / 浅色
+    // 背景上都保持可读。
+    final colors = ref.watch(themeColorsProvider);
     return GestureDetector(
       // 遵循 CeruMusic/Sollin-Music：加载期间禁用按钮，避免连点
       onTap: isLoading ? null : onPressed,
@@ -550,7 +559,7 @@ class _PlayPauseButton extends StatelessWidget {
         width: diameter,
         height: diameter,
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: colors.primary.withValues(alpha: 0.15),
           shape: BoxShape.circle,
           boxShadow: [
             BoxShadow(
@@ -565,16 +574,16 @@ class _PlayPauseButton extends StatelessWidget {
                 child: SizedBox(
                   width: compact ? 20 : 24,
                   height: compact ? 20 : 24,
-                  child: const CircularProgressIndicator(
+                  child: CircularProgressIndicator(
                     strokeWidth: 2.5,
-                    color: Colors.black,
+                    color: colors.primary,
                   ),
                 ),
               )
             : Icon(
                 isPlaying ? Icons.pause : Icons.play_arrow,
                 size: compact ? 26 : 32,
-                color: Colors.black,
+                color: colors.primary,
               ),
       ),
     );
