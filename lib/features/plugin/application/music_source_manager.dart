@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
 import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
-import '../../../core/debug/temp_trace.dart'; // TEMP-TRACE
 import '../../../shared/utils/display_name_sanitizer.dart';
 import '../../../shared/pagination/page_result.dart';
 import '../../player/domain/models/song.dart';
@@ -1444,23 +1443,16 @@ class MusicSourceManager {
 
   static dynamic _decodePluginPage(String? raw) {
     if (raw == null || raw.trim().isEmpty) {
-      TempTrace.log('Parse', '_decodePluginPage 空数据 raw=${raw == null ? 'null' : raw.length}'); // TEMP-TRACE
       throw const FormatException('音源返回了空数据，请稍后重试');
     }
     var decoded = jsonDecode(raw);
     if (decoded is String) decoded = jsonDecode(decoded);
     if (decoded is! Map && decoded is! List) {
-      TempTrace.log(
-        'Parse',
-        '_decodePluginPage 结构异常 type=${decoded.runtimeType} '
-        'head=${raw.length > 200 ? raw.substring(0, 200) : raw}',
-      ); // TEMP-TRACE
       throw const FormatException('音源返回结构不是列表或对象');
     }
     if (decoded is Map) {
       final error = decoded['error'];
       if (error != null && error != false && '$error'.trim().isNotEmpty) {
-        TempTrace.log('Parse', '_decodePluginPage 插件自报错误 error=$error'); // TEMP-TRACE
         throw Exception('$error');
       }
     }
@@ -3317,12 +3309,6 @@ class MusicSourceManager {
     bool needSheetDetail = false,
   }) {
     final (baseId, pluginId) = splitSourceId(sourceId);
-    TempTrace.log(
-      'Manager',
-      '_findDiscoverHost source=$sourceId base=$baseId pluginId=$pluginId '
-      'needTopList=$needTopList needSheets=$needSheets needSheetDetail=$needSheetDetail '
-      'hosts=${_findPluginHostsForSource(sourceId).map((h) => '${h.pluginInfo?.name}(discover=${h.supportsDiscover},sheets=${h.supportsRecommendSheets},detail=${h.supportsSheetDetail},top=${h.supportsTopLists})').toList()}',
-    ); // TEMP-TRACE
     if (pluginId == null) return null;
     for (final host in _findPluginHostsForSource(sourceId)) {
       if (!host.supportsDiscover) continue;
@@ -3335,21 +3321,10 @@ class MusicSourceManager {
   }
 
   dynamic _decodePluginJson(String? raw) {
-    if (raw == null || raw.trim().isEmpty) {
-      TempTrace.log(
-        'Parse',
-        '_decodePluginJson 空数据 raw=${raw == null ? 'null' : 'len=${raw.length}'}',
-      ); // TEMP-TRACE
-      return null;
-    }
+    if (raw == null || raw.trim().isEmpty) return null;
     try {
       return jsonDecode(raw.trim());
-    } catch (e) {
-      TempTrace.log(
-        'Parse',
-        '_decodePluginJson 解析失败 len=${raw.length} '
-        'head=${raw.length > 200 ? raw.substring(0, 200) : raw} error=$e',
-      ); // TEMP-TRACE
+    } catch (_) {
       return null;
     }
   }
@@ -3478,21 +3453,12 @@ class MusicSourceManager {
   /// 用插件推荐歌单的第一页数据充当「热门歌单」。
   Future<List<Playlist>> _getPluginHotPlaylists(String sourceId) async {
     final host = _findDiscoverHost(sourceId, needSheets: true);
-    TempTrace.log(
-      'Manager',
-      '热门歌单: source=$sourceId host=${host?.pluginInfo?.name ?? 'null'}',
-    ); // TEMP-TRACE
     if (host == null) return const [];
 
     try {
-      final tagsRaw = await host.getRecommendSheetTags();
-      TempTrace.log(
-        'Manager',
-        '热门歌单: getRecommendSheetTags 返回长度=${tagsRaw?.length ?? -1}',
-      ); // TEMP-TRACE
       final groups = _pluginTagGroupsFromJson(
         sourceId,
-        _decodePluginJson(tagsRaw),
+        _decodePluginJson(await host.getRecommendSheetTags()),
       );
       final candidates = <String>[''];
       for (final group in groups) {
@@ -3503,20 +3469,13 @@ class MusicSourceManager {
       }
 
       for (final tagId in candidates) {
-        final raw = await host.getRecommendSheetsByTag(tagId);
         final playlists = _pluginPlaylistsFromJson(
           sourceId,
-          _decodePluginJson(raw),
+          _decodePluginJson(await host.getRecommendSheetsByTag(tagId)),
         );
-        TempTrace.log(
-          'Manager',
-          '热门歌单: tag=${tagId.isEmpty ? '(空)' : tagId} '
-          'rawLen=${raw?.length ?? -1} playlists=${playlists.length}',
-        ); // TEMP-TRACE
         if (playlists.isNotEmpty) return playlists;
       }
-    } catch (e, st) {
-      TempTrace.error('Manager', '热门歌单获取失败 source=$sourceId', e, st); // TEMP-TRACE
+    } catch (e) {
       _log(() => '[MusicSourceManager] 插件热门歌单获取失败 source=$sourceId: $e');
     }
     return const [];
@@ -3533,21 +3492,12 @@ class MusicSourceManager {
     final host = isBoard
         ? _findDiscoverHost(sourceId, needTopList: true)
         : _findDiscoverHost(sourceId, needSheetDetail: true);
-    TempTrace.log(
-      'Manager',
-      '详情请求开始 appId=$appId source=$sourceId rawId=$rawId '
-      'isBoard=$isBoard page=$page host=${host?.pluginInfo?.name ?? 'null'}',
-    ); // TEMP-TRACE
     if (host == null) return const PlaylistPage();
 
     try {
       final raw = isBoard
           ? await host.getTopListDetail(rawId, page: page)
           : await host.getMusicSheetInfo(rawId, page: page);
-      TempTrace.log(
-        'Manager',
-        '详情请求返回 appId=$appId page=$page rawLen=${raw?.length ?? -1}',
-      ); // TEMP-TRACE
       final decoded = _decodePluginPage(raw);
       final songs = _parsePluginSearchResult(raw!, sourceId);
       final sheetValue = decoded is Map ? decoded['sheet'] : null;
@@ -3555,12 +3505,6 @@ class MusicSourceManager {
       final total = _pluginTotalOf(decoded);
       final songCount = _nonNegativeInt(meta['songCount']);
       final isEnd = _pluginResultIsEnd(decoded);
-      TempTrace.log(
-        'Manager',
-        '详情解析完成 appId=$appId page=$page songs=${songs.length} '
-        'total=$total songCount=$songCount isEnd=$isEnd '
-        'title=${meta['title']}',
-      ); // TEMP-TRACE
 
       return PlaylistPage(
         playlist: Playlist(
@@ -3576,13 +3520,7 @@ class MusicSourceManager {
         isEnd: isEnd,
         total: total,
       );
-    } catch (e, st) {
-      TempTrace.error(
-        'Manager',
-        '详情获取失败 appId=$appId page=$page',
-        e,
-        st,
-      ); // TEMP-TRACE
+    } catch (e) {
       _log(() => '[MusicSourceManager] 插件发现详情获取失败 id=$appId: $e');
       rethrow;
     }
@@ -3665,23 +3603,9 @@ class MusicSourceManager {
     String sourceId = 'wy',
   }) async {
     final host = _findDiscoverHost(sourceId, needSheets: true);
-    if (host == null) {
-      TempTrace.log('Manager', '分类歌单: 没有可用插件 host=null source=$sourceId'); // TEMP-TRACE
-      return const PageResult(isEnd: true);
-    }
+    if (host == null) return const PageResult(isEnd: true);
     final raw = await host.getRecommendSheetsByTag(tagId, page: page);
-    TempTrace.log(
-      'Manager',
-      '分类歌单: source=$sourceId tag=$tagId page=$page '
-      'rawLen=${raw?.length ?? -1}',
-    ); // TEMP-TRACE
-    final parsed = _parsePluginPlaylistPage(raw, sourceId);
-    TempTrace.log(
-      'Manager',
-      '分类歌单解析: items=${parsed.items.length} total=${parsed.total} '
-      'isEnd=${parsed.isEnd}',
-    ); // TEMP-TRACE
-    return parsed;
+    return _parsePluginPlaylistPage(raw, sourceId);
   }
 
   PageResult<Playlist> _parsePluginPlaylistPage(String? raw, String sourceId) {
@@ -3708,17 +3632,13 @@ class MusicSourceManager {
   Future<List<Leaderboard>> getLeaderboards({String sourceId = 'wy'}) async {
     // 插件（MusicFree）音源：getTopLists 的扁平化结果。
     final host = _findDiscoverHost(sourceId, needTopList: true);
-    TempTrace.log(
-      'Manager',
-      '榜单: source=$sourceId host=${host?.pluginInfo?.name ?? 'null'}',
-    ); // TEMP-TRACE
     if (host != null) {
       try {
-        final raw = await host.getTopLists();
-        TempTrace.log('Manager', '榜单: getTopLists rawLen=${raw?.length ?? -1}'); // TEMP-TRACE
-        return _pluginLeaderboardsFromJson(sourceId, _decodePluginJson(raw));
-      } catch (e, st) {
-        TempTrace.error('Manager', '榜单获取失败 source=$sourceId', e, st); // TEMP-TRACE
+        return _pluginLeaderboardsFromJson(
+          sourceId,
+          _decodePluginJson(await host.getTopLists()),
+        );
+      } catch (e) {
         _log(() => '[MusicSourceManager] 插件榜单获取失败 source=$sourceId: $e');
       }
     }

@@ -12,7 +12,6 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_js/flutter_js.dart';
 import 'package:gbk_codec/gbk_codec.dart';
 import 'package:pointycastle/export.dart' as pc;
-import '../../../core/debug/temp_trace.dart'; // TEMP-TRACE
 
 /// Data emitted when a plugin sends a `pluginNotice` with type `update`
 /// (i.e. the plugin itself detected an available update via
@@ -148,15 +147,6 @@ class JsEngineService {
     }
     try {
       final result = runtime.evaluate(code);
-      if (result.isError) {
-        // TEMP-TRACE
-        TempTrace.log(
-          'Js',
-          'evaluate 出错 codeLen=${code.length} '
-          'codeHead=${code.length > 120 ? code.substring(0, 120) : code} '
-          'msg=${result.stringResult.length > 300 ? result.stringResult.substring(0, 300) : result.stringResult}',
-        );
-      }
       if (_isHardExecutionFailure(result)) {
         _markRuntimeFaulted();
       }
@@ -1279,7 +1269,6 @@ function __zlibRequest(action, data) {
     String url,
     Map<String, dynamic> options,
   ) async {
-    final traceStart = DateTime.now(); // TEMP-TRACE
     try {
       final method = (options['method'] as String?)?.toUpperCase() ?? 'GET';
       final headers = <String, String>{};
@@ -1338,7 +1327,6 @@ function __zlibRequest(action, data) {
       }
 
       _log('[JsEngine] 发起HTTP请求: $method $url');
-      TempTrace.log('Http', '请求 $method $url'); // TEMP-TRACE
 
       final response = await _dio.request(
         url,
@@ -1426,15 +1414,6 @@ function __zlibRequest(action, data) {
           '(${contentType.isEmpty ? '未知类型' : contentType}) $url',
         );
       }
-      TempTrace.log(
-        'Http',
-        '响应 ${response.statusCode} 耗时='
-        '${DateTime.now().difference(traceStart).inMilliseconds}ms '
-        'bodyBytes=${bodyBytes.length} textLen=${bodyText?.length ?? -1} '
-        'base64=${includeBase64 ? bodyBytes.length : 0} '
-        'resultJsonLen=${resultJson.length} '
-        'contentType=${contentType.isEmpty ? '?' : contentType} $url',
-      ); // TEMP-TRACE
       _log('[JsEngine] HTTP请求成功: ${response.statusCode} $url');
       await _resolveRequest(requestId, true, resultJson);
     } catch (e) {
@@ -1451,8 +1430,6 @@ function __zlibRequest(action, data) {
         'headers': <String, String>{},
       });
       _log('[JsEngine] HTTP请求失败: $url - $e');
-      TempTrace.log('Http', '请求失败 $url 耗时='
-          '${DateTime.now().difference(traceStart).inMilliseconds}ms error=$e'); // TEMP-TRACE
       await _resolveRequest(requestId, true, resultJson);
     }
   }
@@ -1496,11 +1473,6 @@ function __zlibRequest(action, data) {
           resultJson.length > _httpChunkThresholdChars &&
           _chunkFailureStreak < _maxChunkFailureStreak;
       if (useChunked) {
-        TempTrace.log(
-          'Http',
-          '_resolveRequest 走分块 requestId=$requestId '
-          'len=${resultJson.length} success=$success',
-        ); // TEMP-TRACE
         var chunked = false;
         try {
           chunked = await _resolveRequestChunked(
@@ -1522,12 +1494,10 @@ function __zlibRequest(action, data) {
           '[JsEngine] 分块未成功，回退整串直传: requestId=$requestId '
           '(连续失败=$_chunkFailureStreak)',
         );
-        TempTrace.log('Http', '分块失败回退直传 requestId=$requestId'); // TEMP-TRACE
         _discardHttpChunks(requestId);
       }
       _resolveRequestDirect(requestId, success, resultJson);
     } catch (e, stackTrace) {
-      TempTrace.error('Http', '_resolveRequest 异常 requestId=$requestId', e, stackTrace); // TEMP-TRACE
       _log('[JsEngine] Error resolving request $requestId: $e');
       _log('[JsEngine] StackTrace: $stackTrace');
       try {
@@ -1554,11 +1524,6 @@ function __zlibRequest(action, data) {
     _log('[JsEngine] 执行JS代码长度: ${jsCode.length}');
     final evalResult = evaluate(jsCode);
     _log('[JsEngine] evaluate结果: ${evalResult.stringResult}');
-    TempTrace.log(
-      'Http',
-      '_resolveRequest 直传 requestId=$requestId codeLen=${jsCode.length} '
-      'isError=${evalResult.isError} msg=${evalResult.stringResult}',
-    ); // TEMP-TRACE
     _executePendingJob();
     _log('[JsEngine] 已解析请求 $requestId, _executePendingJob()已调用');
     if (evalResult.isError) {
@@ -1604,7 +1569,6 @@ function __zlibRequest(action, data) {
     }
     var offset = 0;
     var chunkIndex = 0;
-    final chunkStartedAt = DateTime.now(); // TEMP-TRACE
     while (offset < expectedLength) {
       var end = math.min(offset + _httpChunkChars, resultJson.length);
       // 切点落在低代理上说明切开了代理对（emoji / 生僻字）：往前退一个码元，
@@ -1618,12 +1582,6 @@ function __zlibRequest(action, data) {
         "__pushHttpChunk($requestId, '$escaped');",
       );
       if (pushResult.isError) {
-        // TEMP-TRACE
-        TempTrace.log(
-          'Http',
-          '分块写入失败 requestId=$requestId chunk=$chunkIndex '
-          'offset=$offset end=$end msg=${pushResult.stringResult}',
-        );
         _log(
           '[JsEngine] 分块写入失败 chunk=$chunkIndex: ${pushResult.stringResult}',
         );
@@ -1646,12 +1604,6 @@ function __zlibRequest(action, data) {
     _log('[JsEngine] 分块解析完成: ${evalResult.stringResult}');
     _executePendingJob();
     final ok = !evalResult.isError && evalResult.stringResult.trim() == '1';
-    TempTrace.log(
-      'Http',
-      '分块完成 requestId=$requestId chunks=$chunkIndex '
-      '耗时=${DateTime.now().difference(chunkStartedAt).inMilliseconds}ms '
-      'isError=${evalResult.isError} msg=${evalResult.stringResult}',
-    ); // TEMP-TRACE
     return ok;
   }
 
@@ -1704,11 +1656,6 @@ function __zlibRequest(action, data) {
       final data = _parseArgs(args);
       final key = data['key']?.toString() ?? '';
       if (key.isEmpty) return;
-      TempTrace.log(
-        'Js',
-        '方法回调 key=$key status=${data['status']} '
-        'valueLen=${data['value']?.toString().length ?? -1}',
-      ); // TEMP-TRACE
       final completer = _pendingMethodCalls[key];
       if (completer == null || completer.isCompleted) return;
       completer.complete(
@@ -1774,12 +1721,6 @@ var $resultVar = { __status: 'pending', __value: null };
 
     final completer = Completer<_PluginMethodOutcome>();
     _pendingMethodCalls[resultVar] = completer;
-    final callStartedAt = DateTime.now(); // TEMP-TRACE
-    TempTrace.log(
-      'Js',
-      'callPluginMethod 开始 var=$resultVar timeout=${timeout.inSeconds}s '
-      'expr=${methodExpression.length > 160 ? methodExpression.substring(0, 160) : methodExpression}',
-    ); // TEMP-TRACE
     try {
       final wrappedEvalResult = evaluate(wrappedCode);
       if (wrappedEvalResult.isError) {
@@ -1788,10 +1729,6 @@ var $resultVar = { __status: 'pending', __value: null };
         _log(
           '[JsEngine] callPluginMethod 初始化失败: ${wrappedEvalResult.stringResult}',
         );
-        TempTrace.log(
-          'Js',
-          'callPluginMethod 初始化失败 msg=${wrappedEvalResult.stringResult}',
-        ); // TEMP-TRACE
         throw Exception(wrappedEvalResult.stringResult);
       }
       // 同步返回 / 已 resolve 的 Promise 的 then 回调要等 job 队列被推动，
@@ -1807,12 +1744,6 @@ var $resultVar = { __status: 'pending', __value: null };
         try {
           final outcome = await completer.future.timeout(pollDelay);
           final mapped = _mapMethodOutcome(outcome);
-          TempTrace.log(
-            'Js',
-            'callPluginMethod 返回 var=$resultVar '
-            '耗时=${DateTime.now().difference(callStartedAt).inMilliseconds}ms '
-            'status=${outcome.status} len=${mapped?.length ?? -1}',
-          ); // TEMP-TRACE
           return mapped;
         } on TimeoutException {
           // 回调还没来，继续兜底。
@@ -1824,12 +1755,6 @@ var $resultVar = { __status: 'pending', __value: null };
 
         if (DateTime.now().isAfter(deadline)) {
           _log('[JsEngine] callPluginMethod: 超时 ($timeout)');
-          TempTrace.log(
-            'Js',
-            'callPluginMethod 超时 var=$resultVar '
-            '耗时=${DateTime.now().difference(callStartedAt).inMilliseconds}ms '
-            '限时=${timeout.inSeconds}s',
-          ); // TEMP-TRACE
           throw TimeoutException('Plugin method timed out after $timeout');
         }
 
@@ -1845,11 +1770,6 @@ var $resultVar = { __status: 'pending', __value: null };
         pollDelay = Duration(milliseconds: nextMs > 200 ? 200 : nextMs);
       }
     } catch (e) {
-      TempTrace.log(
-        'Js',
-        'callPluginMethod 异常 var=$resultVar '
-        '耗时=${DateTime.now().difference(callStartedAt).inMilliseconds}ms error=$e',
-      ); // TEMP-TRACE
       _log('[JsEngine] Error calling plugin method: $e');
       rethrow;
     } finally {
@@ -2006,7 +1926,6 @@ var $resultVar = { __status: 'pending', __value: null };
   void _markRuntimeFaulted() {
     if (_runtimeFaulted) return;
     _runtimeFaulted = true;
-    TempTrace.log('Js', '!!! JS 运行时被隔离（后续所有插件调用都会失败）'); // TEMP-TRACE
     for (final timer in _timers.values) {
       timer.cancel();
     }

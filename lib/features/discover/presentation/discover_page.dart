@@ -9,7 +9,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../../../core/constants/app_routes.dart';
-import '../../../core/debug/temp_trace.dart'; // TEMP-TRACE
 import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/app_surface.dart';
@@ -594,18 +593,12 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
     _pagingGeneration++;
     _pagingLoading = false;
     _playlistPager.reset();
-    TempTrace.log('HomeUi', '开始加载歌单列表（reset）'); // TEMP-TRACE
     await _waitForPlugins();
     if (!mounted) return;
 
     // 插件自带「置顶分类」时优先选中它，而不是「热门」。
     await _applyDefaultTag();
     if (!mounted) return;
-    TempTrace.log(
-      'HomeUi',
-      '默认分类 tag=${ref.read(activeTagIdProvider)} '
-      'source=${ref.read(discoverSourceIdProvider)}',
-    ); // TEMP-TRACE
 
     await ref
         .read(categoryPlaylistsProvider.notifier)
@@ -1161,35 +1154,28 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
                   },
                   loading: () =>
                       const Center(child: CircularProgressIndicator()),
-                  error: (error, __) {
-                    TempTrace.log(
-                      'HomeUi',
-                      '歌单网格展示错误 tag=$activeTagId source=$sourceId '
-                      'error=$error',
-                    ); // TEMP-TRACE
-                    return Center(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            Icons.error_outline,
-                            size: 48,
-                            color: colors.textHint,
-                          ),
-                          const SizedBox(height: AppSpacing.md),
-                          Text(
-                            context.tr('加载失败'),
-                            style: TextStyle(color: colors.textHint),
-                          ),
-                          const SizedBox(height: AppSpacing.md),
-                          TextButton(
-                            onPressed: () => _loadPlaylists(),
-                            child: Text(context.tr('重试')),
-                          ),
-                        ],
-                      ),
-                    );
-                  },
+                  error: (_, __) => Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.error_outline,
+                          size: 48,
+                          color: colors.textHint,
+                        ),
+                        const SizedBox(height: AppSpacing.md),
+                        Text(
+                          context.tr('加载失败'),
+                          style: TextStyle(color: colors.textHint),
+                        ),
+                        const SizedBox(height: AppSpacing.md),
+                        TextButton(
+                          onPressed: () => _loadPlaylists(),
+                          child: Text(context.tr('重试')),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
         ),
       ],
@@ -2905,9 +2891,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
         return _buildLeaderboardGrid(colors, filtered, controller: controller);
       },
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (error, __) {
-        TempTrace.log('HomeUi', '榜单网格展示错误 error=$error'); // TEMP-TRACE
-        return Center(
+      error: (_, __) => Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -2921,8 +2905,7 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
             ),
           ],
         ),
-        );
-      },
+      ),
     );
   }
 

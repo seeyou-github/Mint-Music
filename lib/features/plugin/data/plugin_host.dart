@@ -1,5 +1,4 @@
 import 'dart:convert';
-import '../../../core/debug/temp_trace.dart'; // TEMP-TRACE
 import '../../player/domain/models/lyric_line.dart';
 import '../platform/js_engine_service.dart';
 import '../domain/plugin_types.dart';
@@ -1305,41 +1304,16 @@ JSON.stringify((function() {
     Duration timeout = const Duration(seconds: 45),
   }) async {
     _ensureLoaded();
-    final hasMethodValue = hasMethod(method);
-    TempTrace.log(
-      'Plugin',
-      '$method 调用 args=$args hasMethod=$hasMethodValue timeout=${timeout.inSeconds}s',
-    ); // TEMP-TRACE
-    if (!hasMethodValue) return null;
-    final startedAt = DateTime.now();
+    if (!hasMethod(method)) return null;
     try {
-      final result = await _engine.callPluginMethod(
+      return await _engine.callPluginMethod(
         'module.exports.$method($args)',
         timeout: timeout,
       );
-      TempTrace.log(
-        'Plugin',
-        '$method 返回 耗时=${DateTime.now().difference(startedAt).inMilliseconds}ms '
-        'len=${result?.length ?? -1} head=${_traceHead(result)}',
-      ); // TEMP-TRACE
-      return result;
-    } catch (e, st) {
-      TempTrace.error(
-        'Plugin',
-        '$method 调用失败 耗时=${DateTime.now().difference(startedAt).inMilliseconds}ms',
-        e,
-        st,
-      ); // TEMP-TRACE
+    } catch (e) {
       print('[PluginHost] $method 调用失败: $e');
       return null;
     }
-  }
-
-  /// TEMP-TRACE: 只取结果前 200 字符，避免日志被整首歌单淹没。
-  String _traceHead(String? value) {
-    if (value == null) return 'null';
-    final text = value.length > 200 ? value.substring(0, 200) : value;
-    return text.replaceAll('\n', ' ');
   }
 
   /// 榜单列表；返回 `[{id,name,group,coverUrl,description}]`。

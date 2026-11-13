@@ -6,7 +6,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/l10n/l10n.dart';
-import '../../../core/debug/temp_trace.dart'; // TEMP-TRACE
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/app_surface.dart';
 import '../../../core/theme/theme_provider.dart';
@@ -101,10 +100,6 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
   @override
   void initState() {
     super.initState();
-    TempTrace.log(
-      'DetailUi',
-      '打开详情页 id=${widget.playlistId} sourceType=${widget.sourceType}',
-    ); // TEMP-TRACE
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkIfFavorited();
     });
@@ -115,12 +110,6 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
     if (_pagedPlaylistId == widget.playlistId) return;
     _pagedPlaylistId = widget.playlistId;
     final playlist = page.playlist;
-    TempTrace.log(
-      'DetailUi',
-      '首屏数据同步 id=${widget.playlistId} '
-      'songs=${playlist?.songs.length ?? 0} isEnd=${page.isEnd} total=${page.total} '
-      'title=${playlist?.title}',
-    ); // TEMP-TRACE
     _playlistTitle = playlist?.title ?? _playlistTitle;
     _playlistCover = playlist?.coverUrl ?? _playlistCover;
     _baseSongs = page.playlist?.songs ?? const <Song>[];
@@ -170,16 +159,10 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
   /// 失败时退回原页码并提示，已加载的内容保留。
   Future<void> _jumpToPageDirect(int page, {required int fallbackPage}) async {
     setState(() => _pagingLoading = true);
-    TempTrace.log('DetailUi', '跳页直达 page=$page'); // TEMP-TRACE
     try {
       final result = await ref
           .read(discoverRepositoryProvider)
           .getPlaylistDetailPage(widget.playlistId, page: page);
-      TempTrace.log(
-        'DetailUi',
-        '跳页直达完成 page=$page songs=${result.playlist?.songs.length ?? 0} '
-        'isEnd=${result.isEnd} total=${result.total}',
-      ); // TEMP-TRACE
       if (!mounted || _pagedPlaylistId != widget.playlistId) return;
       final songs = result.playlist?.songs ?? const <Song>[];
       setState(() {
@@ -247,15 +230,9 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
       // [_maxConsecutiveEmptyPages] 页，避免卡住或无限请求。
       while (!reachedEnd && emptyStreak < _maxConsecutiveEmptyPages) {
         page += 1;
-        TempTrace.log('DetailUi', '加载下一页 page=$page'); // TEMP-TRACE
         final result = await ref
             .read(discoverRepositoryProvider)
             .getPlaylistDetailPage(widget.playlistId, page: page);
-        TempTrace.log(
-          'DetailUi',
-          '下一页返回 page=$page songs=${result.playlist?.songs.length ?? 0} '
-          'isEnd=${result.isEnd} total=${result.total}',
-        ); // TEMP-TRACE
         if (!mounted || _pagedPlaylistId != widget.playlistId) return;
 
         final newSongs = result.playlist?.songs ?? const <Song>[];
@@ -292,7 +269,6 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
         });
       }
     } catch (e) {
-      TempTrace.error('DetailUi', '加载下一页失败 page=$_page', e); // TEMP-TRACE
       debugPrint('[PlaylistDetailPage] 加载下一页失败: $e');
       // 不能当成「没有更多」：可能是网络抖动 / 服务器异常，
       // 已加载的内容保留，底部显示「加载失败，点击重试」。
@@ -473,24 +449,18 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
                       },
                       loading: () =>
                           const Center(child: CircularProgressIndicator()),
-                      error: (error, __) {
-                        TempTrace.log(
-                          'DetailUi',
-                          '详情页展示错误 id=${widget.playlistId} error=$error',
-                        ); // TEMP-TRACE
-                        return LoadErrorView(
-                          colors: colors,
-                          message: error.toString().replaceFirst(
-                            'Exception: ',
-                            '',
-                          ),
-                          onRetry: () {
-                            ref.invalidate(
-                              playlistDetailProvider(widget.playlistId),
-                            );
-                          },
-                        );
-                      },
+                      error: (error, __) => LoadErrorView(
+                        colors: colors,
+                        message: error.toString().replaceFirst(
+                          'Exception: ',
+                          '',
+                        ),
+                        onRetry: () {
+                          ref.invalidate(
+                            playlistDetailProvider(widget.playlistId),
+                          );
+                        },
+                      ),
                     ),
                   ),
                 ),
