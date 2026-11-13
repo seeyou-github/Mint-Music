@@ -110,7 +110,8 @@ void main() async {
   unawaited(LyricCache.migrateLegacyFiles());
 
   // 自动同步（「设置 - 备份还原」里的开关）：任何设置写盘（插件、热榜、电台、
-  // 扫描目录、字体……最终都写 settings.json）后防抖备份到 WebDAV。
+  // 扫描目录、字体……最终都写 settings.json）后排一次延迟备份到 WebDAV
+  // （1 → 3 → 5 分钟，见 DelayedSync）；上次延迟没跑完就退出的，启动时补排。
   AutoBackup.attach(container);
   AppPreferences.onWrite = AutoBackup.schedule;
 

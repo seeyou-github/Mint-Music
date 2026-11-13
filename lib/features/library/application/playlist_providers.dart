@@ -24,6 +24,8 @@ final playlistRepositoryProvider = Provider<PlaylistRepository>((ref) {
 Future<String?> syncPlaylistsNow(WidgetRef ref) async {
   final config = ref.read(webDavConfigProvider);
   final status = ref.read(playlistSyncStatusProvider.notifier);
+  // 手动同步立即执行：作废还在等延迟的自动同步，避免刚同步完又跑一次。
+  PlaylistSyncService.cancelScheduled();
   if (!config.isConfigured) {
     const message = '未配置 WebDAV：请先在「设置 → 备份还原」中填写 WebDAV 地址';
     status.fail(message);
@@ -223,14 +225,15 @@ class PlaylistsNotifier extends AsyncNotifier<List<Playlist>> {
   /// 本地歌单增删改后自动同步（开启了「自动同步」时）。
   ///
   /// 与收藏页顶部同步按钮一致：先拉取远端合并，再把结果推回去。
-  /// 5 秒防抖：连续增删改只会在最后一次操作后同步一次。
+  /// 延迟执行而不是防抖：第一次 1 分钟，连续触发拉长到 3 / 5 分钟，
+  /// 避免边听边整理歌单时反复走网络（见 `DelayedSync`）。
   void _syncToRemote() {
     final config = ref.read(webDavConfigProvider);
     if (!config.playlistSyncEnabled || !config.isConfigured) return;
     final status = ref.read(playlistSyncStatusProvider.notifier);
     PlaylistSyncService.scheduleSync(
       config,
-      // 真正开始同步时才显示提示（前面的 5 秒是防抖等待，还没发请求）。
+      // 真正开始同步时才显示提示（前面是延迟等待，还没发请求）。
       onStart: status.start,
       onFinish: (ok, error) {
         if (ok) {

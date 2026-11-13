@@ -81,6 +81,8 @@ class _PlaylistSyncButtonState extends ConsumerState<PlaylistSyncButton> {
   Future<void> _runSync() async {
     _attempt += 1;
     _successTimer?.cancel();
+    // 手动同步立即执行：作废还没到点的自动同步。
+    PlaylistSyncService.cancelScheduled();
     setState(() => _phase = _SyncPhase.syncing);
 
     final config = ref.read(webDavConfigProvider);

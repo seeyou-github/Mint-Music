@@ -62,9 +62,10 @@ class _AppState extends ConsumerState<App> {
     // 状态栏 / 系统栏样式：首帧之前就下发一次，避免启动瞬间还是系统默认的
     // 黑色（或带对比度遮罩）状态栏。之后由 build 里的 AnnotatedRegion 跟随。
     SystemBars.apply(light: ref.read(isLightThemeActiveProvider));
-    // 开启「自动同步」时，进入应用先与远端同步一次歌单。
+    // 开启「自动同步」时，进入应用后延迟 1 分钟再与远端同步歌单
+    // （逐次拉长规则在 DelayedSync 里；延迟中退出，下次进入仍是 1 分钟）。
     WidgetsBinding.instance.addPostFrameCallback(
-      (_) => _syncPlaylistsOnStartup(),
+      (_) => _scheduleStartupSync(),
     );
     // Android 通知栏播放卡片上的「收藏 / 歌词」按钮。
     _initNotificationActions();
@@ -224,6 +225,15 @@ class _AppState extends ConsumerState<App> {
     } catch (_) {
       // 取色失败就保持上一次的底色（首次为默认深色）。
     }
+  }
+
+  /// 启动同步排进延迟队列（第一次 1 分钟），而不是立刻打网络。
+  ///
+  /// 失败弹框里的「重新同步」直接调用 [_syncPlaylistsOnStartup]，重试保持立即执行。
+  void _scheduleStartupSync() {
+    if (!mounted) return;
+    if (!ref.read(webDavConfigProvider).playlistSyncEnabled) return;
+    PlaylistSyncService.scheduleDelayed(_syncPlaylistsOnStartup);
   }
 
   /// 启动时从 WebDAV 同步歌单：过程写到窗口底部的同步提示，失败时再弹框

@@ -6,6 +6,7 @@ import 'package:uuid/uuid.dart';
 import '../../features/library/data/playlist_repository.dart';
 import '../../features/library/data/playlist_store.dart';
 import '../storage/app_database.dart';
+import 'delayed_sync.dart';
 import 'playlist_merge.dart';
 import 'playlist_sync_protocol.dart';
 import 'sync_timeout.dart';
@@ -437,9 +438,22 @@ class PlaylistSyncService {
     }
   }
 
-  static Timer? _debounceTimer;
+  /// 自动同步的延迟调度（1 → 3 → 5 分钟逐次拉长，见 [DelayedSync]）。
+  ///
+  /// 标志位写在 `temp/playlist_sync.pending`：延迟期间退出应用，下次进入
+  /// 重新排 1 分钟；标志位的写入 / 删除不经过任何触发源，不会反过来再触发同步。
+  static final DelayedSync _delayed = DelayedSync(
+    fileName: 'playlist_sync.pending',
+    run: _runScheduled,
+  );
 
-  /// 本地歌单增删改后的自动同步：5 秒防抖，连续操作只同步最后一次。
+  /// 等延迟到点后要执行的那次同步（启动同步 / 本地改动同步各自带状态回调）。
+  static Future<void> Function()? _scheduledTask;
+
+  /// 本地歌单增删改后的自动同步。
+  ///
+  /// 不再用 5 秒防抖立即同步：改为延迟执行（第一次 1 分钟，连续触发逐次
+  /// 拉长到 5 分钟），避免边听边整理歌单时反复走网络。
   ///
   /// 与收藏页顶部的同步按钮走同一条路径；因为新协议会自动比对本地指纹，
   /// 这里不需要额外打「本地已改动」标记。
@@ -450,24 +464,42 @@ class PlaylistSyncService {
     void Function()? onStart,
     void Function(bool ok, Object? error)? onFinish,
   }) {
-    _debounceTimer?.cancel();
-    _debounceTimer = Timer(const Duration(seconds: 5), () {
-      _debounceTimer = null;
-      unawaited(() async {
-        onStart?.call();
-        // 与手动同步一致：整次操作套 2 分钟超时，超时会取消底层请求。
-        final op = SyncAttempt(1);
-        final webdav = WebDavService(config, cancelToken: op.cancelToken);
-        op.attachDiagnosis(() => webdav.diagnosis);
-        try {
-          await op.run(pullAndMerge(webdav));
-          onFinish?.call(true, null);
-        } catch (e) {
-          debugPrint('[PlaylistSyncService] 自动同步歌单失败: $e');
-          onFinish?.call(false, e);
-        }
-      }());
+    scheduleDelayed(() async {
+      onStart?.call();
+      // 与手动同步一致：整次操作套 2 分钟超时，超时会取消底层请求。
+      final op = SyncAttempt(1);
+      final webdav = WebDavService(config, cancelToken: op.cancelToken);
+      op.attachDiagnosis(() => webdav.diagnosis);
+      try {
+        await op.run(pullAndMerge(webdav));
+        onFinish?.call(true, null);
+      } catch (e) {
+        debugPrint('[PlaylistSyncService] 自动同步歌单失败: $e');
+        onFinish?.call(false, e);
+      }
     });
+  }
+
+  /// 排一次延迟同步（启动自动同步也走这里）。
+  ///
+  /// 后到的调用会覆盖前一个待执行任务并重新计时（延迟档位随之拉长）。
+  static void scheduleDelayed(Future<void> Function() task) {
+    _scheduledTask = task;
+    _delayed.trigger();
+  }
+
+  /// 手动同步（立即同步按钮 / 启动重试）开始前调用：作废还没到点的自动同步，
+  /// 免得手动同步刚结束又自动跑一遍。
+  static void cancelScheduled() {
+    _scheduledTask = null;
+    _delayed.cancel();
+  }
+
+  static Future<void> _runScheduled() async {
+    final task = _scheduledTask;
+    _scheduledTask = null;
+    if (task == null) return;
+    await task();
   }
 
   // ---------------------------------------------------------------- 墓碑

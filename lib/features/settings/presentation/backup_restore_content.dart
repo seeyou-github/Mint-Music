@@ -7,7 +7,9 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/backup/auto_backup.dart';
 import '../../../core/backup/backup_service.dart';
+import '../../../core/backup/playlist_sync_service.dart';
 import '../../../core/backup/sync_timeout.dart';
 import '../../../core/backup/webdav_service.dart';
 import '../../../core/l10n/l10n.dart';
@@ -92,6 +94,12 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
       playlistSyncEnabled: playlistSyncEnabled,
     );
     ref.read(webDavConfigProvider.notifier).state = next;
+    if (playlistSyncEnabled == false) {
+      // 关掉自动同步：作废还在等待的延迟同步并清掉临时标志，
+      // 否则以后重新打开时会按旧标志补跑一次。
+      PlaylistSyncService.cancelScheduled();
+      AutoBackup.cancelScheduled();
+    }
     final container = ProviderScope.containerOf(context);
     unawaited(
       _persist(
