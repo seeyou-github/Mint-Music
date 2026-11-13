@@ -400,57 +400,40 @@ class _RadioPanelState extends ConsumerState<RadioPanel> {
 
   /// 卡片底部的电台名称。
   ///
-  /// 封面颜色和文字接近时（浅底配浅字 / 深底配深字）单靠渐变看不清，
-  /// 所以在名称下面垫一条通栏的半透明色带；色带按字色明暗反向取色
-  /// （[scrimColor]，深色字配白色带、浅色字配黑色带）。色带上方留一段
-  /// 渐变，避免半透明条在封面上切出硬边。
+  /// 封面颜色和文字接近时（浅底配浅字 / 深底配深字）看不清名称，所以在
+  /// 名称下面垫一条通栏的半透明色带；色带按字色明暗反向取色
+  /// （[scrimColor]，深色字配白色带、浅色字配黑色带）。
+  /// 色带顶部保持水平硬边：不在上方叠渐变，整条颜色均匀，封面与色带
+  /// 直接分界，避免渐变把封面上半段也拖暗、显得发糊。
   Widget _buildNameOverlay(
     String name, {
     required Color textColor,
     required Color scrimColor,
     required bool showBar,
   }) {
-    final barColor = scrimColor.withValues(alpha: 0.55);
     return Positioned(
       left: 0,
       right: 0,
       bottom: 0,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          if (showBar)
-            Container(
-              height: 20,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [scrimColor.withValues(alpha: 0), barColor],
-                ),
-              ),
-            ),
-          Container(
-            padding: EdgeInsets.fromLTRB(
-              AppSpacing.sm,
-              showBar ? AppSpacing.xs : AppSpacing.md,
-              AppSpacing.sm,
-              AppSpacing.sm,
-            ),
-            color: showBar ? barColor : null,
-            child: Text(
-              name,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                // 名称跟随「外观设置 → 字体颜色」。
-                color: textColor,
-              ),
-            ),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(
+          AppSpacing.sm,
+          AppSpacing.md,
+          AppSpacing.sm,
+          AppSpacing.sm,
+        ),
+        color: showBar ? scrimColor.withValues(alpha: 0.55) : null,
+        child: Text(
+          name,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            // 名称跟随「外观设置 → 字体颜色」。
+            color: textColor,
           ),
-        ],
+        ),
       ),
     );
   }
