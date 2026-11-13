@@ -45,9 +45,9 @@ class PlaylistSyncStatus {
 
 /// 全局歌单同步状态。
 ///
-/// 只有「自动同步」（收藏页增删改触发的推送、开启实时同步开关后触发的同步）
-/// 会写入这里，用于在窗口底部显示提示；启动时的后台同步不写，保持静默，
-/// 失败时才弹框（见 `app.dart`）。
+/// 「自动同步」（收藏页增删改触发的推送、开启实时同步开关后触发的同步、
+/// 启动时的一次性同步）都会写入这里，用于在窗口底部显示提示；
+/// 启动同步失败时除底部提示外还会弹框（见 `app.dart`）。
 class PlaylistSyncStatusNotifier extends StateNotifier<PlaylistSyncStatus> {
   PlaylistSyncStatusNotifier() : super(PlaylistSyncStatus.idle);
 

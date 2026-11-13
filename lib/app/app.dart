@@ -30,6 +30,7 @@ import '../features/settings/application/font_providers.dart';
 import '../features/settings/application/plugin_providers.dart';
 import '../features/settings/application/settings_providers.dart';
 import '../core/backup/playlist_sync_service.dart';
+import '../core/backup/playlist_sync_status.dart';
 import '../core/backup/sync_timeout.dart';
 import '../core/backup/webdav_service.dart';
 import '../features/library/application/playlist_providers.dart';
@@ -225,11 +226,16 @@ class _AppState extends ConsumerState<App> {
     }
   }
 
-  /// 启动时从 WebDAV 同步歌单；失败时弹框提示原因并提供「重新同步」。
+  /// 启动时从 WebDAV 同步歌单：过程写到窗口底部的同步提示，失败时再弹框
+  /// 提示原因并提供「重新同步」。
   Future<void> _syncPlaylistsOnStartup() async {
     if (!mounted) return;
     final config = ref.read(webDavConfigProvider);
     if (!config.playlistSyncEnabled) return;
+    final status = ref.read(playlistSyncStatusProvider.notifier);
+    // 和收藏页增删改 / 开启自动同步开关一样，启动时也让底部提示条走
+    // 「正在同步 → 完成 / 失败」三态，不再完全静默。
+    status.start();
     try {
       // 先确保本地歌单已加载（首次启动会创建「我的收藏」、迁移旧数据库数据），
       // 再与远端合并，避免用空数据覆盖远端。
@@ -246,9 +252,13 @@ class _AppState extends ConsumerState<App> {
       await op.run(PlaylistSyncService.pullAndMerge(webdav));
       if (!mounted) return;
       ref.invalidate(playlistsProvider);
+      status.succeed();
     } catch (e) {
       if (!mounted) return;
-      await _showSyncFailedDialog(describeWebDavError(e));
+      final reason = describeWebDavError(e);
+      status.fail(reason);
+      // 弹框仍保留：启动同步失败要给「重新同步」入口，原因也显示得更完整。
+      await _showSyncFailedDialog(reason);
     }
   }
 
@@ -439,7 +449,7 @@ class _AppState extends ConsumerState<App> {
                     ),
                   ),
                   // 歌单自动同步提示：浮在窗口底部（迷你播放器 / 底部导航之上），
-                  // 只在收藏页增删改、开启实时同步开关触发的同步时出现。
+                  // 收藏页增删改、开启自动同步开关、启动时的一次性同步都会出现。
                   Positioned(
                     left: 0,
                     right: 0,
