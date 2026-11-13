@@ -2642,6 +2642,9 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
     return all;
   }
 
+  /// 热榜歌曲行交错底色的强度：调大更像斑马纹，调小层次更弱。
+  static const double _stripeStrength = 0.12;
+
   Widget _buildHotSongItem(ThemeColors colors, HotBoard board, int index) {
     final song = board.songs[index];
     final isTopThree = index < 3;
@@ -2650,10 +2653,15 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
           playbackControllerProvider.select((state) => state.currentSong?.id),
         ) ==
         song.id;
-    // 深浅交错：奇数行（1、3、5…）比卡片底色稍暗，偶数行沿用卡片底色。
-    // 只压 6% 黑，避免整列看起来像斑马纹，只是让行与行之间有隐约的层次。
+    // 深浅交错：奇数行（1、3、5…）与卡片底色拉开一档，偶数行沿用卡片底色。
+    // 深色底上「压黑」本来就看不出来（底色已经很暗），所以按底色亮度选叠加
+    // 方向：深色底叠白色提亮、浅色底叠黑色压暗，统一 12%，相邻行一眼能分开
+    // 又不会变成刺眼的斑马纹。要调深浅只改 [_stripeStrength]。
+    final stripeColor = colors.surface.computeLuminance() < 0.5
+        ? Colors.white
+        : Colors.black;
     final rowBackground = index.isEven
-        ? Color.lerp(colors.surface, Colors.black, 0.06)
+        ? Color.lerp(colors.surface, stripeColor, _stripeStrength)
         : null;
     final title = Text(
       song.title,
