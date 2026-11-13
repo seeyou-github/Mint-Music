@@ -1,5 +1,13 @@
+import 'dart:async' show TimeoutException;
 import 'dart:convert';
-import 'dart:io' show File, FileMode, RandomAccessFile, gzip;
+import 'dart:io'
+    show
+        File,
+        FileMode,
+        HandshakeException,
+        RandomAccessFile,
+        SocketException,
+        gzip;
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -28,37 +36,80 @@ class _RangeNotSupported implements Exception {
   const _RangeNotSupported();
 }
 
-/// 把网络 / WebDAV 异常转换成用户能看懂的原因。
+/// 把网络 / WebDAV 异常转换成「类别 + 具体原因」的用户可读文案。
+///
+/// 类别固定以「网络错误 / 网络超时 / 服务器返回错误 / 证书错误 / 请求已取消 /
+/// 数据格式错误」开头，细节里尽量保留 URL、底层 socket 原因和 HTTP 状态码，
+/// 方便一眼判断该查网络还是查服务器。原先「连接超时 / 接收超时 / 网络连接失败」
+/// 各说各的，且状态码为 null 时会显示 `HTTP null`，这里一并收敛。
 String describeWebDavError(Object error) {
-  if (error is WebDavException) return error.message;
+  if (error is WebDavException) {
+    final message = error.message;
+    final code = error.statusCode;
+    if (code == null) return message;
+    // 内部异常大多已经把状态码写进 message（如「上传失败：HTTP 403」），
+    // 补类别即可，不要重复拼一遍 HTTP 码。
+    if (message.contains('HTTP $code')) {
+      return message.startsWith('服务器返回错误') ? message : '服务器返回错误：$message';
+    }
+    return '服务器返回错误：HTTP $code：$message';
+  }
   if (error is dio.DioException) {
     final uri = error.requestOptions.uri;
+    final cause = _errorCause(error.error ?? error.message);
+    String withCause(String text) => cause.isEmpty ? text : '$text（$cause）';
     switch (error.type) {
       case dio.DioExceptionType.connectionTimeout:
-        return '连接超时：无法在 15 秒内连接 $uri，请检查网络或服务器地址';
+        return withCause('网络超时：连接 $uri 超时，请检查网络或服务器地址');
       case dio.DioExceptionType.sendTimeout:
-        return '发送超时：向 $uri 上传数据超时，请检查网络';
+        return withCause('网络超时：向 $uri 上传数据超时，请检查网络');
       case dio.DioExceptionType.receiveTimeout:
-        return '接收超时：$uri 响应过慢，请稍后重试';
+        return withCause('网络超时：$uri 响应过慢，请稍后重试');
       case dio.DioExceptionType.transformTimeout:
         // dio 5.9 新增：解析响应数据（转换）超时，同样是「服务端太慢」。
-        return '接收超时：$uri 响应数据解析超时，请稍后重试';
+        return withCause('网络超时：解析 $uri 的响应数据超时，请稍后重试');
       case dio.DioExceptionType.badCertificate:
-        return 'HTTPS 证书校验失败：$uri';
+        return withCause('证书错误：HTTPS 证书校验失败 $uri');
       case dio.DioExceptionType.connectionError:
-        return '网络连接失败：无法访问 $uri\n${error.error ?? error.message ?? ''}'.trim();
+        return withCause('网络错误：无法访问 $uri');
       case dio.DioExceptionType.cancel:
-        return '请求已取消';
+        return withCause('请求已取消：$uri');
       case dio.DioExceptionType.badResponse:
         final code = error.response?.statusCode;
-        final message = error.response?.statusMessage;
+        final status = error.response?.statusMessage;
+        if (code == null) {
+          return withCause('服务器返回了无法识别的响应：$uri');
+        }
         return '服务器返回错误：HTTP $code'
-            '${message == null || message.isEmpty ? '' : ' $message'}';
+            '${status == null || status.isEmpty ? '' : ' $status'}（$uri）';
       case dio.DioExceptionType.unknown:
-        return '网络异常：${error.error ?? error.message ?? error}';
+        return withCause('网络异常：$uri');
     }
   }
+  if (error is SocketException) return '网络错误：${_errorCause(error)}';
+  if (error is HandshakeException) {
+    return '证书错误：HTTPS 握手失败（${_errorCause(error)}）';
+  }
+  if (error is TimeoutException) return '网络超时：${_errorCause(error)}';
+  if (error is FormatException) return '数据格式错误：${error.message}';
   return error.toString();
+}
+
+/// 取底层异常的人话描述：DioException 的 message 常是空泛的英文提示，
+/// 真正有用的原因在 `error`（SocketException / OSError / 原始异常）里。
+String _errorCause(Object? cause) {
+  if (cause == null) return '';
+  if (cause is SocketException) {
+    final os = cause.osError;
+    return '${cause.message}${os == null ? '' : '（${os.message}）'}';
+  }
+  if (cause is dio.DioException) {
+    return _errorCause(cause.error ?? cause.message);
+  }
+  final text = '$cause';
+  if (text.trim().isEmpty) return '';
+  // 服务端返回的 HTML 错误页可能很长，截断避免把弹框撑爆。
+  return text.length > 200 ? '${text.substring(0, 200)}…' : text;
 }
 
 /// WebDAV 远端配置。
@@ -143,6 +194,34 @@ class WebDavService {
     : _cancelToken = cancelToken;
 
   final WebDavConfig config;
+
+  /// 超时诊断：当前卡在哪一步、最近一次请求失败的具体原因。
+  ///
+  /// 整次同步被 `SyncAttempt` 的超时掐断时，底层请求往往还在等，界面只能
+  /// 拿到「网络超时」。这里把最近一次明确的错误（HTTP 401、连接被拒等）和
+  /// 正在做的步骤留下来，超时提示就能说清是网络不通、服务器报错，还是
+  /// 单纯响应太慢。只影响提示文案，不改变请求 / 重试逻辑。
+  String _stage = '';
+  String? _lastFailure;
+
+  String get diagnosis {
+    final stage = _stage.isEmpty ? '' : '当前步骤：$_stage';
+    final failure = (_lastFailure == null || _lastFailure!.isEmpty)
+        ? ''
+        : '最近错误：$_lastFailure';
+    if (stage.isEmpty) return failure;
+    if (failure.isEmpty) return stage;
+    return '$stage；$failure';
+  }
+
+  void _enterStage(String stage) {
+    _stage = stage;
+    _lastFailure = null;
+  }
+
+  void _recordFailure(Object error) {
+    _lastFailure = describeWebDavError(error);
+  }
 
   /// 本次操作的取消令牌（见 `SyncAttempt`）。
   ///
@@ -277,7 +356,7 @@ class WebDavService {
       await client.readDir(backupDir.isEmpty ? '/' : backupDir, _cancelToken);
       return '';
     } catch (e) {
-      return '连接失败：$e';
+      return '连接失败：${describeWebDavError(e)}';
     }
   }
 
@@ -445,7 +524,9 @@ class WebDavService {
     }
     await _deleteQuietly(file);
     if (lastError is WebDavException) throw lastError;
-    throw WebDavException('下载失败：${lastError ?? '未知错误'}');
+    throw WebDavException(
+      '下载失败：${lastError == null ? '未知错误' : describeWebDavError(lastError)}',
+    );
   }
 
   /// 多线程分段下载：每段各写一个临时文件，全部到齐后按顺序拼成 [savePath]。
@@ -658,7 +739,9 @@ class WebDavService {
       }
     }
     if (lastError is WebDavException) throw lastError;
-    throw WebDavException('分段下载失败：${lastError ?? '未知错误'}');
+    throw WebDavException(
+      '分段下载失败：${lastError == null ? '未知错误' : describeWebDavError(lastError)}',
+    );
   }
 
   /// 发一次 GET，把响应体按块写进 [file]。
@@ -841,45 +924,61 @@ class WebDavService {
   /// 仅在远端确实不存在时返回 null；网络 / 鉴权等错误一律向上抛出，
   /// 避免把「读取失败」误当成「远端没有歌单」而覆盖远端数据。
   Future<Map<String, dynamic>?> readRemotePlaylists() async {
+    _enterStage('下载远端歌单 playlists.json.gz');
     _requireConfigured();
-    var bytes = Uint8List(0);
     try {
-      bytes = await _readBytes(_playlistPath(playlistCompressedName));
-      // 万一服务器上那个 `.gz` 实际是没压缩的旧文件，解压失败就按原文解析。
-      bytes = _gunzipOrRaw(bytes);
-    } on WebDavException catch (e) {
-      if (e.statusCode != 404) rethrow;
+      var bytes = Uint8List(0);
       try {
-        bytes = await _readBytes(_playlistPath(playlistFileName));
-      } on WebDavException catch (e2) {
-        if (e2.statusCode == 404) return null;
-        rethrow;
+        bytes = await _readBytes(_playlistPath(playlistCompressedName));
+        // 万一服务器上那个 `.gz` 实际是没压缩的旧文件，解压失败就按原文解析。
+        bytes = _gunzipOrRaw(bytes);
+      } on WebDavException catch (e) {
+        if (e.statusCode != 404) rethrow;
+        _enterStage('下载旧版歌单 playlists.json');
+        try {
+          bytes = await _readBytes(_playlistPath(playlistFileName));
+        } on WebDavException catch (e2) {
+          if (e2.statusCode == 404) return null;
+          rethrow;
+        }
       }
+      if (bytes.isEmpty) return null;
+      final decoded = jsonDecode(utf8.decode(bytes));
+      if (decoded is Map) return decoded.map((k, v) => MapEntry('$k', v));
+      throw const WebDavException('远端歌单文件格式错误：不是有效的 JSON 对象');
+    } catch (e) {
+      // 超时或最终失败时，把这一步的具体错误留给界面上的超时提示。
+      _recordFailure(e);
+      rethrow;
     }
-    if (bytes.isEmpty) return null;
-    final decoded = jsonDecode(utf8.decode(bytes));
-    if (decoded is Map) return decoded.map((k, v) => MapEntry('$k', v));
-    throw const WebDavException('远端歌单文件格式错误：不是有效的 JSON 对象');
   }
 
   /// 写入远端歌单 JSON（压缩）。
   Future<void> writeRemotePlaylists(Map<String, dynamic> data) async {
+    _enterStage('上传合并后的歌单 playlists.json.gz');
     _requireConfigured();
-    await _ensureDir(playlistDir);
-    final text = jsonEncode({
-      ...data,
-      'deviceName': config.deviceName,
-      'updatedAt': data['updatedAt'] ?? DateTime.now().millisecondsSinceEpoch,
-    });
-    final bytes = Uint8List.fromList(utf8.encode(text));
-    await _writeBytes(
-      _playlistPath(playlistCompressedName),
-      Uint8List.fromList(gzip.encode(bytes)),
-    );
-    // 远端还留着一份未压缩文件 → 说明有老版本客户端在同步，一并更新它，
-    // 否则老端读不到新数据，会把整份旧歌单再推回来。
-    if (await _remoteFileExists(playlistFileName)) {
-      await _writeBytes(_playlistPath(playlistFileName), bytes);
+    try {
+      await _ensureDir(playlistDir);
+      final text = jsonEncode({
+        ...data,
+        'deviceName': config.deviceName,
+        'updatedAt': data['updatedAt'] ?? DateTime.now().millisecondsSinceEpoch,
+      });
+      final bytes = Uint8List.fromList(utf8.encode(text));
+      await _writeBytes(
+        _playlistPath(playlistCompressedName),
+        Uint8List.fromList(gzip.encode(bytes)),
+      );
+      // 远端还留着一份未压缩文件 → 说明有老版本客户端在同步，一并更新它，
+      // 否则老端读不到新数据，会把整份旧歌单再推回来。
+      if (await _remoteFileExists(playlistFileName)) {
+        await _writeBytes(_playlistPath(playlistFileName), bytes);
+      }
+      // 这次上传成功：别让 _remoteFileExists 吞掉的非致命错误残留到下次诊断。
+      _lastFailure = null;
+    } catch (e) {
+      _recordFailure(e);
+      rethrow;
     }
   }
 
@@ -903,8 +1002,10 @@ class WebDavService {
         if (dyn.isDir == true) continue;
         if ('${dyn.name}' == name) return true;
       }
-    } catch (_) {
+    } catch (e) {
       // 查不到就当作没有：少写一份兼容文件不影响新版本自己同步。
+      // 但把原因记下来：这一步卡住 / 报错时超时提示才有内容可显示。
+      _recordFailure(e);
     }
     return false;
   }

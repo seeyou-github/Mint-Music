@@ -238,15 +238,12 @@ class _AppState extends ConsumerState<App> {
       } catch (e) {
         debugPrint('[App] 本地歌单加载失败，仍尝试远端同步: $e');
       }
-      // 启动时的一次性同步同样套 1 分钟超时，避免启动流程被卡住。
-      // 启动时的一次性同步同样套 1 分钟超时，避免启动流程被卡住；
-      // 超时会连带取消底层 HTTP 请求。
+      // 启动时的一次性同步同样套 2 分钟超时，避免启动流程被卡住；
+      // 超时会连带取消底层 HTTP 请求，并把卡住的步骤 / 最近一次错误写进提示。
       final op = SyncAttempt(1);
-      await op.run(
-        PlaylistSyncService.pullAndMerge(
-          WebDavService(config, cancelToken: op.cancelToken),
-        ),
-      );
+      final webdav = WebDavService(config, cancelToken: op.cancelToken);
+      op.attachDiagnosis(() => webdav.diagnosis);
+      await op.run(PlaylistSyncService.pullAndMerge(webdav));
       if (!mounted) return;
       ref.invalidate(playlistsProvider);
     } catch (e) {
@@ -267,7 +264,10 @@ class _AppState extends ConsumerState<App> {
       context: dialogContext,
       builder: (ctx) => AlertDialog(
         backgroundColor: colors.dialogSurface,
-        title: Text(tr('歌单同步失败'), style: TextStyle(color: colors.textPrimary)),
+        title: Text(
+          tr('启动app自动歌单同步失败'),
+          style: TextStyle(color: colors.textPrimary),
+        ),
         content: SingleChildScrollView(
           child: Text(
             tr('同步远端歌单失败：$reason'),

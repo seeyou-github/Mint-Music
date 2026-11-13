@@ -130,11 +130,8 @@ class AutoBackup {
   static Future<void> _upload(WebDavConfig config) async {
     final bytes = await BackupService.createBackup();
     final op = SyncAttempt(1);
-    await op.run(
-      WebDavService(
-        config,
-        cancelToken: op.cancelToken,
-      ).uploadBackup(bytes, remoteFileName),
-    );
+    final webdav = WebDavService(config, cancelToken: op.cancelToken);
+    op.attachDiagnosis(() => webdav.diagnosis);
+    await op.run(webdav.uploadBackup(bytes, remoteFileName));
   }
 }

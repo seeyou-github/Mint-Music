@@ -42,7 +42,7 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
 
   bool _busy = false;
 
-  /// 备份上传 / 远端还原的第几次尝试：首次 1 分钟超时，重试 2 分钟超时。
+  /// 备份上传 / 远端还原的第几次尝试：首次与重试都是 2 分钟超时。
   int _backupAttempt = 0;
   int _restoreAttempt = 0;
 
@@ -222,7 +222,7 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
     await _runBackupToWebDav();
   }
 
-  /// 真正执行一次「备份并上传」（超时按 [_backupAttempt]：首次 1 分钟，重试 2 分钟）。
+  /// 真正执行一次「备份并上传」（首次与重试都是 2 分钟超时）。
   Future<void> _runBackupToWebDav() async {
     final config = _config;
     if (!config.isConfigured) {
@@ -236,16 +236,12 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
     try {
       final bytes = await BackupService.createBackup();
       final fileName = BackupService.buildBackupFileName();
-      // 服务器「连上了但一直不回」时不能让进度条无限转，整次上传套超时。
-      // 服务器「连上了但一直不回」时不能让进度条无限转，整次上传套超时；
-      // 超时会连带取消这次 PUT 请求。
+      // 服务器「连上了但一直不回」时不能让进度条无限转，整次上传套 2 分钟超时；
+      // 超时会连带取消这次 PUT 请求，并把具体失败原因写进提示。
       final op = SyncAttempt(_backupAttempt);
-      await op.run(
-        WebDavService(
-          config,
-          cancelToken: op.cancelToken,
-        ).uploadBackup(bytes, fileName),
-      );
+      final webdav = WebDavService(config, cancelToken: op.cancelToken);
+      op.attachDiagnosis(() => webdav.diagnosis);
+      await op.run(webdav.uploadBackup(bytes, fileName));
       _closeProgress();
       _toast(tr('备份上传成功'));
     } catch (e) {
@@ -284,9 +280,9 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
     List<RemoteBackupFile> files;
     try {
       final listOp = SyncAttempt(_restoreAttempt);
-      files = await listOp.run(
-        WebDavService(config, cancelToken: listOp.cancelToken).listBackups(),
-      );
+      final webdav = WebDavService(config, cancelToken: listOp.cancelToken);
+      listOp.attachDiagnosis(() => webdav.diagnosis);
+      files = await listOp.run(webdav.listBackups());
     } catch (e) {
       _closeProgress();
       if (!mounted) return;
@@ -320,17 +316,16 @@ class _BackupRestoreContentState extends ConsumerState<BackupRestoreContent> {
     _showProgress(tr('正在下载并还原...'));
     try {
       // 下载耗时与包体积成正比：备份里连插件目录一起打，几十 MB 很常见，
-      // 固定的 1 分钟总超时会让「慢但没断」的下载被判失败。按体积估一个
+      // 固定总超时会让「慢但没断」的下载被判失败。按体积估一个
       // 下限（40KB/s），最少 3 分钟、最多 15 分钟。
       final downloadOp = SyncAttempt(
         _restoreAttempt,
         overwriteTimeout: _downloadTimeoutFor(picked.size),
       );
+      final webdav = WebDavService(config, cancelToken: downloadOp.cancelToken);
+      downloadOp.attachDiagnosis(() => webdav.diagnosis);
       final bytes = await downloadOp.run(
-        WebDavService(
-          config,
-          cancelToken: downloadOp.cancelToken,
-        ).downloadBackup(
+        webdav.downloadBackup(
           picked.path,
           expectedSize: picked.size > 0 ? picked.size : null,
           onProgress: _paintDownloadProgress,

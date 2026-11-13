@@ -41,7 +41,7 @@ class _PlaylistSyncButtonState extends ConsumerState<PlaylistSyncButton> {
   Timer? _successTimer;
 
   /// 本次同步是第几次尝试（1 = 用户刚点的这次，2 起是「重新同步」）。
-  /// 首次 1 分钟超时，重试 2 分钟超时。
+  /// 首次与重试都是 2 分钟超时。
   int _attempt = 0;
 
   /// 正在进行的这次同步（点「同步中」按钮时用它取消）。
@@ -77,7 +77,7 @@ class _PlaylistSyncButtonState extends ConsumerState<PlaylistSyncButton> {
     op.cancel('已停止同步');
   }
 
-  /// 真正执行一次同步（超时按 [_attempt] 决定：首次 1 分钟，重试 2 分钟）。
+  /// 真正执行一次同步（首次与重试都是 2 分钟超时）。
   Future<void> _runSync() async {
     _attempt += 1;
     _successTimer?.cancel();
@@ -85,21 +85,21 @@ class _PlaylistSyncButtonState extends ConsumerState<PlaylistSyncButton> {
 
     final config = ref.read(webDavConfigProvider);
     final op = SyncAttempt(_attempt);
+    final webdav = WebDavService(config, cancelToken: op.cancelToken);
+    op.attachDiagnosis(() => webdav.diagnosis);
     _current = op;
     _stopped = false;
     try {
       if (!config.isConfigured) {
         throw const WebDavException('未配置 WebDAV：请先在「设置 → 备份还原」中填写 WebDAV 地址');
       }
-      // 整次尝试（等本地歌单 + 拉取合并）共用一个超时，避免服务器
+      // 整次尝试（等本地歌单 + 拉取合并）共用一个 2 分钟超时，避免服务器
       // 「连上了但一直不回」时界面无限停在「同步中」。
       // 超时 / 手动停止都会取消底层 HTTP 请求（迟到的响应不会被合并）。
       await op.run(() async {
         // 确保本地歌单（含「我的收藏」）已就绪，再与远端合并。
         await ref.read(playlistsProvider.future);
-        await PlaylistSyncService.pullAndMerge(
-          WebDavService(config, cancelToken: op.cancelToken),
-        );
+        await PlaylistSyncService.pullAndMerge(webdav);
         if (widget.alsoBackup) {
           // 歌单同步完再备份一份配置（与「备份到 WebDAV」同一套流程）。
           // 单独包一层：备份失败时用户要知道「歌单已经同步成功」。

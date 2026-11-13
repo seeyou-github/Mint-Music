@@ -8,16 +8,16 @@ import 'webdav_service.dart';
 /// 仍可能被合并、写盘。这里给每次尝试配一个 `dio.CancelToken`，[WebDavService]
 /// 的每个请求都带上它，超时的那一刻把请求真正取消掉，迟到的响应不会再被使用。
 ///
-/// 超时时长：首次尝试 1 分钟，之后每次重试 2 分钟（继续重试仍是 2 分钟）。
+/// 超时时长：首次尝试与重试都是 2 分钟。
 class SyncAttempt {
   SyncAttempt(this.attempt, {Duration? overwriteTimeout})
     : cancelToken = dio.CancelToken(),
       _overwriteTimeout = overwriteTimeout;
 
   /// 首次尝试的超时。
-  static const Duration firstTimeout = Duration(minutes: 1);
+  static const Duration firstTimeout = Duration(minutes: 2);
 
-  /// 重试的超时（第 2 次及以后）。
+  /// 重试的超时（第 2 次及以后）：与首次一致，不再出现「重试才给更久」的落差。
   static const Duration retryTimeout = Duration(minutes: 2);
 
   /// 第 [attempt] 次尝试（从 1 开始）应该用多长的超时。
@@ -33,9 +33,18 @@ class SyncAttempt {
   /// 本次尝试的取消令牌：一旦超时，所有带它的请求都会被取消。
   final dio.CancelToken cancelToken;
 
+  /// 超时时读取的诊断信息（「卡在哪一步 / 最近一次请求的具体错误」）。
+  ///
+  /// 单独提供注入方法而不放进构造函数：[WebDavService] 要拿本类的
+  /// [cancelToken] 才能创建，构造顺序上无法在构造函数里传进来。
+  String? Function()? _diagnosis;
+
   Duration get timeout => _overwriteTimeout ?? timeoutFor(attempt);
 
   bool get isCancelled => cancelToken.isCancelled;
+
+  /// 注入超时诊断：让「网络超时」带上具体步骤与底层错误，而不只是一句笼统提示。
+  void attachDiagnosis(String? Function() diagnose) => _diagnosis = diagnose;
 
   /// 主动取消（超时时自动调用）。
   void cancel([String reason = '同步超时']) {
@@ -51,8 +60,10 @@ class SyncAttempt {
       timeout,
       onTimeout: () {
         cancel();
+        final detail = _diagnosis?.call() ?? '';
         throw WebDavException(
-          '超时：${_describe(timeout)}内没有完成，'
+          '网络超时：${_describe(timeout)}内没有完成'
+          '${detail.isEmpty ? '' : '（$detail）'}，'
           '请检查网络或 WebDAV 服务器后重试',
         );
       },

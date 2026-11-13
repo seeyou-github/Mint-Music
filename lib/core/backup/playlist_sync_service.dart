@@ -248,12 +248,12 @@ class PlaylistSyncService {
       _debounceTimer = null;
       unawaited(() async {
         onStart?.call();
-        // 与手动同步一致：整次操作套 1 分钟超时，超时会取消底层请求。
+        // 与手动同步一致：整次操作套 2 分钟超时，超时会取消底层请求。
         final op = SyncAttempt(1);
+        final webdav = WebDavService(config, cancelToken: op.cancelToken);
+        op.attachDiagnosis(() => webdav.diagnosis);
         try {
-          await op.run(
-            pullAndMerge(WebDavService(config, cancelToken: op.cancelToken)),
-          );
+          await op.run(pullAndMerge(webdav));
           onFinish?.call(true, null);
         } catch (e) {
           debugPrint('[PlaylistSyncService] 自动同步歌单失败: $e');
