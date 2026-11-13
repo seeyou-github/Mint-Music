@@ -237,6 +237,26 @@ var __timerIdCounter = 0;
 var __mintTimerCallbacks = {};
 var __mintActiveTimerCount = 0;
 
+// 大响应分块传输的落点，必须在全局作用域用 var 显式声明。
+// 不能写成 `__httpChunks = __httpChunks || {}` 这种隐式赋值：本运行时对
+// 未声明标识符赋值会抛 ReferenceError("__httpChunks is not defined")，
+// 结果是超过 256KB 的接口响应（歌单广场、榜单、歌单详情）分块写到一半就
+// 整个丢掉，界面显示「加载失败」——搜索结果小、不走分块，所以看起来正常。
+var __httpChunks = {};
+function __pushHttpChunk(requestId, chunk) {
+  var list = __httpChunks[requestId];
+  if (!list) {
+    list = [];
+    __httpChunks[requestId] = list;
+  }
+  list.push(chunk);
+}
+function __takeHttpChunks(requestId) {
+  var list = __httpChunks[requestId];
+  delete __httpChunks[requestId];
+  return list ? list.join('') : '';
+}
+
 // flutter_js 的部分平台（Windows quickjs_c_bridge.dll、部分 Android .so）
 // 暴露了原生 setTimeout/setInterval 宿主函数，但这些函数一旦被调用就会直接
 // 段错误崩溃整个进程（不是可捕获的 JS 异常，try/catch 拦不住）。玉宁熙等
@@ -1457,6 +1477,12 @@ function __zlibRequest(action, data) {
   /// 大幅下降，块与块之间还能让出主线程。
   static const int _httpChunkChars = 128 * 1024;
 
+  /// 分块传输连续失败次数。某些 flutter_js 构建里跨 evaluate 的全局状态
+  /// 不可靠，分块会稳定失败；连续失败到上限后本次运行直接走直传，不再
+  /// 每次响应都白转义一遍再回退。
+  int _chunkFailureStreak = 0;
+  static const int _maxChunkFailureStreak = 2;
+
   Future<void> _resolveRequest(
     int requestId,
     bool success,
@@ -1466,35 +1492,47 @@ function __zlibRequest(action, data) {
       _log(
         '[JsEngine] _resolveRequest: requestId=$requestId, success=$success, resultJson长度=${resultJson.length}',
       );
-      if (resultJson.length > _httpChunkThresholdChars) {
+      final useChunked =
+          resultJson.length > _httpChunkThresholdChars &&
+          _chunkFailureStreak < _maxChunkFailureStreak;
+      if (useChunked) {
         TempTrace.log(
           'Http',
           '_resolveRequest 走分块 requestId=$requestId '
           'len=${resultJson.length} success=$success',
         ); // TEMP-TRACE
-        await _resolveRequestChunked(requestId, success, resultJson);
-      } else {
-        final escapedJson = _escapeForJsString(resultJson);
-        final jsCode =
-            "__resolveHttpRequest($requestId, $success, '$escapedJson')";
-        _log('[JsEngine] 执行JS代码长度: ${jsCode.length}');
-        final evalResult = evaluate(jsCode);
-        _log('[JsEngine] evaluate结果: ${evalResult.stringResult}');
-        TempTrace.log(
-          'Http',
-          '_resolveRequest 直传 requestId=$requestId codeLen=${jsCode.length} '
-          'isError=${evalResult.isError} msg=${evalResult.stringResult}',
-        ); // TEMP-TRACE
-        _executePendingJob();
-        _log('[JsEngine] 已解析请求 $requestId, _executePendingJob()已调用');
+        var chunked = false;
+        try {
+          chunked = await _resolveRequestChunked(
+            requestId,
+            success,
+            resultJson,
+          );
+        } catch (e) {
+          _log('[JsEngine] 分块传输抛错: $e');
+        }
+        if (chunked) {
+          _chunkFailureStreak = 0;
+          return;
+        }
+        // 分块不可用时不能把整次响应丢掉：回退成一次性直传，让插件至少
+        // 拿到数据。直传 200KB 级已验证可用，只是大体积下编译峰值偏高。
+        _chunkFailureStreak++;
+        _log(
+          '[JsEngine] 分块未成功，回退整串直传: requestId=$requestId '
+          '(连续失败=$_chunkFailureStreak)',
+        );
+        TempTrace.log('Http', '分块失败回退直传 requestId=$requestId'); // TEMP-TRACE
+        _discardHttpChunks(requestId);
       }
+      _resolveRequestDirect(requestId, success, resultJson);
     } catch (e, stackTrace) {
       TempTrace.error('Http', '_resolveRequest 异常 requestId=$requestId', e, stackTrace); // TEMP-TRACE
       _log('[JsEngine] Error resolving request $requestId: $e');
       _log('[JsEngine] StackTrace: $stackTrace');
       try {
         // 分块中途失败的话清掉半成品，避免 JS 侧残留无用数据。
-        evaluate('if (typeof __httpChunks !== "undefined") { __httpChunks[$requestId] = void 0; }');
+        _discardHttpChunks(requestId);
         final errorJson = jsonEncode({
           'body': jsonEncode({
             'error': 'ResolveError',
@@ -1510,13 +1548,46 @@ function __zlibRequest(action, data) {
     }
   }
 
-  /// 大响应分块传输：先把块数组建在 `globalThis.__httpChunks` 上，逐块
-  /// evaluate 写入，最后在 JS 侧 join 成完整串再交给 `__resolveHttpRequest`。
+  void _resolveRequestDirect(int requestId, bool success, String resultJson) {
+    final escapedJson = _escapeForJsString(resultJson);
+    final jsCode = "__resolveHttpRequest($requestId, $success, '$escapedJson')";
+    _log('[JsEngine] 执行JS代码长度: ${jsCode.length}');
+    final evalResult = evaluate(jsCode);
+    _log('[JsEngine] evaluate结果: ${evalResult.stringResult}');
+    TempTrace.log(
+      'Http',
+      '_resolveRequest 直传 requestId=$requestId codeLen=${jsCode.length} '
+      'isError=${evalResult.isError} msg=${evalResult.stringResult}',
+    ); // TEMP-TRACE
+    _executePendingJob();
+    _log('[JsEngine] 已解析请求 $requestId, _executePendingJob()已调用');
+    if (evalResult.isError) {
+      // 直传也失败时把错误抛出去，由 _resolveRequest 的 catch 给插件回
+      // ResolveError，避免 Promise 一直挂着等超时。
+      throw StateError(
+        '大响应解析失败: ${evalResult.stringResult.length > 200 ? evalResult.stringResult.substring(0, 200) : evalResult.stringResult}',
+      );
+    }
+  }
+
+  /// 丢弃某次请求残留的分块数据（含分块中途失败的情况）。
+  void _discardHttpChunks(int requestId) {
+    evaluate(
+      'if (typeof __takeHttpChunks === "function") { __takeHttpChunks($requestId); }',
+    );
+  }
+
+  /// 大响应分块传输：逐块 evaluate 调用 `__pushHttpChunk` 写入 JS 侧的
+  /// `__httpChunks`（在 bootstrap 里用 `var` 显式声明），全部写完后一次性
+  /// join 并交给 `__resolveHttpRequest`。
+  ///
+  /// 返回 true 表示响应已交给 JS 侧；false 表示分块这条路不可用，由调用方
+  /// 回退整串直传。
   ///
   /// 正确性依据：[_escapeForJsString] 是逐字符替换（`\`、`'`、换行等各自
   /// 独立映射为固定序列），拼接结果与整体转义一致。切点还要避开代理对，
   /// 否则半个字符单独转 UTF-8 会变成 U+FFFD。
-  Future<void> _resolveRequestChunked(
+  Future<bool> _resolveRequestChunked(
     int requestId,
     bool success,
     String resultJson,
@@ -1525,11 +1596,16 @@ function __zlibRequest(action, data) {
       '[JsEngine] 大响应分块传输: requestId=$requestId, '
       '长度=${resultJson.length}, 块大小=$_httpChunkChars',
     );
-    evaluate('(__httpChunks = __httpChunks || {})[$requestId] = [];');
+    final expectedLength = resultJson.length;
+    final resetResult = evaluate('__httpChunks[$requestId] = [];');
+    if (resetResult.isError) {
+      _log('[JsEngine] 分块初始化失败: ${resetResult.stringResult}');
+      return false;
+    }
     var offset = 0;
     var chunkIndex = 0;
     final chunkStartedAt = DateTime.now(); // TEMP-TRACE
-    while (offset < resultJson.length) {
+    while (offset < expectedLength) {
       var end = math.min(offset + _httpChunkChars, resultJson.length);
       // 切点落在低代理上说明切开了代理对（emoji / 生僻字）：往前退一个码元，
       // 否则孤立代理转 UTF-8 时会变成 U+FFFD，拼回去的数据就坏了。
@@ -1538,7 +1614,9 @@ function __zlibRequest(action, data) {
         end--;
       }
       final escaped = _escapeForJsString(resultJson.substring(offset, end));
-      final pushResult = evaluate("(__httpChunks[$requestId]).push('$escaped');");
+      final pushResult = evaluate(
+        "__pushHttpChunk($requestId, '$escaped');",
+      );
       if (pushResult.isError) {
         // TEMP-TRACE
         TempTrace.log(
@@ -1546,25 +1624,35 @@ function __zlibRequest(action, data) {
           '分块写入失败 requestId=$requestId chunk=$chunkIndex '
           'offset=$offset end=$end msg=${pushResult.stringResult}',
         );
+        _log(
+          '[JsEngine] 分块写入失败 chunk=$chunkIndex: ${pushResult.stringResult}',
+        );
+        return false;
       }
       chunkIndex++;
       offset = end;
       // 块与块之间让出一次事件循环，主线程不至于被连续的大编译占满。
       await Future<void>.delayed(Duration.zero);
     }
+    // 拼回后校验长度：丢块比报错更难查，长度不对就交回调用方走直传。
     final evalResult = evaluate(
-      '__resolveHttpRequest('
-      '$requestId, $success, (__httpChunks[$requestId] || []).join("")); '
-      '__httpChunks[$requestId] = void 0;',
+      '(function(){'
+      'var s = __takeHttpChunks($requestId);'
+      'if (s.length !== $expectedLength) return 0;'
+      '__resolveHttpRequest($requestId, $success, s);'
+      'return 1;'
+      '})()',
     );
     _log('[JsEngine] 分块解析完成: ${evalResult.stringResult}');
+    _executePendingJob();
+    final ok = !evalResult.isError && evalResult.stringResult.trim() == '1';
     TempTrace.log(
       'Http',
       '分块完成 requestId=$requestId chunks=$chunkIndex '
       '耗时=${DateTime.now().difference(chunkStartedAt).inMilliseconds}ms '
       'isError=${evalResult.isError} msg=${evalResult.stringResult}',
     ); // TEMP-TRACE
-    _executePendingJob();
+    return ok;
   }
 
   String _escapeForJsString(String input) {
