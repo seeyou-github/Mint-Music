@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:async';
+import '../../../core/debug/temp_trace.dart'; // TEMP-TRACE
 import '../domain/plugin_types.dart';
 import '../domain/plugin_source_states.dart';
 import '../data/plugin_service.dart';
@@ -17,10 +18,16 @@ final pluginInitializedProvider = FutureProvider<void>((ref) async {
   final pluginService = ref.watch(pluginServiceProvider);
   final manager = ref.watch(musicSourceManagerProvider);
   print('[PluginProviders] 开始初始化插件系统...');
+  TempTrace.log('PluginInit', '开始初始化插件系统'); // TEMP-TRACE
   // 插件自带音源的开关要先加载，否则插件刚启用时状态还是空的。
   await manager.loadPluginSourceStates();
   await pluginService.initializePlugins();
   print('[PluginProviders] 插件系统初始化完成');
+  TempTrace.log(
+    'PluginInit',
+    '初始化完成 插件数=${pluginService.enabledPlugins.length} '
+    'names=${pluginService.enabledPlugins.map((p) => p.pluginInfo?.name ?? '未知').toList()}',
+  ); // TEMP-TRACE
   print('[PluginProviders] 已加载插件数量: ${pluginService.enabledPlugins.length}');
   for (final plugin in pluginService.enabledPlugins) {
     print('[PluginProviders] - 插件: ${plugin.pluginInfo?.name ?? "未知"}');

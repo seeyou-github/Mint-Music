@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../core/debug/temp_trace.dart'; // TEMP-TRACE
 import '../data/discover_repository.dart';
 import '../domain/models/playlist.dart';
 import '../domain/models/playlist_page.dart';
@@ -32,7 +33,15 @@ final discoverSupportedSourcesProvider = Provider<List<SourceInfo>>((ref) {
 final hotPlaylistsProvider = FutureProvider<List<Playlist>>((ref) async {
   final repo = ref.watch(discoverRepositoryProvider);
   final sourceId = ref.watch(discoverSourceIdProvider);
-  return repo.getHotPlaylists(sourceId: sourceId);
+  TempTrace.log('Home', '热门歌单 开始 source=$sourceId'); // TEMP-TRACE
+  try {
+    final result = await repo.getHotPlaylists(sourceId: sourceId);
+    TempTrace.log('Home', '热门歌单 完成 count=${result.length}'); // TEMP-TRACE
+    return result;
+  } catch (e, st) {
+    TempTrace.error('Home', '热门歌单 失败', e, st); // TEMP-TRACE
+    rethrow;
+  }
 });
 
 final hotSearchTagsProvider = FutureProvider<List<String>>((ref) async {
@@ -54,7 +63,21 @@ final playlistDetailProvider = FutureProvider.family<PlaylistPage, String>((
   playlistId,
 ) async {
   final repo = ref.watch(discoverRepositoryProvider);
-  return repo.getPlaylistDetailPage(playlistId);
+  TempTrace.log('Detail', '首屏请求开始 id=$playlistId'); // TEMP-TRACE
+  try {
+    final page = await repo.getPlaylistDetailPage(playlistId);
+    TempTrace.log(
+      'Detail',
+      '首屏请求完成 id=$playlistId '
+      'songs=${page.playlist?.songs.length ?? 0} '
+      'isEnd=${page.isEnd} total=${page.total} '
+      'title=${page.playlist?.title}',
+    ); // TEMP-TRACE
+    return page;
+  } catch (e, st) {
+    TempTrace.error('Detail', '首屏请求失败 id=$playlistId', e, st); // TEMP-TRACE
+    rethrow;
+  }
 });
 
 final playlistTagsProvider = FutureProvider<List<PlaylistTagGroup>>((
@@ -66,7 +89,19 @@ final playlistTagsProvider = FutureProvider<List<PlaylistTagGroup>>((
   await ref.watch(pluginInitializedProvider.future);
   final repo = ref.watch(discoverRepositoryProvider);
   final sourceId = ref.watch(discoverSourceIdProvider);
-  return repo.getPlaylistTags(sourceId: sourceId);
+  TempTrace.log('Home', '歌单分类 开始 source=$sourceId'); // TEMP-TRACE
+  try {
+    final groups = await repo.getPlaylistTags(sourceId: sourceId);
+    TempTrace.log(
+      'Home',
+      '歌单分类 完成 groups=${groups.length} '
+      'tags=${groups.fold<int>(0, (sum, g) => sum + g.tags.length)}',
+    ); // TEMP-TRACE
+    return groups;
+  } catch (e, st) {
+    TempTrace.error('Home', '歌单分类 失败', e, st); // TEMP-TRACE
+    rethrow;
+  }
 });
 
 final hotPlaylistTagsProvider = FutureProvider<List<PlaylistTag>>((ref) async {
@@ -74,7 +109,19 @@ final hotPlaylistTagsProvider = FutureProvider<List<PlaylistTag>>((ref) async {
   await ref.watch(pluginInitializedProvider.future);
   final repo = ref.watch(discoverRepositoryProvider);
   final sourceId = ref.watch(discoverSourceIdProvider);
-  return repo.getHotPlaylistTags(sourceId: sourceId);
+  TempTrace.log('Home', '热门标签 开始 source=$sourceId'); // TEMP-TRACE
+  try {
+    final tags = await repo.getHotPlaylistTags(sourceId: sourceId);
+    TempTrace.log(
+      'Home',
+      '热门标签 完成 count=${tags.length} '
+      'names=${tags.take(6).map((t) => t.name).toList()}',
+    ); // TEMP-TRACE
+    return tags;
+  } catch (e, st) {
+    TempTrace.error('Home', '热门标签 失败', e, st); // TEMP-TRACE
+    rethrow;
+  }
 });
 
 final activeTagIdProvider = StateProvider<String>((ref) => '');
@@ -139,6 +186,11 @@ class CategoryPlaylistsNotifier
     }
 
     _loadingMore = true;
+    TempTrace.log(
+      'Home',
+      '分类歌单请求开始 apiPage=$_page sort=$sortId tag=$tagId '
+      'source=${sourceId ?? 'wy'} reset=$reset',
+    ); // TEMP-TRACE
     try {
       final result = await _repo.getCategoryPlaylists(
         sortId: sortId,
@@ -147,6 +199,11 @@ class CategoryPlaylistsNotifier
         limit: 30,
         sourceId: sourceId ?? 'wy',
       );
+      TempTrace.log(
+        'Home',
+        '分类歌单请求完成 apiPage=$_page items=${result.items.length} '
+        'total=${result.total} isEnd=${result.isEnd}',
+      ); // TEMP-TRACE
       if (!mounted || requestId != _requestId) return;
 
       if (result.items.length > (_apiPageSize ?? 0)) {
@@ -177,6 +234,7 @@ class CategoryPlaylistsNotifier
       }
       state = AsyncValue.data(merged);
     } catch (e, st) {
+      TempTrace.error('Home', '分类歌单请求失败 apiPage=$_page', e, st); // TEMP-TRACE
       if (!mounted || requestId != _requestId) return;
       final current = state.valueOrNull;
       if (current != null && current.isNotEmpty) {
@@ -269,7 +327,8 @@ class CategoryPlaylistsNotifier
       }
       state = AsyncValue.data(window.items);
       return target;
-    } catch (_) {
+    } catch (e) {
+      TempTrace.error('Home', '跳页失败 page=$page', e); // TEMP-TRACE
       if (!mounted || requestId != _requestId) return null;
       // 跳页失败不写进 loadMoreError（底部那个重试按钮对应的是追加下一页），
       // 由页面提示并保留原缓冲，用户重新点页码即可再次直取。
@@ -301,6 +360,10 @@ class CategoryPlaylistsNotifier
     var nextApiPage = apiPage;
     // 界面每页通常不超过接口一页的两倍，循环上限只是兜底。
     for (var attempt = 0; attempt < 6 && items.length < pageSize; attempt++) {
+      TempTrace.log(
+        'Home',
+        '跳页取数 uiPage=$page apiPage=$apiPage skip=$skip',
+      ); // TEMP-TRACE
       final result = await _repo.getCategoryPlaylists(
         sortId: sortId,
         tagId: tagId,
@@ -308,6 +371,11 @@ class CategoryPlaylistsNotifier
         limit: 30,
         sourceId: sourceId ?? 'wy',
       );
+      TempTrace.log(
+        'Home',
+        '跳页取数完成 apiPage=$apiPage items=${result.items.length} '
+        'total=${result.total} isEnd=${result.isEnd}',
+      ); // TEMP-TRACE
       if (!mounted || requestId != _requestId) return null;
       if (result.items.isEmpty) {
         ended = true;
@@ -360,7 +428,18 @@ class _PlaylistWindow {
 final leaderboardsProvider = FutureProvider<List<Leaderboard>>((ref) async {
   final repo = ref.watch(discoverRepositoryProvider);
   final sourceId = ref.watch(discoverSourceIdProvider);
-  return repo.getLeaderboards(sourceId: sourceId);
+  TempTrace.log('Home', '榜单列表 开始 source=$sourceId'); // TEMP-TRACE
+  try {
+    final boards = await repo.getLeaderboards(sourceId: sourceId);
+    TempTrace.log(
+      'Home',
+      '榜单列表 完成 count=${boards.length}',
+    ); // TEMP-TRACE
+    return boards;
+  } catch (e, st) {
+    TempTrace.error('Home', '榜单列表 失败', e, st); // TEMP-TRACE
+    rethrow;
+  }
 });
 
 /// 指定音源的榜单列表（「新增热榜数据」里按音源分 tab 用）。
