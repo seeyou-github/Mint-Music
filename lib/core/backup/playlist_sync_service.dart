@@ -1,44 +1,34 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../features/library/data/playlist_repository.dart';
 import '../../features/library/data/playlist_store.dart';
 import 'playlist_merge.dart';
+import 'playlist_sync_protocol.dart';
 import 'sync_timeout.dart';
 import 'webdav_service.dart';
 
-/// 歌单跨平台同步。
+/// 歌单跨平台同步（内容寻址 + 版本描述文件）。
 ///
-/// 远端用一个（gzip 压缩的）JSON 文件保存：
-/// `<WebDAV 根路径>/playlists.json.gz`
+/// 远端不止一份「完整歌单」，而是一个很小的版本描述文件
+/// `playlists.meta.json`（revision / digest / size / epoch）加上若干份以内容
+/// 摘要命名的不可变快照 `playlists.<sha256>.json.gz`。写入顺序固定为
+/// 「先传数据、后改指针」，所以指针永远指向一份完整数据。
 ///
-/// 内容：
-/// ```json
-/// {
-///   "version": 2,
-///   "updatedAt": 1700000000000,
-///   "deviceName": "手机",
-///   "playlists": [
-///     { "id": "...", "name": "...", "updateTime": "...",
-///       "meta": { "metaUpdatedAt": 1700000000000 },
-///       "songs": [ { "...": "...", "updatedAt": 1700000000000 } ] }
-///   ],
-///   "deleted": [ { "id": "...", "deletedAt": 1700000000000 } ],
-///   "deletedSongs": [ { "playlistId": "...", "songId": "...", "deletedAt": 1 } ]
-/// }
-/// ```
+/// 每次同步只读版本描述文件（约 200 B）就能判断要不要下载完整快照：
+/// * **A 远端与本地基线一致、本地也没改** → 直接结束，不下载也不上传；
+/// * **B 远端未变、只有本地改了** → 不下载，直接用本地数据生成新快照回推；
+/// * **C 远端有变化 / 首次同步** → 下载完整快照、校验摘要、与本地合并，
+///   合并结果与远端相同就只对齐本地基线，不再回推（避免同步风暴）。
 ///
-/// 合并策略：
-/// * **歌单**：按 id 对齐，删除的靠歌单级墓碑传播；
-/// * **歌单信息**（名字 / 封面 / 描述）：看 `meta.metaUpdatedAt`（没有时回退
-///   `updateTime`）取较新的一份，时间相同按内容比较，保证两端算出同一个赢家；
-/// * **歌曲**：按 `songId` 求并集，同 id 取 `updatedAt` 较新的那份；排序用赢家
-///   歌单的顺序，另一侧独有的歌按原顺序追加；
-/// * **歌曲删除**靠歌曲级墓碑传播，否则「这台删了、那台还有」每次同步都会
-///   把歌加回来。
+/// 回推用 `If-Match` 条件写 meta；被别的设备抢先写入（412）会重新拉取合并。
+/// 本地基线记在 [PlaylistSyncStateStore]，靠「本地数据指纹」识别本地改动，
+/// 还原备份 / 清库 / 导入都会自动走全量路径，不依赖每个增删改点打标记。
 ///
-/// 具体合并算法在 [PlaylistMerge]（纯 Dart，可直接单测）。
+/// 合并策略（按 id 对齐、meta 时间取新、歌曲取并集、墓碑传播删除）不变，
+/// 具体算法在 [PlaylistMerge]。
 class PlaylistSyncService {
   const PlaylistSyncService._();
 
@@ -47,137 +37,271 @@ class PlaylistSyncService {
   /// 墓碑保留天数：过期后两端都已同步过删除，可以安全丢弃。
   static const int _tombstoneTtlDays = 90;
 
-  /// 拉取远端歌单并与本地合并，然后把合并结果推回远端。
-  ///
-  /// 返回本地歌单是否发生了实际变化。
-  ///
-  /// [webdav] 带取消令牌时（见 `SyncAttempt`）：用户中途停止同步会让请求以
-  /// `DioException(cancel)` 失败，这里会把已经写了一半的本地歌单 / 墓碑还原成
-  /// 同步前的内容，再抛出异常，避免留下「合并到一半」的状态。
-  static Future<bool> pullAndMerge(WebDavService webdav) async {
-    // 远端不存在（404）时才返回 null；网络错误会抛异常，绝不能继续 push，
-    // 否则会把「读取失败」误当成「远端没有数据」而覆盖远端。
-    final remote = await webdav.readRemotePlaylists();
-    _throwIfCancelled(webdav);
+  /// 条件写冲突后重新拉取合并的次数。
+  static const int _maxConflictRetries = 3;
 
+  /// 同步入口：返回本地歌单是否发生了实际变化。
+  ///
+  /// [webdav] 带取消令牌时（见 `SyncAttempt`）：中途停止会让请求以
+  /// `DioException(cancel)` 失败，这里把已经写了一半的本地歌单 / 墓碑还原。
+  static Future<bool> pullAndMerge(WebDavService webdav) async {
+    final writer = await PlaylistSyncStateStore.deviceId();
+    for (var attempt = 0; attempt < _maxConflictRetries; attempt++) {
+      try {
+        return await _syncOnce(webdav, writer);
+      } on WebDavException catch (e) {
+        if (e.statusCode == 412 && attempt + 1 < _maxConflictRetries) {
+          _throwIfCancelled(webdav);
+          debugPrint('[PlaylistSyncService] 云端版本被其它设备抢先更新，重新合并');
+          continue;
+        }
+        rethrow;
+      }
+    }
+    return false;
+  }
+
+  static Future<bool> _syncOnce(WebDavService webdav, String writer) async {
     final repo = PlaylistRepository();
     final localPlaylists = await repo.exportAll();
-    final localPlaylistTombstones = await PlaylistStore.readTombstones();
-    final localSongTombstones = await PlaylistStore.readSongTombstones();
+    final localPT = await PlaylistStore.readTombstones();
+    final localST = await PlaylistStore.readSongTombstones();
+    final fingerprint = _fingerprintOf(localPlaylists, localPT, localST);
+    final state = await PlaylistSyncStateStore.load();
+    // 指纹不同就说明本地自上次成功同步后有改动（含还原 / 清库 / 导入）。
+    final dirty = state == null || state.localFingerprint != fingerprint;
 
-    // 本次同步实际写下去的内容：中止回滚前用它确认「本地没被别处改过」。
-    List<Map<String, dynamic>>? writtenPlaylists;
-    Map<String, int>? writtenPlaylistTombstones;
-    Map<String, Map<String, int>>? writtenSongTombstones;
+    final meta = await webdav.readPlaylistMeta();
+    _throwIfCancelled(webdav);
 
-    try {
-      final playlistTombstones = <String, int>{...localPlaylistTombstones};
-      final songTombstones = _copySongTombstones(localSongTombstones);
-
-      if (remote != null) {
-        _parsePlaylistTombstones(remote).forEach((id, deletedAt) {
-          if (deletedAt > (playlistTombstones[id] ?? 0)) {
-            playlistTombstones[id] = deletedAt;
-          }
-        });
-        _parseSongTombstones(remote).forEach((playlistId, songs) {
-          final target = songTombstones.putIfAbsent(playlistId, () => {});
-          songs.forEach((songId, deletedAt) {
-            if (deletedAt > (target[songId] ?? 0)) {
-              target[songId] = deletedAt;
-            }
-          });
-        });
-      }
-      _prunePlaylistTombstones(playlistTombstones);
-      _pruneSongTombstones(songTombstones);
-
-      // 远端还没有歌单文件：把本地这份原样推上去（首次同步）。
-      if (remote == null) {
-        final activePlaylists = _activePlaylistTombstones(
-          playlistTombstones,
-          localPlaylists,
-        );
-        final activeSongs = _activeSongTombstones(
-          songTombstones,
-          localPlaylists,
-        );
-        _throwIfCancelled(webdav);
-        await PlaylistStore.writeTombstones(activePlaylists);
-        writtenPlaylistTombstones = activePlaylists;
-        await PlaylistStore.writeSongTombstones(activeSongs);
-        writtenSongTombstones = activeSongs;
-        await _pushSnapshot(
-          webdav,
-          localPlaylists,
-          activePlaylists,
-          activeSongs,
-        );
-        return true;
-      }
-
-      final merged = PlaylistMerge.mergeAll(
-        local: localPlaylists,
-        remotePlaylists: remote['playlists'],
-        playlistTombstones: playlistTombstones,
-        songTombstones: songTombstones,
-        favoritesId: favoritesId,
-      );
-
-      // 写本地之前再确认一次没被停止：停止后不该再落盘。
+    if (meta == null) {
+      // 远端还没初始化。旧版数据文件只读一次做迁移，避免升级后把已有歌单
+      // 当成「空」覆盖掉；之后完全按新协议运行，不再写旧文件。
+      final legacy = await webdav.readLegacyPlaylists();
       _throwIfCancelled(webdav);
+      if (legacy != null) {
+        return _mergeAndPublish(
+          webdav,
+          writer,
+          meta: null,
+          remote: legacy,
+          localPlaylists: localPlaylists,
+          localPT: localPT,
+          localST: localST,
+          localDirty: dirty,
+        );
+      }
+      final pt = {...localPT};
+      final st = _copySongTombstones(localST);
+      _prunePlaylistTombstones(pt);
+      _pruneSongTombstones(st);
+      await _publish(
+        webdav,
+        writer,
+        meta: null,
+        playlists: localPlaylists,
+        pt: _activePlaylistTombstones(pt, localPlaylists),
+        st: _activeSongTombstones(st, localPlaylists),
+      );
+      return false;
+    }
 
+    switch (decideSyncAction(meta: meta, state: state, localDirty: dirty)) {
+      case SyncAction.noop:
+        // 远端没变、本地也没变：连完整快照都不用下载，更不用回推。
+        return false;
+
+      case SyncAction.pushLocal:
+        // 远端与本地基线一致，本地就是全部改动，不必再下载完整快照。
+        final pt = {...localPT};
+        final st = _copySongTombstones(localST);
+        _prunePlaylistTombstones(pt);
+        _pruneSongTombstones(st);
+        await _publish(
+          webdav,
+          writer,
+          meta: meta,
+          playlists: localPlaylists,
+          pt: _activePlaylistTombstones(pt, localPlaylists),
+          st: _activeSongTombstones(st, localPlaylists),
+        );
+        return false;
+
+      case SyncAction.pullAndMerge:
+        final remote = await webdav.readPlaylistSnapshot(meta);
+        _throwIfCancelled(webdav);
+        return _mergeAndPublish(
+          webdav,
+          writer,
+          meta: meta,
+          remote: remote,
+          localPlaylists: localPlaylists,
+          localPT: localPT,
+          localST: localST,
+          localDirty: dirty,
+        );
+    }
+  }
+
+  /// C 路径：合并远端快照 → 写本地（可回滚）→ 按需回推。
+  static Future<bool> _mergeAndPublish(
+    WebDavService webdav,
+    String writer, {
+    required PlaylistMeta? meta,
+    required Map<String, dynamic> remote,
+    required List<Map<String, dynamic>> localPlaylists,
+    required Map<String, int> localPT,
+    required Map<String, Map<String, int>> localST,
+    required bool localDirty,
+  }) async {
+    final playlistTombstones = <String, int>{...localPT};
+    final songTombstones = _copySongTombstones(localST);
+    _parsePlaylistTombstones(remote).forEach((id, deletedAt) {
+      if (deletedAt > (playlistTombstones[id] ?? 0)) {
+        playlistTombstones[id] = deletedAt;
+      }
+    });
+    _parseSongTombstones(remote).forEach((playlistId, songs) {
+      final target = songTombstones.putIfAbsent(playlistId, () => {});
+      songs.forEach((songId, deletedAt) {
+        if (deletedAt > (target[songId] ?? 0)) target[songId] = deletedAt;
+      });
+    });
+    _prunePlaylistTombstones(playlistTombstones);
+    _pruneSongTombstones(songTombstones);
+
+    final merged = PlaylistMerge.mergeAll(
+      local: localPlaylists,
+      remotePlaylists: remote['playlists'],
+      playlistTombstones: playlistTombstones,
+      songTombstones: songTombstones,
+      favoritesId: favoritesId,
+    );
+
+    List<Map<String, dynamic>>? writtenPlaylists;
+    Map<String, int>? writtenPT;
+    Map<String, Map<String, int>>? writtenST;
+    try {
+      _throwIfCancelled(webdav);
       final changed = !PlaylistMerge.samePlaylists(localPlaylists, merged);
       if (changed) {
-        await repo.importAll(merged);
+        await PlaylistRepository().importAll(merged);
         writtenPlaylists = merged;
       }
-
-      final activePlaylistTombstones = _activePlaylistTombstones(
-        playlistTombstones,
-        merged,
-      );
-      if (!_samePlaylistTombstones(
-        localPlaylistTombstones,
-        activePlaylistTombstones,
-      )) {
+      final activePT = _activePlaylistTombstones(playlistTombstones, merged);
+      if (!_samePlaylistTombstones(localPT, activePT)) {
         _throwIfCancelled(webdav);
-        await PlaylistStore.writeTombstones(activePlaylistTombstones);
-        writtenPlaylistTombstones = activePlaylistTombstones;
+        await PlaylistStore.writeTombstones(activePT);
+        writtenPT = activePT;
       }
-      final activeSongTombstones = _activeSongTombstones(
-        songTombstones,
-        merged,
-      );
-      if (!_sameSongTombstones(localSongTombstones, activeSongTombstones)) {
+      final activeST = _activeSongTombstones(songTombstones, merged);
+      if (!_sameSongTombstones(localST, activeST)) {
         _throwIfCancelled(webdav);
-        await PlaylistStore.writeSongTombstones(activeSongTombstones);
-        writtenSongTombstones = activeSongTombstones;
+        await PlaylistStore.writeSongTombstones(activeST);
+        writtenST = activeST;
       }
       _throwIfCancelled(webdav);
-      await _pushSnapshot(
+      if (meta != null && !localDirty) {
+        // 本地没有改动，远端已经是最新的：只把基线对齐，不再回推。
+        // 否则两台设备会因歌单 / 歌曲顺序差异反复生成新 digest、互相推版本。
+        await _saveState(meta);
+        return changed;
+      }
+      await _publish(
         webdav,
-        merged,
-        activePlaylistTombstones,
-        activeSongTombstones,
+        writer,
+        meta: meta,
+        playlists: merged,
+        pt: activePT,
+        st: activeST,
       );
       return changed;
     } catch (e) {
-      // 只有「被取消 / 被停止」才回滚；普通网络失败保留已合并的结果
-      // （和以前一致，避免把用户刚合并进来的远端歌单又丢掉）。
+      // 只有「被取消 / 被停止」才回滚；412 冲突保留已合并的本地结果，
+      // 下一轮会基于新的远端快照再合并一次，不会丢改动。
       if (webdav.isCancelled) {
         await _rollbackLocal(
           beforePlaylists: localPlaylists,
-          beforePlaylistTombstones: localPlaylistTombstones,
-          beforeSongTombstones: localSongTombstones,
+          beforePlaylistTombstones: localPT,
+          beforeSongTombstones: localST,
           writtenPlaylists: writtenPlaylists,
-          writtenPlaylistTombstones: writtenPlaylistTombstones,
-          writtenSongTombstones: writtenSongTombstones,
+          writtenPlaylistTombstones: writtenPT,
+          writtenSongTombstones: writtenST,
         );
       }
       rethrow;
     }
   }
+
+  /// 生成新快照并回推；内容没变则只对齐本地基线。
+  static Future<void> _publish(
+    WebDavService webdav,
+    String writer, {
+    required PlaylistMeta? meta,
+    required List<Map<String, dynamic>> playlists,
+    required Map<String, int> pt,
+    required Map<String, Map<String, int>> st,
+  }) async {
+    final snapshot = PlaylistSnapshot.build(
+      playlists: playlists,
+      playlistTombstones: pt,
+      songTombstones: st,
+    );
+    final bytes = PlaylistSnapshot.encode(snapshot);
+    final digest = PlaylistSnapshot.digestOf(bytes);
+    _throwIfCancelled(webdav);
+
+    if (meta != null && meta.digest == digest) {
+      // 合并结果与远端完全一致：不传数据、不递增 revision，只把基线追上，
+      // 否则两台设备会互相看到「对方又推了一版」而无限回推。
+      await _saveState(meta);
+      return;
+    }
+
+    final next = meta == null
+        ? PlaylistMeta.initial(
+            epoch: const Uuid().v4(),
+            digest: digest,
+            size: bytes.length,
+            writer: writer,
+          )
+        : meta.next(digest: digest, size: bytes.length, writer: writer);
+    // ① 先传数据（不可变文件，重复 PUT 幂等）② 再条件写指针。
+    await webdav.writePlaylistSnapshot(digest, bytes);
+    _throwIfCancelled(webdav);
+    await webdav.writePlaylistMeta(next, expected: meta);
+    await _saveState(next);
+    // 清理旧快照放在最后，且不阻塞同步结果（失败也不影响本次同步）。
+    unawaited(webdav.gcPlaylistSnapshots(digest));
+  }
+
+  /// 同步成功后记录基线；本地指纹在全部落盘之后重算，保证与下次同步一致。
+  static Future<void> _saveState(PlaylistMeta meta) async {
+    final playlists = await PlaylistRepository().exportAll();
+    final pt = await PlaylistStore.readTombstones();
+    final st = await PlaylistStore.readSongTombstones();
+    await PlaylistSyncStateStore.save(
+      PlaylistSyncState(
+        epoch: meta.epoch,
+        revision: meta.revision,
+        digest: meta.digest,
+        localFingerprint: _fingerprintOf(playlists, pt, st),
+        lastSyncAt: DateTime.now().millisecondsSinceEpoch,
+      ),
+    );
+  }
+
+  static String _fingerprintOf(
+    List<Map<String, dynamic>> playlists,
+    Map<String, int> pt,
+    Map<String, Map<String, int>> st,
+  ) => PlaylistSnapshot.fingerprintOf(
+    PlaylistSnapshot.build(
+      playlists: playlists,
+      playlistTombstones: pt,
+      songTombstones: st,
+    ),
+  );
 
   /// 已取消（超时 / 用户停止）就立刻中止，不再继续写本地或推送远端。
   static void _throwIfCancelled(WebDavService webdav) {
@@ -234,8 +358,8 @@ class PlaylistSyncService {
 
   /// 本地歌单增删改后的自动同步：5 秒防抖，连续操作只同步最后一次。
   ///
-  /// 与收藏页顶部的同步按钮走同一条路径（拉取远端 + 合并 + 回推），而不是
-  /// 「只把本地推上去」——只推的话，另一台设备刚加的收藏永远拉不下来。
+  /// 与收藏页顶部的同步按钮走同一条路径；因为新协议会自动比对本地指纹，
+  /// 这里不需要额外打「本地已改动」标记。
   ///
   /// [onStart] / [onFinish] 用于把同步状态同步给界面（窗口底部的同步提示）。
   static void scheduleSync(
@@ -260,32 +384,6 @@ class PlaylistSyncService {
           onFinish?.call(false, e);
         }
       }());
-    });
-  }
-
-  static Future<void> _pushSnapshot(
-    WebDavService webdav,
-    List<Map<String, dynamic>> playlists,
-    Map<String, int> playlistTombstones,
-    Map<String, Map<String, int>> songTombstones,
-  ) async {
-    await webdav.writeRemotePlaylists({
-      'version': 2,
-      'updatedAt': DateTime.now().millisecondsSinceEpoch,
-      'playlists': playlists,
-      'deleted': [
-        for (final entry in playlistTombstones.entries)
-          {'id': entry.key, 'deletedAt': entry.value},
-      ],
-      'deletedSongs': [
-        for (final entry in songTombstones.entries)
-          for (final song in entry.value.entries)
-            {
-              'playlistId': entry.key,
-              'songId': song.key,
-              'deletedAt': song.value,
-            },
-      ],
     });
   }
 

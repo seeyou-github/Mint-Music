@@ -11,6 +11,7 @@ import 'dart:io'
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart' as dio;
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:path/path.dart' as p;
@@ -18,6 +19,7 @@ import 'package:webdav_client/webdav_client.dart' as webdav;
 
 import '../platform/app_paths.dart';
 import '../security/local_field_codec.dart';
+import 'playlist_sync_protocol.dart';
 
 /// 带可读原因的 WebDAV 异常。
 class WebDavException implements Exception {
@@ -283,7 +285,11 @@ class WebDavService {
   ///
   /// 同样绕过 `client.write()` 的 OPTIONS 预检（部分服务器 OPTIONS 会 301）。
   /// 重定向手动处理，避免 PUT 被客户端改写成 GET。
-  Future<void> _writeBytes(String path, Uint8List bytes) async {
+  Future<void> _writeBytes(
+    String path,
+    Uint8List bytes, {
+    Map<String, String>? extraHeaders,
+  }) async {
     final client = _buildClient();
     var target = path;
     for (var redirects = 0; redirects <= 5; redirects++) {
@@ -300,6 +306,8 @@ class WebDavService {
           // content-length 手动带上：部分服务器要求 PUT 必须带长度。
           final headers = options.headers ?? <String, dynamic>{};
           headers['content-length'] = bytes.length;
+          // 条件写：meta 用 If-Match 做并发控制，首次创建用 If-None-Match: *。
+          extraHeaders?.forEach((key, value) => headers[key] = value);
           options.headers = headers;
         },
       );
@@ -905,80 +913,190 @@ class WebDavService {
 
   // ---------------------------------------------------------------- 歌单同步
 
-  /// 歌单同步文件名（远端 `<远端根>/playlists.json.gz`）。
-  static const String playlistFileName = 'playlists.json';
-
-  /// 压缩后的歌单文件名。
-  ///
-  /// 上千首收藏序列化后 2MB 上下，gzip 能压到 14%（约 300KB），手机流量上传
-  /// 差别很明显。老版本只会读写未压缩的 [playlistFileName]，所以远端还留着
-  /// 那份文件时，写入会同时更新它（见 [writeRemotePlaylists]）。
-  static const String playlistCompressedName = 'playlists.json.gz';
+  /// 旧版数据文件：新协议不再写它们。只在 meta 不存在时读一次做迁移，
+  /// 避免升级后把远端已有歌单当成「空」而丢数据；之后完全按新协议运行。
+  static const String legacyCompressedName = 'playlists.json.gz';
+  static const String legacyPlainName = 'playlists.json';
 
   String _playlistPath(String name) =>
       playlistDir.isEmpty ? name : '$playlistDir/$name';
 
-  /// 读取远端歌单 JSON。
-  ///
-  /// 优先读压缩版；没有（404）时回退到老版本的未压缩文件。
-  /// 仅在远端确实不存在时返回 null；网络 / 鉴权等错误一律向上抛出，
-  /// 避免把「读取失败」误当成「远端没有歌单」而覆盖远端数据。
-  Future<Map<String, dynamic>?> readRemotePlaylists() async {
-    _enterStage('下载远端歌单 playlists.json.gz');
+  /// 读取版本描述文件（约 200 B）；404 表示远端还没初始化。
+  Future<PlaylistMeta?> readPlaylistMeta() async {
+    _enterStage('读取歌单版本描述 playlists.meta.json');
     _requireConfigured();
     try {
-      var bytes = Uint8List(0);
+      final client = _buildClient();
+      final response = await client.c.req<dynamic>(
+        client,
+        'GET',
+        _playlistPath(playlistMetaFileName),
+        cancelToken: _cancelToken,
+        optionsHandler: (options) {
+          options.responseType = dio.ResponseType.plain;
+          options.followRedirects = true;
+          options.validateStatus = (status) => status != null;
+        },
+      );
+      final status = response.statusCode ?? 0;
+      if (status == 404) return null;
+      if (status != 200) {
+        throw WebDavException('读取歌单版本描述失败：HTTP $status', statusCode: status);
+      }
+      return PlaylistMeta.fromText(
+        '${response.data ?? ''}',
+        etag: response.headers.value('etag'),
+      );
+    } catch (e) {
+      _recordFailure(e);
+      rethrow;
+    }
+  }
+
+  /// 按 meta 的 digest 下载完整快照，并校验大小与 sha256。
+  Future<Map<String, dynamic>> readPlaylistSnapshot(PlaylistMeta meta) async {
+    _enterStage('下载远端歌单快照');
+    _requireConfigured();
+    try {
+      final bytes = await _readBytes(
+        _playlistPath(playlistSnapshotFileName(meta.digest)),
+      );
+      if (bytes.length != meta.size) {
+        throw WebDavException('远端歌单快照大小不符：${bytes.length} / ${meta.size} 字节');
+      }
+      if (sha256.convert(bytes).toString() != meta.digest) {
+        throw const WebDavException('远端歌单快照校验失败：内容摘要不匹配');
+      }
+      return PlaylistSnapshot.decode(bytes);
+    } catch (e) {
+      _recordFailure(e);
+      rethrow;
+    }
+  }
+
+  /// 一次性迁移：meta 不存在时尝试读旧版数据文件（只读，不回写）。
+  Future<Map<String, dynamic>?> readLegacyPlaylists() async {
+    _enterStage('迁移旧版歌单数据');
+    _requireConfigured();
+    try {
+      late final Uint8List bytes;
       try {
-        bytes = await _readBytes(_playlistPath(playlistCompressedName));
-        // 万一服务器上那个 `.gz` 实际是没压缩的旧文件，解压失败就按原文解析。
-        bytes = _gunzipOrRaw(bytes);
+        bytes = await _readBytes(_playlistPath(legacyCompressedName));
       } on WebDavException catch (e) {
         if (e.statusCode != 404) rethrow;
-        _enterStage('下载旧版歌单 playlists.json');
         try {
-          bytes = await _readBytes(_playlistPath(playlistFileName));
+          bytes = await _readBytes(_playlistPath(legacyPlainName));
         } on WebDavException catch (e2) {
           if (e2.statusCode == 404) return null;
           rethrow;
         }
       }
       if (bytes.isEmpty) return null;
-      final decoded = jsonDecode(utf8.decode(bytes));
+      final decoded = jsonDecode(utf8.decode(_gunzipOrRaw(bytes)));
       if (decoded is Map) return decoded.map((k, v) => MapEntry('$k', v));
-      throw const WebDavException('远端歌单文件格式错误：不是有效的 JSON 对象');
+      return null;
     } catch (e) {
-      // 超时或最终失败时，把这一步的具体错误留给界面上的超时提示。
       _recordFailure(e);
       rethrow;
     }
   }
 
-  /// 写入远端歌单 JSON（压缩）。
-  Future<void> writeRemotePlaylists(Map<String, dynamic> data) async {
-    _enterStage('上传合并后的歌单 playlists.json.gz');
+  /// 上传不可变快照（内容寻址，同名内容必然相同，重复 PUT 幂等）。
+  Future<void> writePlaylistSnapshot(String digest, Uint8List bytes) async {
+    _enterStage('上传歌单快照');
     _requireConfigured();
     try {
-      await _ensureDir(playlistDir);
-      final text = jsonEncode({
-        ...data,
-        'deviceName': config.deviceName,
-        'updatedAt': data['updatedAt'] ?? DateTime.now().millisecondsSinceEpoch,
-      });
-      final bytes = Uint8List.fromList(utf8.encode(text));
-      await _writeBytes(
-        _playlistPath(playlistCompressedName),
-        Uint8List.fromList(gzip.encode(bytes)),
-      );
-      // 远端还留着一份未压缩文件 → 说明有老版本客户端在同步，一并更新它，
-      // 否则老端读不到新数据，会把整份旧歌单再推回来。
-      if (await _remoteFileExists(playlistFileName)) {
-        await _writeBytes(_playlistPath(playlistFileName), bytes);
-      }
-      // 这次上传成功：别让 _remoteFileExists 吞掉的非致命错误残留到下次诊断。
+      await _writeBytes(_playlistPath(playlistSnapshotFileName(digest)), bytes);
       _lastFailure = null;
     } catch (e) {
       _recordFailure(e);
       rethrow;
+    }
+  }
+
+  /// 条件写 meta：先数据、后指针，指针永远指向完整快照。
+  ///
+  /// * 有 ETag → `If-Match`；首次创建 → `If-None-Match: *`；
+  /// * 服务器不给 ETag → 降级为「写前重读校验 revision / digest」；
+  /// * 无论哪条路径，写完都再读一次复核，被别的设备覆盖就抛 412 让上层重放。
+  Future<void> writePlaylistMeta(
+    PlaylistMeta meta, {
+    required PlaylistMeta? expected,
+  }) async {
+    _enterStage('更新歌单版本描述');
+    _requireConfigured();
+    final etag = expected?.etag;
+    final hasEtag = etag != null && etag.isNotEmpty;
+    try {
+      if (expected != null && !hasEtag) {
+        final current = await readPlaylistMeta();
+        if (current != null &&
+            (current.revision != expected.revision ||
+                current.digest != expected.digest)) {
+          throw const WebDavException(
+            '云端歌单已被其它设备更新（HTTP 412）',
+            statusCode: 412,
+          );
+        }
+      }
+      // 只有拿到 ETag 才发 If-Match；首次创建不加 If-None-Match: *，
+      // 因为部分 WebDAV 实现会直接拒掉这个头，导致第一次同步就失败，
+      // 并发初始化交给下面的「写后复核」兜底。
+      final Map<String, String>? extraHeaders = hasEtag
+          ? {'if-match': etag}
+          : null;
+      await _writeBytes(
+        _playlistPath(playlistMetaFileName),
+        Uint8List.fromList(utf8.encode(jsonEncode(meta.toJson()))),
+        extraHeaders: extraHeaders,
+      );
+      final after = await readPlaylistMeta();
+      if (after == null ||
+          after.revision != meta.revision ||
+          after.digest != meta.digest ||
+          after.writer != meta.writer) {
+        throw const WebDavException('云端歌单已被其它设备更新（HTTP 412）', statusCode: 412);
+      }
+      _lastFailure = null;
+    } catch (e) {
+      _recordFailure(e);
+      rethrow;
+    }
+  }
+
+  /// 清理旧的内容寻址快照：当前 digest 必留，7 天内的一律保留（防并发误删），
+  /// 其余按修改时间只留最近 3 份。失败静默，不影响同步结果。
+  Future<void> gcPlaylistSnapshots(String keepDigest) async {
+    try {
+      final client = _buildClient();
+      final dir = playlistDir.isEmpty ? '/' : playlistDir;
+      final items = await client.readDir(dir, _cancelToken);
+      final keepName = playlistSnapshotFileName(keepDigest);
+      final now = DateTime.now();
+      final candidates = <({String name, DateTime time})>[];
+      for (final item in items) {
+        final dyn = item as dynamic;
+        if (dyn.isDir == true) continue;
+        final name = '${dyn.name ?? ''}';
+        if (!name.startsWith('playlists.') || !name.endsWith('.json.gz')) {
+          continue;
+        }
+        if (name == keepName) continue;
+        final mTime = dyn.mTime;
+        if (mTime is! DateTime) continue;
+        if (now.difference(mTime).inDays < 7) continue;
+        candidates.add((name: name, time: mTime));
+      }
+      candidates.sort((a, b) => b.time.compareTo(a.time));
+      for (final item in candidates.skip(3)) {
+        try {
+          await client.remove(_playlistPath(item.name), _cancelToken);
+        } catch (_) {
+          // 单个文件删不掉就算了，下次 GC 再试。
+        }
+      }
+    } catch (_) {
+      // 列目录失败也不影响本次同步。
     }
   }
 
@@ -989,24 +1107,5 @@ class WebDavService {
     } catch (_) {
       return bytes;
     }
-  }
-
-  /// 远端目录里是否有这个文件（一次 PROPFIND）。
-  Future<bool> _remoteFileExists(String name) async {
-    try {
-      final client = _buildClient();
-      final dir = playlistDir.isEmpty ? '/' : playlistDir;
-      final items = await client.readDir(dir, _cancelToken);
-      for (final item in items) {
-        final dyn = item as dynamic;
-        if (dyn.isDir == true) continue;
-        if ('${dyn.name}' == name) return true;
-      }
-    } catch (e) {
-      // 查不到就当作没有：少写一份兼容文件不影响新版本自己同步。
-      // 但把原因记下来：这一步卡住 / 报错时超时提示才有内容可显示。
-      _recordFailure(e);
-    }
-    return false;
   }
 }
