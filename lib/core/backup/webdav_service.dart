@@ -939,9 +939,12 @@ class WebDavService {
           options.responseType = dio.ResponseType.plain;
           options.followRedirects = true;
           options.validateStatus = (status) => status != null;
-          // 指针必须读到最新内容：中间层缓存旧 meta 会让写后复核误报 412。
           options.headers = {
             ...?options.headers,
+            // 必须拿实体 ETag：服务器（如 Apache）会给 gzip 变体单独的
+            // `"…-gzip"` ETag，拿它做 If-Match 会永远 412。meta 只有几百字节。
+            'accept-encoding': 'identity',
+            // 指针必须读到最新内容：中间层缓存旧 meta 会让写后复核误报 412。
             'cache-control': 'no-cache',
             'pragma': 'no-cache',
           };
@@ -1078,6 +1081,19 @@ class WebDavService {
           if (code == 400 || code == 428 || code == 501) {
             // 服务器不认条件写：退回无条件 PUT，靠下面的写后复核兜底。
             debugPrint('[WebDav] 服务器不支持 If-Match（HTTP $code），改为无条件写入');
+            await _writeBytes(target, body);
+          } else if (code == 412) {
+            // 有些服务器给的 ETag 不是实体 ETag（例如变体 ETag 带 `-gzip`
+            // 后缀），条件写会一直被拒。重读确认远端没被别的设备改过，才降级
+            // 为无条件写入；真改过就交回上层重新合并。
+            final current = await readPlaylistMeta();
+            final unchanged =
+                current != null &&
+                current.epoch == expected!.epoch &&
+                current.revision == expected.revision &&
+                current.digest == expected.digest;
+            if (!unchanged) rethrow;
+            debugPrint('[WebDav] If-Match 被服务器拒绝但版本未变，改为无条件写入');
             await _writeBytes(target, body);
           } else {
             rethrow;
