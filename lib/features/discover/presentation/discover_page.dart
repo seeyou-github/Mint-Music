@@ -2643,7 +2643,10 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
   }
 
   /// 热榜歌曲行交错底色的强度：调大更像斑马纹，调小层次更弱。
-  static const double _stripeStrength = 0.12;
+  /// 浅色模式（叠黑）已验收固定 12%；暗底上白色提亮比浅底压黑更显眼，
+  /// 深色模式单独用 6%，避免交错条过亮抢文字。
+  static const double _stripeStrengthLight = 0.12;
+  static const double _stripeStrengthDark = 0.06;
 
   Widget _buildHotSongItem(ThemeColors colors, HotBoard board, int index) {
     final song = board.songs[index];
@@ -2655,13 +2658,15 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
         song.id;
     // 深浅交错：奇数行（1、3、5…）与卡片底色拉开一档，偶数行沿用卡片底色。
     // 深色底上「压黑」本来就看不出来（底色已经很暗），所以按底色亮度选叠加
-    // 方向：深色底叠白色提亮、浅色底叠黑色压暗，统一 12%，相邻行一眼能分开
-    // 又不会变成刺眼的斑马纹。要调深浅只改 [_stripeStrength]。
-    final stripeColor = colors.surface.computeLuminance() < 0.5
-        ? Colors.white
-        : Colors.black;
+    // 方向：深色底叠白色提亮、浅色底叠黑色压暗；两个方向各用一档强度，
+    // 浅色 12% 黑已验收，深色的白色更显眼，只给 6%。
+    final isDarkSurface = colors.surface.computeLuminance() < 0.5;
+    final stripeColor = isDarkSurface ? Colors.white : Colors.black;
+    final stripeStrength = isDarkSurface
+        ? _stripeStrengthDark
+        : _stripeStrengthLight;
     final rowBackground = index.isEven
-        ? Color.lerp(colors.surface, stripeColor, _stripeStrength)
+        ? Color.lerp(colors.surface, stripeColor, stripeStrength)
         : null;
     final title = Text(
       song.title,
