@@ -355,6 +355,9 @@ class _RadioCategoryManagerSheetState
   }
 
   /// 描边胶囊按钮（弹框里的「新增电台 / 新增分类」）。
+  ///
+  /// 文字用正常字重（w400），避免 13px 的 w500 在深色底上显得发粗；
+  /// 内边距放大到 16×8、字号 14，让按钮高度接近旁边的输入框。
   Widget _buildPillButton(String label, VoidCallback? onTap) {
     final colors = widget.colors;
     return OutlinedButton(
@@ -365,10 +368,10 @@ class _RadioCategoryManagerSheetState
           color: onTap == null ? colors.divider : colors.primary,
         ),
         shape: const StadiumBorder(),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         minimumSize: Size.zero,
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+        textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w400),
       ),
       child: Text(label),
     );
