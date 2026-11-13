@@ -1,7 +1,9 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mintmusic/core/backup/playlist_merge.dart';
 import 'package:mintmusic/core/backup/playlist_sync_protocol.dart';
 
 void main() {
@@ -34,7 +36,7 @@ void main() {
     test('schema 不兼容时给出可读错误', () {
       expect(
         () => PlaylistMeta.fromText(metaText(schema: 99)),
-        throwsA(isA<FormatException>()),
+        throwsA(isA<PlaylistSchemaException>()),
       );
     });
 
@@ -45,6 +47,19 @@ void main() {
       );
       expect(
         () => PlaylistMeta.fromText(metaText(revision: 0)),
+        throwsA(isA<FormatException>()),
+      );
+    });
+
+    test('digest 必须是 64 位十六进制（会拼进文件名）', () {
+      expect(
+        () => PlaylistMeta.fromText(metaText(digest: 'abc')),
+        throwsA(isA<FormatException>()),
+      );
+      expect(
+        () => PlaylistMeta.fromText(
+          metaText(digest: '../../${'a' * 60}'),
+        ),
         throwsA(isA<FormatException>()),
       );
     });
@@ -95,8 +110,8 @@ void main() {
       );
       expect(jsonEncode(a), jsonEncode(b));
       expect(
-        PlaylistSnapshot.digestOf(PlaylistSnapshot.encode(a)),
-        PlaylistSnapshot.digestOf(PlaylistSnapshot.encode(b)),
+        PlaylistSnapshot.digestOf(a),
+        PlaylistSnapshot.digestOf(b),
       );
     });
 
@@ -126,7 +141,25 @@ void main() {
       );
     });
 
-    test('远端 digest 与本地指纹是两套稳定摘要', () {
+    test('digest 基于未压缩内容，解码后仍算回同一个摘要', () {
+      final snapshot = PlaylistSnapshot.build(
+        playlists: [
+          playlist('p1', ['s1']),
+        ],
+        playlistTombstones: const {},
+        songTombstones: const {},
+      );
+      final digest = PlaylistSnapshot.digestOf(snapshot);
+      expect(digest, hasLength(64));
+      expect(PlaylistSnapshot.fingerprintOf(snapshot), digest);
+      // 下载后先解压再算摘要，压缩格式 / zlib 版本不影响校验结果。
+      final decoded = PlaylistSnapshot.decode(
+        PlaylistSnapshot.encode(snapshot),
+      );
+      expect(PlaylistSnapshot.digestOf(decoded), digest);
+    });
+
+    test('也认上一版按 gzip 字节算出的摘要（升级前写下的远端快照）', () {
       final snapshot = PlaylistSnapshot.build(
         playlists: [
           playlist('p1', ['s1']),
@@ -135,12 +168,46 @@ void main() {
         songTombstones: const {},
       );
       final bytes = PlaylistSnapshot.encode(snapshot);
-      final digest = PlaylistSnapshot.digestOf(bytes);
-      final fingerprint = PlaylistSnapshot.fingerprintOf(snapshot);
-      expect(digest, hasLength(64));
-      expect(fingerprint, hasLength(64));
-      expect(digest, isNot(fingerprint));
-      expect(PlaylistSnapshot.fingerprintOf(snapshot), fingerprint);
+      final legacyDigest = sha256.convert(bytes).toString();
+      final contentDigest = PlaylistSnapshot.digestOf(snapshot);
+      expect(legacyDigest, isNot(contentDigest));
+      expect(
+        PlaylistSnapshot.matchesDigest(snapshot, bytes, legacyDigest),
+        isTrue,
+      );
+      expect(
+        PlaylistSnapshot.matchesDigest(snapshot, bytes, contentDigest),
+        isTrue,
+      );
+      expect(
+        PlaylistSnapshot.matchesDigest(snapshot, bytes, 'a' * 64),
+        isFalse,
+      );
+    });
+  });
+
+  group('快照文件名', () {
+    test('从新协议文件名取回 digest', () {
+      final digest = 'a' * 64;
+      final name = playlistSnapshotFileName(digest);
+      expect(name, 'playlists.$digest.json.gz');
+      expect(snapshotDigestOf(name), digest);
+      expect(isPlaylistSnapshotFile(name), isTrue);
+    });
+
+    test('旧版 / 异常文件名不被当成新协议快照', () {
+      for (final name in [
+        'playlists.json.gz',
+        'playlists.json',
+        'playlists.meta.json',
+        'playlists.${'a' * 63}.json.gz',
+        'playlists.${'A' * 64}.json.gz',
+        'playlists.${'a' * 64}.json',
+        'other.${'a' * 64}.json.gz',
+      ]) {
+        expect(isPlaylistSnapshotFile(name), isFalse, reason: name);
+        expect(snapshotDigestOf(name), isNull, reason: name);
+      }
     });
   });
 
@@ -158,7 +225,6 @@ void main() {
       revision: 5,
       digest: 'd',
       localFingerprint: 'f',
-      lastSyncAt: 0,
     );
 
     test('远端未初始化 → pushLocal', () {
@@ -215,25 +281,46 @@ void main() {
         SyncAction.noop,
       );
     });
+
+    test('版本一致 + 本地有改动但只剩空库 → 改走合并，避免覆盖远端', () {
+      expect(
+        decideSyncAction(
+          meta: meta,
+          state: state,
+          localDirty: true,
+          localHasContent: false,
+        ),
+        SyncAction.pullAndMerge,
+      );
+      expect(
+        decideSyncAction(
+          meta: meta,
+          state: state,
+          localDirty: false,
+          localHasContent: false,
+        ),
+        SyncAction.noop,
+      );
+    });
   });
 
   group('PlaylistSyncState', () {
+    final digest = 'a' * 64;
+
     test('JSON 往返保留全部字段', () {
-      const state = PlaylistSyncState(
+      final state = PlaylistSyncState(
         epoch: 'e',
         revision: 2,
-        digest: 'd',
+        digest: digest,
         localFingerprint: 'f',
-        lastSyncAt: 9,
       );
       final decoded = PlaylistSyncState.fromJson(
         jsonDecode(jsonEncode(state.toJson())) as Map,
       );
       expect(decoded.epoch, 'e');
       expect(decoded.revision, 2);
-      expect(decoded.digest, 'd');
+      expect(decoded.digest, digest);
       expect(decoded.localFingerprint, 'f');
-      expect(decoded.lastSyncAt, 9);
     });
 
     test('字段非法抛 FormatException', () {
@@ -241,6 +328,81 @@ void main() {
         () => PlaylistSyncState.fromJson({'epoch': 'e'}),
         throwsA(isA<FormatException>()),
       );
+      expect(
+        () => PlaylistSyncState.fromJson({
+          'epoch': 'e',
+          'revision': 2,
+          'digest': 'd',
+          'localFingerprint': 'f',
+        }),
+        throwsA(isA<FormatException>()),
+      );
+    });
+  });
+
+  group('PlaylistMerge.sameContentIgnoringOrder', () {
+    Map<String, dynamic> song(String id, {int updatedAt = 1, String name = ''}) => {
+      'id': id,
+      'name': name,
+      'updatedAt': updatedAt,
+    };
+    Map<String, dynamic> playlist(
+      String id, {
+      String name = '',
+      List<Map<String, dynamic>> songs = const [],
+    }) => {'id': id, 'name': name, 'songs': songs};
+
+    test('歌单顺序 / 歌曲顺序不同视为相同', () {
+      final a = [
+        playlist('p1', songs: [song('s1'), song('s2')]),
+        playlist('p2', songs: [song('s3')]),
+      ];
+      final b = [
+        playlist('p2', songs: [song('s3')]),
+        playlist('p1', songs: [song('s2'), song('s1')]),
+      ];
+      expect(PlaylistMerge.sameContentIgnoringOrder(a, b), isTrue);
+    });
+
+    test('缺歌单 / 缺歌 / 改名 / 属性变化都视为不同', () {
+      final base = [
+        playlist('p1', name: 'A', songs: [song('s1')]),
+      ];
+      expect(
+        PlaylistMerge.sameContentIgnoringOrder(base, const []),
+        isFalse,
+      );
+      expect(
+        PlaylistMerge.sameContentIgnoringOrder(base, [
+          playlist('p1', name: 'A', songs: [song('s1'), song('s2')]),
+        ]),
+        isFalse,
+      );
+      expect(
+        PlaylistMerge.sameContentIgnoringOrder(base, [
+          playlist('p1', name: 'B', songs: [song('s1')]),
+        ]),
+        isFalse,
+      );
+      expect(
+        PlaylistMerge.sameContentIgnoringOrder(base, [
+          playlist('p1', name: 'A', songs: [song('s1', updatedAt: 2)]),
+        ]),
+        isFalse,
+      );
+    });
+
+    test('id 重复视为不同（不能靠去重掩盖数据问题）', () {
+      final a = [
+        playlist('p1', songs: [song('s1')]),
+        playlist('p2', songs: [song('s2')]),
+      ];
+      final b = [
+        playlist('p1', songs: [song('s1')]),
+        playlist('p1', songs: [song('s2')]),
+      ];
+      expect(PlaylistMerge.sameContentIgnoringOrder(a, b), isFalse);
+      expect(PlaylistMerge.sameContentIgnoringOrder(b, a), isFalse);
     });
   });
 }

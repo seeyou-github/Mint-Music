@@ -239,6 +239,39 @@ class PlaylistMerge {
     return true;
   }
 
+  /// 忽略「歌单顺序 / 歌曲顺序」比较两份内容是否相同。
+  ///
+  /// 各端都保留自己的展示顺序，排序差异不该触发回推（否则两台设备会互相
+  /// 推版本）。但歌单、歌曲、歌单信息的任何增减改都必须报不同，这样远端
+  /// 被清空或被旧备份覆盖后，还能靠干净设备把缺失内容补回去。
+  static bool sameContentIgnoringOrder(
+    List<Map<String, dynamic>> a,
+    List<Map<String, dynamic>> b,
+  ) {
+    if (a.length != b.length) return false;
+    final byId = <String, String>{
+      for (final playlist in a) idOf(playlist): contentKeyOf(playlist),
+    };
+    if (byId.length != a.length) return false;
+    for (final playlist in b) {
+      final key = byId.remove(idOf(playlist));
+      if (key == null || key != contentKeyOf(playlist)) return false;
+    }
+    return byId.isEmpty;
+  }
+
+  /// 单个歌单的内容键：歌单字段 + 歌曲内容，两层都不看顺序。
+  static String contentKeyOf(Map<String, dynamic> playlist) {
+    final songKeys = [
+      for (final song in songsOf(playlist)) '${songIdOf(song)}|${canonical(song)}',
+    ]..sort();
+    final playlistFields = <String, dynamic>{
+      for (final entry in playlist.entries)
+        if (entry.key != 'songs') entry.key: entry.value,
+    };
+    return '${canonical(playlistFields)}|${songKeys.join('\n')}';
+  }
+
   static String canonical(Object? value, [StringBuffer? buffer]) {
     final out = buffer ?? StringBuffer();
     if (value is Map) {

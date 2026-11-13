@@ -11,7 +11,6 @@ import 'dart:io'
 import 'dart:math' as math;
 import 'dart:typed_data';
 
-import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart' as dio;
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:path/path.dart' as p;
@@ -264,7 +263,7 @@ class WebDavService {
   /// 301/302 的服务器会直接抛错（`DioException [bad response]: null`）。
   /// 这里走和备份包同一条下载链路（[downloadToFile]）：小文件单线程、
   /// 大文件按段并发，都带重试 / 断点续传和更宽松的空闲超时（歌单同步用）。
-  Future<Uint8List> _readBytes(String path) async {
+  Future<Uint8List> _readBytes(String path, {int? expectedSize}) async {
     final dir = await AppPaths.tempDirectory();
     final temp = File(
       p.join(
@@ -273,7 +272,11 @@ class WebDavService {
       ),
     );
     try {
-      await downloadToFile(path, savePath: temp.path);
+      await downloadToFile(
+        path,
+        savePath: temp.path,
+        expectedSize: expectedSize,
+      );
       if (isCancelled) throw const WebDavException('下载已取消');
       return await temp.readAsBytes();
     } finally {
@@ -936,6 +939,12 @@ class WebDavService {
           options.responseType = dio.ResponseType.plain;
           options.followRedirects = true;
           options.validateStatus = (status) => status != null;
+          // 指针必须读到最新内容：中间层缓存旧 meta 会让写后复核误报 412。
+          options.headers = {
+            ...?options.headers,
+            'cache-control': 'no-cache',
+            'pragma': 'no-cache',
+          };
         },
       );
       final status = response.statusCode ?? 0;
@@ -953,25 +962,42 @@ class WebDavService {
     }
   }
 
-  /// 按 meta 的 digest 下载完整快照，并校验大小与 sha256。
+  /// 按 meta 的 digest 下载完整快照。
+  ///
+  /// 完整性以**解压后的内容摘要**为准：`meta.size` 只是传输提示，不同 zlib
+  /// 版本压出来的长度可能不同。校验失败重试一次，第二次不再按 `meta.size`
+  /// 分段，避免大小提示不准把下载截断。
   Future<Map<String, dynamic>> readPlaylistSnapshot(PlaylistMeta meta) async {
     _enterStage('下载远端歌单快照');
     _requireConfigured();
-    try {
-      final bytes = await _readBytes(
-        _playlistPath(playlistSnapshotFileName(meta.digest)),
-      );
-      if (bytes.length != meta.size) {
-        throw WebDavException('远端歌单快照大小不符：${bytes.length} / ${meta.size} 字节');
+    Object? lastError;
+    for (var attempt = 1; attempt <= 2; attempt++) {
+      try {
+        final bytes = await _readBytes(
+          _playlistPath(playlistSnapshotFileName(meta.digest)),
+          expectedSize: attempt == 1 ? meta.size : null,
+        );
+        final snapshot = PlaylistSnapshot.decode(bytes);
+        if (!PlaylistSnapshot.matchesDigest(snapshot, bytes, meta.digest)) {
+          throw const WebDavException('远端歌单快照校验失败：内容摘要不匹配');
+        }
+        return snapshot;
+      } catch (e) {
+        lastError = e;
+        if (isCancelled) rethrow;
+        final retryable =
+            e is FormatException ||
+            (e is WebDavException && e.statusCode == null);
+        if (!retryable || attempt >= 2) break;
+        debugPrint('[WebDav] 歌单快照校验失败，去掉大小提示重试一次: $e');
       }
-      if (sha256.convert(bytes).toString() != meta.digest) {
-        throw const WebDavException('远端歌单快照校验失败：内容摘要不匹配');
-      }
-      return PlaylistSnapshot.decode(bytes);
-    } catch (e) {
-      _recordFailure(e);
-      rethrow;
     }
+    final error = lastError;
+    if (error == null) {
+      throw const WebDavException('下载歌单快照失败：未知错误');
+    }
+    _recordFailure(error);
+    throw error;
   }
 
   /// 一次性迁移：meta 不存在时尝试读旧版数据文件（只读，不回写）。
@@ -1016,8 +1042,10 @@ class WebDavService {
 
   /// 条件写 meta：先数据、后指针，指针永远指向完整快照。
   ///
-  /// * 有 ETag → `If-Match`；首次创建 → `If-None-Match: *`；
-  /// * 服务器不给 ETag → 降级为「写前重读校验 revision / digest」；
+  /// * 有强 ETag → `If-Match`；首次创建不发 `If-None-Match: *`（部分实现
+  ///   会直接拒掉），并发初始化交给「写后复核」兜底；
+  /// * 弱 ETag（`W/`）按 RFC 不能用于 `If-Match`，当作没有 ETag；
+  /// * 服务器不给 ETag / 不认条件头 → 降级为「写前重读 + 写后复核」；
   /// * 无论哪条路径，写完都再读一次复核，被别的设备覆盖就抛 412 让上层重放。
   Future<void> writePlaylistMeta(
     PlaylistMeta meta, {
@@ -1026,7 +1054,8 @@ class WebDavService {
     _enterStage('更新歌单版本描述');
     _requireConfigured();
     final etag = expected?.etag;
-    final hasEtag = etag != null && etag.isNotEmpty;
+    final hasEtag =
+        etag != null && etag.isNotEmpty && !etag.startsWith('W/');
     try {
       if (expected != null && !hasEtag) {
         final current = await readPlaylistMeta();
@@ -1039,17 +1068,24 @@ class WebDavService {
           );
         }
       }
-      // 只有拿到 ETag 才发 If-Match；首次创建不加 If-None-Match: *，
-      // 因为部分 WebDAV 实现会直接拒掉这个头，导致第一次同步就失败，
-      // 并发初始化交给下面的「写后复核」兜底。
-      final Map<String, String>? extraHeaders = hasEtag
-          ? {'if-match': etag}
-          : null;
-      await _writeBytes(
-        _playlistPath(playlistMetaFileName),
-        Uint8List.fromList(utf8.encode(jsonEncode(meta.toJson()))),
-        extraHeaders: extraHeaders,
-      );
+      final body = Uint8List.fromList(utf8.encode(jsonEncode(meta.toJson())));
+      final target = _playlistPath(playlistMetaFileName);
+      if (hasEtag) {
+        try {
+          await _writeBytes(target, body, extraHeaders: {'if-match': etag});
+        } on WebDavException catch (e) {
+          final code = e.statusCode;
+          if (code == 400 || code == 428 || code == 501) {
+            // 服务器不认条件写：退回无条件 PUT，靠下面的写后复核兜底。
+            debugPrint('[WebDav] 服务器不支持 If-Match（HTTP $code），改为无条件写入');
+            await _writeBytes(target, body);
+          } else {
+            rethrow;
+          }
+        }
+      } else {
+        await _writeBytes(target, body);
+      }
       final after = await readPlaylistMeta();
       if (after == null ||
           after.revision != meta.revision ||
@@ -1078,9 +1114,9 @@ class WebDavService {
         final dyn = item as dynamic;
         if (dyn.isDir == true) continue;
         final name = '${dyn.name ?? ''}';
-        if (!name.startsWith('playlists.') || !name.endsWith('.json.gz')) {
-          continue;
-        }
+        // 只认 `playlists.<64位sha256>.json.gz`，旧版 `playlists.json.gz`
+        // 不匹配，不会被 GC 删掉（留作回退备份）。
+        if (!isPlaylistSnapshotFile(name)) continue;
         if (name == keepName) continue;
         final mTime = dyn.mTime;
         if (mTime is! DateTime) continue;
@@ -1098,6 +1134,77 @@ class WebDavService {
     } catch (_) {
       // 列目录失败也不影响本次同步。
     }
+  }
+
+  /// 版本描述损坏时的兜底：从远端现存快照里挑一份最新的、内容校验通过的，
+  /// 重建版本描述。
+  ///
+  /// 返回 null 表示远端没有任何快照可恢复（调用方按「远端未初始化」处理）；
+  /// 有快照但全部校验失败时抛错，避免在不确定远端数据的情况下强行覆盖。
+  Future<PlaylistMeta?> recoverPlaylistMeta({
+    required String writer,
+    required String epoch,
+  }) async {
+    _enterStage('尝试恢复歌单版本描述');
+    _requireConfigured();
+    final client = _buildClient();
+    final dir = playlistDir.isEmpty ? '/' : playlistDir;
+    late final List<dynamic> items;
+    try {
+      items = await client.readDir(dir, _cancelToken);
+    } catch (e) {
+      _recordFailure(e);
+      rethrow;
+    }
+    final candidates = <({String digest, DateTime time})>[];
+    for (final item in items) {
+      final dyn = item as dynamic;
+      if (dyn.isDir == true) continue;
+      final digest = snapshotDigestOf('${dyn.name ?? ''}');
+      if (digest == null) continue;
+      final mTime = dyn.mTime;
+      if (mTime is! DateTime) continue;
+      candidates.add((digest: digest, time: mTime));
+    }
+    candidates.sort((a, b) => b.time.compareTo(a.time));
+    Object? lastError;
+    // 只试最近 3 份：既够绕开一份上传中断留下的坏文件，也不会把整次同步拖太久。
+    for (final candidate in candidates.take(3)) {
+      try {
+        final bytes = await _readBytes(
+          _playlistPath(playlistSnapshotFileName(candidate.digest)),
+        );
+        final snapshot = PlaylistSnapshot.decode(bytes);
+        if (!PlaylistSnapshot.matchesDigest(snapshot, bytes, candidate.digest)) {
+          throw const WebDavException('快照内容摘要与文件名不符');
+        }
+        final meta = PlaylistMeta(
+          epoch: epoch,
+          revision: 1,
+          digest: candidate.digest,
+          size: bytes.length,
+          updatedAt: DateTime.now().millisecondsSinceEpoch,
+          writer: writer,
+        );
+        await writePlaylistMeta(meta, expected: null);
+        debugPrint('[WebDav] 已用快照 ${candidate.digest} 重建歌单版本描述');
+        return meta;
+      } catch (e) {
+        if (isCancelled) rethrow;
+        // 别的设备刚修好了指针：交给上层按新的 meta 重新同步。
+        if (e is WebDavException && e.statusCode == 412) rethrow;
+        lastError = e;
+        debugPrint('[WebDav] 恢复快照 ${candidate.digest} 失败: $e');
+      }
+    }
+    if (candidates.isNotEmpty) {
+      _recordFailure(lastError ?? '快照均不可用');
+      throw WebDavException(
+        '远端歌单版本描述损坏，且现存快照无法恢复'
+        '${lastError == null ? '' : '（${describeWebDavError(lastError)}）'}',
+      );
+    }
+    return null;
   }
 
   Uint8List _gunzipOrRaw(Uint8List bytes) {

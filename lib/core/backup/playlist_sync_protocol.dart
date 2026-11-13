@@ -18,7 +18,30 @@ const int playlistSnapshotSchema = 3;
 
 const String playlistMetaFileName = 'playlists.meta.json';
 
+final RegExp _digestPattern = RegExp(r'^[0-9a-f]{64}$');
+final RegExp _snapshotNamePattern = RegExp(
+  r'^playlists\.([0-9a-f]{64})\.json\.gz$',
+);
+
 String playlistSnapshotFileName(String digest) => 'playlists.$digest.json.gz';
+
+/// 从快照文件名里取回 digest；不是新协议的快照文件返回 null。
+///
+/// 旧版 `playlists.json.gz` 不是 64 位十六进制，会被自然排除，GC / 恢复
+/// 都不会误删它。
+String? snapshotDigestOf(String fileName) =>
+    _snapshotNamePattern.firstMatch(fileName)?.group(1);
+
+bool isPlaylistSnapshotFile(String fileName) =>
+    _snapshotNamePattern.hasMatch(fileName);
+
+/// 远端版本描述文件来自更新版本的客户端，当前版本无法识别。
+///
+/// 与普通格式损坏区分开：前者不能尝试「重建指针」，否则会用旧格式覆盖新
+/// 客户端的数据。
+class PlaylistSchemaException extends FormatException {
+  const PlaylistSchemaException(super.message);
+}
 
 /// 远端版本描述文件：约 200~300 字节，不压缩。
 ///
@@ -62,17 +85,21 @@ class PlaylistMeta {
     }
     final schema = decoded['schema'];
     if (schema != playlistMetaSchema) {
-      throw FormatException('版本描述文件不兼容（schema=$schema），请升级客户端后再同步');
+      throw PlaylistSchemaException(
+        '版本描述文件不兼容（schema=$schema），请升级客户端后再同步',
+      );
     }
     final epoch = decoded['epoch'];
     final digest = decoded['digest'];
     final revision = decoded['revision'];
     final size = decoded['size'];
-    if (epoch is! String ||
-        epoch.isEmpty ||
-        digest is! String ||
-        digest.length < 32) {
-      throw const FormatException('版本描述文件缺少 epoch / digest');
+    if (epoch is! String || epoch.isEmpty) {
+      throw const FormatException('版本描述文件缺少 epoch');
+    }
+    // digest 会拼进远端文件名，必须限定成 sha256 十六进制，避免异常数据把
+    // 读取路径带到目录之外。
+    if (digest is! String || !_digestPattern.hasMatch(digest)) {
+      throw const FormatException('版本描述文件的 digest 非法');
     }
     if (revision is! int || revision < 1 || size is! int || size < 0) {
       throw const FormatException('版本描述文件的 revision / size 非法');
@@ -169,12 +196,31 @@ class PlaylistSnapshot {
   static Uint8List encode(Map<String, dynamic> snapshot) =>
       Uint8List.fromList(gzip.encode(utf8.encode(jsonEncode(snapshot))));
 
-  /// 数据文件名里的 digest：直接对 gzip 字节取摘要，下载时也能顺便校验完整性。
-  static String digestOf(Uint8List bytes) => sha256.convert(bytes).toString();
-
-  /// 本地数据指纹：不压缩，只用于判断「本地自上次同步后有没有变」。
-  static String fingerprintOf(Map<String, dynamic> snapshot) =>
+  /// 内容摘要：对**未压缩**的规范化 JSON 取 sha256。
+  ///
+  /// 不用 gzip 字节：压缩结果依赖 zlib 实现 / 版本，跨平台或升级引擎后同样
+  /// 的内容可能算出不同摘要，会让「合并结果与远端相同」的判断失效。下载
+  /// 校验时先解压再算，同样与压缩格式无关。
+  static String digestOf(Map<String, dynamic> snapshot) =>
       sha256.convert(utf8.encode(jsonEncode(snapshot))).toString();
+
+  /// 本地数据指纹：与 [digestOf] 是同一份摘要，语义上表示
+  /// 「本地自上次同步后有没有变」。
+  static String fingerprintOf(Map<String, dynamic> snapshot) =>
+      digestOf(snapshot);
+
+  /// 快照内容是否对应 [digest]。
+  ///
+  /// 额外接受上一版「对 gzip 字节取 sha256」的摘要：升级前写到远端的快照
+  /// 只有这种摘要，不认它会让这些快照永远无法下载（下次推送会自动换成新摘要）。
+  static bool matchesDigest(
+    Map<String, dynamic> snapshot,
+    Uint8List bytes,
+    String digest,
+  ) {
+    if (digestOf(snapshot) == digest) return true;
+    return sha256.convert(bytes).toString() == digest;
+  }
 
   static Map<String, dynamic> decode(Uint8List bytes) {
     final List<int> raw;
@@ -205,7 +251,6 @@ class PlaylistSyncState {
     required this.revision,
     required this.digest,
     required this.localFingerprint,
-    required this.lastSyncAt,
   });
 
   final String epoch;
@@ -215,7 +260,6 @@ class PlaylistSyncState {
   /// 上次同步结束时本地数据的规范化摘要；重算后不同就说明本地有改动
   /// （还原备份 / 清库 / 导入都算），不依赖每个增删改调用点打标记。
   final String localFingerprint;
-  final int lastSyncAt;
 
   factory PlaylistSyncState.fromJson(Map<dynamic, dynamic> json) {
     final epoch = json['epoch'];
@@ -224,6 +268,7 @@ class PlaylistSyncState {
     final revision = json['revision'];
     if (epoch is! String ||
         digest is! String ||
+        !_digestPattern.hasMatch(digest) ||
         fingerprint is! String ||
         revision is! int ||
         revision < 1) {
@@ -234,7 +279,6 @@ class PlaylistSyncState {
       revision: revision,
       digest: digest,
       localFingerprint: fingerprint,
-      lastSyncAt: json['lastSyncAt'] is int ? json['lastSyncAt'] as int : 0,
     );
   }
 
@@ -243,7 +287,6 @@ class PlaylistSyncState {
     'revision': revision,
     'digest': digest,
     'localFingerprint': localFingerprint,
-    'lastSyncAt': lastSyncAt,
   };
 
   PlaylistSyncState copyWith({
@@ -251,13 +294,11 @@ class PlaylistSyncState {
     int? revision,
     String? digest,
     String? localFingerprint,
-    int? lastSyncAt,
   }) => PlaylistSyncState(
     epoch: epoch ?? this.epoch,
     revision: revision ?? this.revision,
     digest: digest ?? this.digest,
     localFingerprint: localFingerprint ?? this.localFingerprint,
-    lastSyncAt: lastSyncAt ?? this.lastSyncAt,
   );
 }
 
@@ -309,10 +350,16 @@ enum SyncAction {
   pullAndMerge,
 }
 
+/// [localHasContent] 表示本地是否真的有歌单内容（歌曲或自建歌单）。
+///
+/// 本地只剩一张空收藏、却有「本地有改动」的基线时，不能直接回推：那通常
+/// 意味着数据库降级成内存库 / 数据被清空，推上去会把远端歌单整份覆盖掉。
+/// 这种可疑情况强制走合并，由远端内容兜底。
 SyncAction decideSyncAction({
   required PlaylistMeta? meta,
   required PlaylistSyncState? state,
   required bool localDirty,
+  bool localHasContent = true,
 }) {
   if (meta == null) return SyncAction.pushLocal;
   if (state == null ||
@@ -321,5 +368,6 @@ SyncAction decideSyncAction({
       state.digest != meta.digest) {
     return SyncAction.pullAndMerge;
   }
-  return localDirty ? SyncAction.pushLocal : SyncAction.noop;
+  if (!localDirty) return SyncAction.noop;
+  return localHasContent ? SyncAction.pushLocal : SyncAction.pullAndMerge;
 }
