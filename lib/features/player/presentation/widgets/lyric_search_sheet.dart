@@ -667,9 +667,10 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
       );
     }
     // 卡片高度：歌名 / 歌手 / 专辑 / 年份 / 时长 各占一行（每行独立展示，
-    // 不再合并成一行被截断），62/76 都会溢出裁掉后面的字段。
+    // 不再合并成一行被截断）。应用字体（思源宋体）的实际行高比默认大，
+    // 108 仍会把最后的时长行裁掉，按实测加高到 124。
     return SizedBox(
-      height: 108,
+      height: 124,
       child: ScrollConfiguration(
         behavior: const _ResultsScrollBehavior(),
         child: ListView.separated(
