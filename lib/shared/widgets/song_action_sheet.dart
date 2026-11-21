@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -699,21 +700,32 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
           colors,
           label: context.tr('歌曲'),
           value: song.title,
-          onTap: () => _searchFor(song.title),
+          // 复制纯歌名；搜索带「- 歌手」后缀（见 [_songSearchKeyword]）。
+          onTap: () {
+            _copyMetaValue(song.title);
+            _searchFor(_songSearchKeyword(song));
+          },
         ),
         if (song.artist.trim().isNotEmpty)
           _buildMetaRow(
             colors,
             label: context.tr('歌手'),
             value: song.artist,
-            onTap: () => unawaited(_openArtist()),
+            onTap: () {
+              _copyMetaValue(song.artist);
+              unawaited(_openArtist());
+            },
           ),
         if (album != null)
           _buildMetaRow(
             colors,
             label: context.tr('专辑'),
             value: '《$album》',
-            onTap: _openAlbum,
+            onTap: () {
+              // 复制纯专辑名（界面上显示的《》书名号不带进剪贴板）。
+              _copyMetaValue(album);
+              _openAlbum();
+            },
           ),
         if (localInfo != null)
           _buildMetaRow(colors, label: context.tr('信息'), value: localInfo),
@@ -973,6 +985,33 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  /// 歌曲名行的搜索关键字：「歌名 - 歌手」。歌手原样保留插件给的分隔符
+  /// （如「封茗囧菌、千月兔」）；没有歌手时就是纯歌名。
+  String _songSearchKeyword(Song song) {
+    final title = song.title.trim();
+    final artist = song.artist.trim();
+    if (artist.isEmpty) return title;
+    return '$title - $artist';
+  }
+
+  /// Android / Windows：点击歌曲名 / 歌手 / 专辑行时，把对应名称复制到
+  /// 剪贴板（搜索跳转同时进行，互不影响）。其它平台不做复制。
+  void _copyMetaValue(String text) {
+    if (!Platform.isAndroid && !Platform.isWindows) return;
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return;
+    unawaited(Clipboard.setData(ClipboardData(text: trimmed)));
+    // 弹层马上会被 pop（点歌名 / 专辑会跳搜索页）：snackbar 挂在根
+    // ScaffoldMessenger 上，pop 之后在目标页仍然可见。
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(context.tr('已复制到剪贴板')),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
       ),
     );
   }
