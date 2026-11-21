@@ -2307,12 +2307,16 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   Future<void> removeFromQueue(int index) async {
     if (index < 0 || index >= state.queue.length) return;
     final newQueue = List<Song>.from(state.queue);
-    final removedSong = newQueue.removeAt(index);
+    newQueue.removeAt(index);
+    // 用「下标 == 当前下标」判断，不能用「id == 当前歌 id」：队列里可能出现
+    // 同一首歌的重复项，而且旧写法在 copyWith 之后才比较（currentSong 已经
+    // 换成下一首），条件恒为假，「移除正在播放的歌」就永远不会切歌。
+    final removingCurrent = index == _currentIndex;
     int newIndex = _currentIndex;
 
     if (index < newIndex) {
       newIndex--;
-    } else if (removedSong.id == state.currentSong?.id) {
+    } else if (removingCurrent) {
       // 移除的是当前歌曲，播放下一首
       if (newQueue.isEmpty) {
         await clearQueue();
@@ -2334,7 +2338,60 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     );
 
     // 如果移除的是当前歌曲，播放新的当前歌曲
-    if (removedSong.id == state.currentSong?.id && newCurrentSong != null) {
+    if (removingCurrent && newCurrentSong != null) {
+      await playSongAt(newIndex);
+    }
+  }
+
+  /// 从队列中移除所有指定 id 的歌曲（本地歌曲删除时同步播放队列）。
+  ///
+  /// 一次重排到位：正在播放的那首被删掉时直接切到它后面第一首还存活的歌
+  /// （后面没有就取最后一首存活的），而不是逐首 [removeFromQueue]——那样
+  /// 中间待删的歌会被短暂播放一遍；队列删空则清空队列。不在队列里的 id
+  /// 直接跳过。
+  Future<void> removeSongsByIds(Iterable<String> ids) async {
+    final doomed = ids.toSet();
+    if (doomed.isEmpty || state.queue.isEmpty) return;
+    final oldQueue = state.queue;
+    final oldIndex = _currentIndex.clamp(0, oldQueue.length - 1);
+    final newQueue = <Song>[
+      for (final song in oldQueue)
+        if (!doomed.contains(song.id)) song,
+    ];
+    if (newQueue.length == oldQueue.length) return; // 队列里没有要删的歌
+
+    final removedCurrent = doomed.contains(oldQueue[oldIndex].id);
+    if (removedCurrent && newQueue.isEmpty) {
+      await clearQueue();
+      return;
+    }
+
+    // 新的当前下标：当前歌没被删 = 它之前存活的歌的数量；被删 = 它后面
+    // 第一首存活的歌在新队列里的位置（后面没有就取最后一首）。
+    int newIndex;
+    if (!removedCurrent) {
+      newIndex = 0;
+      for (var i = 0; i < oldIndex; i++) {
+        if (!doomed.contains(oldQueue[i].id)) newIndex++;
+      }
+    } else {
+      newIndex = newQueue.length - 1;
+      for (var i = oldIndex + 1; i < oldQueue.length; i++) {
+        if (!doomed.contains(oldQueue[i].id)) {
+          newIndex = newQueue.indexOf(oldQueue[i]);
+          break;
+        }
+      }
+    }
+
+    final newCurrentSong = newQueue.isEmpty ? null : newQueue[newIndex];
+    state = state.copyWith(
+      queue: newQueue,
+      currentIndex: newIndex,
+      currentSong: newCurrentSong,
+    );
+
+    if (removedCurrent && newCurrentSong != null) {
       await playSongAt(newIndex);
     }
   }

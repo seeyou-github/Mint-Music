@@ -1094,9 +1094,7 @@ class _LocalPageState extends ConsumerState<LocalPage>
             GestureDetector(
               // 没有目录时扫描没有任何意义，直接引导去选目录（选完关闭
               // 目录弹框会自动扫一次，见 _showDirModal）。
-              onTap: noDirectory
-                  ? () => _showDirModal(colors)
-                  : _scanLibrary,
+              onTap: noDirectory ? () => _showDirModal(colors) : _scanLibrary,
               child: Container(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 24,
@@ -1274,6 +1272,12 @@ class _LocalPageState extends ConsumerState<LocalPage>
     );
     if (confirmed != true || !mounted) return;
 
+    // 先把这些歌从播放队列里摘掉（正在播放的那首会切到下一首），再删文件：
+    // 否则 Windows 上 mpv 还占着文件句柄，删除会因共享冲突失败。
+    await ref
+        .read(playbackControllerProvider.notifier)
+        .removeSongsByIds(selected.map((song) => song.id));
+
     final removed = await ref
         .read(localMusicNotifierProvider.notifier)
         .deleteSongs(selected);
@@ -1344,6 +1348,12 @@ class _LocalPageState extends ConsumerState<LocalPage>
       ),
     );
     if (confirmed != true || !mounted) return;
+
+    // 先把这首歌从播放队列里摘掉（正在播放就切到下一首），再删文件：
+    // 否则 Windows 上 mpv 还占着文件句柄，删除会因共享冲突失败。
+    await ref.read(playbackControllerProvider.notifier).removeSongsByIds([
+      song.id,
+    ]);
 
     final ok = await ref
         .read(localMusicNotifierProvider.notifier)
@@ -1545,7 +1555,8 @@ class _LocalPageState extends ConsumerState<LocalPage>
                   // 按钮就会浮在弹窗边缘上方一截，看着像没贴底。
                   padding: EdgeInsets.only(
                     bottom:
-                        MediaQuery.of(context).viewInsets.bottom + bottomPadding,
+                        MediaQuery.of(context).viewInsets.bottom +
+                        bottomPadding,
                   ),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -1764,9 +1775,7 @@ class _LocalPageState extends ConsumerState<LocalPage>
                                     ScaffoldMessenger.of(context).showSnackBar(
                                       SnackBar(
                                         content: Text(
-                                          context.tr(
-                                            '未设置扫描目录时不会扫描任何音乐',
-                                          ),
+                                          context.tr('未设置扫描目录时不会扫描任何音乐'),
                                         ),
                                         duration: const Duration(seconds: 2),
                                       ),
@@ -1907,201 +1916,210 @@ class _LocalSongItem extends ConsumerWidget {
     // （深色主题白 4% / 浅色主题黑 4%）；本地列表没有 InkWell，由
     // SongRowHover 补上这层悬浮反馈。
     final hoverColor = Theme.of(context).hoverColor;
-    return SongRowHover(hoverColor: hoverColor, child: SizedBox(
-      // 固定行高，保证 itemExtent 与实际布局一致
-      height: itemExtent,
-      child: GestureDetector(
-        onTap: selectionMode
-            ? () => onSelectionToggle?.call(song)
-            : blocked
-            ? () => _showBlockedHint(context)
-            : () => onPlay(song),
-        onLongPress: selectionMode ? null : onLongPress,
-        child: Container(
-          // 左右内边距减半（8 → 4），上下保持 8：行高 64 = 封面 48 + 上下各 8，
-          // 竖向一旦改动，`itemExtent` 定位就会偏。
-          // Windows 上改用与共享列表统一的 [wideSongRowPadding]（外层不再叠加
-          // 8dp），序号左边距与「更多」按钮右边距相等。
-          padding: EdgeInsets.symmetric(
-            horizontal: useWideSongRowSpacing
-                ? wideSongRowPadding
-                : AppSpacing.xs,
-            vertical: AppSpacing.sm,
-          ),
-          decoration: BoxDecoration(
-            color: selected
-                ? colors.primary.withValues(alpha: 0.10)
-                : (isPlaying
-                      ? colors.primary.withValues(alpha: 0.08)
-                      : Colors.transparent),
-            borderRadius: BorderRadius.circular(AppRadius.md),
-          ),
-          child: Row(
-            children: [
-              // 序号 / 勾选框
-              SizedBox(
-                // 宽度按整库最大序号的位数自适应（两位数只有十几像素），
-                // 多选模式下至少留出勾选框的位置。
-                width: _indexWidth(context),
-                child: selectionMode
-                    ? IgnorePointer(
-                        // 只做展示：整行点击由外层 GestureDetector 处理
-                        child: Checkbox(
-                          value: selected,
-                          onChanged: (_) {},
-                          activeColor: colors.primary,
-                          visualDensity: VisualDensity.compact,
-                          materialTapTargetSize:
-                              MaterialTapTargetSize.shrinkWrap,
-                        ),
-                      )
-                    : Padding(
-                        // Windows 上序号左右各留 12dp：序号列变宽、序号不贴
-                        // 屏幕边缘也不贴封面，与共享列表一致。
-                        padding: EdgeInsets.symmetric(
-                          horizontal: useWideSongRowSpacing
-                              ? wideSongIndexInset
-                              : 0,
-                        ),
-                        child: isPlaying
-                            ? Icon(
-                                Icons.play_arrow,
-                                size: 18,
-                                color: colors.primary,
-                              )
-                            : Text(
-                                '${index + 1}',
-                                // 序号贴着列表左边，不再居中留一大块空白。
-                                textAlign: TextAlign.left,
-                                maxLines: 1,
-                                softWrap: false,
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  // 序号用「第二字体颜色」：浅色主题下 textHint 太淡。
-                                  color: colors.textSecondary,
-                                  fontWeight: FontWeight.w500,
+    return SongRowHover(
+      hoverColor: hoverColor,
+      child: SizedBox(
+        // 固定行高，保证 itemExtent 与实际布局一致
+        height: itemExtent,
+        child: GestureDetector(
+          onTap: selectionMode
+              ? () => onSelectionToggle?.call(song)
+              : blocked
+              ? () => _showBlockedHint(context)
+              : () => onPlay(song),
+          onLongPress: selectionMode ? null : onLongPress,
+          child: Container(
+            // 左右内边距减半（8 → 4），上下保持 8：行高 64 = 封面 48 + 上下各 8，
+            // 竖向一旦改动，`itemExtent` 定位就会偏。
+            // Windows 上改用与共享列表统一的 [wideSongRowPadding]（外层不再叠加
+            // 8dp），序号左边距与「更多」按钮右边距相等。
+            padding: EdgeInsets.symmetric(
+              horizontal: useWideSongRowSpacing
+                  ? wideSongRowPadding
+                  : AppSpacing.xs,
+              vertical: AppSpacing.sm,
+            ),
+            decoration: BoxDecoration(
+              color: selected
+                  ? colors.primary.withValues(alpha: 0.10)
+                  : (isPlaying
+                        ? colors.primary.withValues(alpha: 0.08)
+                        : Colors.transparent),
+              borderRadius: BorderRadius.circular(AppRadius.md),
+            ),
+            child: Row(
+              children: [
+                // 序号 / 勾选框
+                SizedBox(
+                  // 宽度按整库最大序号的位数自适应（两位数只有十几像素），
+                  // 多选模式下至少留出勾选框的位置。
+                  width: _indexWidth(context),
+                  child: selectionMode
+                      ? IgnorePointer(
+                          // 只做展示：整行点击由外层 GestureDetector 处理
+                          child: Checkbox(
+                            value: selected,
+                            onChanged: (_) {},
+                            activeColor: colors.primary,
+                            visualDensity: VisualDensity.compact,
+                            materialTapTargetSize:
+                                MaterialTapTargetSize.shrinkWrap,
+                          ),
+                        )
+                      : Padding(
+                          // Windows 上序号左右各留 12dp：序号列变宽、序号不贴
+                          // 屏幕边缘也不贴封面，与共享列表一致。
+                          padding: EdgeInsets.symmetric(
+                            horizontal: useWideSongRowSpacing
+                                ? wideSongIndexInset
+                                : 0,
+                          ),
+                          child: isPlaying
+                              ? Icon(
+                                  Icons.play_arrow,
+                                  size: 18,
+                                  color: colors.primary,
+                                )
+                              : Text(
+                                  '${index + 1}',
+                                  // 序号贴着列表左边，不再居中留一大块空白。
+                                  textAlign: TextAlign.left,
+                                  maxLines: 1,
+                                  softWrap: false,
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    // 序号用「第二字体颜色」：浅色主题下 textHint 太淡。
+                                    color: colors.textSecondary,
+                                    fontWeight: FontWeight.w500,
+                                  ),
                                 ),
-                              ),
-                      ),
-              ),
-              const SizedBox(width: AppSpacing.sm),
-              Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  color: colors.surface,
-                  borderRadius: BorderRadius.circular(AppRadius.sm),
+                        ),
                 ),
-                // 优先使用 coverUrl（精准匹配后的在线封面），再回退到设备本地封面
-                child: song.coverUrl != null && song.coverUrl!.isNotEmpty
-                    ? ClipRRect(
-                        borderRadius: BorderRadius.circular(AppRadius.sm),
-                        child: MusicCoverImage(
-                          key: ValueKey('local_cover_${song.id}'),
-                          url: song.coverUrl,
-                          fit: BoxFit.cover,
-                          width: 48,
-                          height: 48,
-                          errorWidget: Icon(
-                            isPlaying ? Icons.equalizer : Icons.music_note,
-                            size: 22,
-                            color: isPlaying ? colors.primary : colors.textHint,
-                          ),
-                        ),
-                      )
-                    : ClipRRect(
-                        borderRadius: BorderRadius.circular(AppRadius.sm),
-                        child: MusicCoverImage(
-                          key: ValueKey('local_cover_${song.id}'),
-                          songId: song.id,
-                          filePath: song.filePath,
-                          // 桌面端没有 MediaStore，封面来自扫描时写入的封面缓存
-                          mediaStoreId: song.mediaStoreId,
-                          fit: BoxFit.cover,
-                          width: 48,
-                          height: 48,
-                          errorWidget: Icon(
-                            isPlaying ? Icons.equalizer : Icons.music_note,
-                            size: 22,
-                            color: isPlaying ? colors.primary : colors.textHint,
-                          ),
-                        ),
-                      ),
-              ),
-              const SizedBox(width: AppSpacing.md),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      song.title,
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                        // 与在线歌曲一致：黑名单里的歌名变灰，表示放不了。
-                        color: blocked
-                            ? colors.textPrimary.withValues(alpha: 0.45)
-                            : (isPlaying ? colors.primary : colors.textPrimary),
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 2),
-                    Row(
-                      children: [
-                        if (blocked) _buildBlacklistTag(colors, context),
-                        Expanded(
-                          child: Text(
-                            song.artist,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: colors.textSecondary,
+                const SizedBox(width: AppSpacing.sm),
+                Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: colors.surface,
+                    borderRadius: BorderRadius.circular(AppRadius.sm),
+                  ),
+                  // 优先使用 coverUrl（精准匹配后的在线封面），再回退到设备本地封面
+                  child: song.coverUrl != null && song.coverUrl!.isNotEmpty
+                      ? ClipRRect(
+                          borderRadius: BorderRadius.circular(AppRadius.sm),
+                          child: MusicCoverImage(
+                            key: ValueKey('local_cover_${song.id}'),
+                            url: song.coverUrl,
+                            fit: BoxFit.cover,
+                            width: 48,
+                            height: 48,
+                            errorWidget: Icon(
+                              isPlaying ? Icons.equalizer : Icons.music_note,
+                              size: 22,
+                              color: isPlaying
+                                  ? colors.primary
+                                  : colors.textHint,
                             ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                          ),
+                        )
+                      : ClipRRect(
+                          borderRadius: BorderRadius.circular(AppRadius.sm),
+                          child: MusicCoverImage(
+                            key: ValueKey('local_cover_${song.id}'),
+                            songId: song.id,
+                            filePath: song.filePath,
+                            // 桌面端没有 MediaStore，封面来自扫描时写入的封面缓存
+                            mediaStoreId: song.mediaStoreId,
+                            fit: BoxFit.cover,
+                            width: 48,
+                            height: 48,
+                            errorWidget: Icon(
+                              isPlaying ? Icons.equalizer : Icons.music_note,
+                              size: 22,
+                              color: isPlaying
+                                  ? colors.primary
+                                  : colors.textHint,
+                            ),
                           ),
                         ),
-                      ],
-                    ),
-                  ],
                 ),
-              ),
-              // 收藏红心：放在时长左侧，与其它歌曲列表一致；悬停时出现空心，
-              // 点一下直接收藏，已收藏则实心。
-              if (!selectionMode) SongFavoriteHeart(song: song),
-              if (song.duration > 0)
-                Text(
-                  song.displayDuration,
-                  style: TextStyle(fontSize: 12, color: colors.textSecondary),
-                ),
-              // 多选模式下隐藏「更多」按钮，避免与选择手势冲突
-              if (!selectionMode) ...[
-                const SizedBox(width: AppSpacing.xs),
-                GestureDetector(
-                  onTap: () => onContextMenu(colors, song),
-                  child: Padding(
-                    // 右侧只留 2（原来 4），配合行内 4px：⋮ 到屏幕边缘
-                    // 由 28 收到 14。Windows 上放宽到 4，让按钮内侧留白
-                    // ≈12dp，与共享列表的「更多」按钮一致，左右边距相等。
-                    padding: EdgeInsets.only(
-                      left: AppSpacing.xs,
-                      right: useWideSongRowSpacing ? AppSpacing.xs : 2,
-                      top: AppSpacing.xs,
-                      bottom: AppSpacing.xs,
-                    ),
-                    child: Icon(
-                      Icons.more_vert,
-                      size: 18,
-                      color: colors.textSecondary,
-                    ),
+                const SizedBox(width: AppSpacing.md),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        song.title,
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                          // 与在线歌曲一致：黑名单里的歌名变灰，表示放不了。
+                          color: blocked
+                              ? colors.textPrimary.withValues(alpha: 0.45)
+                              : (isPlaying
+                                    ? colors.primary
+                                    : colors.textPrimary),
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 2),
+                      Row(
+                        children: [
+                          if (blocked) _buildBlacklistTag(colors, context),
+                          Expanded(
+                            child: Text(
+                              song.artist,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: colors.textSecondary,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
                 ),
+                // 收藏红心：放在时长左侧，与其它歌曲列表一致；悬停时出现空心，
+                // 点一下直接收藏，已收藏则实心。
+                if (!selectionMode) SongFavoriteHeart(song: song),
+                if (song.duration > 0)
+                  Text(
+                    song.displayDuration,
+                    style: TextStyle(fontSize: 12, color: colors.textSecondary),
+                  ),
+                // 多选模式下隐藏「更多」按钮，避免与选择手势冲突
+                if (!selectionMode) ...[
+                  const SizedBox(width: AppSpacing.xs),
+                  GestureDetector(
+                    onTap: () => onContextMenu(colors, song),
+                    child: Padding(
+                      // 右侧只留 2（原来 4），配合行内 4px：⋮ 到屏幕边缘
+                      // 由 28 收到 14。Windows 上放宽到 4，让按钮内侧留白
+                      // ≈12dp，与共享列表的「更多」按钮一致，左右边距相等。
+                      padding: EdgeInsets.only(
+                        left: AppSpacing.xs,
+                        right: useWideSongRowSpacing ? AppSpacing.xs : 2,
+                        top: AppSpacing.xs,
+                        bottom: AppSpacing.xs,
+                      ),
+                      child: Icon(
+                        Icons.more_vert,
+                        size: 18,
+                        color: colors.textSecondary,
+                      ),
+                    ),
+                  ),
+                ],
               ],
-            ],
+            ),
           ),
         ),
       ),
-    ));
+    );
   }
 
   /// 黑名单标签（与在线歌曲列表同款，显示在歌手名左侧）。
