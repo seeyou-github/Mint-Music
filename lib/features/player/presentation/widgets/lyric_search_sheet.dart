@@ -676,8 +676,10 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
         ),
       );
     }
+    // 卡片高度：三行文本（歌名 / 歌手 / 专辑·年份·时长）+ 内边距，62 会
+    // 溢出 5px 把元信息行整个裁掉。
     return SizedBox(
-      height: 62,
+      height: 76,
       child: ScrollConfiguration(
         behavior: const _ResultsScrollBehavior(),
         child: ListView.separated(
