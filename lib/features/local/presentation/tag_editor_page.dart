@@ -100,14 +100,9 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
   bool _useCandidateInfo = true;
   bool _useCandidateLyric = true;
 
-  /// 文件里歌名 + 歌手都有标签：搜索框拆成两个，并按这两个字段精确过滤结果。
+  /// 文件里歌名 + 歌手都有标签：搜索框拆成两个，结果按「精确匹配优先」
+  /// 排序（匹配的排最前 / 最左，其余结果保持原顺序跟在后面，全部显示）。
   bool _splitSearchFields = false;
-
-  /// 本次搜索放弃精确过滤（过滤后一条都没有时，用户点「显示全部结果」）。
-  bool _ignoreExactMatch = false;
-
-  /// 精确过滤把搜索结果全滤掉了（界面给出「显示全部结果」的出口）。
-  bool _exactMatchBlocked = false;
 
   /// 自动搜索只触发一次（从快速匹配页的「匹配」按钮进来时）。
   bool _autoSearchTriggered = false;
@@ -272,7 +267,8 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
       _searchController.text = _searchKeywordFor(song);
       _searchTitleController.text = song.title;
       _searchArtistController.text = song.artist;
-      // 文件里歌名 + 歌手都有标签：搜索框拆成两个，并按两个字段精确过滤。
+      // 文件里歌名 + 歌手都有标签：搜索框拆成两个，结果按「精确匹配优先」
+      // 排序显示。
       _splitSearchFields =
           !_isUnknownTitle(song.title) && !_isUnknownArtist(song.artist);
     });
@@ -318,7 +314,8 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
       if (!mounted) return;
       setState(() {
         _fileMeta = metadata;
-        // 索引里缺歌名 / 歌手时用文件标签补（在线搜索要按这两个字段精确匹配）。
+        // 索引里缺歌名 / 歌手时用文件标签补（在线搜索按这两个字段把精确
+        // 匹配的结果排到最前）。
         if (_isUnknownTitle(song.title) && !_isUnknownTitle(metadata.title)) {
           _titleController.text = metadata.title!;
           _baseTitle = _titleController.text;
@@ -1357,18 +1354,10 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(
-            Icons.search,
-            size: 48,
-            color: colors.textHint,
-          ),
+          Icon(Icons.search, size: 48, color: colors.textHint),
           const SizedBox(height: AppSpacing.md),
           Text(
-            keyword.isEmpty
-                ? context.tr('输入关键词开始搜索')
-                : _exactMatchBlocked
-                ? context.tr('没有精确匹配的结果')
-                : context.tr('未找到相关结果'),
+            keyword.isEmpty ? context.tr('输入关键词开始搜索') : context.tr('未找到相关结果'),
             style: TextStyle(color: colors.textHint, fontSize: 14),
           ),
           if (_searchError != null) ...[
@@ -1380,19 +1369,6 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 12, color: colors.textHint),
               ),
-            ),
-          ],
-          if (_exactMatchBlocked) ...[
-            const SizedBox(height: AppSpacing.sm),
-            TextButton(
-              onPressed: () {
-                setState(() {
-                  _ignoreExactMatch = true;
-                  _exactMatchBlocked = false;
-                });
-                unawaited(_handleSearch());
-              },
-              child: Text(context.tr('显示全部结果')),
             ),
           ],
         ],
@@ -1414,8 +1390,8 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
     return _searchController.text.trim();
   }
 
-  /// 是否按「歌曲名 + 歌手」精确过滤结果。
-  bool get _exactMatchActive => _splitSearchFields && !_ignoreExactMatch;
+  /// 是否按「歌曲名 + 歌手」给结果排序（精确匹配的排前面）。
+  bool get _exactMatchActive => _splitSearchFields;
 
   /// 精确匹配时要去掉的字符：空白与常见标点 / 括号（全角半角都算），
   /// 「你的样子（女版）」与「你的样子 (女版)」这种排版差异不该影响匹配。
@@ -1445,15 +1421,19 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
         artist.contains(resultArtist);
   }
 
-  List<Song> _filterExactMatches(List<Song> results) {
+  /// 精确匹配的结果排到最前（横向列表的左侧），其余结果保持原顺序跟在
+  /// 后面——不隐藏任何结果，交给用户自己判断。
+  List<Song> _sortExactMatchesFirst(List<Song> results) {
     if (!_exactMatchActive) return results;
     final title = _normalizeForMatch(_searchTitleController.text);
     final artist = _normalizeForMatch(_searchArtistController.text);
     if (title.isEmpty || artist.isEmpty) return results;
-    return [
-      for (final song in results)
-        if (_matchesExactly(song, title, artist)) song,
-    ];
+    final exact = <Song>[];
+    final others = <Song>[];
+    for (final song in results) {
+      (_matchesExactly(song, title, artist) ? exact : others).add(song);
+    }
+    return [...exact, ...others];
   }
 
   Song? get _currentCandidate {
@@ -1503,17 +1483,11 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
   Future<void> _handleSearch() async {
     final keyword = _queryText();
     if (keyword.isEmpty || _searching) return;
-    // 换了搜索词才算新搜索：重新允许精确过滤。同一个词重搜（比如点了
-    // 「显示全部结果」后）要保留用户放行全部结果的选择，否则按钮不生效。
-    if (_splitSearchFields && keyword != _lastSearchKeyword) {
-      _ignoreExactMatch = false;
-    }
     _lastSearchKeyword = keyword;
 
     setState(() {
       _searching = true;
       _searchError = null;
-      _exactMatchBlocked = false;
       _searchResults = const <Song>[];
       _selectedIndex = 0;
       _candidateLyric = null;
@@ -1550,16 +1524,13 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
         limit: 30,
       );
       if (!mounted) return;
-      final filtered = _filterExactMatches(results);
+      final sorted = _sortExactMatchesFirst(results);
       setState(() {
         _searching = false;
-        _searchResults = filtered;
+        _searchResults = sorted;
         _selectedIndex = 0;
-        // 精确过滤把结果全滤掉了：给用户一个「显示全部结果」的出口。
-        _exactMatchBlocked =
-            filtered.isEmpty && results.isNotEmpty && _exactMatchActive;
       });
-      if (filtered.isNotEmpty) _selectCandidate(0);
+      if (sorted.isNotEmpty) _selectCandidate(0);
     } catch (e) {
       if (!mounted) return;
       setState(() {
