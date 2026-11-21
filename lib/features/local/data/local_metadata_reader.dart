@@ -303,29 +303,42 @@ class LocalMetadataReader {
       final frame = _parseMpegFrameHeader(buffer, i);
       if (frame == null) continue;
 
-      // Xing / Info 头（VBR 精确时长）
+      // Xing / Info / VBRI 头（VBR 精确时长）。VBRI 是 Fraunhofer 编码器
+      // 写的另一种 VBR 头（布局与 Xing 不同：帧数在 +14 而不是 +8），
+      // 不认它的话只能退回「按首帧码率估算」——VBR 文件会差出一大截。
       final sideInfo = frame.version == 1
           ? (frame.channelMode == 3 ? 17 : 32)
           : (frame.channelMode == 3 ? 9 : 17);
       final xingOffset = i + 4 + sideInfo;
-      if (xingOffset + 12 <= buffer.length) {
+      if (xingOffset + 18 <= buffer.length) {
         final tag = String.fromCharCodes(
           buffer.sublist(xingOffset, xingOffset + 4),
         );
+        var frames = 0;
         if (tag == 'Xing' || tag == 'Info') {
           final flags = _be32(buffer, xingOffset + 4);
-          if ((flags & 0x01) != 0) {
-            final frames = _be32(buffer, xingOffset + 8);
-            if (frames > 0 && frame.sampleRate > 0) {
-              final total =
-                  frames * frame.samplesPerFrame * 1000 ~/ frame.sampleRate;
-              return total;
-            }
-          }
+          if ((flags & 0x01) != 0) frames = _be32(buffer, xingOffset + 8);
+        } else if (tag == 'VBRI') {
+          // VBRI：+10 = 音频字节数，+14 = 帧数。
+          frames = _be32(buffer, xingOffset + 14);
+        }
+        if (frames > 0 && frame.sampleRate > 0) {
+          final total =
+              frames * frame.samplesPerFrame * 1000 ~/ frame.sampleRate;
+          return total;
         }
       }
 
-      // 退化为按平均码率估算
+      // 没有 VBR 头（或没带帧数）：逐帧走一遍统计帧数——VBR 文件按首帧
+      // 码率估算会差出一大截（首帧码率 ≠ 平均码率）。
+      final counted = await _countMpegFrames(raf, audioStart + i, fileLength);
+      if (counted != null && frame.sampleRate > 0) {
+        final total =
+            counted * frame.samplesPerFrame * 1000 ~/ frame.sampleRate;
+        if (total > 0) return total;
+      }
+
+      // 兜底：按首帧码率估算（尽力而为）
       if (frame.bitrate > 0) {
         final audioBytes = fileLength - audioStart;
         return (audioBytes * 8 * 1000) ~/ frame.bitrate;
@@ -335,6 +348,41 @@ class LocalMetadataReader {
     return null;
   }
 
+  /// 从 [start] 起逐帧走一遍统计 MPEG 帧数（无 Xing/VBRI 的 VBR 文件用）。
+  ///
+  /// 分块读文件，帧跨块时从帧起点重新定位；某一块完全扫不出合法帧头
+  /// （音频结束后的尾部垃圾）就按已统计的帧数收工。
+  static Future<int?> _countMpegFrames(
+    RandomAccessFile raf,
+    int start,
+    int fileLength,
+  ) async {
+    var pos = start;
+    var frames = 0;
+    while (pos + 4 <= fileLength) {
+      final remaining = fileLength - pos;
+      final size = remaining > 256 * 1024 ? 256 * 1024 : remaining;
+      await raf.setPosition(pos);
+      final buffer = await raf.read(size);
+      if (buffer.length < 4) break;
+      var i = 0;
+      var parsedAny = false;
+      while (i + 4 <= buffer.length) {
+        final frame = _parseMpegFrameHeader(buffer, i);
+        if (frame == null) {
+          i++;
+          continue;
+        }
+        frames++;
+        i += frame.frameSize;
+        parsedAny = true;
+      }
+      if (!parsedAny) break; // 音频结束了（后面是尾部垃圾 / 其它数据）
+      pos += i;
+    }
+    return frames > 0 ? frames : null;
+  }
+
   /// 解析 MPEG 帧头，返回码率（bps）/采样率/每帧采样数等信息。
   static ({
     int bitrate,
@@ -342,6 +390,7 @@ class LocalMetadataReader {
     int samplesPerFrame,
     int version,
     int channelMode,
+    int frameSize,
   })?
   _parseMpegFrameHeader(Uint8List buffer, int offset) {
     if (offset + 4 > buffer.length) return null;
@@ -484,12 +533,19 @@ class LocalMetadataReader {
 
     final channelMode = (b3 >> 6) & 0x03;
 
+    // 帧大小（字节）：Layer I 每帧 384 采样 ×4 字节组；II/III 按码率/采样率。
+    final padding = (b2 >> 1) & 0x01;
+    final frameSize = isLayer1
+        ? (48 * kbps * 1000 ~/ sampleRate + padding) * 4
+        : samplesPerFrame ~/ 8 * kbps * 1000 ~/ sampleRate + padding;
+
     return (
       bitrate: kbps * 1000,
       sampleRate: sampleRate,
       samplesPerFrame: samplesPerFrame,
       version: isVersion1 ? 1 : 2,
       channelMode: channelMode,
+      frameSize: frameSize > 0 ? frameSize : 1,
     );
   }
 
