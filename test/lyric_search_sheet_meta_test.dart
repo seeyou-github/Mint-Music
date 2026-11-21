@@ -246,11 +246,19 @@ void main() {
     // 结果卡片渲染出来了（三张卡片的歌名 + 输入框里也有同名文字）。
     expect(find.text('化风行万里'), findsNWidgets(4));
 
-    // 卡片 1：专辑 / 年份 / 时长 都有 → 全部显示。
-    expect(find.text('化风行万里 · 2022 · 4:25'), findsOneWidget);
-    // 卡片 3：没有专辑，只有年份 + 时长。
-    expect(find.text('风行合集 · 2023 · 5:00'), findsOneWidget);
-    // 卡片 2：三者皆缺 → 元信息行为空文本（不显示内容但仍占一行）。
-    expect(find.text(''), findsWidgets);
+    // 本地歌曲信息行（合并单行）。
+    expect(find.text('专辑：化风行万里　·　年份：2022　·　时长：4:25'), findsOneWidget);
+    // 卡片 1：专辑 / 年份 / 时长 各占一行。
+    expect(find.text('专辑：化风行万里'), findsOneWidget);
+    expect(find.text('年份：2022'), findsOneWidget);
+    expect(find.text('时长：4:25'), findsOneWidget);
+    // 卡片 3：只有年份 / 时长，专辑缺失显示 —。
+    expect(find.text('专辑：风行合集'), findsOneWidget);
+    expect(find.text('年份：2023'), findsOneWidget);
+    expect(find.text('时长：5:00'), findsOneWidget);
+    // 卡片 2：三者皆缺 → 显示 —。
+    expect(find.text('专辑：—'), findsOneWidget);
+    expect(find.text('年份：—'), findsOneWidget);
+    expect(find.text('时长：—'), findsOneWidget);
   });
 }

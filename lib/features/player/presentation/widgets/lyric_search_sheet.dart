@@ -646,16 +646,6 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
     );
   }
 
-  /// 搜索结果卡片上的元信息行（专辑 · 年份 · 时长）。
-  String _resultMetaLine(Song song) {
-    final parts = <String>[
-      if (song.album.trim().isNotEmpty) song.album,
-      if ((song.year ?? 0) > 0) '${song.year}',
-      if (song.displayDuration.isNotEmpty) song.displayDuration,
-    ];
-    return parts.join(' · ');
-  }
-
   Widget _buildResults(ThemeColors colors) {
     final hideCover = ref.watch(songListHideCoverProvider);
     if (_searching && _results.isEmpty) {
@@ -676,10 +666,10 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
         ),
       );
     }
-    // 卡片高度：三行文本（歌名 / 歌手 / 专辑·年份·时长）+ 内边距，62 会
-    // 溢出 5px 把元信息行整个裁掉。
+    // 卡片高度：歌名 / 歌手 / 专辑 / 年份 / 时长 各占一行（每行独立展示，
+    // 不再合并成一行被截断），62/76 都会溢出裁掉后面的字段。
     return SizedBox(
-      height: 76,
+      height: 108,
       child: ScrollConfiguration(
         behavior: const _ResultsScrollBehavior(),
         child: ListView.separated(
@@ -754,7 +744,33 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
                           ),
                           const SizedBox(height: 2),
                           Text(
-                            _resultMetaLine(song),
+                            song.album.trim().isEmpty
+                                ? context.tr('专辑：—')
+                                : '${context.tr('专辑')}：${song.album}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: colors.textHint,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            (song.year ?? 0) > 0
+                                ? '${context.tr('年份')}：${song.year}'
+                                : context.tr('年份：—'),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: colors.textHint,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            song.displayDuration.isNotEmpty
+                                ? '${context.tr('时长')}：${song.displayDuration}'
+                                : context.tr('时长：—'),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
