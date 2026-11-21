@@ -18,6 +18,7 @@ import '../data/lx_plugin_converter.dart';
 import '../data/plugin_credential_store.dart';
 import '../data/source_health_store.dart';
 import '../../../shared/utils/ico_converter.dart';
+import '../domain/plugin_types.dart';
 import '../domain/source_id_mapping.dart';
 import '../domain/source_login_state.dart';
 import '../domain/plugin_subscription.dart';
@@ -742,6 +743,8 @@ class PluginService {
       }
 
       final plugins = await loadPlugins();
+      // 重复判定与派生 id 对齐：同「名称+版本」（老 id 插件）或派生出相同
+      // id（新 id 插件）都算已存在。
       final duplicate = plugins.where(
         (p) => p.name == pluginInfo.name && p.version == pluginInfo.version,
       );
@@ -752,7 +755,7 @@ class PluginService {
         );
       }
 
-      final pluginId = DateTime.now().millisecondsSinceEpoch.toRadixString(16);
+      final pluginId = _derivePluginId(host, pluginInfo, type);
       _pluginTypes[pluginId] = type;
       // 新插件追加到顺序表末尾：`enabledPlugins` 按它排，不追加的话新装的
       // 插件这一轮只能靠兜底排到最后，音源列表顺序会和重启后不一致。
@@ -1166,6 +1169,42 @@ class PluginService {
     } catch (e) {
       print('[PluginService] 同步插件图标失败: $e');
     }
+  }
+
+  /// 插件 id：`<标识>-<author>-<version>`。
+  ///
+  /// - MusicFree（ceruMusic）格式：标识 = 首个音源名派生的平台 id（tx / wy / kg …）
+  /// - 洛雪（lx）格式：标识 = 脚本名 name
+  ///
+  /// 同一插件重装（版本不变）→ id 不变：源 id（`平台@插件id`）、音源开关、
+  /// 数据源→播放源映射、图标缓存（icons/<id>.png）等按 id 绑定的数据在
+  /// 重装后全部保持有效。升级版本 → version 变了 → id 变化，属于预期
+  /// （更新流程会把数据源映射迁到新 id，图标按新 id 重新缓存）。
+  static String _derivePluginId(
+    PluginHost host,
+    PluginMetadata info,
+    String? type,
+  ) {
+    final isLx = host.isLxAdapter || type == 'lx';
+    final head = isLx
+        ? info.name.trim()
+        : SourceIdMapping.deriveId(host.sources.firstOrNull?.name ?? info.name);
+    final author = info.author.trim();
+    final segments = [
+      head.trim().isEmpty ? 'plugin' : head.trim(),
+      if (author.isNotEmpty) author,
+      info.version.trim().isEmpty ? '0.0' : info.version.trim(),
+    ];
+    return _sanitizePluginId(segments.join('-'));
+  }
+
+  /// id 会进插件文件名与图标文件名：把文件系统不安全的字符（含空白）换成
+  /// `_`，其余（含中日韩文字、点号）原样保留，并限制总长。
+  static String _sanitizePluginId(String raw) {
+    var cleaned = raw.replaceAll(RegExp(r'[\s\\/:*?"<>|]+'), '_');
+    cleaned = cleaned.replaceAll(RegExp(r'_+'), '_');
+    cleaned = cleaned.replaceAll(RegExp(r'^[_-]+|[_-]+$'), '');
+    return cleaned.length > 100 ? cleaned.substring(0, 100) : cleaned;
   }
 
   /// 下载插件图标并转成 PNG 存到插件目录的 `icons` 子目录。

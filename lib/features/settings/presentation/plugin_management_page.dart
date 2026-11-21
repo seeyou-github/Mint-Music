@@ -1777,13 +1777,16 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
         type: type,
       );
 
-      // 插件 id 是安装时间戳，更新后必然换一个新 id：把旧的「数据源 → 播放源」
-      // 配置搬到新插件上（并清掉旧的那条），否则更新完数据源就变成「未设置」，
-      // 收藏里的歌直接放不了。
+      // 插件 id = 标识-author-version：更新版本号变了 → 新 id。把旧的
+      // 「数据源 → 播放源」配置搬到新插件上（并清掉旧的那条），否则更新完
+      // 数据源就变成「未设置」，收藏里的歌直接放不了。重装同版本时 id 不变，
+      // 这段迁移等于把相同映射原样写回，无副作用。
       final oldMapping =
           ref.read(dataSourcePlaybackSourcesProvider)[result.plugin.id] ??
           const <String>[];
-      if (oldMapping.isNotEmpty) {
+      // 重装同版本时新旧 id 相同（id = 标识-author-version），映射原样有效，
+      // 不迁移——否则下面的「清掉旧那条」会把刚写回的映射清空。
+      if (newPlugin.id != result.plugin.id && oldMapping.isNotEmpty) {
         await setDataSourcePlaybackSources(
           ref,
           pluginId: newPlugin.id,
