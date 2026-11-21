@@ -356,10 +356,18 @@ void DesktopLyricWindow::DestroyWindowIfNeeded() {
   if (window_ == nullptr) {
     return;
   }
+  ::KillTimer(window_, kTimerId);
+  timer_running_ = false;
   ::DestroyWindow(window_);
   window_ = nullptr;
   // 窗口隐藏时释放预渲染位图；下次显示再按需重建。
   ReleaseSprites();
+  // 整份歌词也不再留着：隐藏期间切歌时 Dart 侧不会往已销毁的窗口推词，
+  // 「上一首」的几十~几百 KB 文本没必要常驻。下次 Show() 时
+  // DesktopLyricSync.syncVisibility 会先 pushLyric(force) 再显示。
+  lines_.clear();
+  lines_.shrink_to_fit();
+  active_index_ = -1;
 }
 
 void DesktopLyricWindow::UpdateConfig(int font_size,
