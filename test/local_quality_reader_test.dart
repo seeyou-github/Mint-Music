@@ -98,7 +98,9 @@ void main() {
 
   test('CBR MP3 按体积 / 时长算平均码率', () async {
     final file = await write('cbr.mp3', mp3Frames(10));
-    expect((await LocalMetadataReader.read(file.path)).durationMs, 260);
+    // 时长来自逐帧统计（10 帧 × 1152 采样 ÷ 44100Hz ≈ 261ms），比按
+    // 体积 / 首帧码率的估算（260ms）更准。
+    expect((await LocalMetadataReader.read(file.path)).durationMs, 261);
     expect(await LocalQualityReader.readLabel(file.path), '128K');
   });
 
