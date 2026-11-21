@@ -11,6 +11,9 @@ import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/app_surface.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../shared/widgets/music_cover_image.dart';
+import '../../library/domain/models/recently_played.dart';
+import '../../player/application/playback_context.dart';
+import '../../player/application/playback_controller.dart';
 import '../../player/domain/models/song.dart';
 import '../../player/domain/services/lyric_cache.dart';
 import '../application/local_providers.dart';
@@ -144,6 +147,19 @@ class _QuickMatchPageState extends ConsumerState<QuickMatchPage> {
     }
     setState(() => _loadingStatus = false);
     _statusRunning = false;
+  }
+
+  /// 点整行播放这首：队列与列表一致（目录 + 字段筛选后的顺序），不混进
+  /// 其它分类的歌。
+  Future<void> _playSong(Song song) async {
+    final allSongs =
+        ref.read(localMusicNotifierProvider).valueOrNull ?? const <Song>[];
+    final songs = _filtered(allSongs);
+    final index = songs.indexWhere((s) => s.id == song.id);
+    PlaybackContext.instance.set(PlaybackSourceType.local);
+    ref
+        .read(playbackControllerProvider.notifier)
+        .setQueue(songs, startIndex: index >= 0 ? index : 0);
   }
 
   /// 打开「编辑标签」页；[autoSearch] 为 true 时直接进在线搜索并搜一次。
@@ -532,8 +548,9 @@ class _QuickMatchPageState extends ConsumerState<QuickMatchPage> {
     final hasWord = lyric?.hasWordLyric ?? false;
 
     return InkWell(
-      // 点整行进「编辑标签 - 在线搜索」，回来时列表会刷新被改过的那一行。
-      onTap: () => unawaited(_openEditor(song, autoSearch: true)),
+      // 点整行播放这首（队列 = 当前筛选后的列表）；进「编辑标签」走行尾的
+      // 编辑 / 匹配按钮，回来时列表会刷新被改过的那一行。
+      onTap: () => unawaited(_playSong(song)),
       child: Container(
         padding: const EdgeInsets.symmetric(
           horizontal: AppSpacing.lg,
