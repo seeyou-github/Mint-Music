@@ -1433,12 +1433,12 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
     );
   }
 
-  /// 按命中字段数（歌曲 / 歌手 / 专辑 / 年份 / 时长）降序排到最前（横向列表
-  /// 的左侧），其余结果保持原顺序跟在后面——不隐藏任何结果，交给用户自己
-  /// 判断。比对规则见共享的 [sortSongsByMatchScore]。
+  /// 按匹配级别（1~5，五字段全中最高、仅歌名最低）排到最前（横向列表的
+  /// 左侧），同级别保持原顺序——不隐藏任何结果，交给用户自己判断。
+  /// 定级规则见共享的 [songMatchLevel] / [sortSongsByMatchLevel]。
   List<Song> _sortExactMatchesFirst(List<Song> results) {
     if (!_exactMatchActive) return results;
-    return sortSongsByMatchScore(results, _localMatchFields);
+    return sortSongsByMatchLevel(results, _localMatchFields);
   }
 
   Song? get _currentCandidate {
