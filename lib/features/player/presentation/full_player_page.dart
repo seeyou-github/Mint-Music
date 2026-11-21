@@ -1197,7 +1197,7 @@ class _PlayerSongInfo extends ConsumerWidget {
   }
 }
 
-/// 收藏 / 下载 / 定时 / 评论 / 桌面歌词 / 更多。
+/// 收藏 / 下载 / 定时 / 评论（本地歌曲时换成桌面歌词或定时）/ 桌面歌词 / 更多。
 ///
 /// 竖屏放在歌名下方；横屏放在进度条上方，由 [MainAxisAlignment.spaceBetween]
 /// 在整栏宽度内均匀铺开。
@@ -1355,8 +1355,8 @@ class _PlayerActions extends ConsumerWidget {
           : () => SongActionSheet.showDownloadQualityPicker(context, song),
       tooltip: context.tr('下载'),
     );
-    // 定时关闭（Android）：已设定时用主题色。桌面端这个位置换成评论按钮，
-    // 定时选项挪进「更多」菜单。
+    // 定时关闭（Android 常驻；桌面端只在本地歌曲时顶替评论按钮）。
+    // 已设定时用主题色。
     final sleepActive = ref.watch(sleepTimerProvider).active;
     final sleepTimerButton = iconButton(
       icon: sleepActive ? Icons.timer : Icons.timer_outlined,
@@ -1365,8 +1365,8 @@ class _PlayerActions extends ConsumerWidget {
       color: sleepActive ? themeColors.primary : null,
     );
     // 桌面歌词：图标是文字「词」，开启后文字用主题色。
-    // Android 没有独立的桌面歌词窗口，播放页这个位置让给评论按钮，
-    // 开关改放到「更多」菜单。
+    // 桌面端常驻；Android 只在本地歌曲时顶替评论按钮（在线歌曲这一位留给
+    // 评论，开关在「更多」菜单里）。
     final desktopLyricEnabled = ref.watch(
       desktopLyricSettingsProvider.select((s) => s.enable),
     );
@@ -1396,7 +1396,9 @@ class _PlayerActions extends ConsumerWidget {
       constraints: buttonConstraints,
       tooltip: context.tr('启用桌面歌词'),
     );
-    // 评论：Android 换掉倍速、桌面端换掉定时关闭，两项都挪进「更多」。
+    // 评论：本地歌曲没有评论可看，这个位置让给本平台的常用开关——
+    // Android 换成桌面歌词、桌面端换成定时关闭（原本分别藏在「更多」里，
+    // 见 song_action_sheet 的 compactMode 菜单）。
     final commentButton = iconButton(
       icon: Icons.chat_bubble_outline,
       onPressed: song == null ? null : () => showCommentSheet(context, song),
@@ -1420,7 +1422,11 @@ class _PlayerActions extends ConsumerWidget {
       tooltip: context.tr('更多'),
     );
 
-    // 顺序固定为：收藏、下载、定时（仅 Android）、评论、桌面歌词（仅桌面）、更多。
+    // 本地歌曲：评论按钮换成对应平台的开关。播放在线歌曲时保持评论入口。
+    final isLocal = song?.isLocal ?? false;
+
+    // 顺序固定为：收藏、下载、定时（仅 Android）、评论 / 本地歌曲开关、
+    // 桌面歌词（仅桌面）、更多。
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
@@ -1428,9 +1434,9 @@ class _PlayerActions extends ConsumerWidget {
         downloadButton,
         if (isAndroid) ...[
           sleepTimerButton,
-          commentButton,
+          isLocal ? desktopLyricButton : commentButton,
         ] else ...[
-          commentButton,
+          isLocal ? sleepTimerButton : commentButton,
           desktopLyricButton,
         ],
         moreButton,

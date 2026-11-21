@@ -566,11 +566,14 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
                     ),
                   // 「下载」「桌面歌词」留在播放页图标按钮上；倍速 / 定时关闭
                   // 在播放页被评论按钮占用后挪到这里。
+                  //
+                  // 本地歌曲例外：播放页的评论按钮位置已经换成常用开关
+                  // （Android → 桌面歌词，桌面端 → 定时关闭），这里不再重复列。
                   if (Platform.isAndroid) ...[
-                    _buildDesktopLyricItem(colors),
+                    if (!widget.song.isLocal) _buildDesktopLyricItem(colors),
                     _buildSpeedItem(colors),
                   ] else ...[
-                    const SleepTimerMenuTile(),
+                    if (!widget.song.isLocal) const SleepTimerMenuTile(),
                     _buildSpeedItem(colors),
                   ],
                   // 本地歌曲：先「编辑标签」，其下再提供「搜索歌词」（搜到
