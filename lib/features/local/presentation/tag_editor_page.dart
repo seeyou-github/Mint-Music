@@ -12,6 +12,7 @@ import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/app_surface.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../shared/services/cover_cache_service.dart';
+import '../../../shared/utils/song_match_score.dart';
 import '../../../shared/widgets/source_icon.dart';
 import '../../discover/application/search_providers.dart';
 import '../../download/domain/services/audio_tag_writer.dart';
@@ -1145,8 +1146,9 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
                 color: colors.textHint,
               )
             : SourceIcon(
-                // 同名插件的变体 id 要还原成平台 id 才能取到对应图标。
-                sourceId: SourceInfo.baseIdOf(current.id),
+                // 传完整音源 id（带 @插件id）：插件自带图标时优先显示它，
+                // 内置平台才退回彩色圆标。
+                sourceId: current.id,
                 size: _searchBarHeight,
                 label: current.name,
               ),
@@ -1418,47 +1420,25 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
   /// 是否按「歌曲名 + 歌手」给结果排序（精确匹配的排前面）。
   bool get _exactMatchActive => _splitSearchFields;
 
-  /// 精确匹配时要去掉的字符：空白与常见标点 / 括号（全角半角都算），
-  /// 「你的样子（女版）」与「你的样子 (女版)」这种排版差异不该影响匹配。
-  static const String _matchNoiseChars =
-      ' \u3000（）()[]【】{}<>《》「」『』"“”\'‘’·、,，.。!！?？:：;；_-—–/\\|&+~';
-
-  static String _normalizeForMatch(String value) {
-    final buffer = StringBuffer();
-    for (final rune in value.toLowerCase().runes) {
-      final ch = String.fromCharCode(rune);
-      if (_matchNoiseChars.contains(ch)) continue;
-      buffer.write(ch);
-    }
-    return buffer.toString();
+  /// 匹配基准用编辑信息里的**当前**内容（改了歌名 / 歌手后对比的是改后的），
+  /// 时长取曲库索引里记的（只展示与排序用，不参与写文件）。
+  LocalSongMatchFields get _localMatchFields {
+    final song = _song;
+    return LocalSongMatchFields(
+      title: _titleController.text,
+      artist: _artistController.text,
+      album: _albumController.text,
+      year: int.tryParse(_yearController.text.trim()) ?? song?.year ?? 0,
+      durationSeconds: song?.duration ?? 0,
+    );
   }
 
-  /// 搜索结果是否与文件里的歌名 + 歌手精确对应。
-  ///
-  /// 歌名要求完全一致（忽略排版差异）；歌手允许「包含」——很多结果把
-  /// 合作歌手拼在一起（「三妹、苗小青」），要求完全相等会把它们全过滤掉。
-  bool _matchesExactly(Song song, String title, String artist) {
-    if (_normalizeForMatch(song.title) != title) return false;
-    final resultArtist = _normalizeForMatch(song.artist);
-    if (resultArtist.isEmpty) return false;
-    return resultArtist == artist ||
-        resultArtist.contains(artist) ||
-        artist.contains(resultArtist);
-  }
-
-  /// 精确匹配的结果排到最前（横向列表的左侧），其余结果保持原顺序跟在
-  /// 后面——不隐藏任何结果，交给用户自己判断。
+  /// 按命中字段数（歌曲 / 歌手 / 专辑 / 年份 / 时长）降序排到最前（横向列表
+  /// 的左侧），其余结果保持原顺序跟在后面——不隐藏任何结果，交给用户自己
+  /// 判断。比对规则见共享的 [sortSongsByMatchScore]。
   List<Song> _sortExactMatchesFirst(List<Song> results) {
     if (!_exactMatchActive) return results;
-    final title = _normalizeForMatch(_searchTitleController.text);
-    final artist = _normalizeForMatch(_searchArtistController.text);
-    if (title.isEmpty || artist.isEmpty) return results;
-    final exact = <Song>[];
-    final others = <Song>[];
-    for (final song in results) {
-      (_matchesExactly(song, title, artist) ? exact : others).add(song);
-    }
-    return [...exact, ...others];
+    return sortSongsByMatchScore(results, _localMatchFields);
   }
 
   Song? get _currentCandidate {

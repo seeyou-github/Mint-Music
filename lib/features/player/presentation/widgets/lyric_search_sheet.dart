@@ -9,6 +9,7 @@ import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_surface.dart';
 import '../../../../core/theme/theme_provider.dart';
 import '../../../../shared/widgets/music_cover_image.dart';
+import '../../../../shared/utils/song_match_score.dart';
 import '../../../../shared/widgets/source_icon.dart';
 import '../../../local/application/local_providers.dart';
 import '../../../plugin/application/music_source_manager.dart';
@@ -150,10 +151,16 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
       final filtered = songs
           .where((s) => s.title.trim().isNotEmpty)
           .toList(growable: false);
+      // 与本地歌曲（专辑 / 年份 / 时长一并比对）按命中字段数排序：
+      // 命中越多越靠左，全部结果都保留。
+      final sorted = sortSongsByMatchScore(
+        filtered,
+        LocalSongMatchFields.fromSong(widget.song),
+      );
       setState(() {
-        _results = filtered;
+        _results = sorted;
         _searching = false;
-        _searchError = filtered.isEmpty ? context.tr('没有搜到相关歌曲') : null;
+        _searchError = sorted.isEmpty ? context.tr('没有搜到相关歌曲') : null;
       });
       // 不自动选中第一条：默认继续展示当前正在使用的歌词，用户点了候选
       // 才切换到那份歌词的预览。
@@ -347,7 +354,15 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
                 ),
                 child: _buildSearchArea(colors),
               ),
-              const SizedBox(height: AppSpacing.xs),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.lg,
+                  0,
+                  AppSpacing.lg,
+                  AppSpacing.xs,
+                ),
+                child: _buildLocalSongInfo(colors),
+              ),
               _buildResults(colors),
               _buildFormatTag(colors),
               const Divider(height: 1),
@@ -524,8 +539,9 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
         ),
         clipBehavior: Clip.antiAlias,
         child: SourceIcon(
-          // 同名插件的变体 id 要还原成平台 id 才能取到对应图标。
-          sourceId: MusicSourceManager.splitSourceId(_sourceId).$1,
+          // 传完整音源 id（带 @插件id）：插件自带图标时优先显示它，
+          // 内置平台才退回彩色圆标。
+          sourceId: _sourceId,
           size: _barHeight,
           label: label,
         ),
@@ -609,6 +625,37 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
   }
 
   /// 候选歌曲：横向卡片，选中项用主色描边。
+  /// 本地歌曲的专辑 / 年份 / 时长（展示用）：对照着挑搜索结果。
+  Widget _buildLocalSongInfo(ThemeColors colors) {
+    final song = widget.song;
+    final parts = <String>[
+      if (song.album.trim().isNotEmpty) '${context.tr('专辑')}：${song.album}',
+      if ((song.year ?? 0) > 0) '${context.tr('年份')}：${song.year}',
+      if (song.displayDuration.isNotEmpty)
+        '${context.tr('时长')}：${song.displayDuration}',
+    ];
+    if (parts.isEmpty) return const SizedBox.shrink();
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Text(
+        parts.join('　·　'),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(fontSize: 12, color: colors.textHint),
+      ),
+    );
+  }
+
+  /// 搜索结果卡片上的元信息行（专辑 · 年份 · 时长）。
+  String _resultMetaLine(Song song) {
+    final parts = <String>[
+      if (song.album.trim().isNotEmpty) song.album,
+      if ((song.year ?? 0) > 0) '${song.year}',
+      if (song.displayDuration.isNotEmpty) song.displayDuration,
+    ];
+    return parts.join(' · ');
+  }
+
   Widget _buildResults(ThemeColors colors) {
     final hideCover = ref.watch(songListHideCoverProvider);
     if (_searching && _results.isEmpty) {
@@ -700,6 +747,16 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               fontSize: 11,
+                              color: colors.textHint,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            _resultMetaLine(song),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 10,
                               color: colors.textHint,
                             ),
                           ),
