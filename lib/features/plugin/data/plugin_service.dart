@@ -743,10 +743,13 @@ class PluginService {
       }
 
       final plugins = await loadPlugins();
-      // 重复判定与派生 id 对齐：同「名称+版本」（老 id 插件）或派生出相同
-      // id（新 id 插件）都算已存在。
+      final pluginId = _derivePluginId(host, pluginInfo, type);
+      // 重复判定与派生 id 对齐：派生出相同 id（新 id 插件重装），或同
+      // 「名称+版本」（老时间戳 id 插件），都算已存在。
       final duplicate = plugins.where(
-        (p) => p.name == pluginInfo.name && p.version == pluginInfo.version,
+        (p) =>
+            p.id == pluginId ||
+            (p.name == pluginInfo.name && p.version == pluginInfo.version),
       );
       if (duplicate.isNotEmpty) {
         engine.dispose();
@@ -755,7 +758,6 @@ class PluginService {
         );
       }
 
-      final pluginId = _derivePluginId(host, pluginInfo, type);
       _pluginTypes[pluginId] = type;
       // 新插件追加到顺序表末尾：`enabledPlugins` 按它排，不追加的话新装的
       // 插件这一轮只能靠兜底排到最后，音源列表顺序会和重启后不一致。
