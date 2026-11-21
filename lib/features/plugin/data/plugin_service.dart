@@ -244,7 +244,12 @@ class PluginService {
     for (var i = 0; i < plugins.length; i++) {
       final stored = plugins[i].iconPath?.trim() ?? '';
       if (stored.isEmpty || p.isAbsolute(stored)) continue;
-      plugins[i] = plugins[i].copyWith(iconPath: p.join(iconsDir, stored));
+      // 存的是 `icons/<文件名>`（目录前缀已经在里面），这里取文件名拼回
+      // icons 目录——直接整段 join 会变成 `icons/icons/<文件名>`，
+      // 图标永远解析不到（表现为界面全部退回默认圆标）。
+      plugins[i] = plugins[i].copyWith(
+        iconPath: p.join(iconsDir, p.basename(stored)),
+      );
     }
   }
 
