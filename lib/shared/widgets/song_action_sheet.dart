@@ -989,13 +989,14 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
     );
   }
 
-  /// 歌曲名行的搜索关键字：「歌名 - 歌手」。歌手原样保留插件给的分隔符
+  /// 歌曲名行的搜索关键字：「歌名 歌手」（空格分隔，与编辑标签-在线搜索 /
+  /// 搜索歌词弹框的「歌名 歌手」格式一致）。歌手原样保留插件给的分隔符
   /// （如「封茗囧菌、千月兔」）；没有歌手时就是纯歌名。
   String _songSearchKeyword(Song song) {
     final title = song.title.trim();
     final artist = song.artist.trim();
     if (artist.isEmpty) return title;
-    return '$title - $artist';
+    return '$title $artist';
   }
 
   /// Android / Windows：点击歌曲名 / 歌手 / 专辑行时，把对应名称复制到
@@ -1015,15 +1016,9 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
     final context = this.context;
     final container = ProviderScope.containerOf(context, listen: false);
     Navigator.pop(context);
-    // 带上歌曲的元数据来源：搜出来的结果和这首歌同源，而不是跟着当前
-    // 搜索页选的音源跑（可能完全是另一个平台）。
-    unawaited(
-      openSearchForQuery(
-        container,
-        trimmed,
-        source: widget.song.metadataSourceId,
-      ),
-    );
+    // 不再强制切到歌曲的元数据来源：搜索页音源按钮当前显示哪个音源，
+    // 就用哪个音源搜（与编辑标签-在线搜索 / 搜索歌词弹框的行为一致）。
+    unawaited(openSearchForQuery(container, trimmed));
   }
 
   /// 点专辑：能拿到专辑 id 就直接打开专辑详情页（播放的是这张专辑时用来源
