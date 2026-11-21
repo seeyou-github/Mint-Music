@@ -20,6 +20,7 @@ import '../../settings/application/settings_providers.dart';
 import '../application/local_providers.dart';
 import '../../player/application/lyric_controller.dart';
 import '../../player/application/lyric_resolver.dart';
+import '../../player/application/lyric_search_source_store.dart';
 import '../../player/domain/models/song.dart';
 import '../../player/domain/services/lyric_text_formatter.dart';
 import '../../plugin/application/plugin_providers.dart';
@@ -141,6 +142,23 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
   /// 空串表示用户还没手动选过：默认跟随当前音源（见 [_resolvedSearchSourceId]）。
   String _searchSourceId = '';
 
+  /// 用户在本次会话里手动切换过音源：退出（dispose）时保存为「上次使用的
+  /// 音源」（搜索歌词与在线搜索共用）；没切换过不保存。
+  bool _sourceChanged = false;
+
+  /// 上次使用的音源读取完成（搜索前必须等它，见 [_handleSearch]）。
+  late final Future<void> _lastUsedSourceFuture = _loadLastUsedSource();
+
+  /// 读取「上次使用的音源」，在当前可搜索音源列表里才采用。
+  Future<void> _loadLastUsedSource() async {
+    final last = await LyricSearchSourceStore.load();
+    if (!mounted || last == null) return;
+    final sources = ref.read(searchAvailableSourcesProvider);
+    if (sources.any((source) => source.id == last)) {
+      setState(() => _searchSourceId = last);
+    }
+  }
+
   /// 切换音源按钮的锚点，用于把菜单弹在按钮下方。
   final _sourceButtonKey = GlobalKey();
 
@@ -149,6 +167,7 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
     super.initState();
     // 登记根级覆盖页状态（左侧栏封面 / 来源标签的「再点关闭」要用）。
     RootOverlayTracker.instance.retain(RootOverlayTracker.tagEditor);
+    unawaited(_lastUsedSourceFuture);
     _tabController = TabController(length: 2, vsync: this);
     _titleController = TextEditingController();
     _artistController = TextEditingController();
@@ -370,6 +389,9 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
 
   @override
   void dispose() {
+    if (_sourceChanged) {
+      unawaited(LyricSearchSourceStore.save(_searchSourceId));
+    }
     RootOverlayTracker.instance.release(RootOverlayTracker.tagEditor);
     _tabController.removeListener(_handleTabChanged);
     _tabController.dispose();
@@ -1189,7 +1211,10 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
     ).then((selectedId) {
       if (selectedId == null || selectedId == currentId) return;
       final id = selectedId;
-      setState(() => _searchSourceId = id);
+      setState(() {
+        _searchSourceId = id;
+        _sourceChanged = true;
+      });
       // 换音源后自动重新搜索一次（上次没结果也照样换源再搜）。
       unawaited(_handleSearch());
     });
@@ -1481,6 +1506,9 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
   }
 
   Future<void> _handleSearch() async {
+    // 「上次使用的音源」是异步读的：任何搜索（含进页自动搜索）都等它应用
+    // 完，否则这次搜索会退回「跟随当前音源」。
+    await _lastUsedSourceFuture;
     final keyword = _queryText();
     if (keyword.isEmpty || _searching) return;
     _lastSearchKeyword = keyword;

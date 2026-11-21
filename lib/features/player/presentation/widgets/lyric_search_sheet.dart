@@ -15,6 +15,7 @@ import '../../../plugin/application/music_source_manager.dart';
 import '../../../plugin/application/plugin_providers.dart';
 import '../../application/lyric_controller.dart';
 import '../../application/lyric_resolver.dart';
+import '../../application/lyric_search_source_store.dart';
 import '../../application/playback_controller.dart';
 import '../../domain/models/lyric_line.dart';
 import '../../domain/models/song.dart';
@@ -55,6 +56,10 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
   final TextEditingController _artistController = TextEditingController();
 
   String _sourceId = 'wy';
+
+  /// 用户在本次会话里手动切换过音源：退出（dispose）时保存为「上次使用的
+  /// 音源」；没切换过不保存，避免把跟随当前歌曲的临时值固化。
+  bool _sourceChanged = false;
   List<Song> _results = const [];
   bool _searching = false;
   String? _searchError;
@@ -73,12 +78,29 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
     _artistController.text = widget.song.artist;
     _sourceId = _initialSourceId();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) unawaited(_search());
+      if (!mounted) return;
+      unawaited(_initSourceThenSearch());
     });
+  }
+
+  /// 先应用「上次使用的音源」（两处歌词搜索入口共用，见
+  /// [LyricSearchSourceStore]），再发第一次搜索——避免两次搜索竞态。
+  Future<void> _initSourceThenSearch() async {
+    final last = await LyricSearchSourceStore.load();
+    if (mounted && last != null) {
+      final sources = ref.read(searchSupportedSourcesProvider);
+      if (sources.any((source) => source.id == last)) {
+        setState(() => _sourceId = last);
+      }
+    }
+    if (mounted) await _search();
   }
 
   @override
   void dispose() {
+    if (_sourceChanged) {
+      unawaited(LyricSearchSourceStore.save(_sourceId));
+    }
     _titleController.dispose();
     _artistController.dispose();
     super.dispose();
@@ -456,7 +478,10 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
       position: PopupMenuPosition.under,
       onSelected: (value) {
         if (value == _sourceId) return;
-        setState(() => _sourceId = value);
+        setState(() {
+          _sourceId = value;
+          _sourceChanged = true;
+        });
         unawaited(_search());
       },
       itemBuilder: (context) => [
