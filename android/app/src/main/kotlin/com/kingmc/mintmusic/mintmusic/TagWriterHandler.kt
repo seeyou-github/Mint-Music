@@ -39,9 +39,10 @@ class TagWriterHandler(private val context: Context) : MethodChannel.MethodCallH
             val artist = call.argument<String>("artist")
             val album = call.argument<String>("album")
             val albumArtist = call.argument<String>("albumArtist")
+            val year = call.argument<String>("year")
             val lyrics = call.argument<String>("lyrics")
 
-            Log.d(TAG, "writeTags: filePath=$filePath, title=$title, artist=$artist, album=$album, albumArtist=$albumArtist, hasLyrics=${lyrics != null}")
+            Log.d(TAG, "writeTags: filePath=$filePath, title=$title, artist=$artist, album=$album, albumArtist=$albumArtist, year=$year, hasLyrics=${lyrics != null}")
 
             val file = File(filePath)
             if (!file.exists()) {
@@ -62,7 +63,7 @@ class TagWriterHandler(private val context: Context) : MethodChannel.MethodCallH
 
             Log.d(TAG, "writeTags: tag class=${existingTag.javaClass.simpleName}")
 
-            writeTagFields(existingTag, title, artist, album, albumArtist, lyrics)
+            writeTagFields(existingTag, title, artist, album, albumArtist, year, lyrics)
 
             AudioFileIO.write(audioFile)
             Log.d(TAG, "writeTags: successfully wrote tags to $filePath")
@@ -141,10 +142,11 @@ class TagWriterHandler(private val context: Context) : MethodChannel.MethodCallH
             val artist = call.argument<String>("artist")
             val album = call.argument<String>("album")
             val albumArtist = call.argument<String>("albumArtist")
+            val year = call.argument<String>("year")
             val lyrics = call.argument<String>("lyrics")
             val artworkData = call.argument<ByteArray>("artwork")
 
-            Log.d(TAG, "writeTagsAndArtwork: filePath=$filePath, title=$title, artist=$artist, album=$album, albumArtist=$albumArtist, hasLyrics=${lyrics != null}, hasArtwork=${artworkData != null}")
+            Log.d(TAG, "writeTagsAndArtwork: filePath=$filePath, title=$title, artist=$artist, album=$album, albumArtist=$albumArtist, year=$year, hasLyrics=${lyrics != null}, hasArtwork=${artworkData != null}")
 
             val file = File(filePath)
             if (!file.exists()) {
@@ -165,7 +167,7 @@ class TagWriterHandler(private val context: Context) : MethodChannel.MethodCallH
 
             Log.d(TAG, "writeTagsAndArtwork: tag class=${tag.javaClass.simpleName}")
 
-            writeTagFields(tag, title, artist, album, albumArtist, lyrics)
+            writeTagFields(tag, title, artist, album, albumArtist, year, lyrics)
 
             if (artworkData != null) {
                 val mimeType = detectMimeType(artworkData)
@@ -201,6 +203,7 @@ class TagWriterHandler(private val context: Context) : MethodChannel.MethodCallH
         artist: String?,
         album: String?,
         albumArtist: String?,
+        year: String?,
         lyrics: String?
     ) {
         try {
@@ -234,6 +237,16 @@ class TagWriterHandler(private val context: Context) : MethodChannel.MethodCallH
             }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to write albumArtist: ${e.message}")
+        }
+        // 年份：ID3 走 TYER / TDRC，Vorbis 走 DATE，MP4 走 ©day。
+        // 某些格式（如部分 mp4 变体）jaudiotagger 可能不接受空值，单独兜住。
+        try {
+            if (year != null && year.isNotEmpty()) {
+                tag.deleteField(FieldKey.YEAR)
+                tag.addField(FieldKey.YEAR, year)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to write year: ${e.message}")
         }
         try {
             if (lyrics != null) {

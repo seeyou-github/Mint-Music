@@ -203,10 +203,15 @@ class TagWriteService {
       final albumArtistStr = useBasicInfo
           ? (songInfo.artist.isNotEmpty ? songInfo.artist : '未知艺术家')
           : null;
+      // 年份：Song.year 本来就是 int，转成标签用的字符串（ID3 TYER /
+      // Vorbis DATE / MP4 ©day）。为空就不写，避免把文件里原有的年份冲掉。
+      final yearStr = useBasicInfo && songInfo.year != null
+          ? songInfo.year.toString()
+          : null;
 
       if (useArtwork) {
         debugPrint(
-          '[TagWriteService] 写入标签+封面: title=$titleStr, artist=$artistStr, album=$albumStr, hasLyrics=${lrcToEmbed != null}, artworkSize=${coverBytes?.length}',
+          '[TagWriteService] 写入标签+封面: title=$titleStr, artist=$artistStr, album=$albumStr, year=$yearStr, hasLyrics=${lrcToEmbed != null}, artworkSize=${coverBytes?.length}',
         );
         embedded = await _writeTagsAndArtwork(
           songPath,
@@ -214,12 +219,13 @@ class TagWriteService {
           artist: artistStr,
           album: albumStr,
           albumArtist: albumArtistStr,
+          year: yearStr,
           lyrics: lrcToEmbed,
           artwork: coverBytes!,
         );
       } else if (useBasicInfo || lrcToEmbed != null) {
         debugPrint(
-          '[TagWriteService] 写入标签: title=$titleStr, artist=$artistStr, album=$albumStr, hasLyrics=${lrcToEmbed != null}',
+          '[TagWriteService] 写入标签: title=$titleStr, artist=$artistStr, album=$albumStr, year=$yearStr, hasLyrics=${lrcToEmbed != null}',
         );
         embedded = await _writeTags(
           songPath,
@@ -227,6 +233,7 @@ class TagWriteService {
           artist: artistStr,
           album: albumStr,
           albumArtist: albumArtistStr,
+          year: yearStr,
           lyrics: lrcToEmbed,
         );
       } else {
@@ -297,6 +304,7 @@ class TagWriteService {
     String? artist,
     String? album,
     String? albumArtist,
+    String? year,
     String? lyrics,
   }) async {
     final args = <String, dynamic>{
@@ -305,6 +313,7 @@ class TagWriteService {
       if (artist != null) 'artist': artist,
       if (album != null) 'album': album,
       if (albumArtist != null) 'albumArtist': albumArtist,
+      if (year != null) 'year': year,
       if (lyrics != null) 'lyrics': lyrics,
     };
     try {
@@ -332,6 +341,7 @@ class TagWriteService {
       artist: artist,
       album: album,
       albumArtist: albumArtist,
+      year: year,
       lyrics: lyrics,
     );
   }
@@ -364,6 +374,7 @@ class TagWriteService {
     String? artist,
     String? album,
     String? albumArtist,
+    String? year,
     String? lyrics,
     Uint8List? artwork,
   }) async {
@@ -376,11 +387,12 @@ class TagWriteService {
           if (artist != null) 'artist': artist,
           if (album != null) 'album': album,
           if (albumArtist != null) 'albumArtist': albumArtist,
+          if (year != null) 'year': year,
           if (lyrics != null) 'lyrics': lyrics,
           if (artwork != null) 'artwork': artwork,
         };
         debugPrint(
-          '[TagWriteService] _writeTagsAndArtwork args: filePath=$filePath, title=$title, artist=$artist, album=$album, albumArtist=$albumArtist, hasLyrics=${lyrics != null}, hasArtwork=${artwork != null}',
+          '[TagWriteService] _writeTagsAndArtwork args: filePath=$filePath, title=$title, artist=$artist, album=$album, albumArtist=$albumArtist, year=$year, hasLyrics=${lyrics != null}, hasArtwork=${artwork != null}',
         );
         await _channel.invokeMethod<bool>('writeTagsAndArtwork', args);
         _nativeChannelAvailable = true;
@@ -404,6 +416,7 @@ class TagWriteService {
       artist: artist,
       album: album,
       albumArtist: albumArtist,
+      year: year,
       lyrics: lyrics,
       artwork: artwork,
     );
@@ -416,6 +429,7 @@ class TagWriteService {
     String? artist,
     String? album,
     String? albumArtist,
+    String? year,
     String? lyrics,
     Uint8List? artwork,
   }) async {
@@ -433,6 +447,7 @@ class TagWriteService {
         artist: artist,
         album: album,
         albumArtist: albumArtist,
+        year: year,
         lyrics: lyrics,
         artwork: artwork,
       );
