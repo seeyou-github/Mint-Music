@@ -107,4 +107,20 @@ void main() {
     expect(sorted[3].artist, '初伊');
     expect(sorted[4].artist, '还很九');
   });
+
+  test('0 级细分：歌名包含 + 歌手包含 → 仅歌名包含 → 其它', () {
+    final results = [
+      _song(title: '爱这件事情（Live）', artist: '张三'), // 仅歌名包含 → 12
+      _song(title: '别的歌'), // 都不包含 → 13
+      _song(title: '爱这件事情（Live）', artist: '傅又宣 feat. 李四'), // 双包含 → 11
+      _song(title: '爱这件事情'), // 5 级（完全相等）
+    ];
+    final sorted = sortSongsByMatchLevel(results, _local);
+
+    expect(sorted[0].artist, '傅又宣'); // 5 级最左
+    // 0 级里：双包含的紧随其后，然后是仅歌名包含，最后是都不包含的。
+    expect(sorted[1].artist, '傅又宣 feat. 李四');
+    expect(sorted[2].artist, '张三');
+    expect(sorted[3].title, '别的歌');
+  });
 }

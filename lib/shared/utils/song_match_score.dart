@@ -12,7 +12,8 @@
 /// * 过滤第 4 遍：3 级列表里继续匹配专辑 → **4 级列表**；
 /// * 过滤第 5 遍：4 级列表里继续匹配年份 → **5 级列表**。
 ///
-/// 最终顺序（从左到右）：5 级 > 4 级 > 3 级 > 2 级 > 1 级 > 其它结果
+/// 最终顺序（从左到右）：5 级 > 4 级 > 3 级 > 2 级 > 1 级 >
+/// [歌名包含歌名 且 歌手包含歌手] > [歌名包含歌名] > 其它结果
 /// （歌名都不匹配的）。同级别保持插件返回的原顺序。
 library;
 
@@ -99,7 +100,34 @@ int songMatchLevel(Song candidate, LocalSongMatchFields local) {
   return level;
 }
 
-/// 按匹配级别降序**稳定**排序（Dart 的 List.sort 不保证稳定，这里带上
+/// 0 级（歌名不完全相等）的细分档位：数字越小越靠前。
+/// * 3 = 结果歌名**包含**本地歌名，且结果歌手**包含**本地歌手；
+/// * 2 = 仅结果歌名包含本地歌名；
+/// * 1 = 其它（歌名都不包含）。
+int _zeroLevelTier(Song candidate, LocalSongMatchFields local) {
+  final localTitle = normalizeForMatch(local.title);
+  final candidateTitle = normalizeForMatch(candidate.title);
+  final containsTitle =
+      localTitle.isNotEmpty && candidateTitle.contains(localTitle);
+  if (!containsTitle) return 1;
+  final localArtist = normalizeForMatch(local.artist);
+  final candidateArtist = normalizeForMatch(candidate.artist);
+  final containsArtist =
+      localArtist.isNotEmpty && candidateArtist.contains(localArtist);
+  return containsArtist ? 3 : 2;
+}
+
+/// 排序用的双键：(组, 档位)。
+/// * 组 1 = 五遍过滤有级别的结果（按级别 5→1 排）；
+/// * 组 0 = 歌名不完全相等的结果（按 [_zeroLevelTier] 档位 3→2→1 排），
+///   整组排在组 1 之后。
+(int, int) _sortKeys(Song song, LocalSongMatchFields local) {
+  final level = songMatchLevel(song, local);
+  if (level > 0) return (1, level);
+  return (0, _zeroLevelTier(song, local));
+}
+
+/// 按双键降序**稳定**排序（Dart 的 List.sort 不保证稳定，这里带上
 /// 原下标一起排，同级别保持插件返回的原顺序）。
 List<Song> sortSongsByMatchLevel(
   List<Song> results,
@@ -108,15 +136,14 @@ List<Song> sortSongsByMatchLevel(
   final indexed =
       [
         for (var i = 0; i < results.length; i++)
-          (
-            index: i,
-            song: results[i],
-            level: songMatchLevel(results[i], local),
-          ),
+          (index: i, song: results[i], keys: _sortKeys(results[i], local)),
       ]..sort((a, b) {
-        // 级别数字越大越优先（5 级最左）；歌名都不匹配（0）排最后。
-        final byLevel = b.level.compareTo(a.level);
-        return byLevel != 0 ? byLevel : a.index.compareTo(b.index);
+        // 组：有级别的结果（组 1）在其它结果（组 0）之前；
+        // 组内：级别 / 档位数字大的靠左。
+        final byGroup = b.keys.$1.compareTo(a.keys.$1);
+        if (byGroup != 0) return byGroup;
+        final byTier = b.keys.$2.compareTo(a.keys.$2);
+        return byTier != 0 ? byTier : a.index.compareTo(b.index);
       });
   return [for (final entry in indexed) entry.song];
 }
