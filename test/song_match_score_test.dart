@@ -30,21 +30,13 @@ const _local = LocalSongMatchFields(
 );
 
 void main() {
-  test('五遍过滤全部通过 = 第 5 级（含归一化：逗号/点/空格差异）', () {
+  test('定级：五遍过滤（用户示例）', () {
+    // 傅又宣：五字段全中 → 组 1 级 5。
+    expect(songMatchGroupAndLevel(_song(title: '爱. 这件事 情'), _local), (1, 5));
+    expect(songMatchGroupAndLevel(_song(title: '爱这件事情'), _local), (1, 5));
+    // 吉那罐子：仅歌名命中（归一化后相等），歌手不中 → 组 0 档 2。
     expect(
-      songMatchLevel(
-        _song(title: '爱. 这件事 情', duration: 234),
-        _local,
-      ),
-      5,
-    );
-    expect(songMatchLevel(_song(title: '爱这件事情'), _local), 5);
-  });
-
-  test('定级：每少过一遍降一级', () {
-    // 歌手不中（吉那罐子）→ 停在第 1 级。
-    expect(
-      songMatchLevel(
+      songMatchGroupAndLevel(
         _song(
           title: '爱，这件事情',
           artist: '吉那罐子',
@@ -54,38 +46,30 @@ void main() {
         ),
         _local,
       ),
-      1,
+      (0, 2),
     );
-    // 歌手中、时长不中 → 第 2 级。
+    // 歌名+歌手、时长不中 → 组 1 级 2。
+    expect(songMatchGroupAndLevel(_song(title: '爱这件事情', duration: 300), _local), (1, 2));
+    // 歌名+歌手+时长、专辑不中 → 组 1 级 3。
     expect(
-      songMatchLevel(_song(title: '爱这件事情', duration: 300), _local),
-      2,
+      songMatchGroupAndLevel(_song(title: '爱这件事情', album: '别的专辑'), _local),
+      (1, 3),
     );
-    // 时长中、专辑不中 → 第 3 级。
-    expect(
-      songMatchLevel(
-        _song(title: '爱这件事情', album: '别的专辑'),
-        _local,
-      ),
-      3,
-    );
-    // 专辑中、年份不中 → 第 4 级。
-    expect(
-      songMatchLevel(_song(title: '爱这件事情', year: 2021), _local),
-      4,
-    );
-    // 歌名不中 → 0，排最后。
-    expect(songMatchLevel(_song(title: '别的歌'), _local), 0);
+    // 歌名+歌手+时长+专辑、年份不中 → 组 1 级 4。
+    expect(songMatchGroupAndLevel(_song(title: '爱这件事情', year: 2021), _local), (1, 4));
+    // 歌名不中 → 组 0 档 1。
+    expect(songMatchGroupAndLevel(_song(title: '别的歌'), _local), (0, 1));
+    // 歌名精确但歌手不匹配 → 组 0 档 2（歌名包含档）。
+    expect(songMatchGroupAndLevel(_song(title: '爱这件事情', artist: '张三'), _local), (0, 2));
   });
 
   test('时长容差 ±2 秒：3:55 vs 3:54 算匹配，3:58 不算', () {
-    expect(songMatchLevel(_song(title: '爱这件事情', duration: 234), _local), 5);
-    expect(songMatchLevel(_song(title: '爱这件事情', duration: 233), _local), 5);
-    expect(songMatchLevel(_song(title: '爱这件事情', duration: 238), _local), 2);
+    expect(songMatchGroupAndLevel(_song(title: '爱这件事情', duration: 234), _local), (1, 5));
+    expect(songMatchGroupAndLevel(_song(title: '爱这件事情', duration: 233), _local), (1, 5));
+    expect(songMatchGroupAndLevel(_song(title: '爱这件事情', duration: 238), _local), (1, 2));
   });
 
-  test('排序：5 级最左，1 级在其后保持原顺序，0 级垫底', () {
-    // 用户截图的真实顺序（酷狗原始返回）。
+  test('排序：5 级 → 1 级（双包含）→ 歌名包含 → 其它，同级别稳定', () {
     final results = [
       _song(
         title: '爱，这件事情',
@@ -93,34 +77,16 @@ void main() {
         album: '小吉的路',
         year: 2021,
         duration: 232,
-      ), // 1 级
-      _song(title: '爱这件事情', artist: '白沐'), // 1 级
-      _song(title: '爱这件事情', artist: '初伊'), // 1 级
-      _song(title: '爱·这件事情', artist: '还很九'), // 1 级
-      _song(title: '爱. 这件事 情'), // 5 级（傅又宣）
+      ), // 组 0 档 2（歌名精确、歌手不匹配）
+      _song(title: '爱这件事情', artist: '白沐'), // 组 0 档 2
+      _song(title: '爱这件事情（Live）', artist: '傅又宣 feat. 李四'), // 组 1 级 1（双包含）
+      _song(title: '爱. 这件事 情'), // 组 1 级 5（傅又宣）
     ];
     final sorted = sortSongsByMatchLevel(results, _local);
 
-    expect(sorted.first.artist, '傅又宣'); // 5 级最左
-    expect(sorted[1].artist, '吉那罐子'); // 1 级保持原顺序
-    expect(sorted[2].artist, '白沐');
-    expect(sorted[3].artist, '初伊');
-    expect(sorted[4].artist, '还很九');
-  });
-
-  test('0 级细分：歌名包含 + 歌手包含 → 仅歌名包含 → 其它', () {
-    final results = [
-      _song(title: '爱这件事情（Live）', artist: '张三'), // 仅歌名包含 → 12
-      _song(title: '别的歌'), // 都不包含 → 13
-      _song(title: '爱这件事情（Live）', artist: '傅又宣 feat. 李四'), // 双包含 → 11
-      _song(title: '爱这件事情'), // 5 级（完全相等）
-    ];
-    final sorted = sortSongsByMatchLevel(results, _local);
-
-    expect(sorted[0].artist, '傅又宣'); // 5 级最左
-    // 0 级里：双包含的紧随其后，然后是仅歌名包含，最后是都不包含的。
-    expect(sorted[1].artist, '傅又宣 feat. 李四');
-    expect(sorted[2].artist, '张三');
-    expect(sorted[3].title, '别的歌');
+    expect(sorted[0].artist, '傅又宣'); // 组 1 级 5 最左
+    expect(sorted[1].artist, '傅又宣 feat. 李四'); // 组 1 级 1（双包含）
+    expect(sorted[2].artist, '吉那罐子'); // 组 0 档 2，保持原顺序
+    expect(sorted[3].artist, '白沐');
   });
 }
