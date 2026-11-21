@@ -549,7 +549,7 @@ class _CoverPreviewState extends State<_CoverPreview> {
   }
 }
 
-/// 歌曲信息预览（歌曲 / 歌手 / 专辑 / 年份）。
+/// 歌曲信息预览（歌曲 / 歌手 / 专辑 / 年份 / 时长）。
 class _InfoPreview extends StatelessWidget {
   const _InfoPreview({required this.colors, required this.song, this.year});
 
@@ -599,6 +599,9 @@ class _InfoPreview extends StatelessWidget {
         field(context.tr('歌手'), song.artist),
         field(context.tr('专辑'), song.album),
         field(context.tr('年份'), (year ?? song.year)?.toString() ?? ''),
+        // 时长仅展示用：左侧是本地歌曲（扫描索引里记的），右侧是搜索结果
+        // （插件给了就显示，没给显示 -）。不参与写文件。
+        field(context.tr('时长'), song.displayDuration),
       ],
     );
   }
