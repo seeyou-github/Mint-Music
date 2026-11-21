@@ -353,7 +353,8 @@ class _MatchLyricsPageState extends ConsumerState<MatchLyricsPage> {
                 width: 44,
                 height: 44,
                 child: MusicCoverImage(
-                  url: entry.matchedSong.coverUrl ?? song.coverUrl,
+                  // 显示本地歌曲文件内置封面（从音频文件 / MediaStore 取），
+                  // 不用在线候选的封面。
                   songId: song.id,
                   filePath: song.filePath,
                   fit: BoxFit.cover,
