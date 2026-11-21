@@ -71,6 +71,9 @@ class _MarqueeTextState extends State<MarqueeText>
       textDirection: TextDirection.ltr,
     )..layout(maxWidth: double.infinity);
     final overflow = painter.width - maxWidth;
+    // 量完即弃：切歌 / 改字号都会重建一次，Paragraph 是 native 资源，
+    // 不 dispose 就得等 GC，长听下来会一点点堆内存。
+    painter.dispose();
     _lastText = text;
     _lastStyle = style;
     _lastMaxWidth = maxWidth;

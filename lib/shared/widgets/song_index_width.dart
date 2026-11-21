@@ -26,5 +26,8 @@ double songIndexWidth(
     textScaler: MediaQuery.textScalerOf(context),
   )..layout();
   // ceil 防止亚像素宽度把最后一位裁掉。
-  return painter.width.ceilToDouble();
+  final width = painter.width.ceilToDouble();
+  // 每个列表都会调一次（见上方说明），临时 Paragraph 用完就释放。
+  painter.dispose();
+  return width;
 }

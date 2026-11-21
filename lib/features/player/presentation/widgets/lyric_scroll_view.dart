@@ -153,6 +153,11 @@ class _LyricScrollViewState extends State<LyricScrollView>
     final signature = _makeLinesSignature(widget.lines);
     if (signature != _linesSignature) {
       _linesSignature = signature;
+      // 歌词整份换了（切歌 / 换词源）：旧行的排版不会再命中，直接摘出缓存
+      // 并释放（正在画的等画笔被替换后再释放）。只靠 LRU 淘汰的话，切歌时
+      // 每首都会新建一整份排版，旧的 native Paragraph 要等 GC 才归还。
+      _PlainLineLayout.clear();
+      _YrcLineLayout.clear();
       _ensureLineKeys();
       _scrollTargetIndex = -1;
       _syncClock(widget.currentTimeMs, widget.isPlaying);
@@ -202,6 +207,10 @@ class _LyricScrollViewState extends State<LyricScrollView>
     _clock.dispose();
     _scrollController.removeListener(_handleScroll);
     _scrollController.dispose();
+    // 页面关掉后这份歌词不会再画：把排版缓存摘掉，别让 native Paragraph
+    // 一直挂到下一次 GC。
+    _PlainLineLayout.clear();
+    _YrcLineLayout.clear();
     super.dispose();
   }
 
@@ -1093,12 +1102,58 @@ class _PlainLinePainter extends CustomPainter {
   }
 }
 
+/// 排版对象的「帧末释放」。
+///
+/// [TextPainter] 的 Paragraph 是 native 资源，不 dispose 就得等 GC finalizer，
+/// Dart 堆压力不大时 GC 很少跑，长听切歌会一点点把 RSS 顶上去。
+///
+/// 但淘汰 / 清空发生在 build 期间，这一帧可能还有画笔在用旧排版（旧画笔要等
+/// 下一次 build 才被替换），立刻 dispose 会命中「正在画的那一行」。所以统一
+/// 推到本帧绘制结束后再释放：既及时，又不会打断正在进行的绘制。
+class _DeferredLayoutDisposal {
+  const _DeferredLayoutDisposal._();
+
+  static final List<void Function()> _pending = [];
+  static bool _scheduled = false;
+
+  static void add(void Function() dispose) {
+    _pending.add(dispose);
+    if (_scheduled) return;
+    _scheduled = true;
+    try {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _flush());
+    } catch (_) {
+      // 没有绑定（纯 Dart 测试）：直接释放，没有绘制中的帧。
+      _flush();
+    }
+  }
+
+  static void _flush() {
+    _scheduled = false;
+    if (_pending.isEmpty) return;
+    final items = List<void Function()>.of(_pending);
+    _pending.clear();
+    for (final dispose in items) {
+      dispose();
+    }
+    debugDisposedCount += items.length;
+  }
+
+  /// 已经释放掉的排版数量（测试用）。
+  @visibleForTesting
+  static int debugDisposedCount = 0;
+}
+
+/// 测试入口：已释放的歌词排版数量。
+@visibleForTesting
+int debugLyricLayoutDisposedCount() => _DeferredLayoutDisposal.debugDisposedCount;
+
 /// 普通 LRC 一行歌词的排版缓存（未唱 / 已唱两份同形排版）。
 ///
 /// 单行排版、不换行：超过控件宽度的长句交给画笔横向滚动。
 class _PlainLineLayout {
   static final Map<int, _PlainLineLayout> _cache = {};
-  static const _maxCacheEntries = 200;
+  static const _maxCacheEntries = 120;
 
   final double height;
 
@@ -1107,12 +1162,39 @@ class _PlainLineLayout {
   final TextPainter dimPainter;
   final TextPainter brightPainter;
 
-  const _PlainLineLayout({
+  _PlainLineLayout({
     required this.height,
     required this.width,
     required this.dimPainter,
     required this.brightPainter,
   });
+
+  /// 释放排版用的 Paragraph。
+  ///
+  /// [TextPainter] 底层是 native 的 Paragraph，Dart GC 看不到它的内存占用：
+  /// 只把对象从缓存里 remove 掉的话，要等 GC finalizer 才真正归还。长听切歌
+  /// 时每首都要新建一整份排版，旧的一直挂着，RSS 就从 300MB 涨到 700MB。
+  void _disposePainters() {
+    if (_disposed) return;
+    _disposed = true;
+    dimPainter.dispose();
+    brightPainter.dispose();
+  }
+
+  bool _disposed = false;
+
+  static void _evictOldest() {
+    final oldest = _cache.remove(_cache.keys.first);
+    if (oldest != null) _DeferredLayoutDisposal.add(oldest._disposePainters);
+  }
+
+  /// 整份歌词换掉（切歌 / 页面关闭）时清空：旧歌词的排版不会再被用到。
+  static void clear() {
+    for (final layout in _cache.values) {
+      _DeferredLayoutDisposal.add(layout._disposePainters);
+    }
+    _cache.clear();
+  }
 
   static _PlainLineLayout cached({
     required String text,
@@ -1145,7 +1227,7 @@ class _PlainLineLayout {
       locale: locale,
     );
     if (_cache.length >= _maxCacheEntries) {
-      _cache.remove(_cache.keys.first);
+      _evictOldest();
     }
     _cache[key] = layout;
     return layout;
@@ -1424,7 +1506,7 @@ class _YrcLinePainter extends CustomPainter {
 
 class _YrcLineLayout {
   static final Map<int, _YrcLineLayout> _cache = {};
-  static const _maxCacheEntries = 240;
+  static const _maxCacheEntries = 120;
 
   final double width;
   final double height;
@@ -1434,13 +1516,37 @@ class _YrcLineLayout {
   final double contentWidth;
   final List<_WordPaintData> words;
 
-  const _YrcLineLayout({
+  _YrcLineLayout({
     required this.width,
     required this.height,
     required this.fontSize,
     required this.contentWidth,
     required this.words,
   });
+
+  /// 释放整行所有词的 Paragraph（同 [_PlainLineLayout]）。
+  void _disposePainters() {
+    if (_disposed) return;
+    _disposed = true;
+    for (final word in words) {
+      word.dispose();
+    }
+  }
+
+  bool _disposed = false;
+
+  static void _evictOldest() {
+    final oldest = _cache.remove(_cache.keys.first);
+    if (oldest != null) _DeferredLayoutDisposal.add(oldest._disposePainters);
+  }
+
+  /// 切歌时清空（见 [_PlainLineLayout.clear]）。
+  static void clear() {
+    for (final layout in _cache.values) {
+      _DeferredLayoutDisposal.add(layout._disposePainters);
+    }
+    _cache.clear();
+  }
 
   static _YrcLineLayout cached({
     required LyricLine line,
@@ -1486,7 +1592,7 @@ class _YrcLineLayout {
       fontWeight: fontWeight,
     );
     if (_cache.length >= _maxCacheEntries) {
-      _cache.remove(_cache.keys.first);
+      _evictOldest();
     }
     _cache[key] = layout;
     return layout;
@@ -1515,7 +1621,11 @@ class _YrcLineLayout {
     // 这里不能再叠加 alpha，否则实际亮度会明显低于 80%。
     final dimColor = inactiveColor;
 
-    final spaceFull = _spacePainter(textStyle).width;
+    // 量一个空格宽度用：临时 painter 用完立刻 dispose —— 每行一次，长听下来
+    // 不释放就是几千个 Paragraph 一直挂着（native 内存，GC 不感知）。
+    final spacePainter = _spacePainter(textStyle);
+    final spaceFull = spacePainter.width;
+    spacePainter.dispose();
 
     // build paint data & gap widths
     final paintWords = <_WordPaintData>[];
@@ -1628,6 +1738,12 @@ class _WordPaintData {
   double get width => dimPainter.width;
 
   double get height => dimPainter.height;
+
+  /// 释放在排版本里占用的 native Paragraph。
+  void dispose() {
+    dimPainter.dispose();
+    brightPainter.dispose();
+  }
 
   _WordPaintData copyWith({Offset? offset}) {
     return _WordPaintData(
