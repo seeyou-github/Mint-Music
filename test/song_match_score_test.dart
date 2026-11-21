@@ -63,9 +63,10 @@ void main() {
     expect(songMatchGroupAndLevel(_song(title: '爱这件事情', artist: '张三'), _local), (0, 2));
   });
 
-  test('时长容差 ±2 秒：3:55 vs 3:54 算匹配，3:58 不算', () {
+  test('时长容差 ±1 秒：3:55 vs 3:54 算匹配，3:53 / 3:58 不算', () {
     expect(songMatchGroupAndLevel(_song(title: '爱这件事情', duration: 234), _local), (1, 5));
-    expect(songMatchGroupAndLevel(_song(title: '爱这件事情', duration: 233), _local), (1, 5));
+    expect(songMatchGroupAndLevel(_song(title: '爱这件事情', duration: 233), _local), (1, 2));
+    expect(songMatchGroupAndLevel(_song(title: '爱这件事情', duration: 236), _local), (1, 5));
     expect(songMatchGroupAndLevel(_song(title: '爱这件事情', duration: 238), _local), (1, 2));
   });
 

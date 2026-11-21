@@ -63,8 +63,8 @@ class LocalSongMatchFields {
   final int durationSeconds;
 }
 
-/// 时长匹配的容差（秒）：不同音源对时长的取整方向不一样，±2 秒内算匹配。
-const int _durationToleranceSeconds = 2;
+/// 时长匹配的容差（秒）：不同音源对时长的取整方向不一样，±1 秒内算匹配。
+const int _durationToleranceSeconds = 1;
 
 bool _eq(String a, String b) => normalizeForMatch(a) == normalizeForMatch(b);
 
