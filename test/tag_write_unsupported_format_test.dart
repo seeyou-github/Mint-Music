@@ -6,7 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mintmusic/features/download/domain/services/tag_write_service.dart';
 import 'package:mintmusic/features/player/domain/models/song.dart';
 
-/// 写不进内嵌封面 / 歌词的格式（桌面端的 m4a、aac，所有平台的 wav…）：
+/// 写不进内嵌封面 / 歌词的格式（所有平台的 aac / wav，桌面端的 ogg / wma…）：
 ///
 /// * 判定为「不支持」→ 下载时不会再调歌词接口、也不会下封面图；
 /// * 下载目录里不会多出一个同名 `.lrc` 和一个同名封面图。
@@ -29,12 +29,14 @@ void main() {
   });
 
   group('supportsEmbeddedTags', () {
-    test('桌面端：只有 mp3 / flac 能写', () {
+    test('桌面端：mp3 / flac / m4a 能写，aac / ogg / wma 不行', () {
       debugDefaultTargetPlatformOverride = TargetPlatform.windows;
       expect(TagWriteService.supportsEmbeddedTags('a/b/song.mp3'), isTrue);
       expect(TagWriteService.supportsEmbeddedTags('a/b/song.MP3'), isTrue);
       expect(TagWriteService.supportsEmbeddedTags('a/b/song.flac'), isTrue);
-      expect(TagWriteService.supportsEmbeddedTags('a/b/song.m4a'), isFalse);
+      expect(TagWriteService.supportsEmbeddedTags('a/b/song.m4a'), isTrue);
+      expect(TagWriteService.supportsEmbeddedTags('a/b/song.M4A'), isTrue);
+      expect(TagWriteService.supportsEmbeddedTags('a/b/song.mp4'), isTrue);
       expect(TagWriteService.supportsEmbeddedTags('a/b/song.aac'), isFalse);
       expect(TagWriteService.supportsEmbeddedTags('a/b/song.ogg'), isFalse);
       expect(TagWriteService.supportsEmbeddedTags('a/b/song.wma'), isFalse);
@@ -62,9 +64,9 @@ void main() {
   });
 
   group('processSongFiles 对不支持的格式', () {
-    test('m4a：不写 lrc、不留封面图、不碰网络', () async {
+    test('aac：不写 lrc、不留封面图、不碰网络', () async {
       debugDefaultTargetPlatformOverride = TargetPlatform.windows;
-      final songPath = '${tempDir.path}${Platform.pathSeparator}song.m4a';
+      final songPath = '${tempDir.path}${Platform.pathSeparator}song.aac';
       await File(songPath).writeAsBytes(Uint8List.fromList([0, 1, 2, 3]));
 
       final ok = await TagWriteService().processSongFiles(
@@ -95,7 +97,7 @@ void main() {
           .map((e) => e.path.split(Platform.pathSeparator).last)
           .toList()
         ..sort();
-      expect(names, ['song.m4a'], reason: '不应生成伴生的 .lrc / 封面文件');
+      expect(names, ['song.aac'], reason: '不应生成伴生的 .lrc / 封面文件');
 
       // 音频文件本身也不该被改动。
       expect(await File(songPath).readAsBytes(), [0, 1, 2, 3]);

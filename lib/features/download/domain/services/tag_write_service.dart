@@ -22,6 +22,9 @@ class TagWriteService {
 
   /// 原生通道在 Android 上真正写得进去、而纯 Dart 又写不了的扩展名
   /// （Android 侧用 jaudiotagger；wav 在原生里被显式跳过）。
+  ///
+  /// m4a / mp4 同时列在这里和 [AudioTagWriter]：纯 Dart 已能写，桌面端走
+  /// 纯 Dart；Android 上仍优先用原生 jaudiotagger，失败再回落纯 Dart。
   static const Set<String> _androidNativeExts = {
     '.m4a',
     '.mp4',
@@ -36,17 +39,17 @@ class TagWriteService {
   ///
   /// 判定依据是「这台机器上真有可用的写入实现」，而不是「格式理论上支持」：
   ///
-  /// * mp3 / flac：纯 Dart 就能写，任何平台都算支持；
-  /// * m4a / mp4 / ogg / wma：只有 Android 的原生通道（jaudiotagger）能写；
-  /// * iOS 只多认 m4a / mp4 / aac（AVFoundation）；
-  /// * Windows 等桌面端没有原生通道，除 mp3 / flac 之外一律写不进去；
+  /// * mp3（ID3）/ flac（Vorbis）/ m4a·mp4（iTunes ilst）：纯 Dart 就能写，
+  ///   任何平台都算支持；
+  /// * ogg / wma：只有 Android 的原生通道（jaudiotagger）能写；
+  /// * iOS 只多认 aac（AVFoundation）；
   /// * wav 在原生实现里被显式跳过，也算不支持。
   ///
   /// 写不进去的格式既不该下载封面、也不该在下载目录里留一个同名 `.lrc`
   /// 和一个同名封面图 —— 那只是多两份用户用不上、删歌时还容易落下的文件。
   static bool supportsEmbeddedTags(String filePath) {
     final ext = _extOf(filePath);
-    // mp3 / flac 走纯 Dart，跟平台无关。
+    // mp3 / flac / m4a / mp4 走纯 Dart，跟平台无关。
     if (AudioTagWriter.supports(filePath)) return true;
     // 已经确认过这次运行没有原生通道（桌面端的第一次尝试就会确认）。
     if (_nativeChannelAvailable == false) return false;
@@ -79,8 +82,8 @@ class TagWriteService {
     if (!await file.exists()) return true;
     if (!_isAudioFile(songPath)) return true;
 
-    // 这个格式写不进封面 / 歌词（桌面端的 m4a、aac，以及原生实现明确跳过的
-    // wav 等）：不去下载封面，也不往下载目录里丢同名 .lrc / 封面图。
+    // 这个格式写不进封面 / 歌词（所有平台的 aac / wav，桌面端的 ogg / wma
+    // 等）：不去下载封面，也不往下载目录里丢同名 .lrc / 封面图。
     // 以前会「写不进去就退化成旁挂文件」，结果下载目录里躺着一堆播放器
     // 根本不认识的伴生文件，歌里依旧没有封面和歌词。
     if (!supportsEmbeddedTags(songPath)) {
@@ -416,7 +419,7 @@ class TagWriteService {
     String? lyrics,
     Uint8List? artwork,
   }) async {
-    // 纯 Dart 只实现了 mp3 / flac。写不进内嵌标签的格式（m4a、aac、ogg…）
+    // 纯 Dart 实现了 mp3 / flac / m4a·mp4。写不进内嵌标签的格式（aac、ogg…）
     // 在 [processSongFiles] 入口就已经被拦下（不下载封面、不写伴生文件），
     // 这里只是兜底：万一还有别的调用方进来，也不要硬试一遍再打「失败」。
     if (!AudioTagWriter.supports(filePath)) {

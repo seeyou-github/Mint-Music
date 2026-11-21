@@ -1742,7 +1742,7 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
       // 歌词不写进索引：本地歌曲的歌词只有一个来源——歌曲文件。索引里留一份
       // 会盖住文件（`LyricController.loadLyrics` 先看 `song.lrc`，为空才读
       // 文件），文件被外部工具改过、或者这次没能写进文件时，界面就会显示
-      // 过期内容。只有「这次没写进文件」（m4a 等不支持内嵌的格式 / 只读文件）
+      // 过期内容。只有「这次没写进文件」（aac / ogg 等不支持内嵌的格式 / 只读文件）
       // 才把这份留在内存里当本次会话的兜底 —— 它本来也不落盘。
       var updated = song.copyWith(
         title: title,

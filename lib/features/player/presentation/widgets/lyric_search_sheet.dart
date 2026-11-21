@@ -1010,6 +1010,6 @@ enum _EmbeddedWriteResult {
   /// 写了但失败（只读、磁盘错误…）。
   failed,
 
-  /// 格式不支持（m4a / ogg / ape …）。
+  /// 格式不支持（ogg / ape / aac …）。
   unsupported,
 }

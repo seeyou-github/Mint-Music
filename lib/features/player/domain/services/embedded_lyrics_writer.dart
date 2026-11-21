@@ -4,13 +4,17 @@ import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 
+import '../../../download/domain/services/audio_tag_writer.dart';
+
 /// 把歌词写回**本地音频文件**（覆盖原有的内嵌歌词）。
 ///
 /// 支持：
 /// * `.mp3` → ID3v2 的 `USLT`（无标签时新建 v2.3 标签）；
-/// * `.flac` → Vorbis comment 的 `LYRICS`。
+/// * `.flac` → Vorbis comment 的 `LYRICS`；
+/// * `.m4a` / `.mp4` → `moov/udta/meta/ilst` 的 `©lyr`（委托
+///   [AudioTagWriter]，与标签编辑页共用同一套 MP4 写入逻辑）。
 ///
-/// 其它容器（m4a / ogg / ape / wav …）暂不支持，返回 false 由调用方提示。
+/// 其它容器（ogg / ape / wav / aac …）暂不支持，返回 false 由调用方提示。
 ///
 /// 写入策略：
 /// 1. **原地覆盖**（首选）：新标签能塞进原来的标签空间时只改文件头部，
@@ -33,6 +37,11 @@ class EmbeddedLyricsWriter {
       }
       if (lower.endsWith('.mp3')) {
         return _writeId3(file, text);
+      }
+      if (lower.endsWith('.m4a') || lower.endsWith('.mp4')) {
+        // MP4 的 moov 重建（含 stco 偏移修正）只在 AudioTagWriter 里实现，
+        // 这里直接复用，避免两套 MP4 写入逻辑各自跑偏。
+        return AudioTagWriter.write(filePath, lyrics: text);
       }
       debugPrint('[EmbeddedLyricsWriter] 不支持的格式: $filePath');
       return false;

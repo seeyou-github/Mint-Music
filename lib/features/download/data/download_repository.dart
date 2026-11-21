@@ -979,7 +979,8 @@ class DownloadRepository {
         try {
           final tagOpts =
               _tagWriteOptionsFetcher?.call() ?? const TagWriteOptions();
-          // 这个格式能不能把封面 / 歌词写进文件本身（桌面端的 m4a、aac 写不进）。
+          // 这个格式能不能把封面 / 歌词写进文件本身（aac / 桌面端的 ogg、wma
+          // 写不进）。
           // 写不进去就干脆不下载：歌词接口不用调、封面图片不用拉，下载目录里
           // 也不会多出一个伴生的 .lrc 和封面图。
           final embedsTags = TagWriteService.supportsEmbeddedTags(finalPath);
