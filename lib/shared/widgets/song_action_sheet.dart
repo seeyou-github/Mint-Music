@@ -999,21 +999,13 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
   }
 
   /// Android / Windows：点击歌曲名 / 歌手 / 专辑行时，把对应名称复制到
-  /// 剪贴板（搜索跳转同时进行，互不影响）。其它平台不做复制。
+  /// 剪贴板（搜索跳转同时进行，互不影响）。其它平台不做复制。静默复制，
+  /// 不弹提示。
   void _copyMetaValue(String text) {
     if (!Platform.isAndroid && !Platform.isWindows) return;
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
     unawaited(Clipboard.setData(ClipboardData(text: trimmed)));
-    // 弹层马上会被 pop（点歌名 / 专辑会跳搜索页）：snackbar 挂在根
-    // ScaffoldMessenger 上，pop 之后在目标页仍然可见。
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(context.tr('已复制到剪贴板')),
-        behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 2),
-      ),
-    );
   }
 
   /// 点歌曲名：关掉菜单和播放页，打开搜索页并自动搜索。
