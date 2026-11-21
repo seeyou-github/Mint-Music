@@ -17,6 +17,7 @@ import '../../player/application/playback_controller.dart';
 import '../../player/domain/models/song.dart';
 import '../../player/domain/services/lyric_cache.dart';
 import '../application/local_providers.dart';
+import '../presentation/match_lyrics_page.dart';
 import '../domain/local_song_filter.dart';
 import '../domain/services/embedded_lyric_presence.dart';
 
@@ -162,6 +163,24 @@ class _QuickMatchPageState extends ConsumerState<QuickMatchPage> {
         .setQueue(songs, startIndex: index >= 0 ? index : 0);
   }
 
+  /// 打开「匹配歌词」页；返回后强制重算一遍歌词状态（批量写文件后
+  /// 逐字歌词徽标要跟着变）。
+  Future<void> _openLyricMatcher(List<Song> songs) async {
+    final status = Map<String, LyricPresence>.from(_lyricStatus);
+    await Navigator.of(context, rootNavigator: true).push(
+      MaterialPageRoute<void>(
+        builder: (_) => MatchLyricsPage(songs: songs, lyricStatus: status),
+      ),
+    );
+    if (!mounted) return;
+    final allSongs =
+        ref.read(localMusicNotifierProvider).valueOrNull ?? const <Song>[];
+    if (allSongs.isNotEmpty) {
+      await _loadLyricStatus(allSongs);
+      if (mounted) setState(() {});
+    }
+  }
+
   /// 打开「编辑标签」页；[autoSearch] 为 true 时直接进在线搜索并搜一次。
   ///
   /// 匹配界面已经并入编辑标签页，这里不再单独开一个匹配页。回来时强制
@@ -252,7 +271,7 @@ class _QuickMatchPageState extends ConsumerState<QuickMatchPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _buildHeader(colors, dirs, songs.length, allSongs.length),
+            _buildHeader(colors, dirs, songs.length, allSongs.length, songs),
             _buildFilterBar(colors),
             const SizedBox(height: AppSpacing.xs),
             _buildListHeader(colors),
@@ -288,6 +307,7 @@ class _QuickMatchPageState extends ConsumerState<QuickMatchPage> {
     List<String> dirs,
     int shown,
     int total,
+    List<Song> songs,
   ) {
     final current = dirs.contains(_dir)
         ? _dir
@@ -314,6 +334,26 @@ class _QuickMatchPageState extends ConsumerState<QuickMatchPage> {
               ),
             ),
           ),
+          // 「匹配歌词」：批量给缺歌词 / 缺逐字的歌匹配逐字歌词并写进文件。
+          OutlinedButton.icon(
+            onPressed: songs.isEmpty
+                ? null
+                : () => unawaited(_openLyricMatcher(songs)),
+            icon: Icon(Icons.auto_fix_high, size: 16, color: colors.primary),
+            label: Text(
+              context.tr('匹配歌词'),
+              style: TextStyle(fontSize: 13, color: colors.primary),
+            ),
+            style: OutlinedButton.styleFrom(
+              side: BorderSide(color: colors.primary.withValues(alpha: 0.5)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(AppRadius.full),
+              ),
+              minimumSize: const Size(0, 36),
+              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+            ),
+          ),
+          const SizedBox(width: AppSpacing.sm),
           // 目录下拉：默认第一个目录，可切到别的目录 / 全部目录。
           PopupMenuButton<String>(
             enabled: dirs.isNotEmpty,
