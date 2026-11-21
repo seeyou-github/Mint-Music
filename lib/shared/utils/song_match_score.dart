@@ -4,12 +4,16 @@
 /// 定级，**级别越高越靠前**（横向结果列表里越靠左）；同级别保持插件返回
 /// 的原顺序。只影响排序，不过滤、不隐藏任何结果。
 ///
-/// 级别（第 1 级最高）：
-/// 1. 歌名、歌手、专辑、年份、时长 全部匹配；
-/// 2. 歌名、歌手、专辑、时长 匹配；
-/// 3. 歌名、歌手、时长 匹配；
-/// 4. 歌名、歌手 匹配；
-/// 5. 歌名 匹配。
+/// 级别按五遍过滤收窄（数字越大越优先，第 5 级最高）：
+///
+/// * 过滤第 1 遍：匹配歌名 → 命中的保存为 **1 级列表**；
+/// * 过滤第 2 遍：1 级列表里继续匹配歌手 → **2 级列表**（1 级去掉这些）；
+/// * 过滤第 3 遍：2 级列表里继续匹配时长 → **3 级列表**；
+/// * 过滤第 4 遍：3 级列表里继续匹配专辑 → **4 级列表**；
+/// * 过滤第 5 遍：4 级列表里继续匹配年份 → **5 级列表**。
+///
+/// 最终顺序（从左到右）：5 级 > 4 级 > 3 级 > 2 级 > 1 级 > 其它结果
+/// （歌名都不匹配的）。同级别保持插件返回的原顺序。
 library;
 
 import '../../features/player/domain/models/song.dart';
@@ -69,25 +73,30 @@ bool _durationMatches(int candidate, int local) {
       (candidate - local).abs() <= _durationToleranceSeconds;
 }
 
-/// 单个候选的匹配级别（1~5，见文件头注释）；歌名都不匹配返回 0
-/// （排在所有有级别的结果之后）。
-///
-/// 定级按「能够上的最高级别」：例如专辑、年份都匹配但时长不匹配 →
-/// 只算第 4 级（第 2/3 级都要求时长）。
+/// 单个候选的匹配级别（1~5，数字越大命中字段越多，见文件头注释的五遍
+/// 过滤）；连歌名都不匹配返回 0（排在所有有级别的结果之后）。
 int songMatchLevel(Song candidate, LocalSongMatchFields local) {
-  // 第 5 级的门槛：歌名匹配。歌名不匹配直接 0。
+  // 过滤第 1 遍：歌名完全匹配。
   if (!_eq(candidate.title, local.title)) return 0;
-  if (!_eq(candidate.artist, local.artist)) return 5;
+  var level = 1;
 
-  final duration = _durationMatches(candidate.duration, local.durationSeconds);
-  if (!duration) return 4;
+  // 过滤第 2 遍：歌手。
+  if (!_eq(candidate.artist, local.artist)) return level;
+  level = 2;
 
-  // 第 2 级要求专辑匹配；年份只在第 1 级才要求（双方都有值且一致）。
-  if (_eq(candidate.album, local.album)) {
-    if (local.year > 0 && candidate.year == local.year) return 1;
-    return 2;
+  // 过滤第 3 遍：时长（±2 秒内）。
+  if (!_durationMatches(candidate.duration, local.durationSeconds)) {
+    return level;
   }
-  return 3;
+  level = 3;
+
+  // 过滤第 4 遍：专辑。
+  if (!_eq(candidate.album, local.album)) return level;
+  level = 4;
+
+  // 过滤第 5 遍：年份（双方都有值且一致）。
+  if (local.year > 0 && candidate.year == local.year) level = 5;
+  return level;
 }
 
 /// 按匹配级别降序**稳定**排序（Dart 的 List.sort 不保证稳定，这里带上
@@ -96,15 +105,18 @@ List<Song> sortSongsByMatchLevel(
   List<Song> results,
   LocalSongMatchFields local,
 ) {
-  final indexed = [
-    for (var i = 0; i < results.length; i++)
-      (index: i, song: results[i], level: songMatchLevel(results[i], local)),
-  ]..sort((a, b) {
-      // 歌名都不匹配（level 0）排到所有有级别的结果之后。
-      final ka = a.level == 0 ? 99 : a.level;
-      final kb = b.level == 0 ? 99 : b.level;
-      final byLevel = ka.compareTo(kb);
-      return byLevel != 0 ? byLevel : a.index.compareTo(b.index);
-    });
+  final indexed =
+      [
+        for (var i = 0; i < results.length; i++)
+          (
+            index: i,
+            song: results[i],
+            level: songMatchLevel(results[i], local),
+          ),
+      ]..sort((a, b) {
+        // 级别数字越大越优先（5 级最左）；歌名都不匹配（0）排最后。
+        final byLevel = b.level.compareTo(a.level);
+        return byLevel != 0 ? byLevel : a.index.compareTo(b.index);
+      });
   return [for (final entry in indexed) entry.song];
 }
