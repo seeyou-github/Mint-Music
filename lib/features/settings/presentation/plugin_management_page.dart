@@ -1799,6 +1799,17 @@ class _PluginManagementPageState extends ConsumerState<PluginManagementPage> {
       ref.invalidate(pluginInitializedProvider);
       ref.invalidate(pluginsProvider);
 
+      // 图标按插件 id 命名，更新必然换新 id：安装时那次图标下载一旦失败
+      // （favicon 15s 超时 / 网络抖动），iconPath 为空，要等下次启动的补齐
+      // 逻辑才能恢复。这里立刻补一次，补完刷新列表——主页切换按钮与
+      // 插件管理页的图标马上就能显示，不用重启应用。
+      unawaited(
+        pluginService.syncPluginIcons().then((_) {
+          if (!mounted) return;
+          ref.invalidate(pluginsProvider);
+        }),
+      );
+
       // Clear buffered update notice for this plugin so it doesn't
       // show again after the page is reopened.
       ref
@@ -2643,10 +2654,7 @@ class _PluginCredentialSectionState
                 Expanded(
                   child: Text(
                     context.tr('凭据会包含在备份文件中，请勿分享备份'),
-                    style: TextStyle(
-                      fontSize: 10,
-                      color: colors.textHint,
-                    ),
+                    style: TextStyle(fontSize: 10, color: colors.textHint),
                   ),
                 ),
                 TextButton(

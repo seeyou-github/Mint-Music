@@ -218,9 +218,9 @@ class PluginService {
 
   Future<void> savePlugins(List<PluginInfo> plugins) async {
     final prefs = await AppPreferences.getInstance();
-    final data = jsonEncode(
-      [for (final plugin in plugins) _storedPluginJson(plugin)],
-    );
+    final data = jsonEncode([
+      for (final plugin in plugins) _storedPluginJson(plugin),
+    ]);
     await prefs.setString(_prefsKey, data);
     _pluginOrder = plugins.map((plugin) => plugin.id).toList();
     _pluginInfos = plugins;
@@ -855,13 +855,13 @@ class PluginService {
   /// 已经有同名插件（比如用户自己导入过的旧版本）就不再装第二份。
   /// 用英文文件名而不是中文的：assets 里的中文名打包 / 解包在某些平台上
   /// 会出编码问题，装进用户目录时本来也要重命名。
-  static const List<(String asset, String fileName, String name)> _bundledPlugins =
-      [
-        ('assets/plugins/netease.js', 'netease_plugin.js', '网易_数据源'),
-        ('assets/plugins/qq.js', 'qq_plugin.js', 'QQ_数据源'),
-        ('assets/plugins/kugou.js', 'kugou_plugin.js', '酷狗_数据源'),
-        ('assets/plugins/kuwo.js', 'kuwo_plugin.js', '酷我_数据源'),
-      ];
+  static const List<(String asset, String fileName, String name)>
+  _bundledPlugins = [
+    ('assets/plugins/netease.js', 'netease_plugin.js', '网易_数据源'),
+    ('assets/plugins/qq.js', 'qq_plugin.js', 'QQ_数据源'),
+    ('assets/plugins/kugou.js', 'kugou_plugin.js', '酷狗_数据源'),
+    ('assets/plugins/kuwo.js', 'kuwo_plugin.js', '酷我_数据源'),
+  ];
 
   /// 内置插件是否已经处理过一次。
   static const String _bundledInstalledKey = 'bundled_plugins_installed_v1';
@@ -994,7 +994,7 @@ class PluginService {
     // 这里必须 await：插件列表在初始化完成后才读取，图标没写完的话
     // 界面会一直用旧数据（没有 iconPath），表现为「装了插件也没有图标」。
     // 正常情况下没有缺失图标，这一步是空转；最多等 20 秒兜底。
-    await _syncPluginIcons().timeout(
+    await syncPluginIcons().timeout(
       const Duration(seconds: 20),
       onTimeout: () => print('[PluginService] 同步插件图标超时，跳过'),
     );
@@ -1116,7 +1116,12 @@ class PluginService {
   }
 
   /// 补齐已安装插件的图标缓存。
-  Future<void> _syncPluginIcons() async {
+  ///
+  /// 图标文件按**插件 id** 命名，而插件 id 是安装时间戳——更新插件必然换
+  /// 新 id，安装时那次图标下载一旦失败（favicon 15s 超时 / 网络抖动），
+  /// iconPath 就是空的，界面退回默认圆标。除启动时自动补齐外，更新插件
+  /// 后也应该立刻补一次（见插件管理页的更新流程）。
+  Future<void> syncPluginIcons() async {
     try {
       final plugins = await loadPlugins();
       var changed = false;
