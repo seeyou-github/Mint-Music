@@ -6,7 +6,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:just_audio/just_audio.dart';
-import 'package:mintmusic/core/theme/theme_colors.dart';
 import 'package:mintmusic/core/platform/app_paths.dart';
 import 'package:mintmusic/core/l10n/app_locale.dart';
 import 'package:mintmusic/core/l10n/l10n.dart';
@@ -116,6 +115,49 @@ class _FakeSourceManager implements MusicSourceManager {
         source: 'wy',
       ),
     ];
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+/// 搜索结果不带年份（只有专辑 id）：验证弹框会像编辑标签页那样补查年份。
+class _FakeSourceManagerAlbumYear implements MusicSourceManager {
+  int resolveCalls = 0;
+
+  @override
+  Future<List<Song>> search(
+    String query, {
+    String sourceId = 'wy',
+    int page = 1,
+    int limit = 30,
+  }) async {
+    return [
+      Song(
+        id: 'kw_1',
+        title: 'No Limit (Extended Version)',
+        artist: '2 Unlimited',
+        album: 'No Limit',
+        duration: 355,
+        source: 'kw',
+        lx: const {'albumId': 'album_9527'},
+      ),
+      Song(
+        id: 'kw_2',
+        title: 'No Limit (Remix)',
+        artist: '2 Unlimited',
+        album: 'Retro Megamix',
+        duration: 215,
+        source: 'kw',
+        lx: const {'albumId': 'album_9528'},
+      ),
+    ];
+  }
+
+  @override
+  Future<int?> resolveSongYear(Song song) async {
+    resolveCalls++;
+    return (song.lx?['albumId'] ?? '') == 'album_9527' ? 2014 : null;
   }
 
   @override
@@ -260,5 +302,64 @@ void main() {
     expect(find.text('专辑：—'), findsOneWidget);
     expect(find.text('年份：—'), findsOneWidget);
     expect(find.text('时长：—'), findsOneWidget);
+  });
+
+  testWidgets('搜索结果缺少年份时按专辑补查（与编辑标签页在线搜索一致）', (tester) async {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    final audio = _MemoryAudioHandler();
+    final sources = _FakeSourceManagerAlbumYear();
+    final controller = PlaybackController(audio, sources, _NoIoAudioEffects());
+    controller.getQualityForSource = (_) => '320k';
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      await audio.dispose();
+    });
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          musicSourceManagerProvider.overrideWithValue(sources),
+          playbackControllerProvider.overrideWith((_) => controller),
+          searchSupportedSourcesProvider.overrideWithValue([
+            const SourceInfo(id: 'kw@kw-test-1.9.0', name: '酷我'),
+          ]),
+          themeColorsProvider.overrideWithValue(_colors()),
+        ],
+        child: L10n(
+          locale: AppLocale.zhCn,
+          child: MaterialApp(
+            home: Scaffold(
+              body: Center(
+                child: Builder(
+                  builder: (context) {
+                    return TextButton(
+                      onPressed: () =>
+                          showLyricSearchSheet(context, song: _localSong()),
+                      child: const Text('open'),
+                    );
+                  },
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.runAsync(() async {
+      await tester.tap(find.text('open'));
+      await tester.pump();
+      await Future<void>.delayed(const Duration(milliseconds: 900));
+      await tester.pump();
+    });
+    await tester.pumpAndSettle(const Duration(milliseconds: 200));
+
+    // 第一个候选的专辑查到了年份，卡片从「年份：—」变成「年份：2014」。
+    expect(find.text('年份：2014'), findsOneWidget);
+    // 第二个候选的专辑查不到（负缓存），仍显示 —，不会误填其他专辑的年份。
+    expect(find.text('年份：—'), findsOneWidget);
+    // 两个不同专辑各查一次；同一专辑的重复候选不会重复请求。
+    expect(sources.resolveCalls, 2);
   });
 }

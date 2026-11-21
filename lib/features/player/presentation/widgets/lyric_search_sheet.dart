@@ -65,6 +65,9 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
   bool _searching = false;
   String? _searchError;
 
+  /// 搜索序号：补查年份是异步的，回来时若已经换了关键词 / 音源就丢弃。
+  int _searchSeq = 0;
+
   int _selectedIndex = -1;
   List<LyricLine> _previewLines = const [];
   LyricResult? _previewResult;
@@ -134,6 +137,7 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
   Future<void> _search() async {
     final keyword = _keyword;
     if (keyword.isEmpty || _searching) return;
+    final seq = ++_searchSeq;
     setState(() {
       _searching = true;
       _searchError = null;
@@ -147,7 +151,7 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
       final songs = await ref
           .read(musicSourceManagerProvider)
           .search(keyword, sourceId: _sourceId, limit: 20);
-      if (!mounted) return;
+      if (!mounted || seq != _searchSeq) return;
       final filtered = songs
           .where((s) => s.title.trim().isNotEmpty)
           .toList(growable: false);
@@ -162,13 +166,67 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
         _searching = false;
         _searchError = sorted.isEmpty ? context.tr('没有搜到相关歌曲') : null;
       });
+      // 搜索接口一般只带歌名 / 歌手 / 专辑，年份在专辑详情里：补查一次，
+      // 免得卡片上一片「年份：—」（编辑标签页的在线搜索同样会补）。
+      unawaited(_resolveResultYears(seq));
       // 不自动选中第一条：默认继续展示当前正在使用的歌词，用户点了候选
       // 才切换到那份歌词的预览。
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || seq != _searchSeq) return;
       setState(() {
         _searching = false;
         _searchError = context.tr('搜索失败：$e');
+      });
+    }
+  }
+
+  /// 给搜索结果补发行年份。
+  ///
+  /// 走的是编辑标签页「在线搜索」选中后用的同一个入口
+  /// （[MusicSourceManager.resolveSongYear]）：按候选的专辑 id 查一次专辑详情，
+  /// 内部有专辑级缓存，同一张专辑多个候选只请求一次；查不到的写负缓存，
+  /// 切回上次的结果也不会反复打网络。
+  ///
+  /// 一批 4 个并发，避免一次搜索就同时打十几个专辑详情。
+  Future<void> _resolveResultYears(int seq) async {
+    // 专辑 → 需要回写的卡片下标（同一专辑的多个候选共享一个年份）。
+    final byAlbum = <String, List<int>>{};
+    for (var i = 0; i < _results.length; i++) {
+      final song = _results[i];
+      if ((song.year ?? 0) > 0) continue;
+      final albumId = (song.lx?['albumId'] ?? '').toString().trim();
+      final sourceId = (song.displaySource ?? song.source ?? '').trim();
+      if (albumId.isEmpty || sourceId.isEmpty) continue;
+      byAlbum.putIfAbsent('$sourceId|$albumId', () => <int>[]).add(i);
+    }
+    if (byAlbum.isEmpty) return;
+
+    final manager = ref.read(musicSourceManagerProvider);
+    final groups = byAlbum.entries.toList(growable: false);
+    const batchSize = 4;
+    for (var start = 0; start < groups.length; start += batchSize) {
+      final batch = groups.skip(start).take(batchSize).toList(growable: false);
+      final years = await Future.wait(
+        batch.map((group) => manager.resolveSongYear(_results[group.value.first])),
+      );
+      // 期间重新搜过：这批结果已经不对应当前列表了。
+      if (!mounted || seq != _searchSeq) return;
+      final resolved = <int, int>{};
+      for (var i = 0; i < batch.length; i++) {
+        final year = years[i];
+        if (year == null || year <= 0) continue;
+        for (final index in batch[i].value) {
+          resolved[index] = year;
+        }
+      }
+      if (resolved.isEmpty) continue;
+      setState(() {
+        final next = List<Song>.of(_results);
+        resolved.forEach((index, year) {
+          if (index >= next.length) return;
+          next[index] = next[index].copyWith(year: year);
+        });
+        _results = next;
       });
     }
   }
