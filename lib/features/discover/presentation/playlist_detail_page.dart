@@ -1,0 +1,1266 @@
+import 'dart:async';
+import 'dart:io';
+import 'dart:math' as math;
+
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import '../../../core/l10n/l10n.dart';
+import '../../../core/theme/app_spacing.dart';
+import '../../../core/theme/app_surface.dart';
+import '../../../core/theme/theme_provider.dart';
+import '../../../core/utils/responsive_layout.dart';
+import '../../../core/utils/scroll_locate.dart';
+import '../../../shared/widgets/music_cover_image.dart';
+import '../../../shared/pagination/page_slicer.dart';
+import '../../../shared/widgets/load_more_footer.dart';
+import '../../../shared/widgets/page_bar.dart';
+import '../../../shared/widgets/song_action_sheet.dart';
+import '../../../shared/widgets/song_list_item.dart';
+import '../../../shared/widgets/song_selection.dart';
+import '../application/discover_providers.dart';
+import '../../../features/player/application/playback_context.dart';
+import '../../player/application/mini_player_visibility.dart';
+import '../../library/domain/models/recently_played.dart';
+import '../domain/models/playlist_page.dart';
+import '../../library/application/playlist_providers.dart';
+import '../../library/domain/models/playlist.dart' as local;
+import '../../player/application/playback_controller.dart';
+import '../../player/domain/models/song.dart';
+
+class PlaylistDetailPage extends ConsumerStatefulWidget {
+  const PlaylistDetailPage({
+    super.key,
+    required this.playlistId,
+    this.sourceType = PlaybackSourceType.playlist,
+  });
+
+  final String playlistId;
+
+  /// 打开这个歌单的入口类型（排行榜打开的记为「榜单」）。
+  final PlaybackSourceType sourceType;
+
+  @override
+  ConsumerState<PlaylistDetailPage> createState() => _PlaylistDetailPageState();
+}
+
+class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
+  /// 批量选择控制器（长按歌曲或「更多」菜单进入）。
+  final SongSelectionController _selection = SongSelectionController();
+  bool _isFavorited = false;
+
+  /// 正在后台拉取全部歌曲并收藏：收藏按钮显示转圈动画。
+  bool _favoriting = false;
+  final ScrollController _scrollController = ScrollController();
+
+  // ---- 插件源歌单翻页状态 ----
+  /// 已初始化翻页状态的歌单 id，避免每次 build 重复重置。
+  String? _pagedPlaylistId;
+
+  /// 首屏（第 1 页）歌曲。
+  List<Song> _baseSongs = const [];
+
+  /// 后续页追加的歌曲。
+  final List<Song> _extraSongs = [];
+
+  /// 当前已加载到的页码。
+  int _page = 1;
+
+  /// 是否已到末页。
+  bool _isEnd = true;
+  int? _total;
+  bool _loadingMore = false;
+
+  /// 加载下一页失败的原因（显示「加载失败，点击重试」，不再当成没有更多）。
+  String? _loadMoreError;
+
+  /// 连续多少页没有新歌后放弃翻页（兜底，防止插件异常时无限请求）。
+  static const int _maxConsecutiveEmptyPages = 5;
+
+  /// 补齐一页时最多再续拉几页。
+  ///
+  /// 接口一次给的常常比自己一页（50 首）少，所以要循环续拉；但有的音源一次
+  /// 只返回几条，不设上限会连着发十几个请求（日志里见过 10+ 次、单次最慢
+  /// 近 5 秒）。到这轮数先停，用户滚到底会再进来一轮。
+  static const int _maxFetchRoundsPerEnsure = 4;
+
+  /// 歌曲列表分页：每页 50 首，只显示当前页，接口多给的留在已加载列表里。
+  final PageSlicer _pager = PageSlicer(pageSize: 50);
+
+  /// 正在为某一页补齐数据（避免重复触发）。
+  bool _pagingLoading = false;
+
+  /// 完整歌曲列表（首屏 + 已加载的后续页）。
+  List<Song> get _songs => [..._baseSongs, ..._extraSongs];
+
+  /// 歌单名称 / 封面（写「最近播放」与「最近打开的歌单」用）。
+  String _playlistTitle = '';
+  String _playlistCover = '';
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    _selection.dispose();
+    super.dispose();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkIfFavorited();
+    });
+  }
+
+  /// 首屏数据到达后同步翻页状态（同一歌单只初始化一次）。
+  void _syncPagination(PlaylistPage page) {
+    if (_pagedPlaylistId == widget.playlistId) return;
+    _pagedPlaylistId = widget.playlistId;
+    final playlist = page.playlist;
+    _playlistTitle = playlist?.title ?? _playlistTitle;
+    _playlistCover = playlist?.coverUrl ?? _playlistCover;
+    _baseSongs = page.playlist?.songs ?? const <Song>[];
+    _extraSongs.clear();
+    _page = 1;
+    _isEnd = page.isEnd;
+    _total = page.total;
+    _pager.reset();
+    _scheduleEnsurePage();
+  }
+
+  /// 当前页数据不够（接口每页条数比 50 少）时继续向接口取，直到铺满这一页。
+  void _scheduleEnsurePage() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(_ensurePageLoaded());
+    });
+  }
+
+  /// 切到第 [page] 页并补齐数据。
+  Future<void> _goToPage(int page) async {
+    if (page < 1 || _pagingLoading) return;
+    final previousPage = _pager.page;
+    setState(() => _pager.jumpTo(page));
+    if (_scrollController.hasClients) _scrollController.jumpTo(0);
+    if (_beyondBuffer(page)) {
+      await _jumpToPageDirect(page, fallbackPage: previousPage);
+    } else {
+      await _ensurePageLoaded();
+    }
+  }
+
+  /// 目标页是否超出「缓冲区 + 下一页」的连续范围。
+  ///
+  /// 超出（或往回翻出缓冲区）时走跳页直达——只取目标页，不把中间页
+  /// 逐页拉一遍；范围内仍走追加补齐，缓冲可以继续复用。
+  bool _beyondBuffer(int page) {
+    final contiguousEnd =
+        _pager.bufferBase - 1 + (_songs.length / _pager.pageSize).ceil();
+    return page < _pager.bufferBase || page > contiguousEnd + 1;
+  }
+
+  /// 跳页直达：只请求目标页并替换缓冲区。
+  ///
+  /// 数据源插件的详情页每页 50 首（与本地页大小一致），第 N 页就是插件的
+  /// 第 N 页；上千首的歌单点后面的页码时不用逐页把中间页全部取回来。
+  /// 失败时退回原页码并提示，已加载的内容保留。
+  Future<void> _jumpToPageDirect(int page, {required int fallbackPage}) async {
+    setState(() => _pagingLoading = true);
+    try {
+      final result = await ref
+          .read(discoverRepositoryProvider)
+          .getPlaylistDetailPage(widget.playlistId, page: page);
+      if (!mounted || _pagedPlaylistId != widget.playlistId) return;
+      final songs = result.playlist?.songs ?? const <Song>[];
+      setState(() {
+        _baseSongs = songs;
+        _extraSongs.clear();
+        _page = page;
+        _isEnd = result.isEnd;
+        _total = result.total ?? _total;
+        _loadMoreError = null;
+        _pager.rebase(page);
+      });
+    } catch (e) {
+      debugPrint('[PlaylistDetailPage] 加载第 $page 页失败: $e');
+      if (!mounted) return;
+      setState(() => _pager.jumpTo(fallbackPage));
+      _showMessage('加载第 $page 页失败');
+    } finally {
+      if (mounted) setState(() => _pagingLoading = false);
+    }
+  }
+
+  /// 把当前页需要的数据补齐。
+  ///
+  /// 接口一次可能给得比一页少：继续取下一页，直到够了 / 到末页 / 出错。
+  Future<void> _ensurePageLoaded() async {
+    if (_pagingLoading) return;
+    setState(() => _pagingLoading = true);
+    try {
+      for (var round = 0; round < _maxFetchRoundsPerEnsure; round++) {
+        if (!mounted) break;
+        final missing = _pager.missing(_songs.length, hasMore: !_isEnd);
+        if (missing == 0) break;
+        if (_loadMoreError != null) break;
+        final before = _songs.length;
+        await _loadMore();
+        if (!mounted) return;
+        if (_songs.length == before) break;
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _pagingLoading = false;
+          _pager.clampTo(_songs.length, hasMore: !_isEnd, total: _total);
+        });
+      }
+    }
+  }
+
+  Future<void> _loadMore() async {
+    if (_loadingMore || _isEnd || _pagedPlaylistId != widget.playlistId) return;
+
+    _loadingMore = true;
+    if (mounted) {
+      setState(() {
+        _loadMoreError = null;
+      });
+    }
+
+    try {
+      var page = _page;
+      var emptyStreak = 0;
+      var reachedEnd = false;
+
+      // 插件可能把整页都是不可播放（VIP 等）的歌曲过滤掉，返回空页但
+      // `isEnd` 仍为 false。此时继续往后翻，最多连续跳过
+      // [_maxConsecutiveEmptyPages] 页，避免卡住或无限请求。
+      while (!reachedEnd && emptyStreak < _maxConsecutiveEmptyPages) {
+        page += 1;
+        final result = await ref
+            .read(discoverRepositoryProvider)
+            .getPlaylistDetailPage(widget.playlistId, page: page);
+        if (!mounted || _pagedPlaylistId != widget.playlistId) return;
+
+        final newSongs = result.playlist?.songs ?? const <Song>[];
+        final seen = <String>{
+          for (final song in _baseSongs) song.id,
+          for (final song in _extraSongs) song.id,
+        };
+        final appended = <Song>[
+          for (final song in newSongs)
+            if (seen.add(song.id)) song,
+        ];
+
+        if (appended.isNotEmpty) {
+          final isEnd = result.isEnd;
+          setState(() {
+            _page = page;
+            _extraSongs.addAll(appended);
+            _total = result.total ?? _total;
+            _isEnd = isEnd || (_total != null && _songs.length >= _total!);
+            _loadMoreError = null;
+          });
+          return;
+        }
+
+        reachedEnd = result.isEnd;
+        emptyStreak++;
+      }
+
+      // 已到末页，或连续多页都没有新歌：停止翻页。
+      if (mounted) {
+        setState(() {
+          _page = page;
+          _isEnd = true;
+        });
+      }
+    } catch (e) {
+      debugPrint('[PlaylistDetailPage] 加载下一页失败: $e');
+      // 不能当成「没有更多」：可能是网络抖动 / 服务器异常，
+      // 已加载的内容保留，底部显示「加载失败，点击重试」。
+      if (mounted) {
+        setState(() {
+          _loadMoreError = e.toString().replaceFirst('Exception: ', '');
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _loadingMore = false);
+      }
+    }
+  }
+
+  /// 底部「加载失败，点击重试」。
+  Future<void> _retryLoadMore() async {
+    if (!mounted) return;
+    setState(() => _loadMoreError = null);
+    await _ensurePageLoaded();
+  }
+
+  void _checkIfFavorited() {
+    final playlistsAsync = ref.read(playlistsProvider);
+    final playlistAsync = ref.read(playlistDetailProvider(widget.playlistId));
+
+    playlistAsync.whenData((page) {
+      if (page.playlist == null) return;
+
+      playlistsAsync.whenData((localPlaylists) {
+        final exists = localPlaylists.any(
+          (p) => p.meta['discoverId'] == widget.playlistId,
+        );
+        if (mounted) {
+          setState(() {
+            _isFavorited = exists;
+          });
+        }
+      });
+    });
+  }
+
+  // ---------------------------------------------------------------- 批量选择
+
+  /// 长按歌曲进入批量选择模式并选中该首；已在选择模式则切换其选中态。
+  void _enterSelection(Song song) {
+    if (_selection.isActive) {
+      _selection.toggle(song.id);
+    } else {
+      _selection.enter(song.id);
+    }
+  }
+
+  /// 「更多」菜单里的「批量选择 / 取消批量选择」。
+  void _toggleMultiSelectMode() {
+    if (_selection.isActive) {
+      _selection.exit();
+    } else {
+      _selection.enter();
+    }
+  }
+
+  List<Song> _selectedSongs(List<Song> source) =>
+      _selection.selectedSongs(source);
+
+  void _batchPlayNext(List<Song> songs) {
+    final selected = _selectedSongs(songs);
+    if (selected.isEmpty) return;
+    ref.read(playbackControllerProvider.notifier).insertNext(selected);
+    _showMessage('已将 ${selected.length} 首插入到下一首播放');
+  }
+
+  void _batchAddToQueue(List<Song> songs) {
+    final selected = _selectedSongs(songs);
+    if (selected.isEmpty) return;
+    ref.read(playbackControllerProvider.notifier).appendToQueue(selected);
+    _showMessage('已将 ${selected.length} 首加入播放列表');
+  }
+
+  void _batchAddToPlaylist(List<Song> songs) {
+    final selected = _selectedSongs(songs);
+    if (selected.isEmpty) return;
+    final colors = ref.read(themeColorsProvider);
+    unawaited(showAddSongsToPlaylistSheet(context, ref, colors, selected));
+  }
+
+  Future<void> _batchFavorite(List<Song> songs) async {
+    final selected = _selectedSongs(songs);
+    if (selected.isEmpty) return;
+    await ref
+        .read(playlistsProvider.notifier)
+        .addSongsToPlaylist('__favorites__', selected);
+  }
+
+  void _batchDownload(List<Song> songs) {
+    final selected = _selectedSongs(songs);
+    if (selected.isEmpty) return;
+    unawaited(showBatchDownloadSheet(context, ref, selected));
+  }
+
+  void _showMessage(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(context.tr(message)),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = ref.watch(themeColorsProvider);
+    final playlistAsync = ref.watch(playlistDetailProvider(widget.playlistId));
+    final pageData = playlistAsync.valueOrNull;
+    if (pageData != null) _syncPagination(pageData);
+
+    // 提前计算当前播放歌曲在本歌单中的索引，用于定位按钮。
+    // 在外层 Stack 中直接渲染 FAB，避免嵌套 Stack 裁剪导致按钮不可见。
+    // select 当前歌曲：播放进度每 200ms 变一次整包 state，不 select 的话
+    // 本页在播放期间每秒重建 5 次。
+    final currentSong = ref.watch(
+      playbackControllerProvider.select((s) => s.currentSong),
+    );
+    final int currentSongIndex = currentSong == null
+        ? -1
+        : _songs.indexWhere((s) => s.id == currentSong.id);
+
+    return ListenableBuilder(
+      listenable: _selection,
+      builder: (context, _) {
+        final selecting = _selection.isActive;
+        final currentSongs = _songs;
+        return PopScope(
+          // 多选模式下先拦截返回键用于退出选择
+          canPop: !selecting,
+          onPopInvokedWithResult: (didPop, _) {
+            if (!didPop) _selection.exit();
+          },
+          child: Scaffold(
+            backgroundColor: Colors.transparent,
+            body: Stack(
+              children: [
+                Positioned.fill(
+                  // 顶部避开状态栏：搜索、发现（歌单）、发现（榜单）三个入口
+                  // 打开的都是这个页面，之前裸 Stack 会让返回按钮和歌单标题
+                  // 顶进状态栏里。底部由外层导航栏 / 迷你播放器负责，不重复加。
+                  child: SafeArea(
+                    // 顶部不避让：头部渐变要一直铺到状态栏（沉浸式），
+                    // 状态栏高度交给 _buildHeader 自己加内边距。
+                    top: false,
+                    bottom: false,
+                    child: playlistAsync.when(
+                      data: (page) {
+                        final playlist = page.playlist;
+                        if (playlist == null) {
+                          return Center(
+                            child: Text(
+                              context.tr('歌单未找到'),
+                              style: TextStyle(color: colors.textHint),
+                            ),
+                          );
+                        }
+                        return Column(
+                          children: [
+                            _buildHeader(context, ref, colors, playlist),
+                            if (selecting)
+                              SongSelectionBar(
+                                colors: colors,
+                                controller: _selection,
+                                songs: currentSongs,
+                              ),
+                            Expanded(
+                              child: _buildSongList(ref, colors, currentSongs),
+                            ),
+                          ],
+                        );
+                      },
+                      loading: () =>
+                          const Center(child: CircularProgressIndicator()),
+                      error: (error, __) => LoadErrorView(
+                        colors: colors,
+                        message: error.toString().replaceFirst(
+                          'Exception: ',
+                          '',
+                        ),
+                        onRetry: () {
+                          ref.invalidate(
+                            playlistDetailProvider(widget.playlistId),
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+                ),
+                if (selecting)
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    // 操作栏紧贴底部：有歌在播时贴着迷你播放器顶部，
+                    // 没歌（迷你播放器是空占位）或宽屏侧边栏布局时直接贴底。
+                    bottom: ResponsiveLayout.batchBarBottomInset(
+                      context,
+                      // 播放栏没显示时（没歌在播，或当前页面隐藏了播放栏）操作栏直接贴底。
+                      miniPlayerVisible: ref.watch(miniPlayerVisibleProvider),
+                    ),
+                    child: SongBatchActionBar(
+                      colors: colors,
+                      controller: _selection,
+                      onPlayNext: () => _batchPlayNext(currentSongs),
+                      onAddToQueue: () => _batchAddToQueue(currentSongs),
+                      onAddToPlaylist: () => _batchAddToPlaylist(currentSongs),
+                      onFavorite: () => _batchFavorite(currentSongs),
+                      onDownload: () => _batchDownload(currentSongs),
+                    ),
+                  ),
+                // 定位当前播放歌曲的悬浮按钮：放在外层 Stack 中避免被裁剪
+                if (currentSongIndex >= 0 && !selecting)
+                  _buildLocateFab(colors, currentSongIndex),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// 歌单页顶部：返回按钮 + 封面 + 名称 / 歌曲数量 + 操作按钮。
+  ///
+  /// 不显示歌单描述；名称 + 歌曲数量 + 按钮这一列的高度与歌单封面保持一致。
+  Widget _buildHeader(
+    BuildContext context,
+    WidgetRef ref,
+    ThemeColors colors,
+    playlist,
+  ) {
+    // 与歌单封面同高，去掉描述后顶部不会跳动
+    final headerHeight = ResponsiveLayout.isTablet(context) ? 96.0 : 72.0;
+    return Container(
+      // 顶栏是贴着页面顶部的一条半透明栏：不要圆角、不要阴影，也不留外边距，
+      // 宽度铺满、颜色一直铺到状态栏。
+      // 底色的取法见 detailPageHeaderSurfaceProvider：跟着背景渐变顶部色走，
+      // 只做半透明处理，让页面背景直接透上来，顶栏和列表是同一片背景。
+      padding: EdgeInsets.fromLTRB(
+        AppSpacing.md + AppSpacing.sm,
+        // 状态栏沉浸：色块铺到屏幕顶端，状态栏高度算进内边距，
+        // 内容位置与原来「外边距 + 内边距」时保持一致。
+        MediaQuery.paddingOf(context).top + AppSpacing.md + AppSpacing.sm,
+        AppSpacing.md + AppSpacing.lg,
+        AppSpacing.md + AppSpacing.sm,
+      ),
+      color: ref.watch(detailPageHeaderSurfaceProvider),
+      // 只给下限、不写死高度：名称 / 操作按钮这两行在部分字体
+      // （比如内置的思源宋体）或系统大字号下会比 72 高几像素，写死高度就会报
+      // 「BOTTOM OVERFLOWED BY 5.0 PIXELS」。让它按内容自己撑开，
+      // 封面仍然固定 headerHeight。
+      child: ConstrainedBox(
+        constraints: BoxConstraints(minHeight: headerHeight),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            // 返回按钮：Android 靠系统返回手势 / 返回键，顶部不放返回箭头。
+            if (!Platform.isAndroid) ...[
+              GestureDetector(
+                onTap: () => context.pop(),
+                child: Padding(
+                  padding: const EdgeInsets.all(AppSpacing.xs),
+                  child: Icon(
+                    Icons.arrow_back,
+                    size: 24,
+                    color: colors.textPrimary,
+                  ),
+                ),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+            ],
+            // 歌单封面
+            ClipRRect(
+              borderRadius: BorderRadius.circular(AppRadius.md),
+              child: MusicCoverImage(
+                url: playlist.coverUrl,
+                width: headerHeight,
+                height: headerHeight,
+                fit: BoxFit.cover,
+                errorWidget: Container(
+                  width: headerHeight,
+                  height: headerHeight,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        colors.primary.withValues(alpha: 0.4),
+                        colors.surfaceVariant,
+                      ],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                  ),
+                  child: Icon(
+                    Icons.music_note,
+                    size: 48,
+                    color: colors.textHint,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: AppSpacing.md),
+            // 第一行 名称 / 第二行 操作按钮。
+            // 顶部不再显示音源标签（收藏页里同类详情页仍保留可切换的音源按钮）。
+            // 两行高度不写死（见上方 ConstrainedBox），内容比封面高时由外层撑开。
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          playlist.title,
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: colors.textPrimary,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(width: AppSpacing.sm),
+                      Text(
+                        context.tr('${playlist.songCount}首歌曲'),
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: colors.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                  // 名称与下面这排按钮的垂直间距：原来只有 4dp，两行贴得太紧；
+                  // 放到 12dp 之后名称和按钮分得开，两行合起来仍低于封面
+                  // （72dp），顶栏高度不变，列表位置也不会被推下去。
+                  const SizedBox(height: AppSpacing.md),
+                  // 窄屏下「播放全部 / 收藏 / 更多」一行放不下，允许横向滚动。
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _buildActionButton(
+                          colors,
+                          Icons.play_arrow,
+                          context.tr('播放全部'),
+                          () {
+                            _playAll(_songs);
+                          },
+                        ),
+                        const SizedBox(width: AppSpacing.sm),
+                        _buildFavoriteButton(colors, playlist),
+                        const SizedBox(width: AppSpacing.sm),
+                        _buildMoreButton(context, colors, playlist),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 更多操作：与「收藏」按钮同款（描边胶囊）。
+  Widget _buildMoreButton(BuildContext context, ThemeColors colors, playlist) {
+    return GestureDetector(
+      onTap: () => _showMoreActions(context, colors, playlist),
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md,
+          vertical: AppSpacing.xs,
+        ),
+        decoration: BoxDecoration(
+          color: colors.surfaceVariant,
+          borderRadius: BorderRadius.circular(AppRadius.full),
+          border: Border.all(color: colors.divider),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.more_horiz, size: 16, color: colors.textSecondary),
+            const SizedBox(width: AppSpacing.xs),
+            Text(
+              context.tr('更多'),
+              style: TextStyle(fontSize: 12, color: colors.textPrimary),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildActionButton(
+    ThemeColors colors,
+    IconData icon,
+    String label,
+    VoidCallback onTap,
+  ) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md,
+          vertical: AppSpacing.xs,
+        ),
+        // 与侧栏「发现」的激活态一致：底色把主题色调暗一档，文字 / 图标用主题色。
+        decoration: activeChipDecoration(
+          colors,
+          radius: AppRadius.full,
+          withBorder: true,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 16, color: colors.primary),
+            const SizedBox(width: AppSpacing.xs),
+            Text(
+              label,
+              style: TextStyle(fontSize: 12, color: colors.primary),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFavoriteButton(ThemeColors colors, playlist) {
+    return GestureDetector(
+      onTap: _favoriting ? null : () => _toggleFavorite(playlist),
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md,
+          vertical: AppSpacing.xs,
+        ),
+        decoration: BoxDecoration(
+          color: _isFavorited
+              ? colors.primary.withValues(alpha: 0.15)
+              : colors.surfaceVariant,
+          borderRadius: BorderRadius.circular(AppRadius.full),
+          border: Border.all(
+            color: _isFavorited ? colors.primary : colors.divider,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (_favoriting)
+              SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: colors.primary,
+                ),
+              )
+            else
+              Icon(
+                _isFavorited ? Icons.favorite : Icons.favorite_border,
+                size: 16,
+                color: _isFavorited ? colors.primary : colors.textSecondary,
+              ),
+            const SizedBox(width: AppSpacing.xs),
+            Text(
+              context.tr(
+                _favoriting ? '收藏中...' : (_isFavorited ? '已收藏' : '收藏'),
+              ),
+              style: TextStyle(
+                fontSize: 12,
+                color: _favoriting
+                    ? colors.primary
+                    : (_isFavorited ? colors.primary : colors.textPrimary),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSongList(WidgetRef ref, ThemeColors colors, List<Song> songs) {
+    if (songs.isEmpty) {
+      return Center(
+        child: Text(
+          context.tr('暂无歌曲'),
+          style: TextStyle(color: colors.textHint),
+        ),
+      );
+    }
+
+    final selecting = _selection.isActive;
+    // 宽屏下内容区没有迷你播放器，列表底部只需避开批量操作栏。
+    final bottomInset = ResponsiveLayout.hasBottomMiniPlayer(context)
+        ? AppSpacing.miniPlayerHeight + AppSpacing.lg
+        : AppSpacing.lg;
+    // 多选时批量操作栏紧贴迷你播放器，列表底部要一并让开。
+    final batchBarInset = ResponsiveLayout.batchBarBottomInset(
+      context,
+      miniPlayerVisible: ref.watch(miniPlayerVisibleProvider),
+    );
+
+    // 只渲染当前页（每页 50 首）；播放 / 队列仍用完整列表。
+    _pager.clampTo(songs.length, hasMore: !_isEnd, total: _total);
+    final visible = _pager.slice(songs);
+    final pageCount = _pager.pageCount(
+      songs.length,
+      hasMore: !_isEnd,
+      total: _total,
+    );
+    final list = Padding(
+      // 多选时底部换成批量操作栏，列表要给它让开位置。
+      padding: EdgeInsets.only(
+        bottom: selecting
+            ? bottomInset + SongBatchActionBar.height + batchBarInset
+            : AppSpacing.sm,
+      ),
+      child: CustomScrollView(
+        controller: _scrollController,
+        slivers: [
+          SliverList(
+            delegate: SliverChildBuilderDelegate(
+              (context, index) {
+                final song = visible[index];
+                // 序号按全局位置编号（第 4 页仍是 151~200）：跳页直达会把缓冲区
+                // 重定位到目标页（rebase 后 `start` 归零），必须用 `absoluteStart`
+                // 才不会把每一页都重新编成 1~50。
+                final displayIndex = _pager.absoluteStart + index;
+                // 播放队列用的是缓冲区内的下标：跳页后 `songs` 只剩目标页那几十首，
+                // 拿全局序号当 startIndex 会越界，表现为「点谁都播最后一首」。
+                final bufferIndex = _pager.start + index;
+
+                // 高亮当前正在播放的歌曲，与本地音乐页面保持一致
+                final currentSongId = ref
+                    .read(playbackControllerProvider)
+                    .currentSong
+                    ?.id;
+                final isPlaying =
+                    currentSongId != null && currentSongId == song.id;
+
+                return SongListItem(
+                  song: song,
+                  index: displayIndex,
+                  // 序号列宽度按「全局最大序号」算：跳页直达后缓冲区只剩一页数据
+                  // （songs.length 很小、总数又可能拿不到），只按条数算会把 151
+                  // 这种三位序号裁成两位宽度。
+                  maxIndex: math.max(
+                    _total ?? 0,
+                    _pager.absoluteStart + visible.length,
+                  ),
+                  isPlaying: isPlaying,
+                  showPlayedTag: true,
+                  selectionMode: selecting,
+                  selected: _selection.isSelected(song.id),
+                  onSelectionToggle: (s) => _selection.toggle(s.id),
+                  // 长按进入批量选择模式
+                  onLongPress: () => _enterSelection(song),
+                  onPlayTap: () async {
+                    PlaybackContext.instance.set(
+                      widget.sourceType,
+                      id: widget.playlistId,
+                      name: _playlistTitle,
+                    );
+                    final controller = ref.read(
+                      playbackControllerProvider.notifier,
+                    );
+                    await controller.setQueue(songs, startIndex: bufferIndex);
+                  },
+                  onMenuTap: () => SongActionSheet.show(
+                    context,
+                    song: song,
+                    playlistSongs: songs,
+                  ),
+                );
+              },
+              childCount: visible.length,
+              addAutomaticKeepAlives: false,
+              addRepaintBoundaries: true,
+            ),
+          ),
+          // 分页条单独做成最后一个 sliver：内容不满一屏时贴到底部，
+          // 满一屏时正常跟在列表后面（见 PageBarFooterSliver）。
+          if (!selecting)
+            PageBarFooterSliver(child: _buildPageFooter(colors, pageCount)),
+        ],
+      ),
+    );
+
+    return list;
+  }
+
+  /// 列表末尾的分页条（上面可带一行翻页状态提示）。
+  Widget _buildPageFooter(ThemeColors colors, int pageCount) {
+    return Padding(
+      padding: const EdgeInsets.only(top: AppSpacing.xs),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (_loadingMore || _pagingLoading)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+              child: _buildLoadingMoreIndicator(colors),
+            )
+          else if (_loadMoreError != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+              child: _buildLoadMoreErrorIndicator(colors, _loadMoreError!),
+            ),
+          PageBar(
+            currentPage: _pager.page,
+            pageCount: pageCount,
+            loading: _loadingMore || _pagingLoading,
+            docked: true,
+            // 没拿到总数、也还没翻到末尾：最后一页是猜的，不写成具体页码。
+            lastPageKnown: _isEnd || _total != null,
+            onChanged: (page) => unawaited(_goToPage(page)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 翻页失败提示（悬浮于列表底部，点击重试）。
+  Widget _buildLoadMoreErrorIndicator(ThemeColors colors, String message) {
+    return GestureDetector(
+      onTap: () => unawaited(_retryLoadMore()),
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md,
+          vertical: AppSpacing.xs,
+        ),
+        decoration: BoxDecoration(
+          color: colors.surface,
+          borderRadius: BorderRadius.circular(AppRadius.full),
+          border: Border.all(color: colors.primary.withValues(alpha: 0.4)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.refresh, size: 14, color: colors.primary),
+            const SizedBox(width: 6),
+            Text(
+              context.tr('加载失败，点击重试'),
+              style: TextStyle(fontSize: 12, color: colors.primary),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 翻页加载指示器（悬浮于列表底部，不占用列表项高度）。
+  Widget _buildLoadingMoreIndicator(ThemeColors colors) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.md,
+        vertical: AppSpacing.xs,
+      ),
+      decoration: BoxDecoration(
+        color: colors.surface,
+        borderRadius: BorderRadius.circular(AppRadius.full),
+        border: Border.all(color: colors.divider),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: 14,
+            height: 14,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: colors.primary,
+            ),
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          Text(
+            context.tr('加载更多...'),
+            style: TextStyle(fontSize: 12, color: colors.textSecondary),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 悬浮定位按钮：仅当当前播放的歌曲在本歌单中时显示，
+  /// 点击将歌曲列表滚动到正在播放的那一首。
+  Widget _buildLocateFab(ThemeColors colors, int currentIndex) {
+    if (currentIndex < 0) return const SizedBox.shrink();
+
+    return Positioned(
+      right: AppSpacing.lg,
+      bottom: AppSpacing.miniPlayerHeight + AppSpacing.xxxl + AppSpacing.lg,
+      child: GestureDetector(
+        onTap: () => _locateCurrentSong(currentIndex),
+        child: Container(
+          width: 36,
+          height: 36,
+          decoration: BoxDecoration(
+            color: colors.surface,
+            shape: BoxShape.circle,
+            boxShadow: [
+              BoxShadow(
+                color: colors.shadow,
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Icon(Icons.my_location, size: 18, color: colors.primary),
+        ),
+      ),
+    );
+  }
+
+  void _locateCurrentSong(int currentIndex) {
+    if (!_scrollController.hasClients) return;
+
+    unawaited(
+      scrollToItemIndex(
+        _scrollController,
+        index: currentIndex,
+        itemExtent: SongListItem.itemExtent,
+      ),
+    );
+  }
+
+  void _showMoreActions(BuildContext context, ThemeColors colors, playlist) {
+    final bottomPadding = MediaQuery.of(context).padding.bottom;
+    showModalBottomSheet(
+      useRootNavigator: true,
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        decoration: BoxDecoration(
+          color: colors.dialogSurface,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+        ),
+        child: SafeArea(
+          top: false,
+          child: Padding(
+            padding: EdgeInsets.only(bottom: bottomPadding + 72),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(height: AppSpacing.md),
+                Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: colors.divider,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.md),
+                _buildMenuItem(
+                  colors,
+                  icon: Icons.select_all,
+                  label: context.tr(_selection.isActive ? '取消批量选择' : '批量选择'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _toggleMultiSelectMode();
+                  },
+                ),
+                const SizedBox(height: AppSpacing.lg),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMenuItem(
+    ThemeColors colors, {
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.lg,
+          vertical: AppSpacing.md,
+        ),
+        child: Row(
+          children: [
+            Icon(icon, size: 22, color: colors.textSecondary),
+            const SizedBox(width: AppSpacing.md),
+            Text(
+              label,
+              style: TextStyle(fontSize: 15, color: colors.textPrimary),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _playAll(List<Song> songs) async {
+    if (songs.isEmpty) return;
+    PlaybackContext.instance.set(
+      widget.sourceType,
+      id: widget.playlistId,
+      name: _playlistTitle,
+    );
+    final controller = ref.read(playbackControllerProvider.notifier);
+    await controller.setQueue(songs);
+  }
+
+  void _toggleFavorite(playlist) {
+    if (_favoriting) return;
+    if (_isFavorited) {
+      _removeFromFavorites();
+    } else {
+      unawaited(_addToFavorites(playlist));
+    }
+  }
+
+  /// 收藏前把剩下的歌曲页全部取回来：收藏里存的是完整歌单 / 榜单。
+  ///
+  /// 已加载的歌曲直接用，只补取缓冲区前面缺的页和 [_page] 之后的页，
+  /// 直到插件表示到底。
+  Future<List<Song>> _fetchAllSongsForFavorite() async {
+    final seen = <String>{};
+    final all = <Song>[];
+    var emptyStreak = 0;
+    final repository = ref.read(discoverRepositoryProvider);
+
+    // 跳页直达后缓冲区从中间页开始，前面的页没有加载过：先按顺序补回来，
+    // 否则收藏出来的歌单会缺歌、顺序也会乱。
+    final bufferedFirst = _pager.bufferBase;
+    var page = 0;
+    while (page < bufferedFirst - 1) {
+      page += 1;
+      final result = await repository.getPlaylistDetailPage(
+        widget.playlistId,
+        page: page,
+      );
+      final songs = result.playlist?.songs ?? const <Song>[];
+      for (final song in songs) {
+        if (seen.add(song.id)) all.add(song);
+      }
+      if (result.isEnd) break;
+      if (songs.isEmpty) {
+        if (++emptyStreak >= _maxConsecutiveEmptyPages) break;
+      } else {
+        emptyStreak = 0;
+      }
+    }
+
+    for (final song in _songs) {
+      if (seen.add(song.id)) all.add(song);
+    }
+
+    page = _page;
+    var isEnd = _isEnd;
+    // 兜底改成「连续 N 页没有有效新增」：插件不报 isEnd / total、甚至忽略
+    // page 参数反复返回同一批歌时，也不会一直翻下去。
+    var staleStreak = 0;
+    Set<String> previousPageIds = <String>{};
+    while (!isEnd) {
+      page += 1;
+      final result = await repository.getPlaylistDetailPage(
+        widget.playlistId,
+        page: page,
+      );
+      final pageSongs = result.playlist?.songs ?? const <Song>[];
+      final pageIds = <String>{};
+      var duplicates = 0;
+      var added = 0;
+      for (final song in pageSongs) {
+        // 本页内重复、或之前已经收过的 id，都算重复数据。
+        if (!pageIds.add(song.id) || seen.contains(song.id)) {
+          duplicates++;
+          continue;
+        }
+        seen.add(song.id);
+        all.add(song);
+        added++;
+      }
+      final duplicateRatio = pageSongs.isEmpty
+          ? 1.0
+          : duplicates / pageSongs.length;
+      // 相邻两页返回完全同一批 id：服务端忽略了 page，页码其实没推进。
+      final pageNotAdvanced = previousPageIds.isNotEmpty &&
+          pageIds.isNotEmpty &&
+          pageIds.length == previousPageIds.length &&
+          pageIds.every((id) => previousPageIds.contains(id));
+      previousPageIds = pageIds;
+
+      isEnd =
+          result.isEnd || (result.total != null && all.length >= result.total!);
+      // 无有效新增 = 一首新歌都没有、整页几乎全是重复 id（>= 90%），
+      // 或这一页和上一页是同一批数据。
+      if (added == 0 || duplicateRatio >= 0.9 || pageNotAdvanced) {
+        if (++staleStreak >= _maxConsecutiveEmptyPages) break;
+      } else {
+        staleStreak = 0;
+      }
+    }
+    return all;
+  }
+
+  static String _errorText(Object error) {
+    return error.toString().replaceFirst('Exception: ', '');
+  }
+
+  Future<void> _addToFavorites(playlist) async {
+    setState(() => _favoriting = true);
+    final List<Song> songs;
+    try {
+      songs = await _fetchAllSongsForFavorite();
+    } catch (e) {
+      debugPrint('[PlaylistDetailPage] 收藏前获取全部歌曲失败: $e');
+      if (!mounted) return;
+      setState(() => _favoriting = false);
+      _showMessage('获取歌曲失败：${_errorText(e)}');
+      return;
+    }
+    if (!mounted) return;
+    if (songs.isEmpty) {
+      setState(() => _favoriting = false);
+      _showMessage('没有获取到歌曲，无法收藏');
+      return;
+    }
+
+    // 插件来源的榜单 id 形如 `mf:board:bilibili@xxx:popular/series/one?number=396`，
+    // 原始 id 里带 `/` 和 `?`。落成本地歌单 id 时先编码，保证能安全地放进
+    // `/library/playlist/:id` 路由（否则 go_router 匹配不到）。
+    // 收藏状态判断走 meta['discoverId']，不依赖这个 id，所以编码不影响已收藏判定。
+    final localPlaylist = local.Playlist(
+      id: 'discover_${Uri.encodeComponent(widget.playlistId)}',
+      name: playlist.title,
+      description: playlist.description,
+      coverImgUrl: playlist.coverUrl ?? '',
+      source: playlist.source,
+      createTime: DateTime.now(),
+      updateTime: DateTime.now(),
+      songs: songs,
+      meta: {'discoverId': widget.playlistId, 'type': 'discover_playlist'},
+    );
+
+    try {
+      await ref
+          .read(playlistsProvider.notifier)
+          .createPlaylistFromModel(localPlaylist);
+    } catch (e) {
+      debugPrint('[PlaylistDetailPage] 收藏失败: $e');
+      if (!mounted) return;
+      setState(() => _favoriting = false);
+      _showMessage('收藏失败：${_errorText(e)}');
+      return;
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _favoriting = false;
+      _isFavorited = true;
+    });
+  }
+
+  void _removeFromFavorites() async {
+    final playlistsAsync = ref.read(playlistsProvider);
+    await playlistsAsync.whenData((localPlaylists) async {
+      final existingPlaylist = localPlaylists.firstWhere(
+        (p) => p.meta['discoverId'] == widget.playlistId,
+        orElse: () => throw Exception('未找到收藏的歌单'),
+      );
+      await ref
+          .read(playlistsProvider.notifier)
+          .deletePlaylist(existingPlaylist.id);
+    });
+
+    setState(() {
+      _isFavorited = false;
+    });
+  }
+}

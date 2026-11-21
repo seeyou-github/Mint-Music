@@ -1,0 +1,258 @@
+import 'dart:convert';
+
+import 'package:flutter/foundation.dart';
+import 'package:sqflite/sqflite.dart';
+
+import '../../../core/storage/app_database.dart';
+import '../../../core/storage/app_preferences.dart';
+import '../domain/models/recently_played.dart';
+import '../../player/domain/models/song.dart';
+
+/// 最近播放的本地存储。
+///
+/// 只记录「最近听过哪些歌、最后一次是什么时候」：数据量大、变动频繁，
+/// 丢了也能重新积累，所以放在「临时库」（Windows：
+/// `AppData\temp\db\mintmusic_cache.db`）。
+///
+/// **不记录**播放来源（歌单 / 专辑 / 榜单 …）：最近播放只用来重新播一遍，
+/// 来源信息没有实际用途，存了还得跟着歌单改名 / 删除一起维护。听歌统计与
+/// 排行也已移除，这里不再转发任何统计数据。
+///
+/// **保留窗口**：只留最近一个月（见 [keepMonths]），一天最多清理一次。
+///
+/// **写盘策略**：运行期只改内存，并把变化攒在待写队列里；攒够 [batchSize]
+/// 条（默认 10）才真正写一次数据库。不足 10 条时由 [DeferredWriter] 的
+/// 定时器兜底，应用切后台 / 退出时统一 flush。写库后**不做** checkpoint
+/// （TRUNCATE 要等所有读者并整段回写 WAL，播放期间每 15 秒一次太重）；
+/// 退出时 [AppDatabase.checkpoint] 会统一兜底，进程被杀也不影响
+/// 已提交的事务（WAL 仍在，下次打开自动恢复）。
+class RecentlyPlayedRepository {
+  RecentlyPlayedRepository() {
+    AppDatabase.registerWriter(_writer);
+  }
+
+  /// 攒够多少条变化才写库。
+  static const int batchSize = 10;
+
+  /// 最多保留多少首最近播放（一个月内一般到不了，兜底防止异常数据撑爆表）。
+  static const int maxItems = 500;
+
+  /// 保留窗口（月）：超过这个时间没再听就清掉。
+  static const int keepMonths = 1;
+
+  static const String _legacyKey = 'recently_played';
+
+  List<RecentlyPlayedItem>? _cache;
+
+  /// 待写入的歌曲（song_id → 最新记录）。
+  final Map<String, RecentlyPlayedItem> _pendingSongs = {};
+
+  /// 攒批写盘器：定时器兜底 + 应用切后台/退出时 flush。
+  late final DeferredWriter _writer = DeferredWriter(
+    _flushPending,
+    interval: const Duration(seconds: 15),
+  );
+
+  /// 本次运行最近一次清理的日期（`yyyy-MM-dd`），一天最多清一次。
+  String? _prunedDay;
+
+  // ---------------------------------------------------------------- 读取
+
+  Future<List<RecentlyPlayedItem>> loadHistory() async {
+    // 已经在内存里了就直接用：待写数据还没落盘时，数据库里是旧数据。
+    final cached = _cache;
+    if (cached != null) return cached;
+
+    await _pruneIfDue();
+
+    final history = <RecentlyPlayedItem>[];
+    try {
+      final db = await AppDatabase.cacheDatabase();
+      final rows = await db.query(
+        'recently_played',
+        orderBy: 'played_at DESC',
+        limit: maxItems,
+      );
+      for (final row in rows) {
+        final data = AppDatabase.decodeMap(row['data']);
+        if (data.isEmpty) continue;
+        try {
+          history.add(RecentlyPlayedItem.fromJson(data));
+        } catch (_) {
+          // 单条数据损坏就跳过，不影响其它记录
+        }
+      }
+    } catch (e) {
+      debugPrint('[RecentlyPlayed] 读取最近播放失败: $e');
+    }
+
+    if (history.isEmpty && !await AppDatabase.isMigrated('recently_played')) {
+      final legacy = await _importLegacy();
+      if (legacy.isNotEmpty) {
+        history.addAll(legacy);
+      }
+      if (AppDatabase.isPersistent) {
+        await AppDatabase.markMigrated('recently_played');
+      }
+    }
+
+    _cache = history;
+    return history;
+  }
+
+  // ---------------------------------------------------------------- 清理
+
+  Future<void> _pruneIfDue() async {
+    final now = DateTime.now();
+    final today = '${now.year}-${now.month}-${now.day}';
+    if (_prunedDay == today) return;
+    _prunedDay = today;
+    await pruneOldEntries();
+  }
+
+  /// 清掉一个月前听过、之后再没听过的歌（一天最多一次）。
+  ///
+  /// 「最近播放」只保留近一个月：既控制表的大小，也免得列表里全是上个月的歌。
+  Future<void> pruneOldEntries({DateTime? now}) async {
+    final current = now ?? DateTime.now();
+    final cutoff = DateTime(
+      current.year,
+      current.month - keepMonths,
+      current.day,
+    ).millisecondsSinceEpoch;
+    try {
+      final db = await AppDatabase.cacheDatabase();
+      final removed = await db.delete(
+        'recently_played',
+        where: 'played_at < ?',
+        whereArgs: [cutoff],
+      );
+      if (removed > 0) {
+        debugPrint('[RecentlyPlayed] 已清理 $removed 条一个月前的播放记录');
+      }
+    } catch (e) {
+      debugPrint('[RecentlyPlayed] 清理一个月前的记录失败: $e');
+    }
+  }
+
+  // ---------------------------------------------------------------- 写入
+
+  /// 记录一次播放（同一首歌合并为一条，刷新时间并挪到最前面）。
+  Future<void> recordPlay(Song song) async {
+    final history = await loadHistory();
+    final now = DateTime.now();
+    final item = RecentlyPlayedItem(song: song, playedAt: now);
+    history.removeWhere((existing) => existing.song.id == song.id);
+    history.insert(0, item);
+    if (history.length > maxItems) {
+      history.removeRange(maxItems, history.length);
+    }
+    _cache = history;
+
+    _pendingSongs[song.id] = item;
+    await _afterChange();
+  }
+
+  /// 攒够一批就立即写库，否则交给定时器兜底。
+  Future<void> _afterChange() async {
+    if (_pendingSongs.length >= batchSize) {
+      await _writer.writeNow();
+    } else {
+      _writer.schedule();
+    }
+  }
+
+  /// 清空全部最近播放数据（歌单 / 专辑来源本来就不存，无需一起清）。
+  Future<void> clearAll() async {
+    _cache = <RecentlyPlayedItem>[];
+    _pendingSongs.clear();
+    try {
+      final db = await AppDatabase.cacheDatabase();
+      await db.delete('recently_played');
+      await AppDatabase.checkpoint();
+    } catch (e) {
+      debugPrint('[RecentlyPlayed] 清空失败: $e');
+    }
+  }
+
+  /// 删除一首歌的记录。
+  Future<void> removeFromHistory(String songId) async {
+    final history = await loadHistory();
+    history.removeWhere((item) => item.song.id == songId);
+    _cache = history;
+    _pendingSongs.remove(songId);
+    try {
+      final db = await AppDatabase.cacheDatabase();
+      await db.delete(
+        'recently_played',
+        where: 'song_id = ?',
+        whereArgs: [songId],
+      );
+    } catch (e) {
+      debugPrint('[RecentlyPlayed] 删除记录失败: $e');
+    }
+  }
+
+  /// 立即落盘（应用切后台 / 退出时由 [AppDatabase.flushAll] 调用）。
+  Future<void> flush() async {
+    await _writer.writeNow();
+  }
+
+  /// 把攒下的变化一次性写入数据库。
+  Future<void> _flushPending() async {
+    if (_pendingSongs.isEmpty) return;
+    final songs = List<RecentlyPlayedItem>.of(_pendingSongs.values);
+    _pendingSongs.clear();
+
+    try {
+      final db = await AppDatabase.cacheDatabase();
+      await db.transaction((txn) async {
+        for (final item in songs) {
+          await txn.insert('recently_played', {
+            'song_id': item.song.id,
+            'played_at': item.playedAt.millisecondsSinceEpoch,
+            'play_count': 1,
+            'data': jsonEncode(item.toPersistJson()),
+          }, conflictAlgorithm: ConflictAlgorithm.replace);
+        }
+      });
+    } catch (e) {
+      debugPrint('[RecentlyPlayed] 写库失败: $e');
+      // 写失败就把数据放回队列，下次再试（内存里仍是最新的）。
+      for (final item in songs) {
+        _pendingSongs[item.song.id] = item;
+      }
+    }
+  }
+
+  /// 首次启动：把旧设置文件里的最近播放导入数据库。
+  Future<List<RecentlyPlayedItem>> _importLegacy() async {
+    final history = <RecentlyPlayedItem>[];
+    try {
+      final prefs = await AppPreferences.getInstance();
+      final raw = prefs.getString(_legacyKey);
+      if (raw != null && raw.isNotEmpty) {
+        final list = jsonDecode(raw) as List<dynamic>;
+        history.addAll(
+          list.map(
+            (e) => RecentlyPlayedItem.fromJson(
+              (e as Map).map((k, v) => MapEntry('$k', v)),
+            ),
+          ),
+        );
+      }
+      if (history.isNotEmpty) {
+        _cache = history;
+        for (final item in history) {
+          _pendingSongs[item.song.id] = item;
+        }
+        await _writer.writeNow();
+        await AppDatabase.removeLegacyKey(_legacyKey);
+        debugPrint('[RecentlyPlayed] 已从旧设置迁移 ${history.length} 条记录');
+      }
+    } catch (e) {
+      debugPrint('[RecentlyPlayed] 迁移旧记录失败: $e');
+    }
+    return history;
+  }
+}

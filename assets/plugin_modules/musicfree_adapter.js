@@ -1,0 +1,1663 @@
+/* ==========================================================================
+ * Mint-Music: MusicFree 格式适配器
+ *
+ * MusicFree 插件是一个 CommonJS 模块，形如：
+ *
+ *   module.exports = {
+ *     platform: 'xxx', version: '1.0.0', author: '...', srcUrl: '...',
+ *     cacheControl: 'no-cache',
+ *     supportedSearchType: ['music', 'album', 'sheet', 'artist'],
+ *     search(keyword, page, type)            -> { isEnd, data: [...] }
+ *     getMediaSource(musicItem, quality)     -> { url, headers? }
+ *     getLyric(musicItem)                    -> { rawLrc, translation? }
+ *     getAlbumInfo / getArtistWorks / getTopLists / ...
+ *   }
+ *
+ * 本文件把上述协议适配成本项目的插件契约：
+ *   module.exports = { pluginInfo, sources, sourceActions, search, musicUrl, getPic, getLyric }
+ *
+ * 执行顺序（由 PluginHost 控制）：
+ *   1. 先执行本适配器：安装 module.exports 捕获器、声明契约、暴露 require；
+ *   2. 再执行原始 MusicFree 插件脚本：它调用 require('axios') 等依赖并最终
+ *      `module.exports = {...}`，写入被捕获器截获，插件本体不会覆盖本契约；
+ *   3. PluginHost 读取 module.exports（即本契约），pluginInfo / sources 通过
+ *      getter 在插件本体执行完成后再惰性求值。
+ * ========================================================================== */
+
+var __mintMusicFreeAdapter = true;
+
+var __mfContract = {};
+var __mfLegacyExports = {};
+var __mfCapturedExports = null;
+var __mfInfoCache = null;
+var __mfSourcesCache = null;
+var __mfActionsCache = null;
+var __mfSourceIdCache = null;
+
+/**
+ * 插件没声明音质时的默认档位。
+ *
+ * MusicFree 协议本身没有 qualitys 字段，所以历史行为是「所有插件都报这三档」，
+ * 结果就是「B 站插件也显示无损」。现在插件可以在 module.exports 里写
+ * `qualitys` / `qualities`（播放）和 `downloadQualitys` / `downloadQualities`
+ * （下载），适配器原样透传给宿主；没写的仍然用下面这三档，老插件行为不变。
+ */
+var __mfDefaultQualityLabels = ['128k', '320k', 'flac'];
+
+function __mfNormalizeQualityLabels(raw) {
+  if (!Array.isArray(raw) || !raw.length) return null;
+  var out = [];
+  var seen = {};
+  for (var i = 0; i < raw.length; i++) {
+    var label = __mfText(raw[i], '').trim();
+    if (!label) continue;
+    var key = label.toLowerCase();
+    if (seen[key]) continue;
+    seen[key] = 1;
+    out.push(label);
+  }
+  return out.length ? out : null;
+}
+
+/** 插件声明的播放音质（缺省 = 默认三档）。 */
+function __mfDeclaredQualities() {
+  var plugin = __mfPluginObject() || {};
+  return (
+    __mfNormalizeQualityLabels(plugin.qualitys) ||
+    __mfNormalizeQualityLabels(plugin.qualities) ||
+    __mfNormalizeQualityLabels(plugin.supportedQualities) ||
+    __mfDefaultQualityLabels.slice()
+  );
+}
+
+/** 插件声明的下载音质（缺省 = 播放音质）。 */
+function __mfDeclaredDownloadQualities() {
+  var plugin = __mfPluginObject() || {};
+  return (
+    __mfNormalizeQualityLabels(plugin.downloadQualitys) ||
+    __mfNormalizeQualityLabels(plugin.downloadQualities) ||
+    __mfDeclaredQualities()
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * 捕获原始插件导出
+ *
+ * MusicFree 插件执行 `module.exports = {...}`。这里把 module.exports 改造成
+ * 访问器：读取时返回本适配器的契约，写入时截获插件本体。这样 PluginHost
+ * 解析到的始终是契约，同时插件本体在适配器内部可见。
+ * ------------------------------------------------------------------ */
+
+Object.defineProperty(module, 'exports', {
+  configurable: true,
+  get: function () {
+    return __mfContract;
+  },
+  set: function (value) {
+    if (value && value !== __mfContract) __mfCapturedExports = value;
+  },
+});
+
+/* `exports.foo = ...` 风格的插件：宿主在适配器之前已缓存旧对象，这里替换掉。 */
+exports = __mfLegacyExports;
+
+/* 必需的模块依赖（axios / cheerio / crypto-js ...）由运行时提供。 */
+if (typeof __mfExposeRequire === 'function') {
+  __mfExposeRequire();
+}
+
+/* ------------------------------------------------------------------ *
+ * 工具函数
+ * ------------------------------------------------------------------ */
+
+function __mfLooksLikePlugin(value) {
+  return (
+    !!value &&
+    typeof value === 'object' &&
+    (value.platform ||
+      typeof value.search === 'function' ||
+      typeof value.getMediaSource === 'function' ||
+      typeof value.getLyric === 'function' ||
+      value.supportedSearchType)
+  );
+}
+
+/**
+ * 找到原始 MusicFree 插件导出的对象。
+ *
+ * 依次考察：
+ *   1. `module.exports = {...}` 被捕获器截获的对象；
+ *   2. `exports.foo = ...` 风格写入的对象；
+ *   3. `module.exports.default = {...}`（ESM 互操作写法）写入契约的 default。
+ * 每种情况都额外识别一层 `{ default: {...} }` 包装。
+ *
+ * 混淆过的插件依然会走 `module.exports` 赋值（只是写法被混淆），因此捕获器
+ * 依然有效；一个对象都找不到时说明这根本不是 MusicFree 插件，直接报错，
+ * 免得装出一个没有音源的空插件。
+ */
+function __mfPluginObject() {
+  var candidates = [__mfCapturedExports, __mfLegacyExports, __mfContract.default];
+  var fallback = null;
+  for (var i = 0; i < candidates.length; i++) {
+    var candidate = candidates[i];
+    if (!candidate || typeof candidate !== 'object') continue;
+    if (
+      candidate.default &&
+      candidate.default !== candidate &&
+      __mfLooksLikePlugin(candidate.default)
+    ) {
+      return candidate.default;
+    }
+    if (!fallback && __mfLooksLikePlugin(candidate)) fallback = candidate;
+  }
+  if (!fallback) {
+    throw new Error(
+      '未找到 MusicFree 插件导出（module.exports）：该脚本可能不是 MusicFree 插件'
+    );
+  }
+  return fallback;
+}
+
+function __mfText(value, fallback) {
+  if (value === null || value === undefined) return fallback;
+  var text;
+  if (Array.isArray(value)) {
+    text = value.join(', ');
+  } else if (typeof value === 'object') {
+    try {
+      text = JSON.stringify(value);
+    } catch (e) {
+      text = '';
+    }
+  } else {
+    text = String(value);
+  }
+  text = text.replace(/\s+/g, ' ').trim();
+  return text.length ? text : fallback;
+}
+
+/**
+ * 歌词专用文本处理：只去掉首尾空白，保留换行。
+ * 复用 __mfText 会把整段 LRC 的换行压成空格，解析后只剩一行。
+ */
+function __mfLyricText(value, fallback) {
+  if (typeof value === 'string') {
+    var text = value.trim();
+    return text.length ? text : fallback;
+  }
+  if (Array.isArray(value)) {
+    return __mfLyricText(value.join('\n'), fallback);
+  }
+  return fallback;
+}
+
+function __mfLimitText(text, max) {
+  if (!text || text.length <= max) return text;
+  return text.substring(0, max - 1) + '…';
+}
+
+function __mfArray(value) {
+  if (Array.isArray(value)) return value;
+  if (typeof value === 'string' && value.trim()) {
+    return value
+      .split(',')
+      .map(function (item) {
+        return item.trim();
+      })
+      .filter(function (item) {
+        return item.length > 0;
+      });
+  }
+  return [];
+}
+
+/**
+ * 平台名 -> 音源 id。
+ * 规则必须与 Dart 侧 SourceIdMapping 保持一致，否则搜索源选择器会拿不到结果。
+ */
+function __mfSourceIdFromName(name) {
+  var raw = __mfText(name, 'MusicFree');
+  var lower = raw.toLowerCase();
+  var known = null;
+  if (lower.indexOf('\u7f51\u6613') >= 0 || lower.indexOf('netease') >= 0 || lower.indexOf('163') >= 0) {
+    known = 'wy';
+  } else if (lower.indexOf('\u9177\u72d7') >= 0 || lower.indexOf('kugou') >= 0) {
+    known = 'kg';
+  } else if (lower.indexOf('\u9177\u6211') >= 0 || lower.indexOf('kuwo') >= 0) {
+    known = 'kw';
+  } else if (lower.indexOf('qq') >= 0) {
+    known = 'tx';
+  } else if (lower.indexOf('\u54aa\u5495') >= 0 || lower.indexOf('migu') >= 0) {
+    known = 'mg';
+  } else if (lower.indexOf('\u6c7d\u6c34') >= 0 || lower.indexOf('qsvip') >= 0 || lower === 'qs') {
+    known = 'qsvip';
+  }
+  if (known) return known;
+  var ascii = lower.replace(/[^a-z0-9]/g, '');
+  return ascii.length ? ascii : raw;
+}
+
+function __mfSourceId() {
+  if (!__mfSourceIdCache) {
+    __mfSourceIdCache = __mfSourceIdFromName(__mfPluginMeta().name);
+  }
+  return __mfSourceIdCache;
+}
+
+function __mfPluginMeta() {
+  if (__mfInfoCache) return __mfInfoCache;
+  var plugin = __mfPluginObject();
+  var customSheets =
+    plugin.customSheets === true ||
+    (plugin.pluginInfo && plugin.pluginInfo.customSheets === true);
+  __mfInfoCache = {
+    name: __mfText(plugin.platform, 'MusicFree 音源'),
+    version: __mfText(plugin.version, '1.0.0'),
+    author: __mfText(plugin.author, '未知作者'),
+    description: __mfLimitText(__mfText(plugin.description, ''), 200),
+    homepage: __mfText(plugin.srcUrl, ''),
+    // 插件图标（站点 favicon / logo），宿主导入时下载并缓存成 PNG。
+    iconUrl: __mfText(
+      plugin.iconUrl ||
+        plugin.icon ||
+        (plugin.pluginInfo && plugin.pluginInfo.iconUrl),
+      ''
+    ),
+    // 声明支持「自定义歌单」：歌单内容由插件按关键字搜索得到。
+    customSheets: customSheets,
+  };
+  return __mfInfoCache;
+}
+
+function __mfSupportsMusicSearch(plugin) {
+  if (typeof plugin.search !== 'function') return false;
+  var supported = __mfArray(plugin.supportedSearchType);
+  if (!supported.length) return true;
+  for (var i = 0; i < supported.length; i++) {
+    if (String(supported[i]).toLowerCase() === 'music') return true;
+  }
+  return false;
+}
+
+function __mfActionList() {
+  var plugin = __mfPluginObject();
+  var actions = [];
+  if (typeof plugin.getMediaSource === 'function') actions.push('musicUrl');
+  else actions.push('musicUrl');
+  if (__mfSupportsMusicSearch(plugin)) actions.push('musicSearch');
+  actions.push('musicPic');
+  if (typeof plugin.getLyric === 'function') actions.push('lyric');
+  return actions;
+}
+
+function __mfSourcesObject() {
+  if (!__mfSourcesCache) {
+    var meta = __mfPluginMeta();
+    __mfSourcesCache = {};
+    __mfSourcesCache[__mfSourceId()] = {
+      name: meta.name,
+      type: 'music',
+      qualitys: __mfDeclaredQualities(),
+      qualities: __mfDeclaredQualities(),
+      // 下载音质：插件没声明时等于播放音质（与本项目插件协议一致）
+      downloadQualitys: __mfDeclaredDownloadQualities(),
+      actions: __mfActionList(),
+    };
+  }
+  return __mfSourcesCache;
+}
+
+function __mfSourceActionsObject() {
+  if (!__mfActionsCache) {
+    var plugin = __mfPluginObject();
+    __mfActionsCache = {};
+    __mfActionsCache[__mfSourceId()] = __mfActionList().map(function (action) {
+      return String(action).toLowerCase();
+    });
+  }
+  return __mfActionsCache;
+}
+
+/* ------------------------------------------------------------------ *
+ * musicItem 适配
+ * ------------------------------------------------------------------ */
+
+/** 把本项目的 musicInfo 还原成插件需要的 MusicFree musicItem。 */
+function __mfUnwrapItem(musicInfo) {
+  var info = musicInfo && typeof musicInfo === 'object' ? musicInfo : {};
+  var extra = info.extra;
+  if (extra && typeof extra === 'object' && extra.musicItem && typeof extra.musicItem === 'object') {
+    return extra.musicItem;
+  }
+  // 回退：用本项目字段拼一个 musicItem（例如数据源插件搜到的歌曲交给
+  // MusicFree 插件解析播放地址）。
+  //
+  // 注意：各平台插件拼播放地址用的是它自己的字段名，少一个就直接取不到链接
+  // （表现为 `Plugin returned empty result for musicUrl`）：
+  //   · QQ：songmid + strMediaMid（两者不是同一个值，只给 songmid 拼出来的文件名无效）
+  //   · 酷狗：hash（+ albumId）
+  //   · 咪咕：copyrightId
+  // 所以这里把平台标识一并带过去，再把 info 里剩下的字段补进 item。
+  var id = info.songmid || info.songId || info.songid || info.id || '';
+  // 部分插件在 getMediaSource 第一行就检查 musicItem.qualities[quality]，
+  // 内置源没有插件自己的音质表，这里按 MusicFree 的四个音质键补齐，
+  // 具体的可用性交给插件接口判断。
+  var qualities = { low: {}, standard: {}, high: {}, super: {} };
+  var item = {
+    id: id,
+    songmid: __mfText(info.songmid || info.mid, '') || id,
+    strMediaMid: __mfText(
+      info.strMediaMid || info.media_mid || info.mediaMid,
+      ''
+    ),
+    hash: __mfText(info.hash, ''),
+    albumId: __mfText(info.albumId || info.albumid, ''),
+    albumMid: __mfText(info.albumMid || info.albummid, ''),
+    copyrightId: info.copyrightId,
+    type: info.type !== undefined ? info.type : info.songType,
+    platform: __mfPluginMeta().name,
+    title: __mfText(info.name || info.title, ''),
+    artist: __mfText(info.singer || info.artist, ''),
+    album: __mfText(info.albumName || info.album, ''),
+    artwork: __mfText(info.img || info.picUrl || info.pic || info.cover, ''),
+    duration: typeof info.duration === 'number' ? info.duration : 0,
+    qualities: qualities,
+    _info: info,
+  };
+  // 插件可能还认其它字段（别名 / 平台私有字段），剩下的原样补上。
+  Object.keys(info).forEach(function (key) {
+    if (item[key] === undefined) item[key] = info[key];
+  });
+  return item;
+}
+
+/** 角标里是否带「充电专属 / 会员专享」文案（App 列表的充电标记）。 */
+function __mfHasVipBadge(badges) {
+  if (!Array.isArray(badges)) return false;
+  for (var i = 0; i < badges.length; i++) {
+    var badge = badges[i];
+    var text = badge && typeof badge.text === 'string' ? badge.text : '';
+    if (text.indexOf('充电专属') >= 0 || text.indexOf('会员专享') >= 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** 把 MusicFree musicItem 展平成本项目 _musicInfoToSong 可识别的字段。 */
+function __mfMapMusicItem(item, sourceId) {
+  if (!item || typeof item !== 'object') return null;
+
+  var title = __mfText(item.title || item.name || item.songname, '');
+  if (!title) return null;
+
+  var artist = __mfText(item.artist || item.singer || item.artists, '');
+  var pic = __mfNormalizeCover(
+    item.artwork || item.picUrl || item.img || item.cover || item.artworkUrl
+  );
+  var album = item.album;
+  if (album && typeof album === 'object') album = album.name;
+  album = __mfText(album || item.albumName, '');
+
+  var duration = item.duration;
+  if (typeof duration === 'string') {
+    var parsed = parseFloat(duration);
+    duration = isNaN(parsed) ? 0 : parsed;
+  }
+  if (typeof duration !== 'number' || !isFinite(duration) || duration < 0) duration = 0;
+
+  var id = item.id === null || item.id === undefined ? '' : String(item.id);
+
+  var mapped = {
+    id: item.id,
+    songmid: id,
+    songId: item.id,
+    songid: item.id,
+    hash: id,
+    name: title,
+    title: title,
+    singer: artist,
+    artist: artist,
+    albumName: album,
+    album: album,
+    duration: duration,
+    interval: duration,
+    img: pic,
+    picUrl: pic,
+    artwork: pic,
+    // 专辑 / 歌手 id：本项目按它查专辑发行年份（resolveSongYear），
+    // 插件的播放 / 歌词接口也常认这几个字段。undefined 在 JSON 序列化时
+    // 会被丢掉，插件没给就不占字段。
+    albumId:
+      item.albumId !== undefined && item.albumId !== null
+        ? String(item.albumId)
+        : undefined,
+    albumMid:
+      item.albumMid !== undefined && item.albumMid !== null
+        ? String(item.albumMid)
+        : undefined,
+    artistId:
+      item.artistId !== undefined && item.artistId !== null
+        ? String(item.artistId)
+        : undefined,
+    source: sourceId,
+    // 原始 musicItem：解析播放地址 / 歌词时原样回传给插件，避免二次请求。
+    extra: { musicItem: item },
+  };
+  // 会员专属作品标记（bilibili 充电专属 / 大会员专享）：
+  // 插件在 musicItem 上标记后透传给 Dart，歌曲列表据此显示「会员」标签。
+  // bilibili 各列表接口字段不统一，这里把已知的几种都认一遍，兼容没更新
+  // 到最新版标记逻辑的插件变体。
+  if (
+    item.vipExclusive === true ||
+    item.is_charging_arc === true ||
+    item.is_upower_exclusive === true ||
+    item.is_charge_video === 1 ||
+    item.is_charge_video === '1' ||
+    item.is_ugcpay === true ||
+    item.ugc_pay === 1 ||
+    __mfHasVipBadge(item.badges)
+  ) {
+    mapped.vipExclusive = true;
+  }
+  // 视频选集（分 P）数量：插件在搜索结果 / 歌单里补查后透传，
+  // 歌曲列表据此显示「分P」标签、点击直接打开专辑页。
+  if (typeof item.parts === 'number' && item.parts > 1) {
+    mapped.parts = item.parts;
+  }
+  return mapped;
+}
+
+function __mfNonNegativeInt(value) {
+  return typeof value === 'number' && isFinite(value) && value >= 0 && Math.floor(value) === value
+    ? value
+    : null;
+}
+
+function __mfValidatePageResponse(response) {
+  if (!response || typeof response !== 'object') {
+    throw new Error('插件返回了无效分页数据');
+  }
+  if (response.error) throw new Error(__mfErrorMessage(response.error));
+}
+
+/* ------------------------------------------------------------------ *
+ * 契约实现
+ * ------------------------------------------------------------------ */
+
+function __mfSearch(source, keyword, page, limit) {
+  return Promise.resolve()
+    .then(function () {
+      var plugin = __mfPluginObject();
+      if (!__mfSupportsMusicSearch(plugin)) {
+        return {
+          list: [],
+          total: null,
+          isEnd: true,
+          source: source,
+          unsupported: true,
+        };
+      }
+      var keywordText = __mfText(keyword, '');
+      var pageNumber = typeof page === 'number' && page > 0 ? page : 1;
+      var result = plugin.search(keywordText, pageNumber, 'music');
+      return Promise.resolve(result).then(function (response) {
+        __mfValidatePageResponse(response);
+        var rawList = [];
+        if (Array.isArray(response)) rawList = response;
+        else if (response && Array.isArray(response.data)) rawList = response.data;
+        else if (response && Array.isArray(response.list)) rawList = response.list;
+
+        var sourceId = __mfSourceId();
+        var list = [];
+        for (var i = 0; i < rawList.length; i++) {
+          var mapped = __mfMapMusicItem(rawList[i], sourceId);
+          if (mapped) list.push(mapped);
+        }
+
+        var isEnd = typeof response.isEnd === 'boolean' ? response.isEnd : null;
+        return {
+          list: list,
+          total: __mfNonNegativeInt(response.total),
+          isEnd: isEnd,
+          source: source,
+        };
+      });
+    })
+    .then(
+      function (value) {
+        return value;
+      },
+      function (error) {
+        if (typeof console !== 'undefined' && console.log) {
+          console.log('[MusicFree] search 失败: ' + (error && error.message ? error.message : error));
+        }
+        return {
+          list: [],
+          total: null,
+          isEnd: true,
+          source: source,
+          error: __mfErrorMessage(error),
+        };
+      }
+    );
+}
+
+
+/* ------------------------------------------------------------------ *
+ * 专辑 / 作者（MusicFree 插件的 supportedSearchType 含 album / artist 时）
+ * ------------------------------------------------------------------ */
+
+function __mfSearchTypeList(plugin) {
+  var supported = __mfArray(plugin.supportedSearchType);
+  var result = [];
+  for (var i = 0; i < supported.length; i++) {
+    var t = String(supported[i]).toLowerCase();
+    if (t === 'album' || t === 'artist') result.push(t);
+  }
+  return result;
+}
+
+function __mfMapCollectionItem(item, type, sourceId) {
+  if (!item || typeof item !== 'object') return null;
+  var isArtist = type === 'artist';
+  var title = __mfText(
+    isArtist ? item.name || item.title : item.title || item.name,
+    ''
+  );
+  if (!title) return null;
+  var cover = __mfNormalizeCover(
+    isArtist
+      ? item.avatar || item.artwork || item.picUrl || item.img
+      : item.artwork || item.coverImg || item.picUrl || item.img
+  );
+  var works =
+    item.worksNum ||
+    item.trackCount ||
+    item.albumSize ||
+    item.musicSize ||
+    item.songCount;
+  if (typeof works === 'string') {
+    var parsedWorks = parseInt(works, 10);
+    works = isNaN(parsedWorks) ? 0 : parsedWorks;
+  }
+  if (typeof works !== 'number' || !isFinite(works) || works < 0) works = 0;
+  return {
+    id: item.id === null || item.id === undefined ? '' : String(item.id),
+    title: title,
+    artist: __mfText(item.artist || item.singer || item.creator, ''),
+    coverUrl: cover,
+    worksNum: works,
+    date: __mfText(item.date || item.publishTime || item.publishDate, ''),
+    description: __mfText(
+      item.description || item.desc || item.briefDesc,
+      ''
+    ),
+    type: type,
+    source: sourceId,
+    raw: item,
+  };
+}
+
+function __mfSearchTyped(source, keyword, page, limit, type) {
+  return Promise.resolve()
+    .then(function () {
+      var plugin = __mfPluginObject();
+      var wanted = String(type || '').toLowerCase();
+      if (wanted !== 'album' && wanted !== 'artist') {
+        return { list: [], isEnd: true };
+      }
+      if (__mfSearchTypeList(plugin).indexOf(wanted) < 0) {
+        return { list: [], isEnd: true, unsupported: true };
+      }
+      var keywordText = __mfText(keyword, '');
+      var pageNumber = typeof page === 'number' && page > 0 ? page : 1;
+      var result = plugin.search(keywordText, pageNumber, wanted);
+      return Promise.resolve(result).then(function (response) {
+        __mfValidatePageResponse(response);
+        var rawList = [];
+        if (Array.isArray(response)) rawList = response;
+        else if (response && Array.isArray(response.data)) rawList = response.data;
+        var sourceId = __mfSourceId();
+        var list = [];
+        for (var i = 0; i < rawList.length; i++) {
+          var mapped = __mfMapCollectionItem(rawList[i], wanted, sourceId);
+          if (mapped) list.push(mapped);
+        }
+        var isEnd = !(response && response.isEnd === false);
+        return {
+          list: list,
+          isEnd: isEnd,
+          total: __mfNonNegativeInt(response.total),
+          source: sourceId,
+        };
+      });
+    })
+    .then(
+      function (value) {
+        return value;
+      },
+      function (error) {
+        if (typeof console !== 'undefined' && console.log) {
+          console.log(
+            '[MusicFree] searchTyped 失败: ' +
+              (error && error.message ? error.message : error)
+          );
+        }
+        return { list: [], isEnd: true, error: __mfErrorMessage(error) };
+      }
+    );
+}
+
+function __mfGetAlbumInfo(source, albumItem, page) {
+  return Promise.resolve()
+    .then(function () {
+      var plugin = __mfPluginObject();
+      if (typeof plugin.getAlbumInfo !== 'function') {
+        return { list: [], isEnd: true };
+      }
+      var pageNumber = typeof page === 'number' && page > 0 ? page : 1;
+      return Promise.resolve(
+        plugin.getAlbumInfo(albumItem || {}, pageNumber)
+      ).then(
+        function (res) {
+          __mfValidatePageResponse(res);
+          var sourceId = __mfSourceId();
+          var raw = [];
+          if (res && Array.isArray(res.musicList)) raw = res.musicList;
+          else if (res && Array.isArray(res.data)) raw = res.data;
+          var list = [];
+          for (var i = 0; i < raw.length; i++) {
+            var mapped = __mfMapMusicItem(raw[i], sourceId);
+            if (mapped) list.push(mapped);
+          }
+          return {
+            albumItem: __mfMapCollectionItem(
+              (res && res.albumItem) || albumItem || {},
+              'album',
+              sourceId
+            ),
+            list: list,
+            isEnd: !(res && res.isEnd === false),
+            total: __mfNonNegativeInt(res.total),
+          };
+        }
+      );
+    })
+    .then(
+      function (value) {
+        return value;
+      },
+      function (error) {
+        if (typeof console !== 'undefined' && console.log) {
+          console.log(
+            '[MusicFree] getAlbumInfo 失败: ' +
+              (error && error.message ? error.message : error)
+          );
+        }
+        return { list: [], isEnd: true, error: __mfErrorMessage(error) };
+      }
+    );
+}
+
+function __mfGetArtistWorks(source, artistItem, page, type) {
+  return Promise.resolve()
+    .then(function () {
+      var plugin = __mfPluginObject();
+      if (typeof plugin.getArtistWorks !== 'function') {
+        return { list: [], isEnd: true };
+      }
+      var wanted = String(type || 'music').toLowerCase();
+      var pageNumber = typeof page === 'number' && page > 0 ? page : 1;
+      return Promise.resolve(
+        plugin.getArtistWorks(artistItem || {}, pageNumber, wanted)
+      ).then(function (res) {
+        __mfValidatePageResponse(res);
+        var sourceId = __mfSourceId();
+        var raw = [];
+        if (res && Array.isArray(res.data)) raw = res.data;
+        else if (res && Array.isArray(res.musicList)) raw = res.musicList;
+        var list = [];
+        for (var i = 0; i < raw.length; i++) {
+          var mapped =
+            wanted === 'album'
+              ? __mfMapCollectionItem(raw[i], 'album', sourceId)
+              : __mfMapMusicItem(raw[i], sourceId);
+          if (mapped) list.push(mapped);
+        }
+        return {
+          artistItem: __mfMapCollectionItem(
+            (res && res.artistItem) || artistItem || {},
+            'artist',
+            sourceId
+          ),
+          list: list,
+          isEnd: !(res && res.isEnd === false),
+          total: __mfNonNegativeInt(res.total),
+        };
+      });
+    })
+    .then(
+      function (value) {
+        return value;
+      },
+      function (error) {
+        if (typeof console !== 'undefined' && console.log) {
+          console.log(
+            '[MusicFree] getArtistWorks 失败: ' +
+              (error && error.message ? error.message : error)
+          );
+        }
+        return { list: [], isEnd: true, error: __mfErrorMessage(error) };
+      }
+    );
+}
+
+/** 提取插件抛错的接口信息（HTTP 状态码 + 响应片段），
+ *  随 { error } 跨桥传给 Dart，播放失败的提示里能显示具体原因（如 412 风控）。 */
+function __mfErrorText(error) {
+  if (!error) return '';
+  if (error.response && error.response.status) {
+    var data = error.response.data;
+    var text = '';
+    if (typeof data === 'string') {
+      text = data;
+    } else if (data && typeof data === 'object') {
+      text = data.message || data.msg || '';
+      if (!text) {
+        try {
+          text = JSON.stringify(data);
+        } catch (e) {
+          text = '';
+        }
+      }
+    }
+    text = String(text || '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 160);
+    return 'HTTP ' + error.response.status + (text ? ' ' + text : '');
+  }
+  return error.message || String(error);
+}
+
+function __mfMusicUrl(source, musicInfo, quality) {
+  return Promise.resolve()
+    .then(function () {
+      var plugin = __mfPluginObject();
+      var item = __mfUnwrapItem(musicInfo);
+      var requested = __mfQualityKey(quality);
+      if (!requested) throw new Error('Unsupported quality: ' + quality);
+
+      if (typeof plugin.getMediaSource !== 'function') {
+        return __mfDirectUrl(item, quality);
+      }
+
+      return Promise.resolve(plugin.getMediaSource(item, requested)).then(function (response) {
+        return __mfParseMediaSource(response, requested);
+      });
+    })
+    .then(null, function (error) {
+      if (typeof console !== 'undefined' && console.log) {
+        console.log('[MusicFree] getMediaSource 失败: ' + (error && error.message ? error.message : error));
+      }
+      return { error: __mfErrorText(error) || 'getMediaSource failed' };
+    });
+}
+
+/** 归一化 getMediaSource 的返回值。返回 null 表示没有可用地址。 */
+function __mfParseMediaSource(response, qualityKey) {
+  if (!response) return null;
+  var url = '';
+  var headers = null;
+  var userAgent = '';
+  var reportedQuality = '';
+  if (typeof response === 'string') {
+    url = response;
+  } else if (typeof response === 'object') {
+    if (response.error) throw new Error(__mfErrorText(response.error));
+    // 只记录插件回报的音质，不在这里拒绝：服务器降级（要无损给 192k）是常态，
+    // 由宿主按用途决定是否接受（播放会降级并提示，下载 / 测试会拒绝）。
+    [response.quality, response.data ? response.data.quality : null].forEach(function (value) {
+      var label = __mfText(value, '');
+      if (!label) return;
+      if (!reportedQuality) reportedQuality = label;
+    });
+    url = response.url || (response.data && response.data.url) || '';
+    headers = response.headers || (response.data && response.data.headers) || null;
+    userAgent = response.userAgent || (response.data && response.data.userAgent) || '';
+  }
+  url = __mfText(url, '');
+  if (!/^https?:\/\/[^/?#\s]+(?:[/?#][^\s]*)?$/i.test(url)) return null;
+
+  var resultHeaders = {};
+  if (headers && typeof headers === 'object') {
+    Object.keys(headers).forEach(function (key) {
+      if (headers[key] !== null && headers[key] !== undefined) {
+        resultHeaders[key] = String(headers[key]);
+      }
+    });
+  }
+  if (userAgent) {
+    var hasUa = false;
+    Object.keys(resultHeaders).forEach(function (key) {
+      if (key.toLowerCase() === 'user-agent') hasUa = true;
+    });
+    if (!hasUa) resultHeaders['User-Agent'] = userAgent;
+  }
+  return {
+    url: url,
+    headers: resultHeaders,
+    quality: reportedQuality || __mfQualityLabel(qualityKey),
+  };
+}
+
+/** MusicFree 音质键 → 本项目音质标签。 */
+function __mfQualityLabel(qualityKey) {
+  if (qualityKey === 'super') return 'flac';
+  if (qualityKey === 'high') return '320k';
+  if (qualityKey === 'low') return '64k';
+  if (qualityKey === 'standard') return '128k';
+  // 插件自己声明的数字档（B 站的 192k、64k 等）原样返回，宿主认得这些标签。
+  if (/^\d{2,4}k$/.test(String(qualityKey || ''))) return qualityKey;
+  return String(qualityKey || '128k');
+}
+
+function __mfDirectUrl(item, quality) {
+  var key = __mfQualityKey(quality);
+  if (item && item.qualities && typeof item.qualities === 'object') {
+    var keys = [quality, key].concat(Object.keys(item.qualities));
+    for (var i = 0; i < keys.length; i++) {
+      if (__mfQualityKey(keys[i]) !== key) continue;
+      var parsed = __mfParseMediaSource(item.qualities[keys[i]], key);
+      if (parsed) return parsed;
+    }
+  }
+  return item && item.url ? __mfParseMediaSource(item, key) : null;
+}
+
+function __mfGetPic(source, musicInfo) {
+  return Promise.resolve()
+    .then(function () {
+      var plugin = __mfPluginObject();
+      var item = __mfUnwrapItem(musicInfo);
+      var pic = __mfText(item.artwork || item.picUrl || item.img || item.cover, '');
+      if (pic && /^https?:/i.test(pic)) return __mfNormalizeCover(pic);
+      if (item._info) {
+        pic = __mfText(item._info.img || item._info.picUrl || item._info.pic || '', '');
+        if (pic && /^https?:/i.test(pic)) return __mfNormalizeCover(pic);
+      }
+      // 搜索结果里没有封面时（部分插件只在 getPic 里取封面）再调用插件方法。
+      if (typeof plugin.getPic !== 'function') return null;
+      return Promise.resolve(plugin.getPic(item, 'standard')).then(
+        function (response) {
+          var url = '';
+          if (typeof response === 'string') {
+            url = response;
+          } else if (response && typeof response === 'object') {
+            url =
+              response.url ||
+              response.pic ||
+              response.artwork ||
+              response.img ||
+              '';
+          }
+          url = __mfText(url, '');
+          return /^https?:/i.test(url) ? __mfNormalizeCover(url) : null;
+        },
+        function () {
+          return null;
+        }
+      );
+    })
+    .then(null, function () {
+      return null;
+    });
+}
+
+function __mfGetLyric(source, musicInfo) {
+  return Promise.resolve()
+    .then(function () {
+      var plugin = __mfPluginObject();
+      if (typeof plugin.getLyric !== 'function') return null;
+      var item = __mfUnwrapItem(musicInfo);
+      return Promise.resolve(plugin.getLyric(item)).then(function (response) {
+        if (!response) return null;
+        if (typeof response === 'string') {
+          var text = response.trim();
+          return text ? { lrc: text } : null;
+        }
+        if (typeof response !== 'object') return null;
+        // 歌词不能用 __mfText：它会压缩换行，导致整段 LRC 变成一行。
+        var lrc = __mfLyricText(response.rawLrc || response.lrc || response.lyric || response.raw, '');
+        var wordLyric = __mfLyricText(
+          response.crlyric || response.yrc || response.lyricx || response.wordLyric,
+          ''
+        );
+        var translation = __mfLyricText(response.translation || response.tlyric || response.trans, '');
+        if (!lrc && !wordLyric && !translation) return null;
+        return { lrc: lrc, crlyric: wordLyric, tlyric: translation };
+      });
+    })
+    .then(null, function (error) {
+      if (typeof console !== 'undefined' && console.log) {
+        console.log('[MusicFree] getLyric 失败: ' + (error && error.message ? error.message : error));
+      }
+      return null;
+    });
+}
+
+/**
+ * 本项目音质标签 -> 传给插件的音质键。
+ *
+ * 老约定是 low / standard / high / super 四档，绝大多数 MusicFree 插件只认这
+ * 四个。B 站这类档位是 64k/128k/192k 的音源没法用四档表达（192k 会被说成
+ * 320k），所以：**插件在 qualitys 里声明过的数字档，原样传下去**。
+ * 没声明的仍然走四档映射，老插件不受影响。
+ */
+function __mfQualityKey(quality) {
+  var value = String(quality === null || quality === undefined ? '' : quality).trim().toLowerCase();
+  if (value === 'low' || value === '64k') return 'low';
+  if (value === 'standard' || value === '128k') return 'standard';
+  if (value === 'high' || value === '320k' || value === 'hq') return 'high';
+  if (value === 'super' || value === 'flac' || value === 'lossless') return 'super';
+  // 插件声明的其它数字档（64k/192k/...）直接透传
+  var declared = __mfDeclaredQualities();
+  for (var i = 0; i < declared.length; i++) {
+    if (String(declared[i]).toLowerCase() === value) return value;
+  }
+  return null;
+}
+
+/* ------------------------------------------------------------------ *
+ * 榜单 / 推荐歌单（发现页数据）
+ *
+ * MusicFree 的发现接口接收的是「条目对象」而不是 id：
+ *   getTopListDetail(topListItem, page)
+ *   getRecommendSheetsByTag(tagItem, page)
+ *   getMusicSheetInfo(sheetItem, page)
+ * 因此适配器把最近一次通过 getTopLists / getRecommendSheetTags /
+ * getRecommendSheetsByTag 拿到的原始对象缓存在内存里，按 id 反查；缓存缺失
+ * （例如 App 重启后用持久化的 id 打开）时退化为最小 `{ id }` 对象——示例插件
+ * 都只依赖 id。
+ * ------------------------------------------------------------------ */
+
+var __mfTopListCache = null; // 扁平化榜单 [{id,name,group,coverUrl,description}]
+var __mfTopListRawCache = null; // id -> 原始 topListItem
+var __mfSheetTagGroupCache = null; // [{name,tags:[{id,name}]}]
+var __mfSheetTagRawCache = null; // id -> 原始 tagItem
+var __mfSheetRawCache = null; // id -> 原始 sheetItem（含分页续传字段）
+
+function __mfFirstArray(values) {
+  for (var i = 0; i < values.length; i++) {
+    if (Array.isArray(values[i])) return values[i];
+  }
+  return [];
+}
+
+/**
+ * 统一封面地址：
+ * - 补全协议（`//host/...` → `https://host/...`，`http://` → `https://`）；
+ * - 网易 CDN 的 `?param=NyN` 只是服务端缩略图（榜单页给的通常是 200x200），
+ *   卡片按 2 倍图解码时会被放大到发糊，这里与内置音源保持一致换成 400x400。
+ */
+/** 把插件抛出的异常整理成一行可读文案，交给 Dart 侧显示在「加载失败」里。 */
+function __mfErrorMessage(error) {
+  if (!error) return '未知错误';
+  if (typeof error === 'string') return error;
+  var message = error.message || error.msg || '';
+  if (!message && error.response && error.response.status) {
+    message = 'HTTP ' + error.response.status;
+  }
+  if (!message) {
+    try {
+      message = String(error);
+    } catch (e) {
+      message = '未知错误';
+    }
+  }
+  return message;
+}
+
+function __mfNormalizeCover(value) {
+  var url = __mfText(value, '');
+  if (!url) return '';
+  if (url.indexOf('//') === 0) {
+    url = 'https:' + url;
+  } else if (/^http:\/\//i.test(url)) {
+    url = 'https://' + url.substring(7);
+  }
+  // 有些插件自己拼协议头，会把 `//host/x.jpg` 拼成 `https:////host/x.jpg`
+  // （例如哔哩哔哩插件的 upic / pic）。这种 URL 在 Dart 里 host 会解析成空，
+  // 图片永远加载失败（表现为作者头像 / 封面一直空白），这里统一压掉多余斜杠。
+  url = url.replace(/^(https?:)\/+/, '$1//');
+  if (url.indexOf('music.126.net') !== -1) {
+    var queryIndex = url.indexOf('?');
+    if (queryIndex !== -1) url = url.substring(0, queryIndex);
+    url += '?param=400y400';
+  }
+  return url;
+}
+
+function __mfCoverOf(item) {
+  if (!item || typeof item !== 'object') return '';
+  return __mfNormalizeCover(
+    item.coverImg || item.artwork || item.picUrl || item.img || item.cover
+  );
+}
+
+function __mfIdOf(item) {
+  if (!item || typeof item !== 'object') return '';
+  var id = item.id;
+  if (id === null || id === undefined) return '';
+  return String(id);
+}
+
+/** 把 MusicFree 的分页结果（{isEnd, musicList}）展平成本项目可用的歌曲页。 */
+function __mfNormalizeSongPage(response) {
+  __mfValidatePageResponse(response);
+  var list = [];
+  if (Array.isArray(response)) {
+    list = response;
+  } else if (response && typeof response === 'object') {
+    list = __mfFirstArray([
+      response.musicList,
+      response.data,
+      response.list,
+    ]);
+  }
+
+  var sourceId = __mfSourceId();
+  var songs = [];
+  for (var i = 0; i < list.length; i++) {
+    var mapped = __mfMapMusicItem(list[i], sourceId);
+    if (mapped) songs.push(mapped);
+  }
+
+  var isEnd = true;
+  if (response && typeof response === 'object' && response.isEnd === false) {
+    isEnd = false;
+  }
+  return {
+    isEnd: isEnd,
+    songs: songs,
+    total: __mfNonNegativeInt(response.total),
+  };
+}
+
+/** 榜单 / 歌单条目的元信息，供宿主渲染详情页头部。 */
+function __mfSheetMeta(item) {
+  if (!item || typeof item !== 'object') return null;
+  return {
+    id: __mfIdOf(item),
+    title: __mfText(item.title || item.name, ''),
+    coverUrl: __mfCoverOf(item),
+    description: __mfText(item.description, ''),
+    songCount: __mfNonNegativeInt(item.songCount) !== null
+      ? __mfNonNegativeInt(item.songCount)
+      : __mfNonNegativeInt(item.trackCount),
+    author: __mfText(
+      item.artist || item.author || item.creator || item.nickName || item.nickname,
+      ''
+    ),
+  };
+}
+
+function __mfLoadTopLists() {
+  if (__mfTopListCache) return Promise.resolve(__mfTopListCache);
+
+  var plugin = __mfPluginObject();
+  if (typeof plugin.getTopLists !== 'function') return Promise.resolve([]);
+
+  return Promise.resolve(plugin.getTopLists())
+    .then(function (response) {
+      var groups = [];
+      if (Array.isArray(response)) groups = response;
+      else if (response && typeof response === 'object') {
+        groups = __mfFirstArray([response.data, response.list]);
+      }
+
+      var flat = [];
+      var raw = {};
+      for (var i = 0; i < groups.length; i++) {
+        var group = groups[i] || {};
+        var groupTitle = __mfText(group.title || group.name, '');
+        var items = Array.isArray(group.data)
+          ? group.data
+          : __mfFirstArray([group.list]);
+        for (var j = 0; j < items.length; j++) {
+          var item = items[j];
+          if (!item || typeof item !== 'object') continue;
+          var id = __mfIdOf(item);
+          if (!id || raw[id]) continue;
+          raw[id] = item;
+          flat.push({
+            id: id,
+            name: __mfText(item.title || item.name, id),
+            group: groupTitle,
+            coverUrl: __mfCoverOf(item),
+            description: __mfText(item.description, ''),
+          });
+        }
+      }
+
+      if (flat.length) {
+        __mfTopListRawCache = raw;
+        __mfTopListCache = flat;
+      }
+      return flat;
+    })
+    .then(null, function (error) {
+      if (typeof console !== 'undefined' && console.log) {
+        console.log(
+          '[MusicFree] getTopLists 失败: ' +
+            (error && error.message ? error.message : error)
+        );
+      }
+      return [];
+    });
+}
+
+function __mfLoadSheetTags() {
+  if (__mfSheetTagGroupCache) return Promise.resolve(__mfSheetTagGroupCache);
+
+  var plugin = __mfPluginObject();
+  if (typeof plugin.getRecommendSheetTags !== 'function') {
+    return Promise.resolve([]);
+  }
+
+  return Promise.resolve(plugin.getRecommendSheetTags())
+    .then(function (response) {
+      var pinned = [];
+      var groups = [];
+      if (Array.isArray(response)) {
+        groups = response;
+      } else if (response && typeof response === 'object') {
+        pinned = __mfFirstArray([response.pinned]);
+        groups = __mfFirstArray([response.data, response.list]);
+      }
+
+      var raw = {};
+      function convertTags(list) {
+        var tags = [];
+        for (var i = 0; i < list.length; i++) {
+          var tag = list[i];
+          if (!tag || typeof tag !== 'object') continue;
+          var id = __mfIdOf(tag);
+          if (!id) continue;
+          if (!raw[id]) raw[id] = tag;
+          tags.push({ id: id, name: __mfText(tag.title || tag.name, id) });
+        }
+        return tags;
+      }
+
+      var result = [];
+      var pinnedTags = convertTags(pinned);
+      if (pinnedTags.length) result.push({ name: '推荐', tags: pinnedTags });
+      for (var i = 0; i < groups.length; i++) {
+        var group = groups[i] || {};
+        var tags = convertTags(
+          Array.isArray(group.data) ? group.data : __mfFirstArray([group.list])
+        );
+        if (!tags.length) continue;
+        result.push({ name: __mfText(group.title || group.name, '分类'), tags: tags });
+      }
+
+      if (result.length) {
+        __mfSheetTagRawCache = raw;
+        __mfSheetTagGroupCache = result;
+      }
+      return result;
+    })
+    .then(null, function (error) {
+      if (typeof console !== 'undefined' && console.log) {
+        console.log(
+          '[MusicFree] getRecommendSheetTags 失败: ' +
+            (error && error.message ? error.message : error)
+        );
+      }
+      return [];
+    });
+}
+
+function __mfTopListDetail(id, page) {
+  var key = id === null || id === undefined ? '' : String(id);
+  return __mfLoadTopLists().then(function () {
+    var plugin = __mfPluginObject();
+    if (typeof plugin.getTopListDetail !== 'function') {
+      return { isEnd: true, songs: [] };
+    }
+    var item = (__mfTopListRawCache && __mfTopListRawCache[key]) || {
+      id: key,
+      title: '',
+    };
+    var pageNumber = typeof page === 'number' && page > 0 ? page : 1;
+    return Promise.resolve(plugin.getTopListDetail(item, pageNumber))
+      .then(function (response) {
+        var result = __mfNormalizeSongPage(response);
+        // 与歌单详情一样，把插件回传的续页状态合并回缓存的原始条目。
+        if (response && typeof response === 'object') {
+          var merged = {};
+          Object.keys(item).forEach(function (k) {
+            merged[k] = item[k];
+          });
+          Object.keys(response).forEach(function (k) {
+            if (k === 'musicList' || k === 'isEnd') return;
+            merged[k] = response[k];
+          });
+          if (!__mfTopListRawCache) __mfTopListRawCache = {};
+          __mfTopListRawCache[key] = merged;
+          result.sheet = __mfSheetMeta(merged);
+        } else {
+          result.sheet = __mfSheetMeta(item);
+        }
+        return result;
+      })
+      .then(null, function (error) {
+        if (typeof console !== 'undefined' && console.log) {
+          console.log(
+            '[MusicFree] getTopListDetail 失败: ' +
+              (error && error.message ? error.message : error)
+          );
+        }
+        return { isEnd: true, songs: [], error: __mfErrorMessage(error) };
+      });
+  });
+}
+
+/** 把 MusicFree 的 sheetItem 映射成宿主的歌单结构，并缓存原始对象
+ * （歌单详情翻页时 getMusicSheetInfo 需要用原始 sheetItem 续传）。 */
+function __mfSheetFromRaw(sheet) {
+  if (!sheet || typeof sheet !== 'object') return null;
+  var id = __mfIdOf(sheet);
+  if (!id) return null;
+  if (!__mfSheetRawCache) __mfSheetRawCache = {};
+  if (!__mfSheetRawCache[id]) __mfSheetRawCache[id] = sheet;
+  return {
+    id: id,
+    title: __mfText(sheet.title || sheet.name, id),
+    coverUrl: __mfCoverOf(sheet),
+    description: __mfText(sheet.description, ''),
+    playCount: __mfText(sheet.playCount, ''),
+    author: __mfText(
+      sheet.artist ||
+        sheet.author ||
+        sheet.creator ||
+        sheet.nickName ||
+        sheet.nickname,
+      ''
+    ),
+    songCount: __mfNonNegativeInt(sheet.songCount) !== null
+      ? __mfNonNegativeInt(sheet.songCount)
+      : __mfNonNegativeInt(sheet.trackCount),
+  };
+}
+
+/* ------------------------------------------------------------------ *
+ * 搜索歌单（MusicFree 的 sheet 类型搜索）
+ * ------------------------------------------------------------------ */
+
+function __mfSupportsSheetSearch(plugin) {
+  if (typeof plugin.search !== 'function') return false;
+  var supported = __mfArray(plugin.supportedSearchType);
+  for (var i = 0; i < supported.length; i++) {
+    if (String(supported[i]).toLowerCase() === 'sheet') return true;
+  }
+  return false;
+}
+
+function __mfSearchPlaylists(keyword, page) {
+  return Promise.resolve()
+    .then(function () {
+      var plugin = __mfPluginObject();
+      if (!__mfSupportsSheetSearch(plugin)) {
+        return { isEnd: true, playlists: [] };
+      }
+      var keywordText = __mfText(keyword, '');
+      var pageNumber = typeof page === 'number' && page > 0 ? page : 1;
+      return Promise.resolve(
+        plugin.search(keywordText, pageNumber, 'sheet')
+      ).then(function (response) {
+        __mfValidatePageResponse(response);
+        var list = [];
+        if (Array.isArray(response)) list = response;
+        else if (response && typeof response === 'object') {
+          list = __mfFirstArray([response.data, response.list]);
+        }
+        var playlists = [];
+        for (var i = 0; i < list.length; i++) {
+          var mapped = __mfSheetFromRaw(list[i]);
+          if (mapped) playlists.push(mapped);
+        }
+        var isEnd = !(
+          response &&
+          typeof response === 'object' &&
+          response.isEnd === false
+        );
+        return {
+          isEnd: isEnd,
+          playlists: playlists,
+          total: __mfNonNegativeInt(response.total),
+        };
+      });
+    })
+    .then(null, function (error) {
+      if (typeof console !== 'undefined' && console.log) {
+        console.log(
+          '[MusicFree] searchPlaylists 失败: ' +
+            (error && error.message ? error.message : error)
+        );
+      }
+      return { isEnd: true, playlists: [], error: __mfErrorMessage(error) };
+    });
+}
+
+function __mfRecommendSheetsByTag(tagId, page) {
+  var key = tagId === null || tagId === undefined ? '' : String(tagId);
+  var plugin = __mfPluginObject();
+  if (typeof plugin.getRecommendSheetsByTag !== 'function') {
+    return Promise.resolve({ isEnd: true, playlists: [] });
+  }
+
+  return __mfLoadSheetTags().then(function () {
+    var tag = (__mfSheetTagRawCache && __mfSheetTagRawCache[key]) || {
+      id: key,
+      title: key,
+    };
+    var pageNumber = typeof page === 'number' && page > 0 ? page : 1;
+    return Promise.resolve(plugin.getRecommendSheetsByTag(tag, pageNumber))
+      .then(function (response) {
+        __mfValidatePageResponse(response);
+        var list = [];
+        if (Array.isArray(response)) list = response;
+        else if (response && typeof response === 'object') {
+          list = __mfFirstArray([response.data, response.list]);
+        }
+
+        var playlists = [];
+        for (var i = 0; i < list.length; i++) {
+          var mapped = __mfSheetFromRaw(list[i]);
+          if (mapped) playlists.push(mapped);
+        }
+
+        var isEnd = true;
+        if (response && typeof response === 'object' && response.isEnd === false) {
+          isEnd = false;
+        }
+        return {
+          isEnd: isEnd,
+          playlists: playlists,
+          total: __mfNonNegativeInt(response.total),
+        };
+      })
+      .then(null, function (error) {
+        if (typeof console !== 'undefined' && console.log) {
+          console.log(
+            '[MusicFree] getRecommendSheetsByTag 失败: ' +
+              (error && error.message ? error.message : error)
+          );
+        }
+        return { isEnd: true, playlists: [], error: __mfErrorMessage(error) };
+      });
+  });
+}
+
+function __mfMusicSheetInfo(sheetId, page) {
+  var key = sheetId === null || sheetId === undefined ? '' : String(sheetId);
+  var plugin = __mfPluginObject();
+  if (typeof plugin.getMusicSheetInfo !== 'function') {
+    return Promise.resolve({ isEnd: true, songs: [] });
+  }
+
+  return Promise.resolve().then(function () {
+    var sheet = (__mfSheetRawCache && __mfSheetRawCache[key]) || {
+      id: key,
+      title: '',
+    };
+    var pageNumber = typeof page === 'number' && page > 0 ? page : 1;
+    return Promise.resolve(plugin.getMusicSheetInfo(sheet, pageNumber))
+      .then(function (response) {
+        var result = __mfNormalizeSongPage(response);
+        // 部分插件（如网易）在第一页回传 `_trackIds` 之类的续页状态，需要
+        // 合并回缓存的 sheetItem，否则第二页会重新拉整张歌单。
+        if (response && typeof response === 'object') {
+          var merged = {};
+          Object.keys(sheet).forEach(function (k) {
+            merged[k] = sheet[k];
+          });
+          Object.keys(response).forEach(function (k) {
+            if (k === 'musicList' || k === 'isEnd') return;
+            merged[k] = response[k];
+          });
+          if (!__mfSheetRawCache) __mfSheetRawCache = {};
+          __mfSheetRawCache[key] = merged;
+          result.sheet = __mfSheetMeta(merged);
+        } else {
+          result.sheet = __mfSheetMeta(sheet);
+        }
+        return result;
+      })
+      .then(null, function (error) {
+        if (typeof console !== 'undefined' && console.log) {
+          console.log(
+            '[MusicFree] getMusicSheetInfo 失败: ' +
+              (error && error.message ? error.message : error)
+          );
+        }
+        return { isEnd: true, songs: [], error: __mfErrorMessage(error) };
+      });
+  });
+}
+
+/** 插件实现了哪些「发现页」能力（宿主据此决定音源是否出现在发现页）。 */
+function __mfCapabilities() {
+  var plugin = __mfPluginObject();
+  return {
+    topList:
+      typeof plugin.getTopLists === 'function' &&
+      typeof plugin.getTopListDetail === 'function',
+    sheets:
+      typeof plugin.getRecommendSheetTags === 'function' &&
+      typeof plugin.getRecommendSheetsByTag === 'function',
+    sheetDetail: typeof plugin.getMusicSheetInfo === 'function',
+    /** 搜索歌单：supportedSearchType 里带 sheet 才支持。 */
+    playlistSearch: __mfSupportsSheetSearch(plugin),
+    /** 自定义歌单：插件声明后用「关键字搜索」当歌单内容，不需要歌单接口。 */
+    customSheets:
+      plugin.customSheets === true ||
+      (plugin.pluginInfo && plugin.pluginInfo.customSheets === true),
+  };
+}
+
+/* ------------------------------------------------------------------ *
+ * 契约导出
+ * ------------------------------------------------------------------ */
+
+Object.defineProperty(__mfContract, 'pluginInfo', {
+  enumerable: true,
+  configurable: true,
+  get: function () {
+    return __mfPluginMeta();
+  },
+});
+
+Object.defineProperty(__mfContract, 'sources', {
+  enumerable: true,
+  configurable: true,
+  get: function () {
+    return __mfSourcesObject();
+  },
+});
+
+Object.defineProperty(__mfContract, 'sourceActions', {
+  enumerable: true,
+  configurable: true,
+  get: function () {
+    return __mfSourceActionsObject();
+  },
+});
+
+__mfContract.search = __mfSearch;
+__mfContract.searchTyped = __mfSearchTyped;
+__mfContract.getAlbumInfo = __mfGetAlbumInfo;
+__mfContract.getArtistWorks = __mfGetArtistWorks;
+__mfContract.supportedSearchTypes = function () {
+  return __mfSearchTypeList(__mfPluginObject());
+};
+__mfContract.musicUrl = __mfMusicUrl;
+__mfContract.getPic = __mfGetPic;
+__mfContract.getLyric = __mfGetLyric;
+__mfContract.getLyricResult = __mfGetLyric;
+
+/* 发现页（榜单 / 推荐歌单）。插件未实现时返回空结果，宿主不会把这些音源列进
+ * 发现页音源选择器（见 `capabilities`）。 */
+__mfContract.getTopLists = function () {
+  return __mfLoadTopLists();
+};
+__mfContract.getTopListDetail = __mfTopListDetail;
+__mfContract.getRecommendSheetTags = function () {
+  return __mfLoadSheetTags();
+};
+__mfContract.getRecommendSheetsByTag = __mfRecommendSheetsByTag;
+__mfContract.getMusicSheetInfo = __mfMusicSheetInfo;
+/* 搜索歌单：搜索页选中插件音源搜「歌单」时走这里（sheet 类型搜索）。 */
+__mfContract.searchPlaylists = __mfSearchPlaylists;
+
+/* ------------------------------------------------------------------ *
+ * 歌曲评论
+ *
+ * 宿主的评论契约（与数据源插件一致）：
+ *   getMusicComments(source, musicInfo, page, sort) -> { comments, total, hasMore }
+ *   getMusicCommentReplies(source, musicInfo, commentInfo, page) -> 同上
+ *   commentCapabilities() -> { sorts: [...], replies: bool }
+ * MusicFree 协议只有 getMusicComments(musicItem, page) -> { isEnd, data }。
+ * 这里把宿主的 musicInfo 还原成 musicItem 转发给插件，两种返回形态都归一化
+ * 成宿主格式。三个方法都按「插件实现了才暴露」的 getter 挂到契约上——插件
+ * 没实现时宿主读到 undefined（supportsComments = false），评论入口不显示。
+ * ------------------------------------------------------------------ */
+
+/** 把插件的评论返回归一化成宿主的 { comments, total, hasMore }。 */
+function __mfNormalizeCommentPage(result) {
+  var page = result;
+  if (typeof page === 'string') {
+    try {
+      page = JSON.parse(page);
+    } catch (e) {
+      page = null;
+    }
+  }
+  if (!page || typeof page !== 'object') {
+    return { comments: [], total: 0, hasMore: false };
+  }
+  // 宿主格式（插件直接按数据源协议返回）原样透传
+  if (Array.isArray(page.comments)) {
+    return {
+      comments: page.comments,
+      total: page.total,
+      hasMore: page.hasMore === true,
+    };
+  }
+  // MusicFree 格式：{ isEnd, data }
+  var data = Array.isArray(page.data) ? page.data : [];
+  return {
+    comments: data,
+    total: page.total,
+    hasMore: page.isEnd === false && data.length > 0,
+  };
+}
+
+function __mfGetMusicComments(source, musicInfo, page, sort) {
+  var plugin = __mfPluginObject() || {};
+  if (typeof plugin.getMusicComments !== 'function') return null;
+  var pageNum = typeof page === 'number' && page > 0 ? page : 1;
+  var sortKey = __mfText(sort, '') || 'hot';
+  return Promise.resolve()
+    .then(function () {
+      return plugin.getMusicComments(__mfUnwrapItem(musicInfo), pageNum, sortKey);
+    })
+    .then(function (result) {
+      return JSON.stringify(__mfNormalizeCommentPage(result));
+    });
+}
+
+function __mfGetMusicCommentReplies(source, musicInfo, commentInfo, page) {
+  var plugin = __mfPluginObject() || {};
+  if (typeof plugin.getMusicCommentReplies !== 'function') return null;
+  var pageNum = typeof page === 'number' && page > 0 ? page : 1;
+  var info = commentInfo && typeof commentInfo === 'object' ? commentInfo : {};
+  return Promise.resolve()
+    .then(function () {
+      return plugin.getMusicCommentReplies(__mfUnwrapItem(musicInfo), info, pageNum);
+    })
+    .then(function (result) {
+      return JSON.stringify(__mfNormalizeCommentPage(result));
+    });
+}
+
+function __mfCommentCapabilities() {
+  var plugin = __mfPluginObject() || {};
+  if (typeof plugin.commentCapabilities === 'function') {
+    // 插件自带能力声明（字符串 / 对象都接受）
+    var raw = plugin.commentCapabilities();
+    if (typeof raw === 'string') {
+      try {
+        raw = JSON.parse(raw);
+      } catch (e) {
+        raw = null;
+      }
+    }
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+      return JSON.stringify(raw);
+    }
+  }
+  if (typeof plugin.getMusicComments === 'function') {
+    // MusicFree 协议没有能力声明：实现评论的插件按「只支持热度」处理；
+    // 顺带实现了楼中楼接口的才声明 replies。
+    return JSON.stringify({
+      sorts: ['hot'],
+      replies: typeof plugin.getMusicCommentReplies === 'function',
+    });
+  }
+  return null;
+}
+
+Object.defineProperty(__mfContract, 'getMusicComments', {
+  enumerable: true,
+  configurable: true,
+  get: function () {
+    var plugin = __mfPluginObject() || {};
+    return typeof plugin.getMusicComments === 'function' ? __mfGetMusicComments : undefined;
+  },
+});
+
+Object.defineProperty(__mfContract, 'getMusicCommentReplies', {
+  enumerable: true,
+  configurable: true,
+  get: function () {
+    var plugin = __mfPluginObject() || {};
+    return typeof plugin.getMusicCommentReplies === 'function' ? __mfGetMusicCommentReplies : undefined;
+  },
+});
+
+Object.defineProperty(__mfContract, 'commentCapabilities', {
+  enumerable: true,
+  configurable: true,
+  get: function () {
+    var plugin = __mfPluginObject() || {};
+    if (
+      typeof plugin.commentCapabilities !== 'function' &&
+      typeof plugin.getMusicComments !== 'function'
+    ) {
+      return undefined;
+    }
+    return __mfCommentCapabilities;
+  },
+});
+
+Object.defineProperty(__mfContract, 'capabilities', {
+  enumerable: true,
+  configurable: true,
+  get: function () {
+    return __mfCapabilities();
+  },
+});

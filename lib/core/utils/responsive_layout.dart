@@ -1,0 +1,256 @@
+import 'package:flutter/material.dart';
+
+import '../theme/app_spacing.dart';
+
+/// Device type classification based on screen size.
+enum DeviceType { phone, tablet, desktop }
+
+/// Layout mode for different screen orientations and sizes.
+enum LayoutMode {
+  /// Single column layout (phone portrait, small tablet)
+  singleColumn,
+
+  /// Two column layout (tablet landscape, large tablet portrait)
+  twoColumn,
+
+  /// Three column layout (wide desktop screens)
+  threeColumn,
+}
+
+/// Responsive layout utility that provides adaptive sizing and layout decisions
+/// based on screen dimensions. Inspired by Mio-Music's responsive sidebar + content pattern.
+class ResponsiveLayout {
+  ResponsiveLayout._();
+
+  // ── Breakpoint thresholds ──────────────────────────────────────────
+  static const double phoneMaxWidth = 600;
+  static const double tabletMaxWidth = 900;
+  static const double desktopMaxWidth = 1200;
+
+  static const double sidebarWidth = 220.0;
+  static const double sidebarCollapsedWidth = 72.0;
+  static const double miniPlayerHeight = 64.0;
+  static const double bottomNavHeight = 60.0;
+
+  // ── Device classification ──────────────────────────────────────────
+
+  /// Returns the current device type based on shortest screen dimension.
+  static DeviceType getDeviceType(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).shortestSide;
+    if (width < phoneMaxWidth) return DeviceType.phone;
+    if (width < tabletMaxWidth) return DeviceType.tablet;
+    return DeviceType.desktop;
+  }
+
+  /// Whether the current screen is considered a tablet or larger.
+  static bool isTablet(BuildContext context) {
+    return MediaQuery.sizeOf(context).shortestSide >= phoneMaxWidth;
+  }
+
+  /// Whether the device is in landscape orientation.
+  static bool isLandscape(BuildContext context) {
+    return MediaQuery.orientationOf(context) == Orientation.landscape;
+  }
+
+  /// Whether the device is a tablet in landscape mode (primary target for sidebar).
+  static bool isTabletLandscape(BuildContext context) {
+    return isTablet(context) && isLandscape(context);
+  }
+
+  /// Whether the device is a **phone** (not tablet) in landscape mode.
+  ///
+  /// 手机横屏时宽度富余但高度极小（可用高度通常只有 320~420dp），
+  /// 因此竖排布局几乎必然溢出；横屏时同样需要左右分栏，
+  /// 只是所有控件都要用紧凑尺寸。
+  static bool isPhoneLandscape(BuildContext context) {
+    return isLandscape(context) && !isTablet(context);
+  }
+
+  // ── Layout mode ────────────────────────────────────────────────────
+
+  /// Returns the optimal layout mode for the current screen.
+  static LayoutMode getLayoutMode(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
+    final width = size.width;
+    final isLandscape =
+        MediaQuery.orientationOf(context) == Orientation.landscape;
+
+    if (isLandscape && width >= desktopMaxWidth) return LayoutMode.threeColumn;
+    if (isLandscape && width >= tabletMaxWidth) return LayoutMode.twoColumn;
+    if (!isLandscape && width >= tabletMaxWidth) return LayoutMode.twoColumn;
+    return LayoutMode.singleColumn;
+  }
+
+  /// Whether the sidebar should be shown (tablet landscape or wider).
+  static bool shouldShowSidebar(BuildContext context) {
+    return isTabletLandscape(context);
+  }
+
+  /// Whether the bottom of the content area needs to make room for the
+  /// mini player.
+  ///
+  /// 宽屏（左侧固定导航栏）布局下播放器固定在左侧栏底部，内容区并没有
+  /// 迷你播放器，因此底部的批量操作栏应当直接贴底而不是悬空。
+  static bool hasBottomMiniPlayer(BuildContext context) {
+    return !shouldShowSidebar(context);
+  }
+
+  /// 迷你播放器停在底部导航栏上方时占用的高度。
+  ///
+  /// 手机 56、平板竖屏 64（见 `MiniPlayer`），再加上它与导航栏之间 5px 的
+  /// 间隙（见 `AppShell` 里的 `Positioned(bottom: 5)`）。
+  /// 侧边栏布局下播放器在左侧栏底部，这里返回 0。
+  static double miniPlayerReservedHeight(BuildContext context) {
+    if (shouldShowSidebar(context)) return 0;
+    return (isTablet(context) ? _miniPlayerTabletHeight : _miniPlayerHeight) +
+        _miniPlayerGap;
+  }
+
+  static const double _miniPlayerHeight = 56;
+  static const double _miniPlayerTabletHeight = 64;
+  static const double _miniPlayerGap = 5;
+
+  /// 多选批量操作栏贴在底部时的偏移量。
+  ///
+  /// [miniPlayerVisible] 由调用方按「是否有歌在播」传入：没有歌在播时
+  /// `MiniPlayer` 返回的是空占位，底部其实是空的，操作栏应当直接贴底，
+  /// 否则就会像之前那样在列表中间悬空一大截。
+  /// 操作栏自带 `AppSpacing.sm` 下外边距，这里减掉它才能真正紧挨着播放器。
+  static double batchBarBottomInset(
+    BuildContext context, {
+    required bool miniPlayerVisible,
+  }) {
+    if (!miniPlayerVisible) return 0;
+    final reserved = miniPlayerReservedHeight(context);
+    return reserved > AppSpacing.sm ? reserved - AppSpacing.sm : 0;
+  }
+
+  // ── Grid configuration ─────────────────────────────────────────────
+
+  /// Returns the optimal cross-axis count for a grid based on available width.
+  static int gridCrossAxisCount(
+    BuildContext context, {
+    double minItemWidth = 160,
+  }) {
+    final width = MediaQuery.sizeOf(context).width;
+    final isLandscape =
+        MediaQuery.orientationOf(context) == Orientation.landscape;
+    final availableWidth = shouldShowSidebar(context)
+        ? width - sidebarWidth
+        : width;
+
+    if (availableWidth >= 1100) return isLandscape ? 5 : 4;
+    if (availableWidth >= 800) return isLandscape ? 4 : 3;
+    if (availableWidth >= 550) return 3;
+    if (availableWidth >= 360) return 2;
+    return 2;
+  }
+
+  /// Returns responsive grid delegate based on screen size.
+  static SliverGridDelegate gridDelegate(
+    BuildContext context, {
+    double childAspectRatio = 0.82,
+    double? mainAxisSpacing,
+    double? crossAxisSpacing,
+  }) {
+    final width = MediaQuery.sizeOf(context).width;
+    final isLandscape =
+        MediaQuery.orientationOf(context) == Orientation.landscape;
+    final availableWidth = shouldShowSidebar(context)
+        ? width - sidebarWidth
+        : width;
+
+    final spacing = mainAxisSpacing ?? (isTablet(context) ? 16.0 : 12.0);
+    final cSpacing = crossAxisSpacing ?? (isTablet(context) ? 16.0 : 12.0);
+
+    return SliverGridDelegateWithMaxCrossAxisExtent(
+      maxCrossAxisExtent: isLandscape ? 220 : 200,
+      mainAxisSpacing: spacing,
+      crossAxisSpacing: cSpacing,
+      childAspectRatio: childAspectRatio,
+    );
+  }
+
+  // ── Spacing and sizing helpers ─────────────────────────────────────
+
+  /// Returns responsive padding based on screen size.
+  static EdgeInsets pagePadding(BuildContext context) {
+    if (isTablet(context)) {
+      return const EdgeInsets.symmetric(horizontal: 24, vertical: 16);
+    }
+    return const EdgeInsets.symmetric(horizontal: 16, vertical: 12);
+  }
+
+  /// Returns responsive horizontal padding.
+  static double horizontalPadding(BuildContext context) {
+    if (isTablet(context)) return 24;
+    return 16;
+  }
+
+  /// Returns responsive font size scale factor.
+  static double fontScale(BuildContext context) {
+    if (isTablet(context)) return 1.05;
+    return 1.0;
+  }
+
+  /// Returns a responsive album art size.
+  static double albumArtSize(BuildContext context) {
+    if (isPhoneLandscape(context)) return 210;
+    if (isTabletLandscape(context)) return 399;
+    if (isTablet(context)) return 315;
+    return 294;
+  }
+
+  /// Returns a responsive mini album art size.
+  static double miniAlbumArtSize(BuildContext context) {
+    if (isTablet(context)) return 52;
+    return 44;
+  }
+
+  /// Returns responsive icon size.
+  static double iconSize(BuildContext context, {double base = 24}) {
+    if (isTablet(context)) return base * 1.1;
+    return base;
+  }
+
+  /// Returns the width constraint for content when sidebar is visible.
+  static double contentMaxWidth(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    if (shouldShowSidebar(context)) {
+      return width - sidebarWidth;
+    }
+    return width;
+  }
+}
+
+/// A responsive wrapper widget that provides layout information through InheritedWidget.
+class ResponsiveWrapper extends InheritedWidget {
+  final DeviceType deviceType;
+  final LayoutMode layoutMode;
+  final bool isLandscape;
+  final bool isTablet;
+
+  const ResponsiveWrapper({
+    super.key,
+    required this.deviceType,
+    required this.layoutMode,
+    required this.isLandscape,
+    required this.isTablet,
+    required super.child,
+  });
+
+  static ResponsiveWrapper of(BuildContext context) {
+    final wrapper = context
+        .dependOnInheritedWidgetOfExactType<ResponsiveWrapper>();
+    assert(wrapper != null, 'No ResponsiveWrapper found in context');
+    return wrapper!;
+  }
+
+  @override
+  bool updateShouldNotify(ResponsiveWrapper oldWidget) {
+    return deviceType != oldWidget.deviceType ||
+        layoutMode != oldWidget.layoutMode ||
+        isLandscape != oldWidget.isLandscape ||
+        isTablet != oldWidget.isTablet;
+  }
+}

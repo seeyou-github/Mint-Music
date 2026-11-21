@@ -1,0 +1,914 @@
+import 'dart:async';
+
+import 'package:flutter/gestures.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../../../core/l10n/l10n.dart';
+import '../../../../core/theme/app_spacing.dart';
+import '../../../../core/theme/app_surface.dart';
+import '../../../../core/theme/theme_provider.dart';
+import '../../../../shared/widgets/music_cover_image.dart';
+import '../../../../shared/widgets/source_icon.dart';
+import '../../../local/application/local_providers.dart';
+import '../../../plugin/application/music_source_manager.dart';
+import '../../../plugin/application/plugin_providers.dart';
+import '../../application/lyric_controller.dart';
+import '../../application/lyric_resolver.dart';
+import '../../application/playback_controller.dart';
+import '../../domain/models/lyric_line.dart';
+import '../../domain/models/song.dart';
+import '../../domain/services/embedded_lyrics_writer.dart';
+import '../../domain/services/lyric_text_formatter.dart';
+import 'lyric_format_tag.dart';
+import 'lyric_scroll_view.dart';
+
+/// 打开「搜索歌词」弹层。
+///
+/// 找不到歌词时可以换音源、手动改歌名 / 歌手重新搜；搜到的结果能直接预览，
+/// 预览跟着当前播放进度走，也可以手动滚动。
+Future<void> showLyricSearchSheet(BuildContext context, {required Song song}) {
+  return showModalBottomSheet<void>(
+    context: context,
+    useRootNavigator: true,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    sheetAnimationStyle: const AnimationStyle(
+      duration: Duration(milliseconds: 220),
+      reverseDuration: Duration(milliseconds: 180),
+    ),
+    builder: (ctx) => _LyricSearchSheet(song: song),
+  );
+}
+
+class _LyricSearchSheet extends ConsumerStatefulWidget {
+  const _LyricSearchSheet({required this.song});
+
+  final Song song;
+
+  @override
+  ConsumerState<_LyricSearchSheet> createState() => _LyricSearchSheetState();
+}
+
+class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
+  final TextEditingController _titleController = TextEditingController();
+  final TextEditingController _artistController = TextEditingController();
+
+  String _sourceId = 'wy';
+  List<Song> _results = const [];
+  bool _searching = false;
+  String? _searchError;
+
+  int _selectedIndex = -1;
+  List<LyricLine> _previewLines = const [];
+  LyricResult? _previewResult;
+  bool _loadingPreview = false;
+  String? _previewError;
+  bool _deleting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _titleController.text = widget.song.title;
+    _artistController.text = widget.song.artist;
+    _sourceId = _initialSourceId();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_search());
+    });
+  }
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    _artistController.dispose();
+    super.dispose();
+  }
+
+  /// 默认用当前歌曲的音源（优先插件变体），列表里没有就退到平台 / 第一个可选音源。
+  String _initialSourceId() {
+    final sources = ref.read(searchSupportedSourcesProvider);
+    if (sources.isEmpty) return widget.song.source ?? 'wy';
+    final current = widget.song.preferredSource?.trim().isNotEmpty ?? false
+        ? widget.song.preferredSource!.trim()
+        : (widget.song.source ?? '').trim();
+    if (current.isNotEmpty) {
+      final exact = sources.where((s) => s.id == current).firstOrNull;
+      if (exact != null) return exact.id;
+      final base = MusicSourceManager.splitSourceId(current).$1;
+      final sameBase = sources.where((s) => s.id == base).firstOrNull;
+      if (sameBase != null) return sameBase.id;
+    }
+    return sources.first.id;
+  }
+
+  String get _keyword {
+    final title = _titleController.text.trim();
+    final artist = _artistController.text.trim();
+    return [title, artist].where((e) => e.isNotEmpty).join(' ');
+  }
+
+  /// 用当前音源 + 歌名 / 歌手搜索候选歌曲。
+  Future<void> _search() async {
+    final keyword = _keyword;
+    if (keyword.isEmpty || _searching) return;
+    setState(() {
+      _searching = true;
+      _searchError = null;
+      _results = const [];
+      _selectedIndex = -1;
+      _previewLines = const [];
+      _previewResult = null;
+      _previewError = null;
+    });
+    try {
+      final songs = await ref
+          .read(musicSourceManagerProvider)
+          .search(keyword, sourceId: _sourceId, limit: 20);
+      if (!mounted) return;
+      final filtered = songs
+          .where((s) => s.title.trim().isNotEmpty)
+          .toList(growable: false);
+      setState(() {
+        _results = filtered;
+        _searching = false;
+        _searchError = filtered.isEmpty ? context.tr('没有搜到相关歌曲') : null;
+      });
+      // 不自动选中第一条：默认继续展示当前正在使用的歌词，用户点了候选
+      // 才切换到那份歌词的预览。
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _searching = false;
+        _searchError = context.tr('搜索失败：$e');
+      });
+    }
+  }
+
+  /// 选中某个候选，拉取并解析它的歌词用于预览。
+  Future<void> _selectResult(int index) async {
+    if (index < 0 || index >= _results.length) return;
+    setState(() {
+      _selectedIndex = index;
+      _loadingPreview = true;
+      _previewError = null;
+      _previewLines = const [];
+      _previewResult = null;
+    });
+    try {
+      // 与播放页走同一个竞速取词入口（TTML 词库 + 音源歌词并发，谁先给出
+      // 逐字歌词就用谁）：预览里看到的格式、翻译和正在播放的歌词是同一份，
+      // 「保存到歌曲文件」写进文件的也是它。
+      final result = await ref
+          .read(lyricResolverProvider)
+          .resolveRacing(_results[index]);
+      if (!mounted || _selectedIndex != index) return;
+      final lines = result == null
+          ? const <LyricLine>[]
+          : await buildLyricLinesFrom(result);
+      if (!mounted || _selectedIndex != index) return;
+      setState(() {
+        _loadingPreview = false;
+        _previewResult = lines.isEmpty ? null : result;
+        _previewLines = lines;
+        _previewError = lines.isEmpty ? context.tr('这首歌没有歌词') : null;
+      });
+    } catch (e) {
+      if (!mounted || _selectedIndex != index) return;
+      setState(() {
+        _loadingPreview = false;
+        _previewError = context.tr('歌词加载失败：$e');
+      });
+    }
+  }
+
+  /// 使用预览里的这份歌词：立即生效并写入缓存，下次播放直接命中。
+  Future<void> _applyPreview() async {
+    final result = _previewResult;
+    if (result == null) return;
+    final messenger = ScaffoldMessenger.of(context);
+    // 弹层开着的时候可能已经自动切歌了，这份歌词就对不上了。
+    final liveSong = _liveSong();
+    if (liveSong == null) {
+      final switched = context.tr('歌曲已切换，请重新搜索歌词');
+      Navigator.of(context).pop();
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(switched),
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+    // 绑定到「当前正在使用的音源」（播放解析后可能已经换成插件变体），
+    // 换音源播放同一首歌时各自保留各自的歌词。
+    await ref
+        .read(lyricControllerProvider.notifier)
+        .applyManualLyric(liveSong, result, source: _sourceId);
+
+    // 本地歌曲：顺手把这份歌词写回音频文件，覆盖原来的内嵌歌词，
+    // 这样换播放器 / 清缓存后也还是这份词。
+    var embedded = _EmbeddedWriteResult.skipped;
+    if (liveSong.isLocal) {
+      final path = liveSong.filePath;
+      final text = _portableLyric(result);
+      if (path == null || path.isEmpty) {
+        embedded = _EmbeddedWriteResult.unsupported;
+      } else if (text.isEmpty) {
+        embedded = _EmbeddedWriteResult.failed;
+      } else {
+        final ok = await EmbeddedLyricsWriter.write(path, text);
+        embedded = ok
+            ? _EmbeddedWriteResult.written
+            : _EmbeddedWriteResult.failed;
+        if (ok) await _syncLocalLyric(liveSong);
+      }
+    }
+
+    if (!mounted) return;
+    Navigator.of(context).pop();
+    final message = switch (embedded) {
+      _EmbeddedWriteResult.written => context.tr('已使用这份歌词，并写入歌曲文件'),
+      _EmbeddedWriteResult.failed => context.tr('已使用这份歌词（写入歌曲文件失败）'),
+      _EmbeddedWriteResult.unsupported => context.tr('已使用这份歌词（该格式暂不支持写入文件）'),
+      _EmbeddedWriteResult.skipped => context.tr('已使用这份歌词'),
+    };
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(message),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  /// 要写进音频文件的歌词文本。
+  ///
+  /// 与「下载时写标签」共用同一套规则（[LyricTextFormatter]）：这份结果里有
+  /// 逐字歌词就写增强 LRC（`[mm:ss.mmm]<mm:ss.mmm>字`，逐字时间轴保留，行首
+  /// 仍是标准时间轴，普通播放器也能当整行歌词读）；只有整行歌词才写标准 LRC。
+  ///
+  /// 以前这里写的是「优先 result.lrc」：QQ 这类音源同一份结果里 `lrc` 是整行、
+  /// `crlyric` 才是逐字，于是预览显示逐字、写进文件的却是整行，编辑标签界面
+  /// 打开就看不到逐字了。
+  String _portableLyric(LyricResult result) =>
+      LyricTextFormatter.fromResult(result);
+
+  /// 文件写成功后把索引里残留的歌词清掉，并让歌词控件按文件重新解析。
+  ///
+  /// 本地歌曲的歌词只认歌曲文件：索引里的 `lrc` 一旦有值就会盖住文件
+  /// （见 [LyricController.loadLyrics]），旧值不清掉的话，编辑标签界面和下次
+  /// 播放看到的还是旧的那一份。
+  Future<void> _syncLocalLyric(Song song) async {
+    try {
+      // 用曲库里最新的那一行，别拿播放队列里的旧对象整行覆盖。
+      final indexed =
+          ref.read(localMusicRepositoryProvider).getSongById(song.id) ?? song;
+      final hasStale = (indexed.lrc ?? '').trim().isNotEmpty;
+      final updated = hasStale ? indexed.copyWith(clearLrc: true) : indexed;
+      if (hasStale) {
+        await ref
+            .read(localMusicNotifierProvider.notifier)
+            .upsertSong(updated, forceOverwrite: true);
+      }
+      await ref.read(lyricControllerProvider.notifier).onLyricsWritten(updated);
+    } catch (_) {}
+  }
+
+  /// 弹层对应的歌曲在播放器里是否还在播放。
+  ///
+  /// 歌曲 id 只在平台内唯一，比较时要带上平台部分；插件变体变化
+  /// （`wy` → `wy@插件`）仍算同一首歌。
+  bool _isSameSong(Song song) {
+    if (song.id != widget.song.id) return false;
+    final currentBase = MusicSourceManager.splitSourceId(song.lyricSourceId).$1;
+    final targetBase = MusicSourceManager.splitSourceId(
+      widget.song.lyricSourceId,
+    ).$1;
+    return currentBase == targetBase;
+  }
+
+  /// 播放器里正在播放的这首歌（已经切歌返回 null）。
+  Song? _liveSong() {
+    final current = ref.read(playbackControllerProvider).currentSong;
+    if (current == null || !_isSameSong(current)) return null;
+    return current;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = ref.watch(themeColorsProvider);
+    final viewInsets = MediaQuery.viewInsetsOf(context);
+    final available = MediaQuery.sizeOf(context).height - viewInsets.bottom;
+    final sheetHeight = available * 0.9;
+    return Padding(
+      padding: EdgeInsets.only(bottom: viewInsets.bottom),
+      child: Container(
+        height: sheetHeight,
+        decoration: BoxDecoration(
+          color: colors.dialogSurface,
+          borderRadius: const BorderRadius.vertical(
+            top: Radius.circular(AppRadius.lg),
+          ),
+        ),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            children: [
+              _buildHeader(colors),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.lg,
+                  0,
+                  AppSpacing.lg,
+                  AppSpacing.sm,
+                ),
+                child: _buildSearchArea(colors),
+              ),
+              const SizedBox(height: AppSpacing.xs),
+              _buildResults(colors),
+              _buildFormatTag(colors),
+              const Divider(height: 1),
+              Expanded(child: _buildPreview(colors)),
+              _buildFooter(colors),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeader(ThemeColors colors) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.lg,
+        AppSpacing.md,
+        AppSpacing.sm,
+        AppSpacing.sm,
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              context.tr('搜索歌词'),
+              style: TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.bold,
+                color: colors.textPrimary,
+              ),
+            ),
+          ),
+          IconButton(
+            icon: Icon(Icons.close, size: 20, color: colors.textHint),
+            onPressed: () => Navigator.of(context).pop(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 输入区高度：两个输入框和右侧的圆形按钮共用同一高度，右边缘才能对齐。
+  static const double _barHeight = 42;
+
+  /// 搜索输入区：歌曲名 / 歌手名各占一行，右侧分别是音源切换与搜索按钮。
+  ///
+  /// 两个输入框并排放在一行时，弹层宽度下每个只剩一百多像素，长歌名会被截断；
+  /// 改成「每行一个输入框 + 一个圆形按钮」后每个框都能占满整行宽度。
+  Widget _buildSearchArea(ThemeColors colors) {
+    return Column(
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: _buildField(
+                colors,
+                controller: _titleController,
+                hint: context.tr('歌曲名'),
+                icon: Icons.music_note,
+              ),
+            ),
+            const SizedBox(width: AppSpacing.sm),
+            _buildSourceButton(colors),
+          ],
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        Row(
+          children: [
+            Expanded(
+              child: _buildField(
+                colors,
+                controller: _artistController,
+                hint: context.tr('歌手名'),
+                icon: Icons.person_outline,
+              ),
+            ),
+            const SizedBox(width: AppSpacing.sm),
+            _buildSearchButton(colors),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildField(
+    ThemeColors colors, {
+    required TextEditingController controller,
+    required String hint,
+    required IconData icon,
+  }) {
+    return SizedBox(
+      height: _barHeight,
+      child: TextField(
+        controller: controller,
+        textInputAction: TextInputAction.search,
+        onSubmitted: (_) => unawaited(_search()),
+        style: TextStyle(fontSize: 14, color: colors.textPrimary),
+        decoration: InputDecoration(
+          isDense: true,
+          hintText: hint,
+          hintStyle: TextStyle(fontSize: 14, color: colors.textHint),
+          prefixIcon: Icon(icon, size: 18, color: colors.textHint),
+          prefixIconConstraints: const BoxConstraints(minWidth: 36),
+          filled: true,
+          fillColor: colors.surfaceVariant,
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.sm,
+            vertical: 10,
+          ),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(AppRadius.md),
+            borderSide: BorderSide.none,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 音源切换：圆形按钮，直接显示当前音源的图标（和搜索按钮同尺寸）。
+  Widget _buildSourceButton(ThemeColors colors) {
+    final sources = ref.watch(searchSupportedSourcesProvider);
+    if (sources.isEmpty) return const SizedBox(width: _barHeight);
+    final selected = sources.where((s) => s.id == _sourceId).firstOrNull;
+    final label = selected?.name ?? _sourceId;
+    return PopupMenuButton<String>(
+      tooltip: context.tr('切换音源'),
+      color: colors.dialogSurface,
+      position: PopupMenuPosition.under,
+      onSelected: (value) {
+        if (value == _sourceId) return;
+        setState(() => _sourceId = value);
+        unawaited(_search());
+      },
+      itemBuilder: (context) => [
+        for (final source in sources)
+          PopupMenuItem<String>(
+            value: source.id,
+            height: 40,
+            child: Row(
+              children: [
+                SourceIcon(sourceId: source.id, size: 16, label: source.name),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: Text(
+                    source.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: source.id == _sourceId
+                          ? colors.primary
+                          : colors.textPrimary,
+                      fontWeight: source.id == _sourceId
+                          ? FontWeight.w500
+                          : FontWeight.normal,
+                    ),
+                  ),
+                ),
+                if (source.id == _sourceId)
+                  Icon(Icons.check, size: 16, color: colors.primary),
+              ],
+            ),
+          ),
+      ],
+      child: Container(
+        width: _barHeight,
+        height: _barHeight,
+        decoration: BoxDecoration(
+          color: colors.surfaceVariant,
+          shape: BoxShape.circle,
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: SourceIcon(
+          // 同名插件的变体 id 要还原成平台 id 才能取到对应图标。
+          sourceId: MusicSourceManager.splitSourceId(_sourceId).$1,
+          size: _barHeight,
+          label: label,
+        ),
+      ),
+    );
+  }
+
+  /// 搜索按钮：和音源按钮同尺寸的圆形，便于两行输入框右边缘对齐。
+  Widget _buildSearchButton(ThemeColors colors) {
+    return GestureDetector(
+      onTap: _searching ? null : () => unawaited(_search()),
+      child: Container(
+        width: _barHeight,
+        height: _barHeight,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          // 与侧栏「发现」的激活态一致：主题色调暗做底、文字用主题色。
+          color: _searching ? colors.surfaceVariant : activeChipColor(colors),
+          shape: BoxShape.circle,
+        ),
+        child: _searching
+            ? SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: colors.textHint,
+                ),
+              )
+            : Text(
+                context.tr('搜索'),
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: colors.primary,
+                ),
+              ),
+      ),
+    );
+  }
+
+  /// 预览中的逐字歌词格式（YRC / QRC / KRC / LRCX / TTML ...）。
+  ///
+  /// 没选候选时展示的「当前使用的歌词」，格式取播放器里已加载的歌词。
+  String? _activeFormat() {
+    if (_selectedIndex < 0) {
+      final lyric = ref.watch(lyricControllerProvider);
+      if (lyric.currentSongId != widget.song.id ||
+          !_sameLyricSource(lyric.currentSongSource) ||
+          !lyric.hasYrc) {
+        return null;
+      }
+      return lyric.lyricFormat;
+    }
+    final result = _previewResult;
+    if (result == null || !_previewLines.any((line) => line.isYrc)) {
+      return null;
+    }
+    final index = _selectedIndex;
+    final source = index < _results.length
+        ? MusicSourceManager.splitSourceId(_results[index].source ?? '').$1
+        : '';
+    return lyricFormatOfResult(result, source: source.isEmpty ? null : source);
+  }
+
+  Widget _buildFormatTag(ThemeColors colors) {
+    final format = _activeFormat();
+    if (format == null) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.lg,
+        AppSpacing.xs,
+        AppSpacing.lg,
+        AppSpacing.xs,
+      ),
+      child: Align(
+        alignment: Alignment.centerRight,
+        child: LyricFormatTag(format: format, colors: colors),
+      ),
+    );
+  }
+
+  /// 候选歌曲：横向卡片，选中项用主色描边。
+  Widget _buildResults(ThemeColors colors) {
+    final hideCover = ref.watch(songListHideCoverProvider);
+    if (_searching && _results.isEmpty) {
+      return const SizedBox(height: 12);
+    }
+    if (_results.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.lg,
+          vertical: AppSpacing.xs,
+        ),
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: Text(
+            _searchError ?? context.tr('按歌名 / 歌手搜索歌词'),
+            style: TextStyle(fontSize: 12, color: colors.textHint),
+          ),
+        ),
+      );
+    }
+    return SizedBox(
+      height: 62,
+      child: ScrollConfiguration(
+        behavior: const _ResultsScrollBehavior(),
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+          itemCount: _results.length,
+          separatorBuilder: (_, _) => const SizedBox(width: AppSpacing.sm),
+          itemBuilder: (context, index) {
+            final song = _results[index];
+            final selected = index == _selectedIndex;
+            return GestureDetector(
+              onTap: () => unawaited(_selectResult(index)),
+              child: Container(
+                width: 210,
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: colors.surfaceVariant,
+                  borderRadius: BorderRadius.circular(AppRadius.md),
+                  border: Border.all(
+                    color: selected ? colors.primary : Colors.transparent,
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    if (!hideCover) ...[
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(AppRadius.sm),
+                        child: SizedBox(
+                          width: 40,
+                          height: 40,
+                          child: MusicCoverImage(
+                            url: song.coverUrl,
+                            songId: song.id,
+                            mediaStoreId: song.mediaStoreId,
+                            fit: BoxFit.cover,
+                            errorWidget: Icon(
+                              Icons.music_note,
+                              size: 18,
+                              color: colors.textHint,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: AppSpacing.sm),
+                    ],
+                    Expanded(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            song.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                              color: selected
+                                  ? colors.primary
+                                  : colors.textPrimary,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            song.artist,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: colors.textHint,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  /// 歌词预览：还没挑候选时显示当前使用的歌词，挑了就预览候选歌词。
+  Widget _buildPreview(ThemeColors colors) {
+    if (_selectedIndex < 0) return _buildCurrentLyricPreview(colors);
+    if (_loadingPreview) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_previewLines.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+          child: Text(
+            _previewError ?? context.tr('选择上面的搜索结果预览歌词'),
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 13, color: colors.textHint),
+          ),
+        ),
+      );
+    }
+    return _buildLyricLines(colors, _previewLines);
+  }
+
+  /// 播放器里的歌词是否属于弹层这首歌的平台（插件变体不区分）。
+  bool _sameLyricSource(String? lyricSource) {
+    if (lyricSource == null) return true;
+    final lyricBase = MusicSourceManager.splitSourceId(lyricSource).$1;
+    final targetBase = MusicSourceManager.splitSourceId(
+      widget.song.lyricSourceId,
+    ).$1;
+    return lyricBase == targetBase;
+  }
+
+  /// 当前正在使用的歌词（打开弹层时的默认内容）+「删除歌词关联」按钮。
+  Widget _buildCurrentLyricPreview(ThemeColors colors) {
+    final lyric = ref.watch(lyricControllerProvider);
+    final sameSong =
+        lyric.currentSongId == widget.song.id &&
+        _sameLyricSource(lyric.currentSongSource);
+    final lines = sameSong ? lyric.lines : const <LyricLine>[];
+    if (lines.isEmpty) {
+      final hint = sameSong && lyric.isLoading
+          ? context.tr('歌词加载中…')
+          : _searchError ?? context.tr('选择上面的搜索结果预览歌词');
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+          child: Text(
+            hint,
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 13, color: colors.textHint),
+          ),
+        ),
+      );
+    }
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.lg,
+            0,
+            AppSpacing.sm,
+            0,
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.check_circle_outline, size: 14, color: colors.primary),
+              const SizedBox(width: AppSpacing.xs),
+              Expanded(
+                child: Text(
+                  context.tr('当前使用的歌词'),
+                  style: TextStyle(fontSize: 12, color: colors.textSecondary),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: _deleting
+                    ? null
+                    : () => unawaited(_deleteAssociation()),
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  minimumSize: const Size(0, 30),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.sm,
+                  ),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                icon: _deleting
+                    ? SizedBox(
+                        width: 12,
+                        height: 12,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: colors.textHint,
+                        ),
+                      )
+                    : Icon(Icons.link_off, size: 15, color: colors.error),
+                label: Text(
+                  context.tr(_deleting ? '删除中' : '删除歌词关联'),
+                  style: TextStyle(fontSize: 12, color: colors.error),
+                ),
+              ),
+            ],
+          ),
+        ),
+        Expanded(child: _buildLyricLines(colors, lines)),
+      ],
+    );
+  }
+
+  Widget _buildLyricLines(ThemeColors colors, List<LyricLine> lines) {
+    final position = ref.watch(
+      playbackControllerProvider.select((s) => s.position),
+    );
+    final isPlaying = ref.watch(
+      playbackControllerProvider.select((s) => s.isAudible),
+    );
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+      child: LyricScrollView(
+        lines: lines,
+        currentTimeMs: position.inMilliseconds,
+        isPlaying: isPlaying,
+        hasYrc: lines.any((line) => line.isYrc),
+        activeColor: colors.primary,
+        inactiveColor: colors.textHint,
+        mainFontSize: 18,
+        transFontSize: 13,
+        romanFontSize: 11,
+        fontSizeRate: 1,
+        enableScale: true,
+        centerAlign: true,
+      ),
+    );
+  }
+
+  /// 删除当前歌词关联：清缓存、清掉正在显示的歌词，之后不再自动匹配。
+  ///
+  /// 只删除「当前正在使用的音源」下的关联；换音源播放这首歌不受影响。
+  Future<void> _deleteAssociation() async {
+    if (_deleting) return;
+    setState(() => _deleting = true);
+    final messenger = ScaffoldMessenger.of(context);
+    final message = context.tr('已删除歌词关联');
+    await ref
+        .read(lyricControllerProvider.notifier)
+        .deleteLyricAssociation(_liveSong() ?? widget.song);
+    if (!mounted) return;
+    Navigator.of(context).pop();
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(message),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  Widget _buildFooter(ThemeColors colors) {
+    final enabled = _previewResult != null && !_loadingPreview;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.lg,
+        AppSpacing.sm,
+        AppSpacing.lg,
+        AppSpacing.md,
+      ),
+      child: SizedBox(
+        width: double.infinity,
+        child: GestureDetector(
+          onTap: enabled ? () => unawaited(_applyPreview()) : null,
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 11),
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              // 与侧栏「发现」的激活态一致：主题色调暗做底、文字用主题色。
+              color: enabled ? activeChipColor(colors) : colors.surfaceVariant,
+              borderRadius: BorderRadius.circular(AppRadius.full),
+            ),
+            child: Text(
+              context.tr('保存到歌曲文件'),
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: enabled ? colors.primary : colors.textHint,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Material 默认只允许触摸 / 触控笔拖动横向列表，桌面端要用鼠标拖动
+/// 搜索结果，需要把 mouse / trackpad 也加进来。
+class _ResultsScrollBehavior extends MaterialScrollBehavior {
+  const _ResultsScrollBehavior();
+
+  @override
+  Set<PointerDeviceKind> get dragDevices => const {
+    PointerDeviceKind.touch,
+    PointerDeviceKind.stylus,
+    PointerDeviceKind.invertedStylus,
+    PointerDeviceKind.mouse,
+    PointerDeviceKind.trackpad,
+    PointerDeviceKind.unknown,
+  };
+}
+
+/// 「保存到歌曲文件」时，本地歌曲写回文件的结果。
+enum _EmbeddedWriteResult {
+  /// 不是本地歌曲，不需要写文件。
+  skipped,
+
+  /// 已成功写入。
+  written,
+
+  /// 写了但失败（只读、磁盘错误…）。
+  failed,
+
+  /// 格式不支持（m4a / ogg / ape …）。
+  unsupported,
+}

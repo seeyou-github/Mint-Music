@@ -1,0 +1,1610 @@
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:flutter/foundation.dart';
+
+/// 本地音乐文件的元信息。
+class LocalAudioMetadata {
+  final String? title;
+  final String? artist;
+  final String? album;
+  final int? year;
+  final int? durationSeconds;
+
+  /// 毫秒级时长：播放页按「音频字节数 / 时长」算平均码率时用，
+  /// 避免秒级取整把码率算偏。
+  final int? durationMs;
+
+  final Uint8List? artwork;
+
+  /// 文件里内嵌的歌词（ID3 的 USLT / FLAC 的 LYRICS / MP4 的 ©lyr）。
+  final String? lyrics;
+
+  /// 流派（ID3 的 TCON / Vorbis 的 GENRE / MP4 的 ©gen / WAV 的 IGNR）。
+  final String? genre;
+
+  /// 注释 / 备注（ID3 的 COMM / Vorbis 的 COMMENT / MP4 的 ©cmt）。
+  final String? comment;
+
+  const LocalAudioMetadata({
+    this.title,
+    this.artist,
+    this.album,
+    this.year,
+    this.durationSeconds,
+    this.durationMs,
+    this.artwork,
+    this.lyrics,
+    this.genre,
+    this.comment,
+  });
+
+  bool get isEmpty =>
+      (title == null || title!.isEmpty) &&
+      (artist == null || artist!.isEmpty) &&
+      (album == null || album!.isEmpty) &&
+      (genre == null || genre!.isEmpty) &&
+      (comment == null || comment!.isEmpty) &&
+      durationSeconds == null;
+}
+
+/// 纯 Dart 的音频元信息读取器。
+///
+/// 桌面端（Windows/macOS/Linux）没有 MediaStore，`on_audio_query` 插件不可用，
+/// 这里直接解析文件里的标签，拿到标题 / 歌手 / 专辑 / 时长 / 内嵌封面：
+///
+/// * MP3 → ID3v2.2/2.3/2.4 标签 + MPEG 帧头计算时长；
+/// * FLAC → STREAMINFO 时长 + Vorbis Comment + PICTURE 封面；
+/// * M4A/MP4 → `moov/udta/meta/ilst` 标签 + `mvhd` 时长；
+/// * WAV → `fmt `/`data` 块计算时长 + `LIST/INFO` 标签；
+/// * OGG → Vorbis Comment + 末页 granule 计算时长。
+class LocalMetadataReader {
+  LocalMetadataReader._();
+
+  static const Set<String> audioExtensions = {
+    '.mp3',
+    '.flac',
+    '.m4a',
+    '.aac',
+    '.mp4',
+    '.wav',
+    '.ogg',
+    '.oga',
+    '.wma',
+    '.ape',
+    // WebM / WebA（YouTube 下载的音频通常这两种容器，Opus / Vorbis 编码）：
+    // Windows 走 media_kit（libmpv）能直接播，本地页也要能显示。
+    '.webm',
+    '.weba',
+  };
+
+  static bool isAudioFile(String path) {
+    final ext = extensionOf(path);
+    return ext.isNotEmpty && audioExtensions.contains(ext);
+  }
+
+  static String extensionOf(String path) {
+    final dot = path.lastIndexOf('.');
+    if (dot < 0) return '';
+    final sep = path.lastIndexOf(Platform.pathSeparator);
+    if (dot < sep) return '';
+    return path.substring(dot).toLowerCase();
+  }
+
+  /// 读取音频文件的元信息；解析失败时返回空结果。
+  static Future<LocalAudioMetadata> read(String filePath) async {
+    try {
+      final ext = extensionOf(filePath);
+      final file = File(filePath);
+      if (!await file.exists()) return const LocalAudioMetadata();
+      final raf = await file.open(mode: FileMode.read);
+      try {
+        final length = await raf.length();
+        switch (ext) {
+          case '.mp3':
+            return await _readMp3(raf, length);
+          case '.flac':
+            return await _readFlac(raf, length);
+          case '.m4a':
+          case '.mp4':
+            return await _readMp4(raf, length);
+          case '.aac':
+            // 有的 .aac 其实是 MP4 容器；读不到 mvhd 时长再按 ADTS 帧数算。
+            final mp4 = await _readMp4(raf, length);
+            if (mp4.durationMs != null) return mp4;
+            final adtsMs = await _readAdtsDuration(raf, length);
+            if (adtsMs == null) return mp4;
+            return LocalAudioMetadata(
+              durationMs: adtsMs,
+              durationSeconds: adtsMs ~/ 1000,
+            );
+          case '.wav':
+            return await _readWav(raf, length);
+          case '.ogg':
+          case '.oga':
+            return await _readOgg(raf, length);
+          case '.webm':
+          case '.weba':
+            return await _readWebm(raf, length);
+          default:
+            return const LocalAudioMetadata();
+        }
+      } finally {
+        await raf.close();
+      }
+    } catch (e) {
+      debugPrint('[LocalMetadata] 读取失败 $filePath: $e');
+    }
+    return const LocalAudioMetadata();
+  }
+
+  /// 只读「内嵌歌词」，不解析封面、时长等其它字段。
+  ///
+  /// 「有没有歌词 / 是不是逐字」不再写进曲库索引：标签可能被外部工具改过
+  /// （例如内嵌逐字歌词），索引不会自己跟着更新，于是出现「播放页显示 QRC、
+  /// 快速匹配页没有逐字标签」这种前后不一致。需要时直接读文件才是唯一真相。
+  /// 跳过 APIC / PICTURE 解码与 MP3 时长扫描，只遍历标签帧，单文件几毫秒。
+  static Future<String?> readLyrics(String filePath) async {
+    try {
+      final ext = extensionOf(filePath);
+      final file = File(filePath);
+      if (!await file.exists()) return null;
+      final raf = await file.open(mode: FileMode.read);
+      try {
+        final length = await raf.length();
+        final metadata = switch (ext) {
+          '.mp3' => await _readMp3(raf, length, lyricsOnly: true),
+          '.flac' => await _readFlac(raf, length, lyricsOnly: true),
+          '.m4a' || '.mp4' || '.aac' => await _readMp4(raf, length),
+          '.ogg' || '.oga' => await _readOgg(raf, length),
+          _ => const LocalAudioMetadata(),
+        };
+        final text = metadata.lyrics?.trim() ?? '';
+        return text.isEmpty ? null : text;
+      } finally {
+        await raf.close();
+      }
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // ==================== MP3 ====================
+
+  static Future<LocalAudioMetadata> _readMp3(
+    RandomAccessFile raf,
+    int fileLength, {
+    bool lyricsOnly = false,
+  }) async {
+    String? title;
+    String? artist;
+    String? album;
+    String? albumArtist;
+    String? lyrics;
+    String? genre;
+    String? comment;
+    int? year;
+    Uint8List? artwork;
+    int? durationMs;
+
+    await raf.setPosition(0);
+    final header = await raf.read(10);
+    var audioStart = 0;
+    if (header.length == 10 &&
+        header[0] == 0x49 &&
+        header[1] == 0x44 &&
+        header[2] == 0x33) {
+      final version = header[3];
+      final flags = header[5];
+      final tagSize = _synchSafeToInt(header, 6);
+      final tagBytes = await raf.read(tagSize);
+      var frameStart = 0;
+      if ((flags & 0x40) != 0 && tagBytes.length >= 4) {
+        frameStart = version >= 4
+            ? _synchSafeToInt(tagBytes, 0)
+            : 4 + _be32(tagBytes, 0);
+      }
+      var offset = frameStart;
+      while (offset + 10 <= tagBytes.length) {
+        if (tagBytes[offset] == 0) break; // 填充
+        final id = String.fromCharCodes(tagBytes.sublist(offset, offset + 4));
+        final size = version >= 4
+            ? _synchSafeToInt(tagBytes, offset + 4)
+            : _be32(tagBytes, offset + 4);
+        if (size <= 0 || offset + 10 + size > tagBytes.length) break;
+        final content = tagBytes.sublist(offset + 10, offset + 10 + size);
+        switch (id) {
+          case 'TIT2':
+            title = _decodeTextFrame(content);
+            break;
+          case 'TPE1':
+            artist = _decodeTextFrame(content);
+            break;
+          case 'TALB':
+            album = _decodeTextFrame(content);
+            break;
+          case 'TPE2':
+            albumArtist = _decodeTextFrame(content);
+            break;
+          case 'TDRC': // ID3v2.4 录制时间
+          case 'TYER': // ID3v2.3 年份
+          case 'TDRL': // ID3v2.4 发布时间
+            year = _parseYear(_decodeTextFrame(content));
+            break;
+          case 'USLT': // 未同步歌词
+            lyrics = _decodeUsltFrame(content);
+            break;
+          case 'TCON': // 流派
+            genre = _decodeTextFrame(content);
+            break;
+          case 'COMM': // 注释（结构与 USLT 一致：编码 + 语言 + 描述 + 文本）
+            comment = _decodeUsltFrame(content);
+            break;
+          case 'TLEN':
+            durationMs = int.tryParse((_decodeTextFrame(content) ?? '').trim());
+            break;
+          case 'APIC':
+            // 只要歌词时不解封面：封面动辄几百 KB，解码纯属浪费。
+            if (!lyricsOnly) artwork = _decodeApicFrame(content);
+            break;
+          case 'TXXX': // 自定义文本帧：歌词可能写在 TXXX:LYRICS 里
+            final custom = _decodeUserTextFrame(content);
+            if (custom != null) {
+              final key = custom.$1.toUpperCase();
+              if (key == 'LYRICS' ||
+                  key == 'LYRIC' ||
+                  key == 'UNSYNCEDLYRICS') {
+                lyrics ??= custom.$2;
+              } else if (key == 'COMMENT' || key == 'COMMENTS') {
+                comment ??= custom.$2;
+              }
+            }
+            break;
+        }
+        offset += 10 + size;
+      }
+      audioStart = 10 + tagSize;
+    }
+
+    if (durationMs == null && !lyricsOnly) {
+      durationMs = await _readMp3Duration(raf, audioStart, fileLength);
+    }
+
+    return LocalAudioMetadata(
+      title: title,
+      artist: artist ?? albumArtist,
+      album: album,
+      year: year,
+      durationSeconds: durationMs == null ? null : durationMs ~/ 1000,
+      durationMs: durationMs,
+      artwork: artwork,
+      lyrics: lyrics,
+      genre: genre,
+      comment: comment,
+    );
+  }
+
+  /// 通过 MPEG 帧头估算时长（优先读 Xing/Info 帧数）。
+  static Future<int?> _readMp3Duration(
+    RandomAccessFile raf,
+    int audioStart,
+    int fileLength,
+  ) async {
+    if (audioStart >= fileLength) return null;
+    await raf.setPosition(audioStart);
+    final buffer = await raf.read(
+      fileLength - audioStart > 65536 ? 65536 : fileLength - audioStart,
+    );
+    if (buffer.length < 4) return null;
+
+    for (var i = 0; i + 4 <= buffer.length; i++) {
+      if (buffer[i] != 0xFF || (buffer[i + 1] & 0xE0) != 0xE0) continue;
+      final frame = _parseMpegFrameHeader(buffer, i);
+      if (frame == null) continue;
+
+      // Xing / Info 头（VBR 精确时长）
+      final sideInfo = frame.version == 1
+          ? (frame.channelMode == 3 ? 17 : 32)
+          : (frame.channelMode == 3 ? 9 : 17);
+      final xingOffset = i + 4 + sideInfo;
+      if (xingOffset + 12 <= buffer.length) {
+        final tag = String.fromCharCodes(
+          buffer.sublist(xingOffset, xingOffset + 4),
+        );
+        if (tag == 'Xing' || tag == 'Info') {
+          final flags = _be32(buffer, xingOffset + 4);
+          if ((flags & 0x01) != 0) {
+            final frames = _be32(buffer, xingOffset + 8);
+            if (frames > 0 && frame.sampleRate > 0) {
+              final total =
+                  frames * frame.samplesPerFrame * 1000 ~/ frame.sampleRate;
+              return total;
+            }
+          }
+        }
+      }
+
+      // 退化为按平均码率估算
+      if (frame.bitrate > 0) {
+        final audioBytes = fileLength - audioStart;
+        return (audioBytes * 8 * 1000) ~/ frame.bitrate;
+      }
+      return null;
+    }
+    return null;
+  }
+
+  /// 解析 MPEG 帧头，返回码率（bps）/采样率/每帧采样数等信息。
+  static ({
+    int bitrate,
+    int sampleRate,
+    int samplesPerFrame,
+    int version,
+    int channelMode,
+  })?
+  _parseMpegFrameHeader(Uint8List buffer, int offset) {
+    if (offset + 4 > buffer.length) return null;
+    final b1 = buffer[offset + 1];
+    final b2 = buffer[offset + 2];
+    final b3 = buffer[offset + 3];
+
+    final versionBits = (b1 >> 3) & 0x03; // 0=2.5, 1=保留, 2=2, 3=1
+    final layerBits = (b1 >> 1) & 0x03; // 0=保留, 1=LayerIII, 2=LayerII, 3=LayerI
+    if (versionBits == 1 || layerBits == 0) return null;
+
+    final bitrateIndex = (b2 >> 4) & 0x0F;
+    final sampleRateIndex = (b2 >> 2) & 0x03;
+    if (bitrateIndex == 0 || bitrateIndex == 15 || sampleRateIndex == 3) {
+      return null;
+    }
+
+    final isVersion1 = versionBits == 3;
+    final isLayer1 = layerBits == 3;
+
+    // 码率表（kbps）
+    const v1l1 = [
+      0,
+      32,
+      64,
+      96,
+      128,
+      160,
+      192,
+      224,
+      256,
+      288,
+      320,
+      352,
+      384,
+      416,
+      448,
+      0,
+    ];
+    const v1l2 = [
+      0,
+      32,
+      48,
+      56,
+      64,
+      80,
+      96,
+      112,
+      128,
+      160,
+      192,
+      224,
+      256,
+      320,
+      384,
+      0,
+    ];
+    const v1l3 = [
+      0,
+      32,
+      40,
+      48,
+      56,
+      64,
+      80,
+      96,
+      112,
+      128,
+      160,
+      192,
+      224,
+      256,
+      320,
+      0,
+    ];
+    const v2l1 = [
+      0,
+      32,
+      48,
+      56,
+      64,
+      80,
+      96,
+      112,
+      128,
+      144,
+      160,
+      176,
+      192,
+      224,
+      256,
+      0,
+    ];
+    const v2l23 = [
+      0,
+      8,
+      16,
+      24,
+      32,
+      40,
+      48,
+      56,
+      64,
+      80,
+      96,
+      112,
+      128,
+      144,
+      160,
+      0,
+    ];
+
+    int kbps;
+    if (isVersion1) {
+      kbps = isLayer1
+          ? v1l1[bitrateIndex]
+          : (layerBits == 2 ? v1l2[bitrateIndex] : v1l3[bitrateIndex]);
+    } else {
+      kbps = isLayer1 ? v2l1[bitrateIndex] : v2l23[bitrateIndex];
+    }
+    if (kbps <= 0) return null;
+
+    const sampleRatesV1 = [44100, 48000, 32000];
+    const sampleRatesV2 = [22050, 24000, 16000];
+    const sampleRatesV25 = [11025, 12000, 8000];
+    final sampleRate = isVersion1
+        ? sampleRatesV1[sampleRateIndex]
+        : (versionBits == 2
+              ? sampleRatesV2[sampleRateIndex]
+              : sampleRatesV25[sampleRateIndex]);
+
+    int samplesPerFrame;
+    if (isLayer1) {
+      samplesPerFrame = 384;
+    } else if (layerBits == 2) {
+      samplesPerFrame = 1152;
+    } else {
+      samplesPerFrame = isVersion1 ? 1152 : 576;
+    }
+
+    final channelMode = (b3 >> 6) & 0x03;
+
+    return (
+      bitrate: kbps * 1000,
+      sampleRate: sampleRate,
+      samplesPerFrame: samplesPerFrame,
+      version: isVersion1 ? 1 : 2,
+      channelMode: channelMode,
+    );
+  }
+
+  // ==================== FLAC ====================
+
+  static Future<LocalAudioMetadata> _readFlac(
+    RandomAccessFile raf,
+    int fileLength, {
+    bool lyricsOnly = false,
+  }) async {
+    await raf.setPosition(0);
+    final magic = await raf.read(4);
+    if (magic.length < 4 ||
+        magic[0] != 0x66 ||
+        magic[1] != 0x4C ||
+        magic[2] != 0x61 ||
+        magic[3] != 0x43) {
+      return const LocalAudioMetadata();
+    }
+
+    String? title;
+    String? artist;
+    String? album;
+    String? lyrics;
+    String? genre;
+    String? comment;
+    int? year;
+    Uint8List? artwork;
+    int? durationMs;
+
+    var offset = 4;
+    var isLast = false;
+    while (!isLast && offset + 4 <= fileLength) {
+      await raf.setPosition(offset);
+      final header = await raf.read(4);
+      if (header.length < 4) break;
+      final headerByte = header[0];
+      isLast = (headerByte & 0x80) != 0;
+      final type = headerByte & 0x7F;
+      final length = (header[1] << 16) | (header[2] << 8) | header[3];
+      final dataStart = offset + 4;
+      if (dataStart + length > fileLength) break;
+
+      if (type == 0 && length >= 18 && !lyricsOnly) {
+        final info = await raf.read(18);
+        if (info.length >= 18) {
+          final sampleRate =
+              (info[10] << 12) | (info[11] << 4) | (info[12] >> 4);
+          final totalSamples =
+              ((info[13] & 0x0F) << 32) |
+              (info[14] << 24) |
+              (info[15] << 16) |
+              (info[16] << 8) |
+              info[17];
+          if (sampleRate > 0 && totalSamples > 0) {
+            durationMs = totalSamples * 1000 ~/ sampleRate;
+          }
+        }
+      } else if (type == 4) {
+        final data = await raf.read(length);
+        final comments = _parseVorbisComments(data);
+        title ??= comments['TITLE'];
+        artist ??= comments['ARTIST'];
+        album ??= comments['ALBUM'];
+        year ??= _parseYear(
+          comments['DATE'] ?? comments['YEAR'] ?? comments['ORIGINALDATE'],
+        );
+        lyrics ??=
+            comments['LYRICS'] ??
+            comments['LYRIC'] ??
+            comments['UNSYNCEDLYRICS'];
+        genre ??= comments['GENRE'];
+        comment ??=
+            comments['COMMENT'] ??
+            comments['DESCRIPTION'] ??
+            comments['COMMENTS'];
+      } else if (type == 6 && !lyricsOnly) {
+        final data = await raf.read(length);
+        artwork ??= _parseFlacPicture(data);
+      } else {
+        await raf.setPosition(dataStart + length);
+      }
+      offset = dataStart + length;
+    }
+
+    return LocalAudioMetadata(
+      title: title,
+      artist: artist,
+      album: album,
+      year: year,
+      durationSeconds: durationMs == null ? null : durationMs ~/ 1000,
+      durationMs: durationMs,
+      artwork: artwork,
+      lyrics: lyrics,
+      genre: genre,
+      comment: comment,
+    );
+  }
+
+  // ==================== MP4 / M4A ====================
+
+  static Future<LocalAudioMetadata> _readMp4(
+    RandomAccessFile raf,
+    int fileLength,
+  ) async {
+    var offset = 0;
+    Uint8List? moov;
+    while (offset + 8 <= fileLength) {
+      await raf.setPosition(offset);
+      final header = await raf.read(8);
+      if (header.length < 8) break;
+      var size = _be32(header, 0);
+      final type = String.fromCharCodes(header.sublist(4, 8));
+      var headerSize = 8;
+      if (size == 1) {
+        final ext = await raf.read(8);
+        if (ext.length < 8) break;
+        size = _be64(ext, 0);
+        headerSize = 16;
+      } else if (size == 0) {
+        size = fileLength - offset;
+      }
+      if (size < headerSize) break;
+      if (type == 'moov') {
+        if (size - headerSize > 0) {
+          moov = await raf.read(size - headerSize);
+        }
+        break;
+      }
+      offset += size;
+    }
+    if (moov == null) return const LocalAudioMetadata();
+
+    String? title;
+    String? artist;
+    String? album;
+    int? year;
+    String? lyrics;
+    String? genre;
+    String? comment;
+    Uint8List? artwork;
+    int? durationMs;
+
+    // 遍历 moov 的子块
+    var pos = 0;
+    while (pos + 8 <= moov.length) {
+      final size = _be32(moov, pos);
+      final type = String.fromCharCodes(moov.sublist(pos + 4, pos + 8));
+      if (size < 8 || pos + size > moov.length) break;
+      if (type == 'mvhd') {
+        final data = moov.sublist(pos + 8, pos + size);
+        durationMs = _parseMvhdDurationMs(data);
+      } else if (type == 'udta') {
+        final data = moov.sublist(pos + 8, pos + size);
+        final parsed = _parseMp4Udta(data);
+        title = parsed.title;
+        artist = parsed.artist;
+        album = parsed.album;
+        year = parsed.year;
+        lyrics = parsed.lyrics;
+        artwork = parsed.artwork;
+        genre = parsed.genre;
+        comment = parsed.comment;
+      }
+      pos += size;
+    }
+
+    return LocalAudioMetadata(
+      title: title,
+      artist: artist,
+      album: album,
+      year: year,
+      durationSeconds: durationMs == null ? null : durationMs ~/ 1000,
+      durationMs: durationMs,
+      artwork: artwork,
+      lyrics: lyrics,
+      genre: genre,
+      comment: comment,
+    );
+  }
+
+  static int? _parseMvhdDurationMs(Uint8List data) {
+    if (data.length < 20) return null;
+    final version = data[0];
+    if (version == 1) {
+      if (data.length < 32) return null;
+      final timescale = _be32(data, 20);
+      final duration = _be64(data, 24);
+      if (timescale <= 0) return null;
+      return (duration * 1000 / timescale).round();
+    }
+    final timescale = _be32(data, 12);
+    final duration = _be32(data, 16);
+    if (timescale <= 0) return null;
+    return (duration * 1000 / timescale).round();
+  }
+
+  static ({
+    String? title,
+    String? artist,
+    String? album,
+    int? year,
+    String? lyrics,
+    Uint8List? artwork,
+    String? genre,
+    String? comment,
+  })
+  _parseMp4Udta(Uint8List udta) {
+    String? title;
+    String? artist;
+    String? album;
+    int? year;
+    String? lyrics;
+    Uint8List? artwork;
+    String? genre;
+    String? comment;
+
+    // udta > meta > ilst
+    var pos = 0;
+    while (pos + 8 <= udta.length) {
+      final size = _be32(udta, pos);
+      final type = String.fromCharCodes(udta.sublist(pos + 4, pos + 8));
+      if (size < 8 || pos + size > udta.length) break;
+      if (type == 'meta') {
+        // meta 是 full atom：前 4 字节是版本/标志
+        final meta = udta.sublist(pos + 8, pos + size);
+        var mpos = 4;
+        while (mpos + 8 <= meta.length) {
+          final msize = _be32(meta, mpos);
+          final mtype = String.fromCharCodes(meta.sublist(mpos + 4, mpos + 8));
+          if (msize < 8 || mpos + msize > meta.length) break;
+          if (mtype == 'ilst') {
+            final items = meta.sublist(mpos + 8, mpos + msize);
+            final parsed = _parseMp4Ilst(items);
+            title = parsed.title;
+            artist = parsed.artist;
+            album = parsed.album;
+            year = parsed.year;
+            lyrics = parsed.lyrics;
+            artwork = parsed.artwork;
+            genre = parsed.genre;
+            comment = parsed.comment;
+          }
+          mpos += msize;
+        }
+      }
+      pos += size;
+    }
+
+    return (
+      title: title,
+      artist: artist,
+      album: album,
+      year: year,
+      lyrics: lyrics,
+      artwork: artwork,
+      genre: genre,
+      comment: comment,
+    );
+  }
+
+  static ({
+    String? title,
+    String? artist,
+    String? album,
+    int? year,
+    String? lyrics,
+    Uint8List? artwork,
+    String? genre,
+    String? comment,
+  })
+  _parseMp4Ilst(Uint8List ilst) {
+    String? title;
+    String? artist;
+    String? album;
+    int? year;
+    String? lyrics;
+    Uint8List? artwork;
+    String? genre;
+    String? comment;
+
+    var pos = 0;
+    while (pos + 8 <= ilst.length) {
+      final size = _be32(ilst, pos);
+      if (size < 8 || pos + size > ilst.length) break;
+      // atom 名可能是 '©nam'（0xA9 开头），去掉版权符号后比较
+      final nameBytes = ilst.sublist(pos + 4, pos + 8);
+      final isCopyright = nameBytes[0] == 0xA9;
+      final name = isCopyright
+          ? String.fromCharCodes(nameBytes.sublist(1))
+          : String.fromCharCodes(nameBytes);
+
+      // atom 内容里是 data atom
+      var dpos = pos + 8;
+      final dend = pos + size;
+      while (dpos + 8 <= dend) {
+        final dsize = _be32(ilst, dpos);
+        final dtype = String.fromCharCodes(ilst.sublist(dpos + 4, dpos + 8));
+        if (dsize < 8 || dpos + dsize > dend) break;
+        if (dtype == 'data' && dsize >= 16) {
+          final payload = ilst.sublist(dpos + 16, dpos + dsize);
+          switch (name) {
+            case 'nam': // ©nam
+              title = utf8.decode(payload, allowMalformed: true);
+              break;
+            case 'ART': // ©ART
+              artist = utf8.decode(payload, allowMalformed: true);
+              break;
+            case 'alb': // ©alb
+              album = utf8.decode(payload, allowMalformed: true);
+              break;
+            case 'aART': // aART
+              artist ??= utf8.decode(payload, allowMalformed: true);
+              break;
+            case 'day': // ©day
+              year = _parseYear(utf8.decode(payload, allowMalformed: true));
+              break;
+            case 'lyr': // ©lyr
+              lyrics = utf8.decode(payload, allowMalformed: true);
+              break;
+            case 'gen': // ©gen 流派
+              genre = utf8.decode(payload, allowMalformed: true);
+              break;
+            case 'cmt': // ©cmt 注释
+              comment = utf8.decode(payload, allowMalformed: true);
+              break;
+            case 'covr': // covr
+              if (artwork == null && payload.isNotEmpty) {
+                artwork = Uint8List.fromList(payload);
+              }
+              break;
+          }
+        }
+        dpos += dsize;
+      }
+      pos += size;
+    }
+
+    return (
+      title: title,
+      artist: artist,
+      album: album,
+      year: year,
+      lyrics: lyrics,
+      artwork: artwork,
+      genre: genre,
+      comment: comment,
+    );
+  }
+
+  // ==================== WAV ====================
+
+  static Future<LocalAudioMetadata> _readWav(
+    RandomAccessFile raf,
+    int fileLength,
+  ) async {
+    await raf.setPosition(0);
+    final riff = await raf.read(12);
+    if (riff.length < 12) return const LocalAudioMetadata();
+
+    var byteRate = 0;
+    int? durationMs;
+    String? title;
+    String? artist;
+    String? album;
+    String? genre;
+    String? comment;
+    int? year;
+
+    var offset = 12;
+    while (offset + 8 <= fileLength) {
+      await raf.setPosition(offset);
+      final header = await raf.read(8);
+      if (header.length < 8) break;
+      final id = String.fromCharCodes(header.sublist(0, 4));
+      final size = _le32(header, 4);
+      final dataStart = offset + 8;
+      if (size < 0 || dataStart + size > fileLength) break;
+
+      if (id == 'fmt ') {
+        final data = await raf.read(size >= 16 ? 16 : size);
+        if (data.length >= 16) {
+          byteRate = _le32(data, 8);
+        }
+      } else if (id == 'data') {
+        if (byteRate > 0) {
+          durationMs = size * 1000 ~/ byteRate;
+        }
+      } else if (id == 'LIST') {
+        final data = await raf.read(size);
+        final parsed = _parseWavInfo(data);
+        title ??= parsed.$1;
+        artist ??= parsed.$2;
+        album ??= parsed.$3;
+        year ??= _parseYear(parsed.$4);
+        genre ??= parsed.$5;
+        comment ??= parsed.$6;
+      } else {
+        await raf.setPosition(dataStart + size);
+      }
+      offset = dataStart + size + (size.isOdd ? 1 : 0);
+    }
+
+    return LocalAudioMetadata(
+      title: title,
+      artist: artist,
+      album: album,
+      year: year,
+      durationSeconds: durationMs == null ? null : durationMs ~/ 1000,
+      durationMs: durationMs,
+      genre: genre,
+      comment: comment,
+    );
+  }
+
+  static (String?, String?, String?, String?, String?, String?) _parseWavInfo(
+    Uint8List list,
+  ) {
+    String? title;
+    String? artist;
+    String? album;
+    String? date;
+    String? genre;
+    String? comment;
+    if (list.length < 4) return (null, null, null, null, null, null);
+    var pos = 4; // 跳过 'INFO'
+    while (pos + 8 <= list.length) {
+      final id = String.fromCharCodes(list.sublist(pos, pos + 4));
+      final size = _le32(list, pos + 4);
+      final dataStart = pos + 8;
+      if (size < 0 || dataStart + size > list.length) break;
+      final value = utf8
+          .decode(
+            list.sublist(dataStart, dataStart + size),
+            allowMalformed: true,
+          )
+          .replaceAll('\u0000', '')
+          .trim();
+      switch (id) {
+        case 'INAM':
+          title = value;
+          break;
+        case 'IART':
+          artist = value;
+          break;
+        case 'IPRD':
+          album = value;
+          break;
+        case 'ICRD':
+          date = value;
+          break;
+        case 'IGNR':
+          genre = value;
+          break;
+        case 'ICMT':
+          comment = value;
+          break;
+      }
+      pos = dataStart + size + (size.isOdd ? 1 : 0);
+    }
+    return (title, artist, album, date, genre, comment);
+  }
+
+  // ==================== OGG ====================
+
+  static Future<LocalAudioMetadata> _readOgg(
+    RandomAccessFile raf,
+    int fileLength,
+  ) async {
+    String? title;
+    String? artist;
+    String? album;
+    String? lyrics;
+    String? genre;
+    String? comment;
+    int? year;
+    int? sampleRate;
+    int? lastGranule;
+
+    // 首页：识别头（采样率）与注释头
+    final headLength = fileLength > 65536 ? 65536 : fileLength;
+    await raf.setPosition(0);
+    final head = await raf.read(headLength);
+    if (head.length < 4) return const LocalAudioMetadata();
+
+    // 找第一个 Vorbis 识别头
+    for (var i = 0; i + 16 < head.length; i++) {
+      if (head[i] == 0x01 &&
+          head[i + 1] == 0x76 &&
+          head[i + 2] == 0x6F &&
+          head[i + 3] == 0x72 &&
+          head[i + 4] == 0x62 &&
+          head[i + 5] == 0x69 &&
+          head[i + 6] == 0x73) {
+        sampleRate = _le32(head, i + 12);
+        break;
+      }
+    }
+
+    // 注释头：0x03 'vorbis'
+    for (var i = 0; i + 7 < head.length; i++) {
+      if (head[i] == 0x03 &&
+          head[i + 1] == 0x76 &&
+          head[i + 2] == 0x6F &&
+          head[i + 3] == 0x72 &&
+          head[i + 4] == 0x62 &&
+          head[i + 5] == 0x69 &&
+          head[i + 6] == 0x73) {
+        final comments = _parseVorbisComments(
+          head.sublist(i + 7),
+          allowTruncated: true,
+        );
+        title = comments['TITLE'];
+        artist = comments['ARTIST'];
+        album = comments['ALBUM'];
+        year = _parseYear(
+          comments['DATE'] ?? comments['YEAR'] ?? comments['ORIGINALDATE'],
+        );
+        lyrics =
+            comments['LYRICS'] ??
+            comments['LYRIC'] ??
+            comments['UNSYNCEDLYRICS'];
+        genre = comments['GENRE'];
+        comment = comments['COMMENT'] ?? comments['DESCRIPTION'];
+        break;
+      }
+    }
+
+    // 末页的 granule 位置 → 时长
+    if (fileLength > 65536) {
+      await raf.setPosition(fileLength - 65536);
+      final tail = await raf.read(65536);
+      for (var i = tail.length - 27; i >= 0; i--) {
+        if (tail[i] == 0x4F &&
+            tail[i + 1] == 0x67 &&
+            tail[i + 2] == 0x67 &&
+            tail[i + 3] == 0x53) {
+          lastGranule = _le64(tail, i + 6);
+          break;
+        }
+      }
+    }
+
+    int? durationMs;
+    if (sampleRate != null &&
+        sampleRate > 0 &&
+        lastGranule != null &&
+        lastGranule > 0) {
+      durationMs = lastGranule * 1000 ~/ sampleRate;
+    }
+
+    return LocalAudioMetadata(
+      title: title,
+      artist: artist,
+      album: album,
+      year: year,
+      durationSeconds: durationMs == null ? null : durationMs ~/ 1000,
+      durationMs: durationMs,
+      lyrics: lyrics,
+      genre: genre,
+      comment: comment,
+    );
+  }
+
+  // ==================== WebM / WebA（EBML 容器） ====================
+
+  // EBML 元素 ID（Matroska 规范）。
+  static const int _ebmlIdSegment = 0x18538067;
+  static const int _ebmlIdInfo = 0x1549A966;
+  static const int _ebmlIdTimecodeScale = 0x2AD7B1;
+  static const int _ebmlIdDuration = 0x4489;
+  static const int _ebmlIdTitle = 0x7BA9;
+
+  /// Info 里第一个子元素一般就是这些字段（TimecodeScale 在 Duration 前），
+  /// 按顺序扫到 Duration 就收工。
+  static const int _maxInfoLeaves = 16;
+
+  /// 读取 WebM / WebA 的时长与标题。
+  ///
+  /// WebM 是 EBML 容器：顶层找 Segment → 跳过 SeekHead 等 → Info，在 Info
+  /// 里读 TimecodeScale（时间单位，默认 1ms）+ Duration（按 scale 计的时长）+
+  /// Title。文件可能几百 MB（一小时的视频），全部走「定位 + 少量读」，
+  /// 绝不整段读进来；Info 排在 Segment 开头附近，通常在文件开头几十 KB 内
+  /// 就能拿到，扫不到就放弃（返回空结果，界面用文件名兜底）。
+  static Future<LocalAudioMetadata> _readWebm(
+    RandomAccessFile raf,
+    int fileLength,
+  ) async {
+    var pos = 0;
+    var guard = 0;
+    while (pos < fileLength && guard++ < 32) {
+      final top = await _readEbmlHead(raf, pos);
+      if (top == null) return const LocalAudioMetadata();
+      final next = top.unknownSize ? top.dataPos : top.dataPos + top.size;
+      if (top.id != _ebmlIdSegment) {
+        // EBML header 等其它顶层元素：跳过。
+        if (next <= pos) return const LocalAudioMetadata();
+        pos = next;
+        continue;
+      }
+
+      // 进了 Segment：找 Info。SeekHead / Void 这类元数据元素可能排在
+      // Info 前面（YouTube 封装的 webm 就是 SeekHead 打头），跳过继续找；
+      // 撞到 Tracks / Cluster 还没见到 Info，说明这个 Segment 没有 Info。
+      final segmentEnd = top.unknownSize ? fileLength : top.dataPos + top.size;
+      var inner = top.dataPos;
+      var innerGuard = 0;
+      while (inner < segmentEnd && innerGuard++ < 32) {
+        final child = await _readEbmlHead(raf, inner);
+        if (child == null) return const LocalAudioMetadata();
+        if (child.id != _ebmlIdInfo) {
+          if (child.id == 0x1654AE6B /* Tracks */ ||
+              child.id == 0x1F43B675 /* Cluster */ ) {
+            break;
+          }
+          final nextInner = child.unknownSize
+              ? segmentEnd
+              : child.dataPos + child.size;
+          if (nextInner <= inner) return const LocalAudioMetadata();
+          inner = nextInner;
+          continue;
+        }
+        final infoEnd = child.unknownSize
+            ? segmentEnd
+            : child.dataPos + child.size;
+        var leaf = child.dataPos;
+        var leafGuard = 0;
+        int? durationMs;
+        String? title;
+        var scaleNs = 1000000; // TimecodeScale 默认值 1ms
+        while (leaf < infoEnd && leafGuard++ < _maxInfoLeaves) {
+          final item = await _readEbmlHead(raf, leaf);
+          if (item == null) break;
+          // 大小合法性交给各字段自己的读取函数校验（TimecodeScale / Duration
+          // 有固定字节数，Title 可到几 KB，统一卡 ≤8 会把 Title 挡掉）。
+          if (!item.unknownSize && item.size > 0) {
+            switch (item.id) {
+              case _ebmlIdTimecodeScale:
+                final value = await _readEbmlUint(raf, item.dataPos, item.size);
+                if (value != null && value > 0) scaleNs = value;
+              case _ebmlIdDuration:
+                final value = await _readEbmlFloat(
+                  raf,
+                  item.dataPos,
+                  item.size,
+                );
+                if (value != null) {
+                  durationMs = (value * scaleNs / 1000000).round();
+                }
+              case _ebmlIdTitle:
+                title = await _readEbmlUtf8(raf, item.dataPos, item.size);
+            }
+          }
+          final nextLeaf = item.unknownSize
+              ? infoEnd
+              : item.dataPos + item.size;
+          if (nextLeaf <= leaf) break;
+          leaf = nextLeaf;
+        }
+        return LocalAudioMetadata(
+          title: (title?.isNotEmpty ?? false) ? title : null,
+          durationSeconds: durationMs == null ? null : durationMs ~/ 1000,
+          durationMs: durationMs,
+        );
+      }
+      return const LocalAudioMetadata();
+    }
+    return const LocalAudioMetadata();
+  }
+
+  /// 读一个 EBML 元素头：返回 (ID, payload 大小, payload 起始位置, 是否未知大小)。
+  ///
+  /// ID 和 Size 用同一条可变长规则（见 [_vintLength]）：ID 的长度标志位是
+  /// ID 值的一部分，Size 的标志位不参与数值；Size 的所有数据位全 1 表示
+  /// 「大小未知」（流式封装的 Segment / Cluster 常见）。
+  static Future<({int id, int size, int dataPos, bool unknownSize})?>
+  _readEbmlHead(RandomAccessFile raf, int pos) async {
+    // ID 最长 4 字节、大小最长 8 字节；靠近文件尾可能读不满 12 字节，
+    // 只要够 ID + 大小头用就行（[_readAt] 返回实际读到的字节）。
+    final head = await _readAt(raf, pos, 12);
+    if (head == null || head.isEmpty) return null;
+    final idLength = _vintLength(head[0]);
+    if (idLength == null || head.length < idLength) return null;
+    var id = 0;
+    for (var i = 0; i < idLength; i++) {
+      id = (id << 8) | head[i];
+    }
+    final offset = idLength;
+    if (offset >= head.length) return null;
+    final sizeLength = _vintLength(head[offset]);
+    if (sizeLength == null || head.length < offset + sizeLength) return null;
+    var size = head[offset] & ((1 << (8 - sizeLength)) - 1);
+    for (var i = 1; i < sizeLength; i++) {
+      size = (size << 8) | head[offset + i];
+    }
+    // 数据位共 7N 个（首字节的标志位 1 个 + 高位 0 填充的 N-1 个不算），
+    // 全 1 = 大小未知。
+    final unknown = size == (1 << (7 * sizeLength)) - 1;
+    return (
+      id: id,
+      size: unknown ? 0 : size,
+      dataPos: pos + idLength + sizeLength,
+      unknownSize: unknown,
+    );
+  }
+
+  /// EBML 可变长整数（ID 与 Size 通用）首字节 → 总字节数。
+  ///
+  /// 从最高位往下扫，第一个 1 的位置 p（0 起算）→ 总长 p + 1 字节：
+  /// 0x80~0xFF → 1 字节、0x40~0x7F → 2 字节 …… 0x01 → 8 字节。
+  /// ID 的长度标志位是 ID 值的一部分（0x1A45DFA3 首字节 0x1A → 4 字节）；
+  /// Size 的标志位不参与数值。首字节为 0（非法）返回 null。
+  static int? _vintLength(int first) {
+    if (first == 0) return null;
+    var length = 1;
+    for (var mask = 0x80; (first & mask) == 0 && length <= 8; mask >>= 1) {
+      length++;
+    }
+    return length > 8 ? null : length;
+  }
+
+  static Future<int?> _readEbmlUint(
+    RandomAccessFile raf,
+    int pos,
+    int size,
+  ) async {
+    if (size <= 0 || size > 8) return null;
+    final bytes = await _readAt(raf, pos, size);
+    if (bytes == null || bytes.length < size) return null;
+    var value = 0;
+    for (final b in bytes) {
+      value = (value << 8) | b;
+    }
+    return value;
+  }
+
+  static Future<double?> _readEbmlFloat(
+    RandomAccessFile raf,
+    int pos,
+    int size,
+  ) async {
+    if (size != 4 && size != 8) return null;
+    final bytes = await _readAt(raf, pos, size);
+    if (bytes == null || bytes.length < size) return null;
+    final buffer = ByteData.sublistView(bytes);
+    return size == 4
+        ? buffer.getFloat32(0, Endian.big)
+        : buffer.getFloat64(0, Endian.big);
+  }
+
+  static Future<String?> _readEbmlUtf8(
+    RandomAccessFile raf,
+    int pos,
+    int size,
+  ) async {
+    if (size <= 0 || size > 4096) return null;
+    final bytes = await _readAt(raf, pos, size);
+    if (bytes == null) return null;
+    try {
+      return utf8.decode(bytes, allowMalformed: true);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 定位读取最多 [size] 字节，返回**实际读到的**字节（靠近文件尾时可能
+  /// 少于请求量，由调用方自行判断够不够用）；一个字节都读不到返回 null。
+  static Future<Uint8List?> _readAt(
+    RandomAccessFile raf,
+    int pos,
+    int size,
+  ) async {
+    if (pos < 0 || size <= 0) return null;
+    try {
+      await raf.setPosition(pos);
+      final bytes = await raf.read(size);
+      if (bytes.isEmpty) return null;
+      return bytes;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // ==================== AAC (ADTS) ====================
+
+  static const List<int> _adtsSampleRates = [
+    96000,
+    88200,
+    64000,
+    48000,
+    44100,
+    32000,
+    24000,
+    22050,
+    16000,
+    12000,
+    11025,
+    8000,
+    7350,
+  ];
+
+  /// ADTS(AAC) 时长：按帧长逐帧走一遍，帧数 × 1024 / 采样率。
+  ///
+  /// 用缓冲分块读取而不是每帧 seek，整库扫描时也不会太慢。
+  static Future<int?> _readAdtsDuration(
+    RandomAccessFile raf,
+    int fileLength,
+  ) async {
+    var pos = 0;
+    await raf.setPosition(0);
+    final head = await raf.read(10);
+    if (head.length == 10 &&
+        head[0] == 0x49 &&
+        head[1] == 0x44 &&
+        head[2] == 0x33) {
+      pos = 10 + _synchSafeToInt(head, 6);
+      if ((head[5] & 0x10) != 0) pos += 10;
+    }
+
+    const blockSize = 256 * 1024;
+    var frames = 0;
+    int? sampleRate;
+    var buffer = Uint8List(0);
+    var bufferStart = pos;
+    while (pos + 7 <= fileLength) {
+      if (pos + 7 > bufferStart + buffer.length) {
+        bufferStart = pos;
+        await raf.setPosition(pos);
+        final remain = fileLength - pos;
+        buffer = await raf.read(remain < blockSize ? remain : blockSize);
+        if (buffer.length < 7) break;
+      }
+      final i = pos - bufferStart;
+      if (buffer[i] != 0xFF || (buffer[i + 1] & 0xF0) != 0xF0) break;
+      final rateIndex = (buffer[i + 2] >> 2) & 0x0F;
+      if (rateIndex >= _adtsSampleRates.length) return null;
+      final frameLength =
+          ((buffer[i + 3] & 0x03) << 11) |
+          (buffer[i + 4] << 3) |
+          (buffer[i + 5] >> 5);
+      final headerLength = (buffer[i + 1] & 0x01) != 0 ? 7 : 9;
+      if (frameLength < headerLength) break;
+      sampleRate ??= _adtsSampleRates[rateIndex];
+      frames++;
+      pos += frameLength;
+    }
+
+    if (frames <= 0 || sampleRate == null || sampleRate <= 0) return null;
+    return frames * 1024 * 1000 ~/ sampleRate;
+  }
+
+  // ==================== 公共解析 ====================
+
+  /// 解析 Vorbis Comment 块（FLAC / OGG）。
+  static Map<String, String> _parseVorbisComments(
+    Uint8List data, {
+    bool allowTruncated = false,
+  }) {
+    final result = <String, String>{};
+    var offset = 0;
+    if (data.length < 8) return result;
+
+    final vendorLength = _le32(data, offset);
+    offset += 4;
+    if (offset + vendorLength > data.length) return result;
+    offset += vendorLength;
+    if (offset + 4 > data.length) return result;
+
+    final count = _le32(data, offset);
+    offset += 4;
+    for (var i = 0; i < count; i++) {
+      if (offset + 4 > data.length) break;
+      final length = _le32(data, offset);
+      offset += 4;
+      if (offset + length > data.length) {
+        if (!allowTruncated) break;
+        break;
+      }
+      final comment = utf8.decode(
+        data.sublist(offset, offset + length),
+        allowMalformed: true,
+      );
+      offset += length;
+      final eq = comment.indexOf('=');
+      if (eq <= 0) continue;
+      final key = comment.substring(0, eq).toUpperCase();
+      final value = comment.substring(eq + 1);
+      result.putIfAbsent(key, () => value);
+    }
+    return result;
+  }
+
+  /// 解析 FLAC PICTURE 元数据块，取出图片数据。
+  static Uint8List? _parseFlacPicture(Uint8List data) {
+    if (data.length < 32) return null;
+    var pos = 4; // 图片类型
+    final mimeLength = _be32(data, pos);
+    pos += 4;
+    if (pos + mimeLength > data.length) return null;
+    pos += mimeLength;
+    final descLength = _be32(data, pos);
+    pos += 4;
+    if (pos + descLength > data.length) return null;
+    pos += descLength;
+    pos += 16; // 宽/高/色深/颜色数
+    if (pos + 4 > data.length) return null;
+    final dataLength = _be32(data, pos);
+    pos += 4;
+    if (pos + dataLength > data.length) return null;
+    return Uint8List.fromList(data.sublist(pos, pos + dataLength));
+  }
+
+  /// 解析 ID3 文本帧。
+  static String? _decodeTextFrame(List<int> content) {
+    if (content.isEmpty) return null;
+    return _decodeTextByEncoding(content[0], content.sublist(1));
+  }
+
+  /// 按 ID3 文本编码解码内容。
+  static String? _decodeTextByEncoding(int encoding, List<int> data) {
+    if (data.isEmpty) return '';
+    try {
+      switch (encoding) {
+        case 0:
+          return latin1.decode(data).replaceAll('\u0000', '').trim();
+        case 1:
+          return _decodeUtf16(data);
+        case 2:
+          return _decodeUtf16Be(data);
+        case 3:
+          return utf8.decode(data, allowMalformed: true).trim();
+        default:
+          return utf8.decode(data, allowMalformed: true).trim();
+      }
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 解析 ID3 USLT 帧（未同步歌词）。
+  ///
+  /// 结构：[编码 1 字节][语言 3 字节][描述符（以 0 结尾）][歌词文本]
+  static String? _decodeUsltFrame(List<int> content) {
+    if (content.length < 5) return null;
+    final encoding = content[0];
+    var pos = 4; // 跳过编码 + 语言（3 字节）
+    if (encoding == 1 || encoding == 2) {
+      // UTF-16：两个 0 字节结束描述符
+      while (pos + 1 < content.length) {
+        if (content[pos] == 0 && content[pos + 1] == 0) {
+          pos += 2;
+          break;
+        }
+        pos += 2;
+      }
+    } else {
+      while (pos < content.length && content[pos] != 0) {
+        pos++;
+      }
+      pos++; // 跳过结束符
+    }
+    if (pos >= content.length) return null;
+    final text = _decodeTextByEncoding(encoding, content.sublist(pos));
+    if (text == null || text.trim().isEmpty) return null;
+    return text;
+  }
+
+  /// 解析 ID3 TXXX（自定义文本）帧，返回（描述符, 内容）。
+  ///
+  /// 结构：[编码 1 字节][描述符（以 0 结尾）][内容]。歌词帧没有统一标准，
+  /// 有的工具写 `LYRICS`、有的写 `Lyrics`，读取时统一转成大写再比较。
+  static (String, String)? _decodeUserTextFrame(List<int> content) {
+    if (content.length < 2) return null;
+    final encoding = content[0];
+    final wide = encoding == 1 || encoding == 2;
+    var pos = 1;
+    var descEnd = -1;
+    if (wide) {
+      while (pos + 1 < content.length) {
+        if (content[pos] == 0 && content[pos + 1] == 0) {
+          descEnd = pos;
+          pos += 2;
+          break;
+        }
+        pos += 2;
+      }
+    } else {
+      while (pos < content.length && content[pos] != 0) {
+        pos++;
+      }
+      descEnd = pos;
+      pos++;
+    }
+    if (descEnd < 1 || pos >= content.length) return null;
+    final description = _decodeTextByEncoding(
+      encoding,
+      content.sublist(1, descEnd),
+    );
+    final value = _decodeTextByEncoding(encoding, content.sublist(pos));
+    if (description == null || value == null || value.trim().isEmpty) {
+      return null;
+    }
+    return (description.trim(), value);
+  }
+
+  /// 从日期 / 年份文本里解析出年份（`2023`、`2023-05-01` 都取前 4 位）。
+  static int? _parseYear(String? value) {
+    if (value == null) return null;
+    final match = RegExp(r'(\d{4})').firstMatch(value);
+    if (match == null) return null;
+    final year = int.tryParse(match.group(1)!);
+    if (year == null || year < 1000 || year > 9999) return null;
+    return year;
+  }
+
+  static String _decodeUtf16(List<int> data) {
+    var bytes = data;
+    var littleEndian = true;
+    if (bytes.length >= 2) {
+      if (bytes[0] == 0xFF && bytes[1] == 0xFE) {
+        bytes = bytes.sublist(2);
+      } else if (bytes[0] == 0xFE && bytes[1] == 0xFF) {
+        bytes = bytes.sublist(2);
+        littleEndian = false;
+      }
+    }
+    final value = littleEndian ? _decodeUtf16Le(bytes) : _decodeUtf16Be(bytes);
+    // v2.4 允许多个以 0 分隔的字符串，只取第一个
+    final index = value.indexOf('\u0000');
+    final first = index >= 0 ? value.substring(0, index) : value;
+    return first.trim();
+  }
+
+  static String _decodeUtf16Le(List<int> bytes) {
+    final units = <int>[];
+    for (var i = 0; i + 1 < bytes.length; i += 2) {
+      units.add(bytes[i] | (bytes[i + 1] << 8));
+    }
+    return String.fromCharCodes(units);
+  }
+
+  static String _decodeUtf16Be(List<int> bytes) {
+    final units = <int>[];
+    for (var i = 0; i + 1 < bytes.length; i += 2) {
+      units.add((bytes[i] << 8) | bytes[i + 1]);
+    }
+    return String.fromCharCodes(units);
+  }
+
+  /// 解析 ID3 APIC 帧，取出图片数据。
+  static Uint8List? _decodeApicFrame(List<int> content) {
+    if (content.length < 4) return null;
+    final encoding = content[0];
+    var pos = 1;
+    while (pos < content.length && content[pos] != 0) {
+      pos++;
+    }
+    pos++; // 跳过 MIME 结束符
+    if (pos >= content.length) return null;
+    pos++; // 图片类型
+    if (encoding == 1 || encoding == 2) {
+      while (pos + 1 < content.length) {
+        if (content[pos] == 0 && content[pos + 1] == 0) {
+          pos += 2;
+          break;
+        }
+        pos += 2;
+      }
+    } else {
+      while (pos < content.length && content[pos] != 0) {
+        pos++;
+      }
+      pos++;
+    }
+    if (pos >= content.length) return null;
+    return Uint8List.fromList(content.sublist(pos));
+  }
+
+  // ==================== 字节工具 ====================
+
+  static int _synchSafeToInt(List<int> bytes, [int offset = 0]) {
+    var value = 0;
+    for (var i = 0; i < 4; i++) {
+      value = (value << 7) | (bytes[offset + i] & 0x7F);
+    }
+    return value;
+  }
+
+  static int _be32(List<int> bytes, [int offset = 0]) {
+    return (bytes[offset] << 24) |
+        (bytes[offset + 1] << 16) |
+        (bytes[offset + 2] << 8) |
+        bytes[offset + 3];
+  }
+
+  static int _be64(List<int> bytes, [int offset = 0]) {
+    var value = 0;
+    for (var i = 0; i < 8; i++) {
+      value = (value << 8) | bytes[offset + i];
+    }
+    return value;
+  }
+
+  static int _le32(List<int> bytes, [int offset = 0]) {
+    return bytes[offset] |
+        (bytes[offset + 1] << 8) |
+        (bytes[offset + 2] << 16) |
+        (bytes[offset + 3] << 24);
+  }
+
+  static int _le64(List<int> bytes, [int offset = 0]) {
+    var value = 0;
+    for (var i = 7; i >= 0; i--) {
+      value = (value << 8) | bytes[offset + i];
+    }
+    return value;
+  }
+}

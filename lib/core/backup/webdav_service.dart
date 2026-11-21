@@ -1,0 +1,1514 @@
+import 'dart:async' show TimeoutException;
+import 'dart:convert';
+import 'dart:io'
+    show
+        File,
+        FileMode,
+        HandshakeException,
+        RandomAccessFile,
+        SocketException,
+        gzip;
+import 'dart:math' as math;
+import 'dart:typed_data';
+
+import 'package:dio/dio.dart' as dio;
+import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:path/path.dart' as p;
+import 'package:webdav_client/webdav_client.dart' as webdav;
+
+import '../platform/app_paths.dart';
+import '../security/local_field_codec.dart';
+import 'data_snapshot.dart';
+import 'playlist_sync_protocol.dart';
+
+/// 带可读原因的 WebDAV 异常。
+class WebDavException implements Exception {
+  const WebDavException(this.message, {this.statusCode});
+
+  final String message;
+  final int? statusCode;
+
+  @override
+  String toString() => message;
+}
+
+/// 服务器不支持 `Range`（忽略分段请求、把整份文件发回来）时内部抛这个，
+/// 用来把分段下载快速切回单线程，不会当成用户可见的错误。
+class _RangeNotSupported implements Exception {
+  const _RangeNotSupported();
+}
+
+/// 把网络 / WebDAV 异常转换成「类别 + 具体原因」的用户可读文案。
+///
+/// 类别固定以「网络错误 / 网络超时 / 服务器返回错误 / 证书错误 / 请求已取消 /
+/// 数据格式错误」开头，细节里尽量保留 URL、底层 socket 原因和 HTTP 状态码，
+/// 方便一眼判断该查网络还是查服务器。原先「连接超时 / 接收超时 / 网络连接失败」
+/// 各说各的，且状态码为 null 时会显示 `HTTP null`，这里一并收敛。
+String describeWebDavError(Object error) {
+  if (error is WebDavException) {
+    final message = error.message;
+    final code = error.statusCode;
+    if (code == null) return message;
+    // 内部异常大多已经把状态码写进 message（如「上传失败：HTTP 403」），
+    // 补类别即可，不要重复拼一遍 HTTP 码。
+    if (message.contains('HTTP $code')) {
+      return message.startsWith('服务器返回错误') ? message : '服务器返回错误：$message';
+    }
+    return '服务器返回错误：HTTP $code：$message';
+  }
+  if (error is dio.DioException) {
+    final uri = error.requestOptions.uri;
+    final cause = _errorCause(error.error ?? error.message);
+    String withCause(String text) => cause.isEmpty ? text : '$text（$cause）';
+    switch (error.type) {
+      case dio.DioExceptionType.connectionTimeout:
+        return withCause('网络超时：连接 $uri 超时，请检查网络或服务器地址');
+      case dio.DioExceptionType.sendTimeout:
+        return withCause('网络超时：向 $uri 上传数据超时，请检查网络');
+      case dio.DioExceptionType.receiveTimeout:
+        return withCause('网络超时：$uri 响应过慢，请稍后重试');
+      case dio.DioExceptionType.transformTimeout:
+        // dio 5.9 新增：解析响应数据（转换）超时，同样是「服务端太慢」。
+        return withCause('网络超时：解析 $uri 的响应数据超时，请稍后重试');
+      case dio.DioExceptionType.badCertificate:
+        return withCause('证书错误：HTTPS 证书校验失败 $uri');
+      case dio.DioExceptionType.connectionError:
+        return withCause('网络错误：无法访问 $uri');
+      case dio.DioExceptionType.cancel:
+        return withCause('请求已取消：$uri');
+      case dio.DioExceptionType.badResponse:
+        final code = error.response?.statusCode;
+        final status = error.response?.statusMessage;
+        if (code == null) {
+          return withCause('服务器返回了无法识别的响应：$uri');
+        }
+        return '服务器返回错误：HTTP $code'
+            '${status == null || status.isEmpty ? '' : ' $status'}（$uri）';
+      case dio.DioExceptionType.unknown:
+        return withCause('网络异常：$uri');
+    }
+  }
+  if (error is SocketException) return '网络错误：${_errorCause(error)}';
+  if (error is HandshakeException) {
+    return '证书错误：HTTPS 握手失败（${_errorCause(error)}）';
+  }
+  if (error is TimeoutException) return '网络超时：${_errorCause(error)}';
+  if (error is FormatException) return '数据格式错误：${error.message}';
+  return error.toString();
+}
+
+/// 取底层异常的人话描述：DioException 的 message 常是空泛的英文提示，
+/// 真正有用的原因在 `error`（SocketException / OSError / 原始异常）里。
+String _errorCause(Object? cause) {
+  if (cause == null) return '';
+  if (cause is SocketException) {
+    final os = cause.osError;
+    return '${cause.message}${os == null ? '' : '（${os.message}）'}';
+  }
+  if (cause is dio.DioException) {
+    return _errorCause(cause.error ?? cause.message);
+  }
+  final text = '$cause';
+  if (text.trim().isEmpty) return '';
+  // 服务端返回的 HTML 错误页可能很长，截断避免把弹框撑爆。
+  return text.length > 200 ? '${text.substring(0, 200)}…' : text;
+}
+
+/// WebDAV 远端配置。
+class WebDavConfig {
+  const WebDavConfig({
+    this.url = '',
+    this.user = '',
+    this.password = '',
+    this.deviceName = '',
+    this.playlistSyncEnabled = false,
+  });
+
+  /// WebDAV 服务器地址，例如 `https://dav.example.com/back`。
+  final String url;
+
+  final String user;
+  final String password;
+
+  /// 设备名称：备份压缩包保存到 `<url>/<设备名>/` 下。
+  final String deviceName;
+
+  /// 「自动同步」总开关（歌单自动同步 + 设置变更自动备份）。
+  final bool playlistSyncEnabled;
+
+  bool get isConfigured => url.trim().isNotEmpty;
+
+  WebDavConfig copyWith({
+    String? url,
+    String? user,
+    String? password,
+    String? deviceName,
+    bool? playlistSyncEnabled,
+  }) {
+    return WebDavConfig(
+      url: url ?? this.url,
+      user: user ?? this.user,
+      password: password ?? this.password,
+      deviceName: deviceName ?? this.deviceName,
+      playlistSyncEnabled: playlistSyncEnabled ?? this.playlistSyncEnabled,
+    );
+  }
+
+  /// 地址 / 账号 / 密码编码后写盘：设置文件以及打包进备份包的 settings.json
+  /// 都只包含编码后的值，读回时由 [fromJson] 还原。
+  Map<String, dynamic> toJson() => {
+    'url': sealField(url),
+    'user': sealField(user),
+    'password': sealField(password),
+    'deviceName': deviceName,
+    'playlistSyncEnabled': playlistSyncEnabled,
+  };
+
+  factory WebDavConfig.fromJson(Map<String, dynamic> json) {
+    return WebDavConfig(
+      url: unsealField('${json['url'] ?? ''}'),
+      user: unsealField('${json['user'] ?? ''}'),
+      password: unsealField('${json['password'] ?? ''}'),
+      deviceName: '${json['deviceName'] ?? ''}',
+      playlistSyncEnabled: json['playlistSyncEnabled'] == true,
+    );
+  }
+}
+
+/// 远端备份文件条目。
+class RemoteBackupFile {
+  const RemoteBackupFile({
+    required this.name,
+    required this.path,
+    required this.size,
+    required this.modified,
+  });
+
+  final String name;
+  final String path;
+  final int size;
+  final DateTime? modified;
+}
+
+/// WebDAV 客户端封装：备份上传 / 下载 / 列表，歌单 JSON 的读写。
+class WebDavService {
+  WebDavService(this.config, {dio.CancelToken? cancelToken})
+    : _cancelToken = cancelToken;
+
+  final WebDavConfig config;
+
+  /// 超时诊断：当前卡在哪一步、最近一次请求失败的具体原因。
+  ///
+  /// 整次同步被 `SyncAttempt` 的超时掐断时，底层请求往往还在等，界面只能
+  /// 拿到「网络超时」。这里把最近一次明确的错误（HTTP 401、连接被拒等）和
+  /// 正在做的步骤留下来，超时提示就能说清是网络不通、服务器报错，还是
+  /// 单纯响应太慢。只影响提示文案，不改变请求 / 重试逻辑。
+  String _stage = '';
+  String? _lastFailure;
+
+  String get diagnosis {
+    final stage = _stage.isEmpty ? '' : '当前步骤：$_stage';
+    final failure = (_lastFailure == null || _lastFailure!.isEmpty)
+        ? ''
+        : '最近错误：$_lastFailure';
+    if (stage.isEmpty) return failure;
+    if (failure.isEmpty) return stage;
+    return '$stage；$failure';
+  }
+
+  void _enterStage(String stage) {
+    _stage = stage;
+    _lastFailure = null;
+  }
+
+  void _recordFailure(Object error) {
+    _lastFailure = describeWebDavError(error);
+  }
+
+  /// 本次操作的取消令牌（见 `SyncAttempt`）。
+  ///
+  /// 超时后它会被 cancel，正在等待的请求立刻结束，服务器迟到的响应也不会
+  /// 再被写盘 / 合并。为 null 时（后台推送、连接测试）不参与取消。
+  final dio.CancelToken? _cancelToken;
+
+  /// 本次操作是否已被取消（超时 / 主动取消）。
+  ///
+  /// 上层在把结果写盘之前先看一眼：取消后即使数据已经拿到，也当作失败丢弃。
+  bool get isCancelled => _cancelToken?.isCancelled ?? false;
+
+  webdav.Client? _client;
+
+  webdav.Client _buildClient() {
+    final existing = _client;
+    if (existing != null) return existing;
+    final client = webdav.newClient(
+      config.url.trim(),
+      user: config.user,
+      password: config.password,
+    );
+    client.setConnectTimeout(15000);
+    client.setReceiveTimeout(30000);
+    _client = client;
+    return client;
+  }
+
+  void _requireConfigured() {
+    if (!config.isConfigured) {
+      throw const WebDavException('未配置 WebDAV：请先在「设置 → 备份还原」中填写 WebDAV 地址');
+    }
+  }
+
+  /// 读取远端文件的全部字节。
+  ///
+  /// 不调用 `client.read()`：它固定先发 OPTIONS 且要求返回 200，遇到
+  /// 301/302 的服务器会直接抛错（`DioException [bad response]: null`）。
+  /// 这里走和备份包同一条下载链路（[downloadToFile]）：小文件单线程、
+  /// 大文件按段并发，都带重试 / 断点续传和更宽松的空闲超时（歌单同步用）。
+  Future<Uint8List> _readBytes(String path, {int? expectedSize}) async {
+    final dir = await AppPaths.tempDirectory();
+    final temp = File(
+      p.join(
+        dir.path,
+        'webdav_read_${DateTime.now().microsecondsSinceEpoch}.bin',
+      ),
+    );
+    try {
+      await downloadToFile(
+        path,
+        savePath: temp.path,
+        expectedSize: expectedSize,
+      );
+      if (isCancelled) throw const WebDavException('下载已取消');
+      return await temp.readAsBytes();
+    } finally {
+      await _deleteQuietly(temp);
+    }
+  }
+
+  /// 直接发 PUT 写入远端文件。
+  ///
+  /// 同样绕过 `client.write()` 的 OPTIONS 预检（部分服务器 OPTIONS 会 301）。
+  /// 重定向手动处理，避免 PUT 被客户端改写成 GET。
+  Future<void> _writeBytes(
+    String path,
+    Uint8List bytes, {
+    Map<String, String>? extraHeaders,
+  }) async {
+    final client = _buildClient();
+    var target = path;
+    for (var redirects = 0; redirects <= 5; redirects++) {
+      final response = await client.c.req<dynamic>(
+        client,
+        'PUT',
+        target,
+        data: bytes,
+        cancelToken: _cancelToken,
+        optionsHandler: (options) {
+          options.followRedirects = false;
+          options.validateStatus = (status) => status != null;
+          options.responseType = dio.ResponseType.plain;
+          // content-length 手动带上：部分服务器要求 PUT 必须带长度。
+          final headers = options.headers ?? <String, dynamic>{};
+          headers['content-length'] = bytes.length;
+          // 条件写：meta 用 If-Match 做并发控制，首次创建用 If-None-Match: *。
+          extraHeaders?.forEach((key, value) => headers[key] = value);
+          options.headers = headers;
+        },
+      );
+      final status = response.statusCode ?? 0;
+      if (status >= 200 && status < 300) return;
+      if (status >= 300 && status < 400) {
+        final location = response.headers.value('location');
+        if (location == null || location.isEmpty) {
+          throw WebDavException(
+            '服务器返回重定向（HTTP $status），但没有提供跳转地址',
+            statusCode: status,
+          );
+        }
+        final current = Uri.tryParse(target);
+        target = current?.resolve(location).toString() ?? location;
+        continue;
+      }
+      final message = response.statusMessage;
+      throw WebDavException(
+        '上传失败：HTTP $status'
+        '${message == null || message.isEmpty ? '' : ' $message'}',
+        statusCode: status,
+      );
+    }
+    throw const WebDavException('上传失败：重定向次数过多');
+  }
+
+  /// 远端根路径（URL 里的路径部分，例如 `back`），仅用于界面展示。
+  String get remoteRoot {
+    final uri = Uri.tryParse(config.url.trim());
+    final path = uri?.path ?? '';
+    return path.replaceAll(RegExp(r'^/+|/+$'), '');
+  }
+
+  /// 备份压缩包所在目录（**相对** URL 基址）：`<设备名>`。
+  ///
+  /// URL 里已经带了远程路径（例如 `https://dav.example.com/back`），
+  /// 这里的路径是相对基址的，所以最终落在 `back/<设备名>/`。
+  String get backupDir => config.deviceName.trim();
+
+  /// 歌单同步文件所在目录（相对 URL 基址，即 URL 里带的那个路径）。
+  String get playlistDir => '';
+
+  /// 远端备份文件名的前缀（用于列表过滤）。
+  static const String backupNamePrefix = 'mintmusic-backup';
+
+  // ---------------------------------------------------------------- 连接测试
+
+  /// 测试连接是否可用。
+  Future<String> testConnection() async {
+    if (!config.isConfigured) return 'WebDAV 未配置';
+    try {
+      final client = _buildClient();
+      await client.readDir(backupDir.isEmpty ? '/' : backupDir, _cancelToken);
+      return '';
+    } catch (e) {
+      return '连接失败：${describeWebDavError(e)}';
+    }
+  }
+
+  // ---------------------------------------------------------------- 备份
+
+  /// 确保远端目录存在。
+  Future<void> _ensureDir(String path) async {
+    if (path.isEmpty) return;
+    final client = _buildClient();
+    try {
+      await client.mkdir(path, _cancelToken);
+    } catch (_) {
+      // 目录已存在时服务端会报错，忽略即可。
+    }
+  }
+
+  /// 上传备份压缩包。
+  ///
+  /// 保存位置：`<远端根>/<设备名>/<文件名>`。
+  Future<void> uploadBackup(Uint8List bytes, String fileName) async {
+    _requireConfigured();
+    await _ensureDir(backupDir);
+    final target = backupDir.isEmpty ? fileName : '$backupDir/$fileName';
+    await _writeBytes(target, bytes);
+  }
+
+  /// 列出远端备份文件。
+  Future<List<RemoteBackupFile>> listBackups() async {
+    _requireConfigured();
+    final client = _buildClient();
+    final dir = backupDir.isEmpty ? '/' : backupDir;
+    final items = await client.readDir(dir, _cancelToken);
+    final result = <RemoteBackupFile>[];
+    for (final item in items) {
+      final dyn = item as dynamic;
+      if (dyn.isDir == true) continue;
+      final name = dyn.name?.toString() ?? '';
+      if (name.isEmpty || name == '.' || name == '..') continue;
+      if (!name.contains(backupNamePrefix)) continue;
+      final path = dyn.path?.toString() ?? '$dir/$name';
+      final size = dyn.size is int ? dyn.size as int : 0;
+      final modified = dyn.mTime;
+      DateTime? modifiedAt;
+      if (modified is DateTime) {
+        modifiedAt = modified;
+      } else if (modified is int) {
+        modifiedAt = DateTime.fromMillisecondsSinceEpoch(modified);
+      }
+      result.add(
+        RemoteBackupFile(
+          name: name,
+          path: path,
+          size: size,
+          modified: modifiedAt,
+        ),
+      );
+    }
+    result.sort(
+      (a, b) =>
+          (b.modified ?? DateTime(0)).compareTo(a.modified ?? DateTime(0)),
+    );
+    return result;
+  }
+
+  /// 下载备份时的「空闲超时」：连续这么久没收到任何字节才算卡住。
+  ///
+  /// dio 的 `receiveTimeout` 语义是「响应头 / 每两个数据块之间的最长间隔」，
+  /// 客户端级原来给的 30 秒对备份包来说太短：备份里连插件目录一起打包，几十 MB
+  /// 很常见，服务器只要在开头憋住半分钟，界面就会报
+  /// 「接收超时：… 响应过慢」。音频下载模块（`DownloadRepository`）用的是
+  /// 10 分钟，这里同样放宽；整次下载的总耗时由上层 `SyncAttempt` 兜底。
+  static const Duration downloadIdleTimeout = Duration(minutes: 2);
+
+  /// 单次下载最多尝试几次（含首次）：失败后断点续传重试。
+  static const int downloadMaxAttempts = 3;
+
+  /// 多线程分段下载的并发数。
+  ///
+  /// WebDAV 走的是标准 HTTP，支持 `Range` 的服务器（TeraCloud / Nextcloud /
+  /// 坚果云等）可以按段并发拉取：单连接被限速时，多开几条连接能明显提速。
+  /// 服务器不接受 Range 或并发被拒时，[downloadToFile] 会自动退回单线程，
+  /// 不会因此失败。
+  static const int downloadParallelism = 4;
+
+  /// 单个分片的最大字节数，同时也是「要不要分段」的门槛：
+  /// 文件超过这个大小就走多线程，每片最多这么多字节。
+  static const int _maxSegmentBytes = 100 * 1024;
+
+  /// 把远端文件流式下载到 [savePath]，失败自动重试并从断点续传。
+  ///
+  /// 不整包塞进内存再判断成败：直接落盘的好处是失败时已经收到的字节还在，
+  /// 下一次带 `Range` 接着下，不用把几十 MB 从头再来一遍。
+  ///
+  /// 大小已知且超过 [_maxSegmentBytes] 时先走 [downloadParallelism] 路分段
+  /// 并发（每片最多 [_maxSegmentBytes]，分片数多于线程数时排队依次下）；
+  /// 服务器不支持 `Range`、并发被限流或某段重试仍失败时，自动回退到单线程。
+  Future<void> downloadToFile(
+    String path, {
+    required String savePath,
+    int? expectedSize,
+    void Function(int received, int total)? onProgress,
+  }) async {
+    _requireConfigured();
+    final total = expectedSize ?? 0;
+    if (total > _maxSegmentBytes && downloadParallelism > 1) {
+      final done = await _downloadParallel(
+        path,
+        savePath: savePath,
+        total: total,
+        onProgress: onProgress,
+      );
+      if (done) return;
+      // 分段被取消（超时）时不能装作成功，也不能再开单线程重下。
+      if (isCancelled) throw const WebDavException('下载已取消');
+    }
+    await _downloadSingle(
+      path,
+      savePath: savePath,
+      expectedSize: expectedSize,
+      onProgress: onProgress,
+    );
+  }
+
+  /// 单线程下载（带整文件断点续传与重试）。
+  Future<void> _downloadSingle(
+    String path, {
+    required String savePath,
+    int? expectedSize,
+    void Function(int received, int total)? onProgress,
+  }) async {
+    final client = _buildClient();
+    final file = File(savePath);
+    Object? lastError;
+    for (var attempt = 1; attempt <= downloadMaxAttempts; attempt++) {
+      try {
+        // 只有重试时才续传：首次下载的临时文件名是新的，不会误用上次的残片。
+        var start = 0;
+        if (attempt > 1 && await file.exists()) {
+          start = await file.length();
+        }
+        if (expectedSize != null && expectedSize > 0 && start >= expectedSize) {
+          return;
+        }
+        await _downloadOnce(
+          client,
+          path,
+          file,
+          start,
+          expectedSize,
+          onProgress,
+        );
+        return;
+      } catch (e) {
+        lastError = e;
+        // 超时 / 用户取消：请求已经被 cancel 掉了，继续重试没有意义。
+        if (isCancelled) rethrow;
+        if (!_isRetryableDownloadError(e)) {
+          await _deleteQuietly(file);
+          rethrow;
+        }
+        if (attempt < downloadMaxAttempts) {
+          await Future<void>.delayed(Duration(milliseconds: 800 * attempt));
+        }
+      }
+    }
+    await _deleteQuietly(file);
+    if (lastError is WebDavException) throw lastError;
+    throw WebDavException(
+      '下载失败：${lastError == null ? '未知错误' : describeWebDavError(lastError)}',
+    );
+  }
+
+  /// 多线程分段下载：每段各写一个临时文件，全部到齐后按顺序拼成 [savePath]。
+  ///
+  /// 返回 false 表示这条路走不通（服务器忽略 Range、并发被拒、某段重试耗尽），
+  /// 调用方回退单线程；返回 true 表示文件已经完整落盘。
+  Future<bool> _downloadParallel(
+    String path, {
+    required String savePath,
+    required int total,
+    void Function(int received, int total)? onProgress,
+  }) async {
+    // 每片最多 _maxSegmentBytes：文件越大片越多，由 [downloadParallelism] 个
+    // worker 排队依次取，同一时刻最多开这么多条连接。
+    final segmentCount = (total + _maxSegmentBytes - 1) ~/ _maxSegmentBytes;
+    final file = File(savePath);
+    // 每片已经下到多少字节：重试续传和进度都靠它，不去翻文件（文件是预分配的，
+    // 分不清哪段是真数据、哪段还是空洞）。
+    final segmentDone = List<int>.filled(segmentCount, 0);
+    var aborted = false;
+
+    var received = 0;
+    var lastReportMs = 0;
+    void report(int delta) {
+      // 续传 / 重试时同几个字节可能被重复计入，钳一下上限，别让进度条超过 100%。
+      received = math.min(total, received + delta);
+      final now = DateTime.now().millisecondsSinceEpoch;
+      // 分片回调很密：150ms 推一次进度就够，别把 UI 线程刷满。
+      if (now - lastReportMs < 150 && received < total) return;
+      lastReportMs = now;
+      onProgress?.call(received, total);
+    }
+
+    try {
+      final client = _buildClient();
+      // 先花一个 1 字节的请求确认服务器真的支持 Range：不支持的话几条连接会
+      // 各自把整份文件下回来（既慢又费流量），必须在开工前就分辨出来。
+      if (!await _supportsRange(client, path)) return false;
+
+      // 先把目标文件截到最终大小，每个分片直接写自己的偏移位置。
+      // 分片一多，「每片一个临时文件再拼接」会多出几百个文件 + 一次全量拷贝。
+      final truncate = await file.open(mode: FileMode.write);
+      try {
+        await truncate.truncate(total);
+      } finally {
+        await truncate.close();
+      }
+
+      var next = 0;
+      Future<void> worker() async {
+        // 每个 worker 一个句柄，片与片之间复用；写到哪儿由自己 setPosition 定。
+        final handle = await file.open(mode: FileMode.append);
+        try {
+          while (!aborted) {
+            final index = next++;
+            if (index >= segmentCount) return;
+            final start = index * _maxSegmentBytes;
+            final end = math.min(total, start + _maxSegmentBytes) - 1;
+            await _downloadSegment(
+              client,
+              path,
+              handle,
+              segmentDone,
+              index,
+              start,
+              end,
+              report,
+              () => aborted,
+            );
+          }
+        } finally {
+          await handle.close();
+        }
+      }
+
+      await Future.wait(
+        [for (var i = 0; i < math.min(downloadParallelism, segmentCount); i++) worker()],
+        // 某一片判定「服务器不支持 Range」时立刻收手，不等其它片跑完。
+        eagerError: true,
+      );
+      onProgress?.call(total, total);
+      return true;
+    } on _RangeNotSupported {
+      // 先把还在跑的 worker 喊停，避免它们继续往这个文件里写（下面单线程会
+      // 重新截断整个文件，同时写就会写坏）。
+      aborted = true;
+      return false;
+    } catch (e) {
+      aborted = true;
+      if (isCancelled) rethrow;
+      debugPrint('[WebDav] 分段下载失败，回退单线程: $e');
+      return false;
+    }
+  }
+
+  /// 问服务器一句「支持 `Range` 吗」：只请求第 1 个字节，看它回不回 206。
+  ///
+  /// 有的 WebDAV 实现（部分只读网关、对象存储的静态映射）会忽略 `Range` 直接
+  /// 回 200 + 整份文件；那种情况下分段下载毫无意义，必须先分辨出来。
+  Future<bool> _supportsRange(webdav.Client client, String path) async {
+    try {
+      final response = await client.c.req<dynamic>(
+        client,
+        'GET',
+        path,
+        cancelToken: _cancelToken,
+        optionsHandler: (options) {
+          options.responseType = dio.ResponseType.stream;
+          options.followRedirects = true;
+          options.validateStatus = (status) => status != null;
+          options.receiveTimeout = downloadIdleTimeout;
+          options.headers = {...?options.headers, 'range': 'bytes=0-0'};
+        },
+      );
+      final supported = response.statusCode == 206;
+      // 这 1 个字节不写盘，直接丢掉释放连接。
+      _closeStreamBody(response.data);
+      return supported;
+    } catch (e) {
+      // 探测失败（网络 / 鉴权）不在这里下结论，交给单线程那条路去报错。
+      debugPrint('[WebDav] Range 探测失败: $e');
+      return false;
+    }
+  }
+
+  /// 下载一片 `[start, end]`（闭区间），直接写进 [handle] 对应的偏移位置。
+  ///
+  /// [segmentDone] 记录每片已下字节：片内重试时从断点续传，进度也按它补报，
+  /// 已经落盘的字节不会重复计。失败按片重试，重试耗尽才整体回退单线程。
+  Future<void> _downloadSegment(
+    webdav.Client client,
+    String path,
+    RandomAccessFile handle,
+    List<int> segmentDone,
+    int index,
+    int start,
+    int end,
+    void Function(int delta) onBytes,
+    bool Function() isAborted,
+  ) async {
+    Object? lastError;
+    for (var attempt = 1; attempt <= downloadMaxAttempts; attempt++) {
+      try {
+        if (isAborted()) throw const _RangeNotSupported();
+        final offset = start + segmentDone[index];
+        if (offset > end) return;
+
+        final response = await client.c.req<dynamic>(
+          client,
+          'GET',
+          path,
+          cancelToken: _cancelToken,
+          optionsHandler: (options) {
+            options.responseType = dio.ResponseType.stream;
+            options.followRedirects = true;
+            options.validateStatus = (status) => status != null;
+            options.receiveTimeout = downloadIdleTimeout;
+            options.headers = {
+              ...?options.headers,
+              'range': 'bytes=$offset-$end',
+            };
+          },
+        );
+        final status = response.statusCode ?? 0;
+        if (status == 200) {
+          // 服务器忽略了 Range，把整份文件发了回来：分片拼不起来，放弃。
+          _closeStreamBody(response.data);
+          throw const _RangeNotSupported();
+        }
+        if (status != 206) {
+          _closeStreamBody(response.data);
+          if (status == 404) {
+            throw WebDavException('远端文件不存在（HTTP 404）', statusCode: 404);
+          }
+          final message = response.statusMessage;
+          throw WebDavException(
+            'HTTP $status${message == null || message.isEmpty ? '' : ' $message'}',
+            statusCode: status,
+          );
+        }
+
+        final body = response.data;
+        if (body is! dio.ResponseBody) {
+          throw const WebDavException('下载失败：服务器没有返回数据流');
+        }
+        await handle.setPosition(offset);
+        var written = offset;
+        await for (final chunk in body.stream) {
+          if (isAborted()) throw const _RangeNotSupported();
+          await handle.writeFrom(chunk);
+          written += chunk.length;
+          segmentDone[index] = written - start;
+          onBytes(chunk.length);
+        }
+        await handle.flush();
+        // 片内字节数对不上（服务端提前掐断）：按失败处理，交给重试补。
+        if (written != end + 1) {
+          throw WebDavException('分段不完整：$written/${end + 1}');
+        }
+        return;
+      } on _RangeNotSupported {
+        rethrow;
+      } catch (e) {
+        lastError = e;
+        if (isCancelled) rethrow;
+        if (!_isRetryableDownloadError(e)) rethrow;
+        if (attempt < downloadMaxAttempts) {
+          await Future<void>.delayed(Duration(milliseconds: 600 * attempt));
+        }
+      }
+    }
+    if (lastError is WebDavException) throw lastError;
+    throw WebDavException(
+      '分段下载失败：${lastError == null ? '未知错误' : describeWebDavError(lastError)}',
+    );
+  }
+
+  /// 发一次 GET，把响应体按块写进 [file]。
+  ///
+  /// [start] > 0 时带上 `Range` 续传：服务器回 206 就追加写；回 200 说明它
+  /// 不支持断点续传 / 忽略了 Range，只能把文件截断从头写。
+  Future<void> _downloadOnce(
+    webdav.Client client,
+    String path,
+    File file,
+    int start,
+    int? expectedSize,
+    void Function(int received, int total)? onProgress,
+  ) async {
+    var target = path;
+    for (var redirects = 0; redirects <= 5; redirects++) {
+      final response = await client.c.req<dynamic>(
+        client,
+        'GET',
+        target,
+        cancelToken: _cancelToken,
+        optionsHandler: (options) {
+          options.responseType = dio.ResponseType.stream;
+          options.followRedirects = true;
+          // 状态码由下面统一判断，避免 404 被 Dio 转成无信息的 badResponse。
+          options.validateStatus = (status) => status != null;
+          // 只把「长时间一个字节都没有」当失败，整体耗时交给上层超时。
+          options.receiveTimeout = downloadIdleTimeout;
+          if (start > 0) {
+            options.headers = {...?options.headers, 'range': 'bytes=$start-'};
+          }
+        },
+      );
+      final status = response.statusCode ?? 0;
+
+      if (status >= 300 && status < 400) {
+        final location = response.headers.value('location');
+        _closeStreamBody(response.data);
+        if (location == null || location.isEmpty) {
+          throw WebDavException(
+            '服务器返回重定向（HTTP $status），但没有提供跳转地址',
+            statusCode: status,
+          );
+        }
+        final current = Uri.tryParse(target);
+        target = current?.resolve(location).toString() ?? location;
+        continue;
+      }
+
+      if (status != 200 && status != 206) {
+        _closeStreamBody(response.data);
+        if (status == 404) {
+          throw WebDavException('远端文件不存在（HTTP 404）', statusCode: 404);
+        }
+        final message = response.statusMessage;
+        throw WebDavException(
+          'HTTP $status${message == null || message.isEmpty ? '' : ' $message'}',
+          statusCode: status,
+        );
+      }
+
+      final body = response.data;
+      if (body is! dio.ResponseBody) {
+        throw const WebDavException('下载失败：服务器没有返回数据流');
+      }
+      final resume = status == 206 && start > 0;
+      final receivedBase = resume ? start : 0;
+      final contentLength =
+          int.tryParse(response.headers.value('content-length') ?? '') ?? 0;
+      final total =
+          expectedSize ??
+          (contentLength > 0 ? contentLength + receivedBase : 0);
+
+      final sink = file.openWrite(
+        mode: resume ? FileMode.writeOnlyAppend : FileMode.write,
+      );
+      var received = receivedBase;
+      try {
+        await for (final chunk in body.stream) {
+          sink.add(chunk);
+          received += chunk.length;
+          onProgress?.call(received, total);
+        }
+        await sink.flush();
+      } finally {
+        await sink.close();
+      }
+      return;
+    }
+    throw const WebDavException('下载失败：重定向次数过多');
+  }
+
+  void _closeStreamBody(Object? data) {
+    if (data is dio.ResponseBody) {
+      // `ResponseBody.close()` 是 dio 的内部成员，这里直接取消订阅，
+      // 效果一样：连接立刻释放，不会因为没读完响应体把 socket 一直挂着。
+      data.stream.listen(null, onError: (Object _) {}).cancel();
+    }
+  }
+
+  /// 这个错误还值不值得重试。
+  ///
+  /// 4xx（404 / 403 / 400…）说明是这条路径或权限本身有问题，再试也一样；
+  /// 超时、连接中断、5xx、408、429 都值得带 `Range` 再试一次。
+  bool _isRetryableDownloadError(Object error) {
+    if (error is WebDavException) {
+      final code = error.statusCode;
+      if (code == null) return true;
+      return code >= 500 || code == 408 || code == 429;
+    }
+    return true;
+  }
+
+  Future<void> _deleteQuietly(File file) async {
+    try {
+      if (await file.exists()) await file.delete();
+    } catch (_) {
+      // 删不掉就留给系统清理，不影响本次结果。
+    }
+  }
+
+  /// 下载远端备份文件。
+  ///
+  /// 先流式落到临时文件再读进内存：整包 `ResponseType.bytes` 时 dio 会在
+  /// 两个数据块之间套 30 秒的 receiveTimeout（见 [downloadIdleTimeout]），
+  /// 大备份包几乎必然报「接收超时」，而且失败只能从头再来。
+  Future<Uint8List> downloadBackup(
+    String path, {
+    int? expectedSize,
+    void Function(int received, int total)? onProgress,
+  }) async {
+    _requireConfigured();
+    final dir = await AppPaths.tempDirectory();
+    final temp = File(
+      p.join(
+        dir.path,
+        'webdav_restore_${DateTime.now().microsecondsSinceEpoch}.zip',
+      ),
+    );
+    try {
+      await downloadToFile(
+        path,
+        savePath: temp.path,
+        expectedSize: expectedSize,
+        onProgress: onProgress,
+      );
+      // 超时 / 主动取消后即使字节已经收完也不采用，避免半截包被当成成功。
+      if (isCancelled) throw const WebDavException('下载已取消');
+      return await temp.readAsBytes();
+    } finally {
+      await _deleteQuietly(temp);
+    }
+  }
+
+  /// 删除远端备份文件。
+  Future<void> deleteBackup(String path) async {
+    _requireConfigured();
+    final client = _buildClient();
+    await client.remove(path, _cancelToken);
+  }
+
+  // ---------------------------------------------------------------- 歌单同步
+
+  /// 旧版数据文件：新协议不再写它们。只在 meta 不存在时读一次做迁移，
+  /// 避免升级后把远端已有歌单当成「空」而丢数据；之后完全按新协议运行。
+  static const String legacyCompressedName = 'playlists.json.gz';
+  static const String legacyPlainName = 'playlists.json';
+
+  /// 歌单快照 GC：除当前 digest 外额外保留的份数（供回滚 / 另一台设备读取）。
+  static const int _keepRecentSnapshots = 3;
+
+  /// 歌单快照 GC：这段时间内写入的一律保留。
+  ///
+  /// 另一台设备可能刚读到旧 meta、正在下载那份快照，立刻删掉会让它 404；
+  /// 这个窗口实际只需要覆盖一次下载（秒级），10 分钟已经很保守。
+  static const Duration _snapshotGracePeriod = Duration(minutes: 10);
+
+  String _playlistPath(String name) =>
+      playlistDir.isEmpty ? name : '$playlistDir/$name';
+
+  /// 读取版本描述文件（约 200 B）；404 表示远端还没初始化。
+  Future<PlaylistMeta?> readPlaylistMeta() async {
+    _enterStage('读取歌单版本描述 playlists.meta.json');
+    _requireConfigured();
+    try {
+      final client = _buildClient();
+      final response = await client.c.req<dynamic>(
+        client,
+        'GET',
+        _playlistPath(playlistMetaFileName),
+        cancelToken: _cancelToken,
+        optionsHandler: (options) {
+          options.responseType = dio.ResponseType.plain;
+          options.followRedirects = true;
+          options.validateStatus = (status) => status != null;
+          options.headers = {
+            ...?options.headers,
+            // 必须拿实体 ETag：服务器（如 Apache）会给 gzip 变体单独的
+            // `"…-gzip"` ETag，拿它做 If-Match 会永远 412。meta 只有几百字节。
+            'accept-encoding': 'identity',
+            // 指针必须读到最新内容：中间层缓存旧 meta 会让写后复核误报 412。
+            'cache-control': 'no-cache',
+            'pragma': 'no-cache',
+          };
+        },
+      );
+      final status = response.statusCode ?? 0;
+      if (status == 404) return null;
+      if (status != 200) {
+        throw WebDavException('读取歌单版本描述失败：HTTP $status', statusCode: status);
+      }
+      return PlaylistMeta.fromText(
+        '${response.data ?? ''}',
+        etag: response.headers.value('etag'),
+      );
+    } catch (e) {
+      _recordFailure(e);
+      rethrow;
+    }
+  }
+
+  /// 按 meta 的 digest 下载完整快照。
+  ///
+  /// 完整性以**解压后的内容摘要**为准：`meta.size` 只是传输提示，不同 zlib
+  /// 版本压出来的长度可能不同。校验失败重试一次，第二次不再按 `meta.size`
+  /// 分段，避免大小提示不准把下载截断。
+  Future<Map<String, dynamic>> readPlaylistSnapshot(PlaylistMeta meta) async {
+    _enterStage('下载远端歌单快照');
+    _requireConfigured();
+    Object? lastError;
+    for (var attempt = 1; attempt <= 2; attempt++) {
+      try {
+        final bytes = await _readBytes(
+          _playlistPath(playlistSnapshotFileName(meta.digest)),
+          expectedSize: attempt == 1 ? meta.size : null,
+        );
+        // 解压 + 校验放进 isolate（与上传路径同一套兜底：失败按可重试分类）。
+        final snapshot = await PlaylistSnapshot.decodeAndVerify(
+          bytes,
+          meta.digest,
+          mismatchMessage: '远端歌单快照校验失败：内容摘要不匹配',
+        );
+        return snapshot;
+      } catch (e) {
+        lastError = e;
+        if (isCancelled) rethrow;
+        final retryable =
+            e is FormatException ||
+            (e is WebDavException && e.statusCode == null);
+        if (!retryable || attempt >= 2) break;
+        debugPrint('[WebDav] 歌单快照校验失败，去掉大小提示重试一次: $e');
+      }
+    }
+    final error = lastError;
+    if (error == null) {
+      throw const WebDavException('下载歌单快照失败：未知错误');
+    }
+    _recordFailure(error);
+    throw error;
+  }
+
+  /// 一次性迁移：meta 不存在时尝试读旧版数据文件（只读，不回写）。
+  Future<Map<String, dynamic>?> readLegacyPlaylists() async {
+    _enterStage('迁移旧版歌单数据');
+    _requireConfigured();
+    try {
+      late final Uint8List bytes;
+      try {
+        bytes = await _readBytes(_playlistPath(legacyCompressedName));
+      } on WebDavException catch (e) {
+        if (e.statusCode != 404) rethrow;
+        try {
+          bytes = await _readBytes(_playlistPath(legacyPlainName));
+        } on WebDavException catch (e2) {
+          if (e2.statusCode == 404) return null;
+          rethrow;
+        }
+      }
+      if (bytes.isEmpty) return null;
+      final decoded = jsonDecode(utf8.decode(_gunzipOrRaw(bytes)));
+      if (decoded is Map) return decoded.map((k, v) => MapEntry('$k', v));
+      return null;
+    } catch (e) {
+      _recordFailure(e);
+      rethrow;
+    }
+  }
+
+  /// 上传不可变快照（内容寻址，同名内容必然相同，重复 PUT 幂等）。
+  Future<void> writePlaylistSnapshot(String digest, Uint8List bytes) async {
+    _enterStage('上传歌单快照');
+    _requireConfigured();
+    try {
+      await _writeBytes(_playlistPath(playlistSnapshotFileName(digest)), bytes);
+      _lastFailure = null;
+    } catch (e) {
+      _recordFailure(e);
+      rethrow;
+    }
+  }
+
+  /// 条件写 meta：先数据、后指针，指针永远指向完整快照。
+  ///
+  /// * 有强 ETag → `If-Match`；首次创建不发 `If-None-Match: *`（部分实现
+  ///   会直接拒掉），并发初始化交给「写后复核」兜底；
+  /// * 弱 ETag（`W/`）按 RFC 不能用于 `If-Match`，当作没有 ETag；
+  /// * 服务器不给 ETag / 不认条件头 → 降级为「写前重读 + 写后复核」；
+  /// * 无论哪条路径，写完都再读一次复核，被别的设备覆盖就抛 412 让上层重放。
+  Future<void> writePlaylistMeta(
+    PlaylistMeta meta, {
+    required PlaylistMeta? expected,
+  }) async {
+    _enterStage('更新歌单版本描述');
+    _requireConfigured();
+    final etag = expected?.etag;
+    final hasEtag =
+        etag != null && etag.isNotEmpty && !etag.startsWith('W/');
+    try {
+      if (expected != null && !hasEtag) {
+        final current = await readPlaylistMeta();
+        if (current != null &&
+            (current.revision != expected.revision ||
+                current.digest != expected.digest)) {
+          throw const WebDavException(
+            '云端歌单已被其它设备更新（HTTP 412）',
+            statusCode: 412,
+          );
+        }
+      }
+      final body = Uint8List.fromList(utf8.encode(jsonEncode(meta.toJson())));
+      final target = _playlistPath(playlistMetaFileName);
+      if (hasEtag) {
+        try {
+          await _writeBytes(target, body, extraHeaders: {'if-match': etag});
+        } on WebDavException catch (e) {
+          final code = e.statusCode;
+          if (code == 400 || code == 428 || code == 501) {
+            // 服务器不认条件写：退回无条件 PUT，靠下面的写后复核兜底。
+            debugPrint('[WebDav] 服务器不支持 If-Match（HTTP $code），改为无条件写入');
+            await _writeBytes(target, body);
+          } else if (code == 412) {
+            // 有些服务器给的 ETag 不是实体 ETag（例如变体 ETag 带 `-gzip`
+            // 后缀），条件写会一直被拒。重读确认远端没被别的设备改过，才降级
+            // 为无条件写入；真改过就交回上层重新合并。
+            final current = await readPlaylistMeta();
+            final unchanged =
+                current != null &&
+                current.epoch == expected!.epoch &&
+                current.revision == expected.revision &&
+                current.digest == expected.digest;
+            if (!unchanged) rethrow;
+            debugPrint('[WebDav] If-Match 被服务器拒绝但版本未变，改为无条件写入');
+            await _writeBytes(target, body);
+          } else {
+            rethrow;
+          }
+        }
+      } else {
+        await _writeBytes(target, body);
+      }
+      final after = await readPlaylistMeta();
+      if (after == null ||
+          after.revision != meta.revision ||
+          after.digest != meta.digest ||
+          after.writer != meta.writer) {
+        throw const WebDavException('云端歌单已被其它设备更新（HTTP 412）', statusCode: 412);
+      }
+      _lastFailure = null;
+    } catch (e) {
+      _recordFailure(e);
+      rethrow;
+    }
+  }
+
+  /// 清理旧的内容寻址快照：当前 digest 必留，最近 [_keepRecentSnapshots] 份
+  /// 必留，[_snapshotGracePeriod] 内刚写入的也留（其它设备可能刚读到旧 meta、
+  /// 正在下载那一份，窗口只有秒级），其余按修改时间从旧到新删除。
+  /// 失败静默，不影响同步结果。
+  ///
+  /// 早先的策略是「7 天内一律保留」，结果一天里同步几次就会堆出十几份
+  /// 130KB 的快照——云端目录只涨不跌。改成按份数保留后，正常使用下目录里
+  /// 稳定在 3~4 份。
+  Future<void> gcPlaylistSnapshots(String keepDigest) async {
+    try {
+      final client = _buildClient();
+      final dir = playlistDir.isEmpty ? '/' : playlistDir;
+      final items = await client.readDir(dir, _cancelToken);
+      final keepName = playlistSnapshotFileName(keepDigest);
+      final now = DateTime.now();
+      final candidates = <({String name, DateTime time})>[];
+      for (final item in items) {
+        final dyn = item as dynamic;
+        if (dyn.isDir == true) continue;
+        final name = '${dyn.name ?? ''}';
+        // 只认 `playlists.<64位sha256>.json.gz`，旧版 `playlists.json.gz`
+        // 不匹配，不会被 GC 删掉（留作回退备份）。
+        if (!isPlaylistSnapshotFile(name)) continue;
+        if (name == keepName) continue;
+        final mTime = dyn.mTime;
+        if (mTime is! DateTime) continue;
+        // 刚写下去的留给并发窗口，别让另一台设备下到一半 404。
+        if (now.difference(mTime) < _snapshotGracePeriod) continue;
+        candidates.add((name: name, time: mTime));
+      }
+      candidates.sort((a, b) => b.time.compareTo(a.time));
+      final expired = candidates.skip(_keepRecentSnapshots).toList();
+      var removed = 0;
+      for (final item in expired) {
+        try {
+          await client.remove(_playlistPath(item.name), _cancelToken);
+          removed++;
+        } catch (_) {
+          // 单个文件删不掉就算了，下次 GC 再试。
+        }
+      }
+      if (removed > 0) {
+        debugPrint('[WebDav] 已清理 $removed 份旧歌单快照');
+      }
+    } catch (_) {
+      // 列目录失败也不影响本次同步。
+    }
+  }
+
+  /// 版本描述损坏时的兜底：从远端现存快照里挑一份最新的、内容校验通过的，
+  /// 重建版本描述。
+  ///
+  /// 返回 null 表示远端没有任何快照可恢复（调用方按「远端未初始化」处理）；
+  /// 有快照但全部校验失败时抛错，避免在不确定远端数据的情况下强行覆盖。
+  Future<PlaylistMeta?> recoverPlaylistMeta({
+    required String writer,
+    required String epoch,
+  }) async {
+    _enterStage('尝试恢复歌单版本描述');
+    _requireConfigured();
+    final client = _buildClient();
+    final dir = playlistDir.isEmpty ? '/' : playlistDir;
+    late final List<dynamic> items;
+    try {
+      items = await client.readDir(dir, _cancelToken);
+    } catch (e) {
+      _recordFailure(e);
+      rethrow;
+    }
+    final candidates = <({String digest, DateTime time})>[];
+    for (final item in items) {
+      final dyn = item as dynamic;
+      if (dyn.isDir == true) continue;
+      final digest = snapshotDigestOf('${dyn.name ?? ''}');
+      if (digest == null) continue;
+      final mTime = dyn.mTime;
+      if (mTime is! DateTime) continue;
+      candidates.add((digest: digest, time: mTime));
+    }
+    candidates.sort((a, b) => b.time.compareTo(a.time));
+    Object? lastError;
+    // 只试最近 3 份：既够绕开一份上传中断留下的坏文件，也不会把整次同步拖太久。
+    for (final candidate in candidates.take(3)) {
+      try {
+        final bytes = await _readBytes(
+          _playlistPath(playlistSnapshotFileName(candidate.digest)),
+        );
+        // 这条路径只用快照做完整性校验（内容本身不参与重建 meta），
+        // 解压 / 校验放进 isolate，与下载路径同一套兜底语义。
+        await PlaylistSnapshot.decodeAndVerify(
+          bytes,
+          candidate.digest,
+          mismatchMessage: '快照内容摘要与文件名不符',
+        );
+        final meta = PlaylistMeta(
+          epoch: epoch,
+          revision: 1,
+          digest: candidate.digest,
+          size: bytes.length,
+          updatedAt: DateTime.now().millisecondsSinceEpoch,
+          writer: writer,
+        );
+        await writePlaylistMeta(meta, expected: null);
+        debugPrint('[WebDav] 已用快照 ${candidate.digest} 重建歌单版本描述');
+        return meta;
+      } catch (e) {
+        if (isCancelled) rethrow;
+        // 别的设备刚修好了指针：交给上层按新的 meta 重新同步。
+        if (e is WebDavException && e.statusCode == 412) rethrow;
+        lastError = e;
+        debugPrint('[WebDav] 恢复快照 ${candidate.digest} 失败: $e');
+      }
+    }
+    if (candidates.isNotEmpty) {
+      _recordFailure(lastError ?? '快照均不可用');
+      throw WebDavException(
+        '远端歌单版本描述损坏，且现存快照无法恢复'
+        '${lastError == null ? '' : '（${describeWebDavError(lastError)}）'}',
+      );
+    }
+    return null;
+  }
+
+  // ------------------------------------------------------- 附加数据 / 播放进度
+
+  /// 通用快照目录与歌单相同（都是 URL 基址）。
+  String _dataPath(String name) => playlistDir.isEmpty ? name : '$playlistDir/$name';
+
+  /// 读取通用版本描述文件；404 表示远端还没初始化。
+  Future<DataSnapshotMeta?> readDataMeta(String base) async {
+    _enterStage('读取 $base 版本描述');
+    _requireConfigured();
+    try {
+      final client = _buildClient();
+      final response = await client.c.req<dynamic>(
+        client,
+        'GET',
+        _dataPath(dataMetaFileName(base)),
+        cancelToken: _cancelToken,
+        optionsHandler: (options) {
+          options.responseType = dio.ResponseType.plain;
+          options.followRedirects = true;
+          options.validateStatus = (status) => status != null;
+          options.headers = {
+            ...?options.headers,
+            // 与歌单 meta 相同：必须拿实体 ETag，不能拿 gzip 变体的 ETag。
+            'accept-encoding': 'identity',
+            'cache-control': 'no-cache',
+            'pragma': 'no-cache',
+          };
+        },
+      );
+      final status = response.statusCode ?? 0;
+      if (status == 404) return null;
+      if (status != 200) {
+        throw WebDavException('读取 $base 版本描述失败：HTTP $status', statusCode: status);
+      }
+      return DataSnapshotMeta.fromText(
+        '${response.data ?? ''}',
+        etag: response.headers.value('etag'),
+      );
+    } catch (e) {
+      _recordFailure(e);
+      rethrow;
+    }
+  }
+
+  /// 按 meta 的 digest 下载并校验通用快照。
+  Future<Map<String, dynamic>> readDataSnapshot(
+    String base,
+    DataSnapshotMeta meta,
+  ) async {
+    _enterStage('下载 $base 快照');
+    _requireConfigured();
+    Object? lastError;
+    for (var attempt = 1; attempt <= 2; attempt++) {
+      try {
+        final bytes = await _readBytes(
+          _dataPath(dataSnapshotFileName(base, meta.digest)),
+          expectedSize: attempt == 1 ? meta.size : null,
+        );
+        return await DataSnapshotCodec.decodeAndVerify(
+          bytes,
+          meta.digest,
+          schema: dataSnapshotSchema,
+          mismatchMessage: '$base 快照校验失败：内容摘要不匹配',
+        );
+      } catch (e) {
+        lastError = e;
+        if (isCancelled) rethrow;
+        final retryable =
+            e is FormatException ||
+            (e is WebDavException && e.statusCode == null);
+        if (!retryable || attempt >= 2) break;
+        debugPrint('[WebDav] $base 快照校验失败，去掉大小提示重试一次: $e');
+      }
+    }
+    final error = lastError;
+    if (error == null) {
+      throw WebDavException('下载 $base 快照失败：未知错误');
+    }
+    _recordFailure(error);
+    throw error;
+  }
+
+  /// 上传不可变通用快照（内容寻址，重复 PUT 幂等）。
+  Future<void> writeDataSnapshot(
+    String base,
+    String digest,
+    Uint8List bytes,
+  ) async {
+    _enterStage('上传 $base 快照');
+    _requireConfigured();
+    try {
+      await _writeBytes(_dataPath(dataSnapshotFileName(base, digest)), bytes);
+      _lastFailure = null;
+    } catch (e) {
+      _recordFailure(e);
+      rethrow;
+    }
+  }
+
+  /// 条件写通用 meta（与歌单 meta 相同的 If-Match / 降级 / 写后复核策略）。
+  Future<void> writeDataMeta(
+    String base,
+    DataSnapshotMeta meta, {
+    required DataSnapshotMeta? expected,
+  }) async {
+    _enterStage('更新 $base 版本描述');
+    _requireConfigured();
+    final etag = expected?.etag;
+    final hasEtag =
+        etag != null && etag.isNotEmpty && !etag.startsWith('W/');
+    try {
+      if (expected != null && !hasEtag) {
+        final current = await readDataMeta(base);
+        if (current != null &&
+            (current.epoch != expected.epoch ||
+                current.revision != expected.revision ||
+                current.digest != expected.digest)) {
+          throw WebDavException(
+            '云端 $base 已被其它设备更新（HTTP 412）',
+            statusCode: 412,
+          );
+        }
+      }
+      final body = Uint8List.fromList(utf8.encode(jsonEncode(meta.toJson())));
+      final target = _dataPath(dataMetaFileName(base));
+      if (hasEtag) {
+        try {
+          await _writeBytes(target, body, extraHeaders: {'if-match': etag});
+        } on WebDavException catch (e) {
+          final code = e.statusCode;
+          if (code == 400 || code == 428 || code == 501) {
+            debugPrint('[WebDav] 服务器不支持 If-Match（HTTP $code），改为无条件写入');
+            await _writeBytes(target, body);
+          } else if (code == 412) {
+            final current = await readDataMeta(base);
+            final unchanged =
+                current != null &&
+                current.epoch == expected!.epoch &&
+                current.revision == expected.revision &&
+                current.digest == expected.digest;
+            if (!unchanged) rethrow;
+            debugPrint('[WebDav] If-Match 被服务器拒绝但版本未变，改为无条件写入');
+            await _writeBytes(target, body);
+          } else {
+            rethrow;
+          }
+        }
+      } else {
+        await _writeBytes(target, body);
+      }
+      final after = await readDataMeta(base);
+      if (after == null ||
+          after.revision != meta.revision ||
+          after.digest != meta.digest ||
+          after.writer != meta.writer) {
+        throw WebDavException(
+          '云端 $base 已被其它设备更新（HTTP 412）',
+          statusCode: 412,
+        );
+      }
+      _lastFailure = null;
+    } catch (e) {
+      _recordFailure(e);
+      rethrow;
+    }
+  }
+
+  /// 清理通用的旧内容寻址快照（保留当前 digest + 最近 2 份 + 10 分钟宽限）。
+  Future<void> gcDataSnapshots(String base, String keepDigest) async {
+    try {
+      final client = _buildClient();
+      final dir = playlistDir.isEmpty ? '/' : playlistDir;
+      final items = await client.readDir(dir, _cancelToken);
+      final keepName = dataSnapshotFileName(base, keepDigest);
+      final now = DateTime.now();
+      final candidates = <({String name, DateTime time})>[];
+      for (final item in items) {
+        final dyn = item as dynamic;
+        if (dyn.isDir == true) continue;
+        final name = '${dyn.name ?? ''}';
+        if (dataSnapshotDigestOf(base, name) == null) continue;
+        if (name == keepName) continue;
+        final mTime = dyn.mTime;
+        if (mTime is! DateTime) continue;
+        if (now.difference(mTime) < const Duration(minutes: 10)) continue;
+        candidates.add((name: name, time: mTime));
+      }
+      candidates.sort((a, b) => b.time.compareTo(a.time));
+      var removed = 0;
+      for (final item in candidates.skip(2)) {
+        try {
+          await client.remove(_dataPath(item.name), _cancelToken);
+          removed++;
+        } catch (_) {}
+      }
+      if (removed > 0) {
+        debugPrint('[WebDav] 已清理 $removed 份旧 $base 快照');
+      }
+    } catch (_) {}
+  }
+
+  /// 读取一个普通文件；404 返回 null。
+  Future<Uint8List?> readOptionalDataFile(String path) async {
+    _requireConfigured();
+    try {
+      return await _readBytes(_dataPath(path));
+    } on WebDavException catch (e) {
+      if (e.statusCode == 404) return null;
+      rethrow;
+    }
+  }
+
+  /// 写入一个普通文件（插件脚本等）。
+  Future<void> writeDataFile(String path, Uint8List bytes) async {
+    _requireConfigured();
+    await _writeBytes(_dataPath(path), bytes);
+  }
+
+  /// 确保远端子目录存在（失败忽略，服务器会自动建目录或已存在）。
+  ///
+  /// 目录也要走 [_dataPath]：`_writeBytes` 写的是 `<playlistDir>/<dir>/...`，
+  /// 目录若建在根上，服务器不自动建目录时 PUT 就会失败。
+  Future<void> ensureDataDir(String dir) async {
+    _requireConfigured();
+    await _ensureDir(_dataPath(dir));
+  }
+
+  /// 清理某个目录下不在 [keepNames] 里的旧文件（保持内容寻址目录不膨胀）。
+  Future<void> gcDataFiles(
+    String dir,
+    Set<String> keepNames, {
+    Duration grace = const Duration(minutes: 10),
+  }) async {
+    try {
+      final client = _buildClient();
+      final base = _dataPath(dir);
+      final items = await client.readDir(base.isEmpty ? '/' : base, _cancelToken);
+      final now = DateTime.now();
+      for (final item in items) {
+        final dyn = item as dynamic;
+        if (dyn.isDir == true) continue;
+        final name = '${dyn.name ?? ''}';
+        if (keepNames.contains(name)) continue;
+        final mTime = dyn.mTime;
+        if (mTime is! DateTime || now.difference(mTime) < grace) continue;
+        try {
+          await client.remove(base.isEmpty ? name : '$base/$name', _cancelToken);
+        } catch (_) {}
+      }
+    } catch (_) {}
+  }
+
+  Uint8List _gunzipOrRaw(Uint8List bytes) {
+    if (bytes.isEmpty) return bytes;
+    try {
+      return Uint8List.fromList(gzip.decode(bytes));
+    } catch (_) {
+      return bytes;
+    }
+  }
+}

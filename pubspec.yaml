@@ -1,0 +1,136 @@
+name: mintmusic
+description: "Music - A Flutter music player replicating CeruMusic for Android"
+publish_to: 'none'
+version: 2.0.0+1
+
+environment:
+  sdk: ^3.11.4
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  flutter_riverpod: ^2.6.1
+  riverpod_annotation: ^2.6.1
+
+  go_router: ^14.8.1
+
+  just_audio: ^0.9.46
+  # 实际用的是 third_party/audio_service（源码依赖，见 dependency_overrides）：
+  # 通知栏卡片要换成自定义布局（MintNotification.java），必须改插件源码。
+  audio_service: ^0.18.18
+  audio_session: ^0.1.25
+
+  # 桌面端（Windows）没有 just_audio 的原生实现，缺了后端时任何 AudioPlayer
+  # 调用都会抛 MissingPluginException（表现为「播放失败/MissingPluginException」）。
+  # 这里用 media_kit（libmpv）作为 Windows 后端；移动端仍走 just_audio 原生实现，
+  # 因为 just_audio_media_kit 只在我们显式开启的平台注册。
+  just_audio_media_kit: ^2.1.0
+  media_kit_libs_windows_audio: ^1.0.9
+
+  dio: ^5.8.0+1
+
+  permission_handler: ^11.4.0
+  file_picker: ^9.2.3
+
+  path_provider: ^2.1.5
+  path: ^1.9.1
+
+  freezed_annotation: ^2.4.4
+  json_annotation: ^4.9.0
+
+  cached_network_image: ^3.4.1
+  flutter_cache_manager: ^3.4.1
+  file: ^7.0.1
+
+  shared_preferences: ^2.5.3
+
+  # Windows 自绘标题栏：直接调 User32 / DWM 的几个函数（见
+  # core/platform/window_chrome.dart），需要 package:ffi 分配原生内存。
+  ffi: ^2.1.0
+
+  # 本地数据库。
+  # - sqflite：Android / iOS 官方实现
+  # - sqflite_common_ffi：Windows / macOS / Linux 桌面端实现（SQLite 走 FFI）
+  # - sqlite3_flutter_libs：桌面端把 sqlite3.dll 随应用一起打包
+  # 固定 sqlite3 为 2.x：3.x 改用 native assets 构建，需要额外的工具链支持。
+  sqflite: ^2.4.2
+  sqflite_common_ffi: ^2.3.7
+  sqlite3: ^2.9.4
+  sqlite3_flutter_libs: ^0.5.42
+
+  encrypt: ^5.0.3
+  pointycastle: ^3.9.1
+  crypto: ^3.0.6
+  convert: ^3.1.2
+  archive: ^4.0.4
+  # WebDAV 备份（备份 / 还原 / 歌单同步）
+  webdav_client: ^1.2.2
+  on_audio_query: ^2.9.0
+  flutter_js: ^0.8.7
+  xml: ^6.5.0
+  palette_generator: ^0.3.3+4
+  gbk_codec: ^0.4.0
+  connectivity_plus: ^6.1.0
+  uuid: ^4.5.1
+  record: ^5.2.1
+  webview_flutter: ^4.10.0
+  url_launcher: ^6.3.1
+  share_plus: ^10.1.4
+  qr_flutter: ^4.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  flutter_lints: ^6.0.0
+
+  build_runner: ^2.4.15
+  freezed: ^2.5.8
+  json_serializable: ^6.9.4
+  riverpod_generator: ^2.6.3
+
+dependency_overrides:
+  record_linux: ^1.3.1
+  # url_launcher_android >= 6.3.26 requires AGP 8.9.1+ (androidx.core 1.17.0 / browser 1.9.0),
+  # which exceeds this project's AGP 8.6.0 / Android Studio support range.
+  url_launcher_android: 6.3.25
+  # 本地补丁版（vendor 在 third_party/，基于 2.1.0，版本 2.1.0+mint.1）：
+  # mpv 会自动加载同目录同名文件当外部字幕 / 封面，`.lrc` 侧栏歌词打不开时报
+  # `Can not open external file`，media_kit 把这类错误当致命错误，正在加载的
+  # 媒体被判失败且 setAudioSource 永不返回（带 .lrc 的本地歌曲无法播放）。
+  # 补丁关闭了 mpv 的 sub-auto / cover-art-auto，并忽略外部文件错误。
+  # 详见 third_party/just_audio_media_kit/CHANGELOG.md；上游修复后可移除此 override。
+  just_audio_media_kit:
+    path: third_party/just_audio_media_kit
+  # 本地补丁版（vendor 在 third_party/，基于 0.18.19）：通知栏要换成自定义播放卡片
+  # （封面在左、歌名 + 收藏/上一首/播放暂停/下一首/桌面歌词 五个按钮），必须改插件
+  # 源码，所以在 AudioService.buildNotification() 里加了 MintNotification 分支。
+  # 另外 AudioServiceConfig.save() 被改成空实现（配置只存 settings.json）。
+  # 上游无法合并这类改动，升级插件时把新版本源码替换进目录后重新应用这三处改动。
+  audio_service:
+    path: third_party/audio_service
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/images/
+    - assets/images/backgrounds/
+    - assets/afp/
+    - assets/plugin_modules/
+    # 内置音源插件：首次启动自动安装（见 PluginService._ensureBundledPlugins）
+    - assets/plugins/
+
+  fonts:
+    - family: lyricfont
+      fonts:
+        - asset: assets/fonts/lyricfont.ttf
+    # 思源宋体（随安装包内置）
+    - family: SourceHanSerif
+      fonts:
+        - asset: assets/fonts/SourceHanSerif.otf
+    # 方正兰亭黑（随安装包内置）
+    - family: FZLantingHei
+      fonts:
+        - asset: assets/fonts/FZLantingHei.ttf

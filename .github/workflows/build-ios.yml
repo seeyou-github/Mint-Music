@@ -1,0 +1,117 @@
+name: Build iOS (Unsigned IPA)
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-ios:
+    name: Build iOS IPA
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Flutter info
+        run: flutter doctor -v
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Install CocoaPods dependencies
+        working-directory: ios
+        run: pod install --repo-update
+
+      - name: Disable code signing
+        run: |
+          cp ios/Flutter/Debug.xcconfig ios/Flutter/Debug.xcconfig.bak 2>/dev/null || true
+          cp ios/Flutter/Release.xcconfig ios/Flutter/Release.xcconfig.bak 2>/dev/null || true
+          printf '#include "Generated.xcconfig"\nCODE_SIGNING_ALLOWED=NO\nCODE_SIGNING_REQUIRED=NO\nCODE_SIGN_IDENTITY=""\nCODE_SIGN_STYLE=Manual\nDEVELOPMENT_TEAM=""\nPROVISIONING_PROFILE=""\n' > ios/Flutter/NoCodesign.xcconfig
+          echo '#include "NoCodesign.xcconfig"' > ios/Flutter/Debug.xcconfig
+          echo '#include "NoCodesign.xcconfig"' > ios/Flutter/Release.xcconfig
+
+      - name: Build iOS archive
+        run: flutter build ipa --release --no-codesign
+
+      - name: Package IPA from archive
+        run: |
+          echo "=== Archive contents ==="
+          ls -la build/ios/archive/Runner.xcarchive/Products/ 2>/dev/null
+
+          # Find Runner.app
+          APP_PATH=$(find build/ios/archive/Runner.xcarchive/Products -name "Runner.app" -type d | head -1)
+
+          if [ -z "$APP_PATH" ]; then
+            echo "ERROR: Runner.app not found in archive"
+            exit 1
+          fi
+
+          echo "Found app at: $APP_PATH"
+          echo "App size: $(du -sh "$APP_PATH" | cut -f1)"
+
+          # Create IPA manually
+          mkdir -p build/ios/ipa/Payload
+          cp -R "$APP_PATH" build/ios/ipa/Payload/
+          cd build/ios/ipa
+          zip -r ../mintmusic-unsigned.ipa Payload/
+          cd ../../..
+
+          echo "=== IPA created ==="
+          ls -la build/ios/ipa/
+          ls -la build/ios/mintmusic-unsigned.ipa
+
+      - name: Restore xcconfig
+        if: always()
+        run: |
+          cp ios/Flutter/Debug.xcconfig.bak ios/Flutter/Debug.xcconfig 2>/dev/null || true
+          cp ios/Flutter/Release.xcconfig.bak ios/Flutter/Release.xcconfig 2>/dev/null || true
+          rm -f ios/Flutter/Debug.xcconfig.bak ios/Flutter/Release.xcconfig.bak
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mintmusic-ios-unsigned
+          path: |
+            build/ios/mintmusic-unsigned.ipa
+          retention-days: 7
+          if-no-files-found: error
+
+  build-android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      # 与其他 Android 工作流一致：只出 arm64-v8a 的 APK。不分 ABI 打包时，
+      # 插件 AAR（sqlite3_flutter_libs 等）自带的 armeabi-v7a / x86 / x86_64
+      # 原生库会和 arm64 一起塞进同一个 APK。
+      - name: Build Android APK (arm-v8a only)
+        run: flutter build apk --release --split-per-abi --target-platform android-arm64 --android-skip-build-dependency-validation
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mintmusic-android
+          path: build/app/outputs/flutter-apk/*.apk
+          retention-days: 7
+          if-no-files-found: error

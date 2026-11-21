@@ -1,0 +1,67 @@
+name: Build Windows (x64 Portable ZIP)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-windows-x64:
+    name: Build Windows x64 Portable ZIP
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          # 钉死版本，避免 stable 漂移：
+          # Flutter 3.47 起 Windows 默认启用 Impeller（上游 flutter#191860，
+          # 启动时链接 70+ 个 shader program，慢 2~4 秒），我们在
+          # windows/runner/main.cpp 里用 set_impeller_switch 退回 Skia，
+          # 这条路径依赖 3.47.x 的引擎/SDK 行为，跨大版本需要重新验证。
+          # 3.47.7 = 当前 stable 最新，Dart 3.13.5（与已实测通过的包一致）。
+          flutter-version: 3.47.7
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Windows (release, x64)
+        run: flutter build windows --release
+
+      - name: Package portable ZIP
+        shell: pwsh
+        run: |
+          # Flutter 稳定版产物目录（旧版 Flutter 回退到无 x64 子目录的布局）
+          $releaseDir = 'build/windows/x64/runner/Release'
+          if (-not (Test-Path $releaseDir)) {
+            $releaseDir = 'build/windows/runner/Release'
+          }
+          if (-not (Test-Path $releaseDir)) {
+            throw "找不到 Windows 构建产物目录：$releaseDir"
+          }
+          Write-Host "使用产物目录：$releaseDir"
+
+          # 先整理成顶层文件夹，解压后直接得到一个免安装目录
+          $stage = 'mintmusic-windows-x64'
+          if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
+          New-Item -ItemType Directory -Path $stage | Out-Null
+          Copy-Item -Recurse -Force "$releaseDir\*" $stage
+
+          $zip = 'mintmusic-windows-x64-portable.zip'
+          if (Test-Path $zip) { Remove-Item $zip -Force }
+          Compress-Archive -Path $stage -DestinationPath $zip -Force
+
+          Write-Host "已生成 $zip"
+          Get-Item $zip |
+            Format-List Name, @{ Name = 'SizeMB'; Expression = { [math]::Round($_.Length / 1MB, 1) } }
+
+      - name: Upload Windows ZIP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mintmusic-windows-x64
+          path: mintmusic-windows-x64-portable.zip
+          retention-days: 3
+          if-no-files-found: error

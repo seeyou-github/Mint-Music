@@ -1,0 +1,476 @@
+import 'dart:convert';
+import 'dart:io';
+import 'package:dio/dio.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:path/path.dart' as p;
+
+import '../../../core/platform/app_paths.dart';
+import '../../../core/storage/app_preferences.dart';
+import '../domain/models/plugin_info.dart';
+
+class PluginRepository {
+  static const _key = 'installed_plugins';
+  final Dio _dio = Dio();
+
+  Future<List<PluginInfo>> loadPlugins() async {
+    final prefs = await AppPreferences.getInstance();
+    final data = prefs.getString(_key);
+    if (data == null) return [];
+    final list = jsonDecode(data) as List<dynamic>;
+    final plugins = list
+        .map((e) => PluginInfo.fromJson(e as Map<String, dynamic>))
+        .toList();
+    await _resolveIconPaths(plugins);
+    return plugins;
+  }
+
+  Future<void> savePlugins(List<PluginInfo> plugins) async {
+    final prefs = await AppPreferences.getInstance();
+    final data = jsonEncode(
+      [for (final plugin in plugins) _storedPluginJson(plugin)],
+    );
+    await prefs.setString(_key, data);
+  }
+
+  /// 图标缓存目录名（插件目录下的 `icons`）。
+  static const String _iconsFolder = 'icons';
+
+  /// 设置里只存 `icons/<id>.png`，读出来时拼回当前插件目录。
+  Future<void> _resolveIconPaths(List<PluginInfo> plugins) async {
+    final needsResolve = plugins.any((plugin) {
+      final stored = plugin.iconPath?.trim() ?? '';
+      return stored.isNotEmpty && !p.isAbsolute(stored);
+    });
+    if (!needsResolve) return;
+    final iconsDir = p.join(await _getPluginsDir(), _iconsFolder);
+    for (var i = 0; i < plugins.length; i++) {
+      final stored = plugins[i].iconPath?.trim() ?? '';
+      if (stored.isEmpty || p.isAbsolute(stored)) continue;
+      plugins[i] = plugins[i].copyWith(iconPath: p.join(iconsDir, stored));
+    }
+  }
+
+  /// 落盘前把本插件目录 `icons` 下的绝对路径缩成相对路径。
+  Map<String, dynamic> _storedPluginJson(PluginInfo plugin) {
+    final json = plugin.toJson();
+    final icon = plugin.iconPath?.trim() ?? '';
+    if (icon.isNotEmpty &&
+        p.isAbsolute(icon) &&
+        p.basename(p.dirname(icon)) == _iconsFolder) {
+      json['iconPath'] = '$_iconsFolder/${p.basename(icon)}';
+    }
+    return json;
+  }
+
+  Future<String> _getPluginsDir() async {
+    final appDir = await AppPaths.pluginDirectory();
+    final pluginsDir = Directory(appDir.path);
+    return pluginsDir.path;
+  }
+
+  /// 把设置里存的插件路径（新版本只存文件名）解析成绝对路径。
+  Future<String?> _resolvePluginFilePath(String stored) async {
+    final value = stored.trim();
+    if (value.isEmpty) return null;
+    if (p.isAbsolute(value) && await File(value).exists()) return value;
+    final candidate = p.join(await _getPluginsDir(), p.basename(value));
+    return await File(candidate).exists() ? candidate : null;
+  }
+
+  Future<PluginInfo> selectAndAddPlugin(String type) async {
+    final result = await FilePicker.platform.pickFiles(
+      dialogTitle: '请选择你的 ${type == 'lx' ? '洛雪' : '澜音'} js插件',
+      type: FileType.custom,
+      allowedExtensions: ['js'],
+    );
+
+    if (result == null || result.files.isEmpty) {
+      throw Exception('未选择文件');
+    }
+
+    final filePath = result.files.single.path;
+    if (filePath == null) {
+      throw Exception('无法获取文件路径');
+    }
+
+    final file = File(filePath);
+    final fileName = file.uri.pathSegments.last;
+    String pluginCode = await file.readAsString();
+
+    _validatePluginCode(pluginCode, type);
+
+    return await addPlugin(pluginCode, fileName, type);
+  }
+
+  Future<PluginInfo> downloadAndAddPlugin(String url, String type) async {
+    final response = await _dio.get(
+      url,
+      options: Options(
+        responseType: ResponseType.plain,
+        headers: {'User-Agent': 'MintMusic/1.0'},
+        receiveTimeout: const Duration(seconds: 30),
+      ),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('下载失败: HTTP ${response.statusCode}');
+    }
+
+    String pluginCode = response.data.toString();
+    if (pluginCode.trim().isEmpty) {
+      throw Exception('下载的文件内容为空');
+    }
+
+    _validatePluginCode(pluginCode, type);
+
+    final fileName = 'downloaded_${DateTime.now().millisecondsSinceEpoch}.js';
+    return await addPlugin(pluginCode, fileName, type);
+  }
+
+  /// 插件代码的静态粗筛（真正的判定在运行时）。
+  ///
+  /// 混淆过的插件不会把 `module.exports`、`lx` 之类的关键字原样写出来，
+  /// 只靠关键字判断会把能正常运行的插件挡在门外，因此这里放宽条件。
+  void _validatePluginCode(String code, String type) {
+    final lower = code.toLowerCase();
+    final looksLikeJsModule =
+        lower.contains('module') ||
+        lower.contains('exports') ||
+        lower.contains('require(');
+    if (type == 'cr') {
+      if (!lower.contains('cerumusic') && !looksLikeJsModule) {
+        throw Exception('澜音插件格式校验失败：代码中未找到cerumusic或exports');
+      }
+    } else if (type == 'lx') {
+      if (!lower.contains('lx') && !looksLikeJsModule) {
+        throw Exception('洛雪插件格式校验失败：代码中未找到lx关键字或module.exports');
+      }
+    }
+  }
+
+  Future<PluginInfo> addPlugin(
+    String pluginCode,
+    String pluginName,
+    String type,
+  ) async {
+    final pluginInfo = _parsePluginInfo(pluginCode);
+
+    if (pluginInfo['name'] == null ||
+        pluginInfo['version'] == null ||
+        pluginInfo['author'] == null) {
+      throw Exception('插件信息不完整，必须包含名称、版本和作者信息');
+    }
+
+    final plugins = await loadPlugins();
+    final duplicate = plugins.where(
+      (p) => p.name == pluginInfo['name'] && p.version == pluginInfo['version'],
+    );
+    if (duplicate.isNotEmpty) {
+      throw Exception(
+        '插件 "${pluginInfo['name']} v${pluginInfo['version']}" 已存在，不能重复添加',
+      );
+    }
+
+    final pluginId = DateTime.now().millisecondsSinceEpoch.toRadixString(16);
+    final safeName = (pluginName).replaceAll(RegExp(r'[^\w\d-]'), '_');
+    final pluginsDir = await _getPluginsDir();
+    final destPath = '$pluginsDir/${pluginId}_$safeName';
+    final destFile = File(destPath);
+    await destFile.writeAsString(pluginCode);
+
+    final sources = _parseSupportedSources(pluginCode);
+
+    final plugin = PluginInfo(
+      id: pluginId,
+      name: pluginInfo['name'] as String,
+      version: pluginInfo['version'] as String,
+      author: pluginInfo['author'] as String,
+      description: pluginInfo['description'] ?? '',
+      type: type,
+      installTime: DateTime.now(),
+      supportedSources: sources,
+      // 只存文件名：便携版整体搬目录后路径依然有效（与 PluginService 一致）。
+      filePath: p.basename(destPath),
+      isEnabled: plugins.isEmpty,
+    );
+
+    plugins.add(plugin);
+    await savePlugins(plugins);
+    return plugin;
+  }
+
+  Map<String, String?> _parsePluginInfo(String code) {
+    final nameMatch = RegExp(
+      "name\\s*:\\s*['\"]([^'\"]+)['\"]",
+    ).firstMatch(code);
+    final versionMatch = RegExp(
+      "version\\s*:\\s*['\"]([^'\"]+)['\"]",
+    ).firstMatch(code);
+    final authorMatch = RegExp(
+      "author\\s*:\\s*['\"]([^'\"]+)['\"]",
+    ).firstMatch(code);
+    final descMatch = RegExp(
+      "description\\s*:\\s*['\"]([^'\"]+)['\"]",
+    ).firstMatch(code);
+
+    return {
+      'name': nameMatch?.group(1),
+      'version': versionMatch?.group(1),
+      'author': authorMatch?.group(1),
+      'description': descMatch?.group(1),
+    };
+  }
+
+  List<PluginSource> _parseSupportedSources(String code) {
+    final sources = <PluginSource>[];
+    final sourceMatch = RegExp(
+      "sources\\s*:\\s*\\[([\\s\\S]*?)\\]",
+      multiLine: true,
+    ).firstMatch(code);
+    if (sourceMatch != null) {
+      final sourcesBlock = sourceMatch.group(1)!;
+      final sourceEntries = RegExp(
+        "\\{[\\s\\S]*?name\\s*:\\s*['\"]([^'\"]+)['\"][\\s\\S]*?qualities\\s*:\\s*\\[([^\\]]*)\\]",
+      ).allMatches(sourcesBlock);
+      for (final entry in sourceEntries) {
+        final name = entry.group(1)!;
+        final qualitiesStr = entry.group(2)!;
+        final qualities = RegExp(
+          "['\"]([^'\"]+)['\"]",
+        ).allMatches(qualitiesStr).map((m) => m.group(1)!).toList();
+        sources.add(PluginSource(name: name, qualities: qualities));
+      }
+    }
+    return sources;
+  }
+
+  Future<void> uninstallPlugin(String id) async {
+    final plugins = await loadPlugins();
+    final plugin = plugins.where((p) => p.id == id).firstOrNull;
+    if (plugin?.filePath != null) {
+      final resolved = await _resolvePluginFilePath(plugin!.filePath!);
+      if (resolved != null) {
+        await File(resolved).delete();
+      }
+    }
+    plugins.removeWhere((p) => p.id == id);
+    await savePlugins(plugins);
+  }
+
+  Future<void> togglePlugin(String id, bool isEnabled) async {
+    final plugins = await loadPlugins();
+    final index = plugins.indexWhere((p) => p.id == id);
+    if (index != -1) {
+      // 允许多个插件同时启用：只翻转目标插件，其它插件保持原状态
+      // （与 PluginService.togglePlugin 的策略保持一致）。
+      plugins[index] = plugins[index].copyWith(isEnabled: isEnabled);
+      await savePlugins(plugins);
+    }
+  }
+
+  Future<void> updatePlugin(PluginInfo plugin) async {
+    final plugins = await loadPlugins();
+    final index = plugins.indexWhere((p) => p.id == plugin.id);
+    if (index != -1) {
+      plugins[index] = plugin;
+      await savePlugins(plugins);
+    }
+  }
+
+  /// Normalize a URL that may be a GitHub/Gitee blob page URL to a raw
+  /// content URL, so that the response contains JS code instead of HTML.
+  String _normalizeUpdateUrl(String url) {
+    // GitHub blob → raw
+    final githubBlobPattern = RegExp(
+      r'^https?://github\.com/([^/]+/[^/]+)/blob/([^?#]+)',
+    );
+    final githubMatch = githubBlobPattern.firstMatch(url);
+    if (githubMatch != null) {
+      final repoPath = githubMatch.group(1);
+      final branchAndPath = githubMatch.group(2);
+      return 'https://raw.githubusercontent.com/$repoPath/$branchAndPath';
+    }
+
+    // GitHub repo page → try fetching latest release JS
+    // e.g. https://github.com/owner/repo → look for a .js file in repo
+    final githubRepoPattern = RegExp(r'^https?://github\.com/([^/]+/[^/]+)/?$');
+    final repoMatch = githubRepoPattern.firstMatch(url);
+    if (repoMatch != null) {
+      // Can't reliably determine the JS file path from just the repo URL.
+      // Return as-is and let the caller handle the failure gracefully.
+    }
+
+    return url;
+  }
+
+  /// 从插件头注释里取一个字段（大小写不敏感，`update_?url` 兼容下划线写法）。
+  ///
+  /// 只看开头一段：头注释一定在脚本最前面，避免在大体积混淆脚本里全文扫描。
+  static String? _headerField(String code, String fieldPattern) {
+    final head = code.length > 8192 ? code.substring(0, 8192) : code;
+    final match = RegExp(
+      '^[ \\t]*\\*?[ \\t]*@$fieldPattern[ \\t]+(\\S+)',
+      caseSensitive: false,
+      multiLine: true,
+    ).firstMatch(head);
+    return match?.group(1)?.trim();
+  }
+
+  static bool _isHttpUrl(String value) {
+    final uri = Uri.tryParse(value);
+    return uri != null && (uri.scheme == 'http' || uri.scheme == 'https');
+  }
+
+  /// 更新检测地址优先级：源码 `@updateUrl` > 源码 `@homepage` > 安装时存下的地址。
+  ///
+  /// 每次检查都从已安装插件的本地文件实时读一遍，老插件不必重装也能用上
+  /// 新字段。落雪插件被转换过，原始头注释保存在 `<filePath>.source.js`，
+  /// 所以先读它、再读转换后的代码，都取不到才回退到安装时的快照。
+  Future<String?> resolveUpdateUrl(PluginInfo plugin) async {
+    final storedPath = plugin.filePath;
+    if (storedPath != null && storedPath.isNotEmpty) {
+      final path = await _resolvePluginFilePath(storedPath);
+      if (path != null) {
+        for (final candidate in ['$path.source.js', path]) {
+          try {
+            final file = File(candidate);
+            if (!await file.exists()) continue;
+            final code = await file.readAsString();
+            final declared =
+                _headerField(code, 'update_?url') ??
+                _headerField(code, 'homepage');
+            if (declared != null && _isHttpUrl(declared)) return declared;
+          } catch (_) {
+            // 文件读不了就继续试下一个候选 / 回退存储值，不影响检查主流程。
+          }
+        }
+      }
+    }
+    final stored = plugin.updateUrl?.trim();
+    return (stored == null || stored.isEmpty) ? null : stored;
+  }
+
+  /// Check if a plugin has an update available by fetching its updateUrl
+  /// and comparing the version number.
+  Future<PluginUpdateResult> checkPluginUpdate(PluginInfo plugin) async {
+    final declaredUrl = await resolveUpdateUrl(plugin);
+    if (declaredUrl == null || declaredUrl.isEmpty) {
+      return PluginUpdateResult(plugin: plugin, available: false);
+    }
+
+    final url = _normalizeUpdateUrl(declaredUrl);
+
+    try {
+      final response = await _dio.get(
+        url,
+        options: Options(
+          responseType: ResponseType.plain,
+          headers: {
+            'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+                '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          },
+          receiveTimeout: const Duration(seconds: 15),
+          followRedirects: true,
+          maxRedirects: 5,
+        ),
+      );
+
+      if (response.statusCode != 200) {
+        return PluginUpdateResult(plugin: plugin, available: false);
+      }
+
+      final code = response.data.toString();
+      final remoteVersion = _extractVersionFromCode(code);
+
+      if (remoteVersion != null &&
+          _isNewerVersion(remoteVersion, plugin.version)) {
+        return PluginUpdateResult(
+          plugin: plugin,
+          available: true,
+          remoteVersion: remoteVersion,
+          remoteCode: code,
+          updateUrl: url,
+        );
+      }
+    } catch (e) {
+      print('[PluginRepository] Update check failed for ${plugin.name}: $e');
+    }
+
+    return PluginUpdateResult(plugin: plugin, available: false);
+  }
+
+  /// Check all installed plugins for updates.
+  Future<List<PluginUpdateResult>> checkAllPluginUpdates() async {
+    final plugins = await loadPlugins();
+    final results = <PluginUpdateResult>[];
+
+    // 不再按存储值提前跳过：地址也可能只写在插件源码头注释里，
+    // 由 checkPluginUpdate → resolveUpdateUrl 自己判断有没有可用地址。
+    for (final plugin in plugins) {
+      results.add(await checkPluginUpdate(plugin));
+    }
+
+    return results;
+  }
+
+  /// Extract version string from plugin JS code.
+  String? _extractVersionFromCode(String code) {
+    // Try common version patterns in JS plugin code
+    // 1. @version X.Y.Z in comment header
+    final commentVersion = RegExp(
+      r'@version\s+(\S+)',
+      caseSensitive: false,
+    ).firstMatch(code);
+    if (commentVersion != null) {
+      return commentVersion.group(1);
+    }
+
+    // 2. version: 'X.Y.Z' in object literal
+    final objectVersion = RegExp(
+      "version\\s*:\\s*['\"]([^'\"]+)['\"]",
+      caseSensitive: false,
+    ).firstMatch(code);
+    if (objectVersion != null) {
+      return objectVersion.group(1);
+    }
+
+    return null;
+  }
+
+  /// Compare two semantic version strings.
+  /// Returns true if [remote] is newer than [local].
+  bool _isNewerVersion(String remote, String local) {
+    final remoteParts = _parseVersion(remote);
+    final localParts = _parseVersion(local);
+
+    for (var i = 0; i < 3; i++) {
+      final r = i < remoteParts.length ? remoteParts[i] : 0;
+      final l = i < localParts.length ? localParts[i] : 0;
+      if (r > l) return true;
+      if (r < l) return false;
+    }
+    return false;
+  }
+
+  List<int> _parseVersion(String version) {
+    final cleaned = version.replaceAll(RegExp(r'[^0-9.]'), '');
+    return cleaned.split('.').map((s) => int.tryParse(s) ?? 0).toList();
+  }
+}
+
+class PluginUpdateResult {
+  final PluginInfo plugin;
+  final bool available;
+  final String? remoteVersion;
+  final String? remoteCode;
+  final String? updateUrl;
+
+  const PluginUpdateResult({
+    required this.plugin,
+    required this.available,
+    this.remoteVersion,
+    this.remoteCode,
+    this.updateUrl,
+  });
+}

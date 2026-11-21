@@ -1,0 +1,949 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import 'package:path/path.dart' as p;
+
+import '../../../core/l10n/l10n.dart';
+import '../../../core/theme/app_surface.dart';
+import '../../../core/theme/app_spacing.dart';
+import '../../../core/theme/theme_provider.dart';
+import '../../../core/utils/responsive_layout.dart';
+import '../../../shared/widgets/cover_badge.dart';
+import '../../../shared/widgets/music_cover_image.dart';
+import '../../../shared/widgets/playlist_manager.dart';
+import '../../../shared/widgets/playlist_sync_button.dart';
+import '../application/playlist_providers.dart';
+import '../../player/application/playback_context.dart';
+import '../../player/application/playback_controller.dart';
+import '../domain/models/playlist.dart' as local_playlist;
+import '../domain/models/recently_played.dart';
+import '../utils/cerumusic_playlist_importer.dart';
+import '../utils/favorite_playlist.dart';
+
+class LibraryPage extends ConsumerWidget {
+  const LibraryPage({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final colors = ref.watch(themeColorsProvider);
+    final playlistsAsync = ref.watch(playlistsProvider);
+
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      body: SafeArea(
+        bottom: false,
+        child: Column(
+          children: [
+            _buildHeader(context, colors, ref),
+            const SizedBox(height: AppSpacing.md),
+            Expanded(
+              child: playlistsAsync.when(
+                data: (playlists) => playlists.isEmpty
+                    ? _buildEmptyState(context, colors)
+                    : _buildPlaylistGrid(context, colors, playlists, ref),
+                loading: () => const Center(child: CircularProgressIndicator()),
+                error: (e, _) => Center(
+                  child: Text(
+                    context.tr('加载失败'),
+                    style: TextStyle(color: colors.textHint),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 顶部操作区。
+  ///
+  /// Android：不显示「我的收藏」标题（底部导航已经标明当前是收藏分类），
+  /// 新建歌单靠左、导入 / 同步靠右。
+  /// 桌面（Windows 等）：保留左侧「我的收藏」标题，操作按钮整组靠右，
+  /// 其中「新建歌单」紧挨在「导入」左边。
+  Widget _buildHeader(BuildContext context, ThemeColors colors, WidgetRef ref) {
+    final isTablet = ResponsiveLayout.isTablet(context);
+    final padding = EdgeInsets.symmetric(
+      horizontal: ResponsiveLayout.horizontalPadding(context),
+      vertical: AppSpacing.md,
+    );
+
+    if (Platform.isAndroid) {
+      return Padding(
+        padding: padding,
+        child: Row(
+          children: [
+            _buildCreateButton(context, colors),
+            const Spacer(),
+            _buildImportButton(context, colors, ref),
+            const SizedBox(width: AppSpacing.sm),
+            const PlaylistSyncButton(compact: true),
+          ],
+        ),
+      );
+    }
+
+    return Padding(
+      padding: padding,
+      child: Row(
+        children: [
+          Expanded(
+            child: Row(
+              children: [
+                // 主色竖条：与本地页「本地音乐」标题同款。
+                Container(
+                  width: 4,
+                  height: 24,
+                  decoration: BoxDecoration(
+                    color: colors.primary,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.md),
+                Expanded(
+                  child: Text(
+                    context.tr('我的收藏'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: isTablet ? 26 : 22,
+                      fontWeight: FontWeight.bold,
+                      color: colors.textPrimary,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: AppSpacing.md),
+          _buildCreateButton(context, colors),
+          const SizedBox(width: AppSpacing.sm),
+          _buildImportButton(context, colors, ref),
+          const SizedBox(width: AppSpacing.sm),
+          const PlaylistSyncButton(compact: true),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCreateButton(BuildContext context, ThemeColors colors) {
+    return _buildHeaderIconButton(
+      colors,
+      Icons.add,
+      context.tr('新建歌单'),
+      () => showCreatePlaylistDialog(context),
+    );
+  }
+
+  Widget _buildImportButton(
+    BuildContext context,
+    ThemeColors colors,
+    WidgetRef ref,
+  ) {
+    return _buildHeaderIconButton(
+      colors,
+      Icons.file_download,
+      context.tr('导入'),
+      () => _showImportDialog(context, colors, ref),
+    );
+  }
+
+  /// 顶部图标按钮：与本地页「选择目录 / 扫描」同款（圆角方块 + 居中图标）。
+  Widget _buildHeaderIconButton(
+    ThemeColors colors,
+    IconData icon,
+    String tooltip,
+    VoidCallback onTap,
+  ) {
+    return Tooltip(
+      message: tooltip,
+      child: GestureDetector(
+        onTap: onTap,
+        behavior: HitTestBehavior.opaque,
+        child: Container(
+          width: 40,
+          height: 40,
+          decoration: floatingButtonDecoration(colors, radius: AppRadius.md),
+          child: Icon(icon, size: 20, color: colors.textSecondary),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmptyState(BuildContext context, ThemeColors colors) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.library_music,
+            size: 64,
+            color: colors.textHint,
+          ),
+          const SizedBox(height: AppSpacing.md),
+          Text(
+            context.tr('还没有歌单'),
+            style: TextStyle(fontSize: 16, color: colors.textHint),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Text(
+            context.tr('点击上方"新建歌单"开始创建'),
+            style: TextStyle(
+              fontSize: 13,
+              color: colors.textHint,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPlaylistGrid(
+    BuildContext context,
+    ThemeColors colors,
+    List<local_playlist.Playlist> playlists,
+    WidgetRef ref,
+  ) {
+    final isTablet = ResponsiveLayout.isTablet(context);
+    final crossAxisCount = ResponsiveLayout.gridCrossAxisCount(context);
+
+    return GridView.builder(
+      // AppShell 将迷你播放器叠放在页面内容之上。为列表底部预留空间，
+      // 使最后一行歌单能够完整滚动到播放器上方。
+      padding: EdgeInsets.fromLTRB(
+        ResponsiveLayout.horizontalPadding(context),
+        0,
+        ResponsiveLayout.horizontalPadding(context),
+        AppSpacing.miniPlayerHeight + AppSpacing.lg,
+      ),
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: crossAxisCount,
+        childAspectRatio: isTablet ? 0.85 : 0.8,
+        crossAxisSpacing: isTablet ? 16 : AppSpacing.md,
+        mainAxisSpacing: isTablet ? 16 : AppSpacing.md,
+      ),
+      itemCount: playlists.length,
+      addAutomaticKeepAlives: false,
+      addRepaintBoundaries: true,
+      itemBuilder: (context, index) {
+        final playlist = playlists[index];
+        return _buildPlaylistCard(context, colors, playlist, index, ref);
+      },
+    );
+  }
+
+  Widget _buildPlaylistCard(
+    BuildContext context,
+    ThemeColors colors,
+    local_playlist.Playlist playlist,
+    int index,
+    WidgetRef ref,
+  ) {
+    final favoriteType = playlist.favoriteType;
+    return GestureDetector(
+      // 歌单 id 可能带 `/`、`?`（插件来源的榜单是 `mf:board:<源>:<原始 id>`，
+      // 例如 bilibili 的 `popular/series/one?number=396`），不编码会让
+      // go_router 把 id 切成多段，报 no routes for location。
+      onTap: () =>
+          context.push('/library/playlist/${Uri.encodeComponent(playlist.id)}'),
+      child: Container(
+        decoration: BoxDecoration(
+          color: colors.surface,
+          borderRadius: BorderRadius.circular(AppRadius.lg),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  Container(
+                    color: colors.surfaceVariant,
+                    child: _buildPlaylistCover(colors, playlist),
+                  ),
+                  if (favoriteType != null)
+                    Positioned(
+                      top: 6,
+                      right: 6,
+                      child: CoverBadge(
+                        label: context.tr(
+                          favoriteType == PlaybackSourceType.artist
+                              ? '作者'
+                              : '专辑',
+                        ),
+                        color: favoriteType == PlaybackSourceType.artist
+                            ? const Color(0xFFB07CFF)
+                            : const Color(0xFFD9B44A),
+                      ),
+                    )
+                  else if (playlist.isUserCreated)
+                    // 用户自建歌单（不是「我的收藏」，也不是收藏来的内容）。
+                    Positioned(
+                      top: 6,
+                      right: 6,
+                      child: CoverBadge(
+                        label: context.tr('自建'),
+                        color: colors.primary,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(AppSpacing.sm),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    playlist.displayName,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                      color: colors.textPrimary,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    context.tr('${playlist.songCount}首歌曲'),
+                    style: TextStyle(fontSize: 11, color: colors.textSecondary),
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      _PlaylistAction(
+                        icon: Icons.play_arrow,
+                        label: context.tr('播放'),
+                        color: colors.primary,
+                        onTap: () {
+                          if (playlist.songs.isNotEmpty) {
+                            PlaybackContext.instance.set(
+                              PlaybackSourceType.playlist,
+                              id: playlist.id,
+                              name: playlist.name,
+                            );
+                            ref
+                                .read(playbackControllerProvider.notifier)
+                                .setQueue(
+                                  playlist.playbackSongs,
+                                  startIndex: 0,
+                                );
+                          }
+                        },
+                      ),
+                      // 「我的收藏」不能删除，只有自己建的歌单才有删除入口。
+                      if (playlist.id != '__favorites__')
+                        _PlaylistAction(
+                          icon: Icons.delete,
+                          label: context.tr('删除'),
+                          color: colors.textSecondary,
+                          onTap: () =>
+                              _confirmDelete(context, colors, ref, playlist),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPlaylistCover(
+    ThemeColors colors,
+    local_playlist.Playlist playlist,
+  ) {
+    // 「我的收藏」没有原始歌单封面，用当前第一首歌的封面；
+    // 其它歌单展示歌单自身的原始封面。
+    final isFavorites = playlist.id == '__favorites__';
+    if (isFavorites) {
+      final firstSong = playlist.songs.isNotEmpty ? playlist.songs.first : null;
+      if (firstSong != null) {
+        if (firstSong.mediaStoreId != null || firstSong.isLocal) {
+          return SizedBox.expand(
+            child: MusicCoverImage(
+              key: ValueKey('lib_cover_${firstSong.id}'),
+              songId: firstSong.id,
+              mediaStoreId: firstSong.mediaStoreId,
+              fit: BoxFit.cover,
+              errorWidget: Center(
+                child: Icon(Icons.music_note, size: 40, color: colors.textHint),
+              ),
+            ),
+          );
+        }
+
+        if (firstSong.coverUrl != null && firstSong.coverUrl!.isNotEmpty) {
+          return SizedBox.expand(
+            child: MusicCoverImage(
+              // 带上歌曲 id：第一首歌变化时强制重建，避免沿用上一首的封面
+              key: ValueKey('lib_cover_url_${firstSong.id}'),
+              url: firstSong.coverUrl,
+              fit: BoxFit.cover,
+              errorWidget: Center(
+                child: Icon(Icons.music_note, size: 40, color: colors.textHint),
+              ),
+            ),
+          );
+        }
+      }
+      // 「我的收藏」没有自己的封面：没有可用的首曲封面时直接显示占位，
+      // **不能**回落到下面的 `coverImgUrl` —— 否则删光歌曲后会残留上一张
+      // 封面，同步还会把它传给其它设备（见 PlaylistMerge 的空歌单封面清理）。
+      return Center(
+        child: Icon(Icons.music_note, size: 40, color: colors.textHint),
+      );
+    }
+
+    // 歌单自身的原始封面
+    if (playlist.coverImgUrl.isNotEmpty) {
+      return SizedBox.expand(
+        child: MusicCoverImage(
+          url: playlist.coverImgUrl,
+          fit: BoxFit.cover,
+          errorWidget: Center(
+            child: Icon(Icons.music_note, size: 40, color: colors.textHint),
+          ),
+        ),
+      );
+    }
+
+    // 歌单没有原始封面时退回第一首歌的封面
+    final firstSong = playlist.songs.isNotEmpty ? playlist.songs.first : null;
+    if (firstSong != null) {
+      if (firstSong.mediaStoreId != null || firstSong.isLocal) {
+        return SizedBox.expand(
+          child: MusicCoverImage(
+            key: ValueKey('lib_cover_${firstSong.id}'),
+            songId: firstSong.id,
+            mediaStoreId: firstSong.mediaStoreId,
+            fit: BoxFit.cover,
+            errorWidget: Center(
+              child: Icon(Icons.music_note, size: 40, color: colors.textHint),
+            ),
+          ),
+        );
+      }
+      if (firstSong.coverUrl != null && firstSong.coverUrl!.isNotEmpty) {
+        return SizedBox.expand(
+          child: MusicCoverImage(
+            key: ValueKey('lib_cover_url_${firstSong.id}'),
+            url: firstSong.coverUrl,
+            fit: BoxFit.cover,
+            errorWidget: Center(
+              child: Icon(Icons.music_note, size: 40, color: colors.textHint),
+            ),
+          ),
+        );
+      }
+    }
+
+    return Center(
+      child: Icon(Icons.music_note, size: 40, color: colors.textHint),
+    );
+  }
+
+  void _confirmDelete(
+    BuildContext context,
+    ThemeColors colors,
+    WidgetRef ref,
+    local_playlist.Playlist playlist,
+  ) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: colors.dialogSurface,
+        title: Text(
+          context.tr('删除歌单'),
+          style: TextStyle(color: colors.textPrimary),
+        ),
+        content: Text(
+          context.tr('确定要删除"${playlist.name}"吗？此操作不可撤销。'),
+          style: TextStyle(color: colors.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(
+              context.tr('取消'),
+              style: TextStyle(color: colors.textHint),
+            ),
+          ),
+          TextButton(
+            onPressed: () {
+              ref.read(playlistsProvider.notifier).deletePlaylist(playlist.id);
+              Navigator.pop(ctx);
+            },
+            child: Text(
+              context.tr('删除'),
+              style: TextStyle(color: colors.error),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showImportDialog(
+    BuildContext context,
+    ThemeColors colors,
+    WidgetRef ref,
+  ) {
+    showDialog(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: colors.dialogSurface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadius.lg),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.lg),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                context.tr('选择导入方式'),
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                  color: colors.textPrimary,
+                ),
+              ),
+              const SizedBox(height: AppSpacing.lg),
+              _buildImportOption(
+                colors,
+                Icons.queue_music,
+                context.tr('从当前播放列表'),
+                context.tr('将当前播放列表保存为歌单'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _importFromCurrentPlaylist(context, colors, ref);
+                },
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              _buildImportOption(
+                colors,
+                Icons.folder_open,
+                context.tr('从本地歌单文件'),
+                context.tr('导入 .cmpl/.cpl/.json 歌单文件'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _importFromLocalFile(context, colors, ref);
+                },
+              ),
+              const SizedBox(height: AppSpacing.lg),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: Text(
+                    context.tr('取消'),
+                    style: TextStyle(color: colors.textHint),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildImportOption(
+    ThemeColors colors,
+    IconData icon,
+    String title,
+    String description, {
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(AppRadius.md),
+      child: Container(
+        padding: const EdgeInsets.all(AppSpacing.md),
+        decoration: BoxDecoration(
+          border: Border.all(color: colors.divider),
+          borderRadius: BorderRadius.circular(AppRadius.md),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: colors.primary.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(AppRadius.sm),
+              ),
+              child: Icon(icon, size: 20, color: colors.primary),
+            ),
+            const SizedBox(width: AppSpacing.md),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color: colors.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    description,
+                    style: TextStyle(fontSize: 12, color: colors.textHint),
+                  ),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right, size: 20, color: colors.textHint),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _importFromCurrentPlaylist(
+    BuildContext context,
+    ThemeColors colors,
+    WidgetRef ref,
+  ) {
+    final playbackState = ref.read(playbackControllerProvider);
+    final queue = playbackState.queue;
+
+    if (queue.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            context.tr('当前播放列表为空'),
+            style: TextStyle(color: colors.textOnPrimary),
+          ),
+          backgroundColor: colors.warning,
+        ),
+      );
+      return;
+    }
+
+    final controller = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: colors.dialogSurface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadius.lg),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.lg),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                context.tr('从播放列表导入'),
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                  color: colors.textPrimary,
+                ),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              Text(
+                context.tr('共 ${queue.length} 首歌曲'),
+                style: TextStyle(fontSize: 13, color: colors.textHint),
+              ),
+              const SizedBox(height: AppSpacing.md),
+              TextField(
+                controller: controller,
+                autofocus: true,
+                decoration: InputDecoration(
+                  hintText: context.tr('输入歌单名称'),
+                  hintStyle: TextStyle(color: colors.textHint),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(AppRadius.md),
+                    borderSide: BorderSide(color: colors.divider),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(AppRadius.md),
+                    borderSide: BorderSide(color: colors.divider),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(AppRadius.md),
+                    borderSide: BorderSide(color: colors.primary),
+                  ),
+                ),
+                style: TextStyle(color: colors.textPrimary),
+              ),
+              const SizedBox(height: AppSpacing.lg),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    child: Text(
+                      context.tr('取消'),
+                      style: TextStyle(color: colors.textHint),
+                    ),
+                  ),
+                  const SizedBox(width: AppSpacing.sm),
+                  TextButton(
+                    onPressed: () {
+                      final name = controller.text.trim();
+                      if (name.isEmpty) return;
+                      Navigator.pop(ctx);
+
+                      final localPlaylist = local_playlist.Playlist(
+                        id: DateTime.now().millisecondsSinceEpoch.toString(),
+                        name: name,
+                        description: '从播放列表导入，共 ${queue.length} 首歌曲',
+                        source: 'local',
+                        createTime: DateTime.now(),
+                        updateTime: DateTime.now(),
+                        songs: queue,
+                      );
+
+                      ref
+                          .read(playlistsProvider.notifier)
+                          .updatePlaylist(localPlaylist);
+
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            context.tr('成功从播放列表导入 ${queue.length} 首歌曲'),
+                            style: TextStyle(color: colors.textOnPrimary),
+                          ),
+                          backgroundColor: colors.primary,
+                        ),
+                      );
+                    },
+                    child: Text(
+                      context.tr('导入'),
+                      style: TextStyle(color: colors.primary),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _importFromLocalFile(
+    BuildContext context,
+    ThemeColors colors,
+    WidgetRef ref,
+  ) async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.any,
+        allowCompression: false,
+      );
+
+      if (result == null || result.files.isEmpty) {
+        return;
+      }
+
+      final file = result.files.first;
+
+      if (file.path == null) {
+        return;
+      }
+
+      final ext = file.path!.split('.').last.toLowerCase();
+
+      List<Map<String, dynamic>> playlistData;
+      // 歌单名：导出的文件名就是歌单名（xxx.cmpl），JSON 文件里也可能带
+      // name 字段；都取不到时才用「导入歌单 + 日期」兜底。
+      String? playlistName;
+
+      if (ext == 'cmpl' || ext == 'cpl') {
+        playlistData = await CeruMusicPlaylistImporter.importFromFileAsync(
+          file.path!,
+        );
+
+        if (!CeruMusicPlaylistImporter.validateImportedPlaylist(playlistData)) {
+          throw Exception('歌单数据格式不正确或缺少必要字段');
+        }
+
+        playlistName = _playlistNameFromFilePath(file.path!);
+      } else {
+        final fileBytes = await File(file.path!).readAsBytes();
+        final content = utf8.decode(fileBytes);
+        playlistData = _parseJsonPlaylist(content);
+        playlistName =
+            _playlistNameFromJson(content) ??
+            _playlistNameFromFilePath(file.path!);
+      }
+
+      final songs = _convertCeruMusicPlaylistToSongs(playlistData);
+
+      if (songs.isEmpty) {
+        throw Exception('歌单中没有有效的歌曲');
+      }
+
+      final name =
+          playlistName ?? '导入歌单 ${DateTime.now().toString().substring(0, 10)}';
+
+      await ref
+          .read(playlistsProvider.notifier)
+          .createPlaylistWithSongs(name, songs);
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              context.tr('导入成功！共导入 ${songs.length} 首歌曲'),
+              style: TextStyle(color: colors.textOnPrimary),
+            ),
+            backgroundColor: colors.primary,
+          ),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              context.tr('导入失败：${e.toString()}'),
+              style: TextStyle(color: colors.textOnPrimary),
+            ),
+            backgroundColor: colors.error,
+          ),
+        );
+      }
+    }
+  }
+
+  /// 从文件名里取歌单名。
+  ///
+  /// 导出的歌单文件名就是歌单名（`我的歌单.cmpl`），导入时直接拿文件名当
+  /// 歌单名，才能把名字还原回来。
+  String? _playlistNameFromFilePath(String path) {
+    final name = p.basenameWithoutExtension(path).trim();
+    if (name.isEmpty) return null;
+    return name;
+  }
+
+  /// 从 JSON 歌单文件里取歌单名（文件里有 name / playlistName / title 时）。
+  String? _playlistNameFromJson(String jsonText) {
+    try {
+      final data = jsonDecode(jsonText);
+      if (data is Map) {
+        for (final key in const ['name', 'playlistName', 'title']) {
+          final value = data[key];
+          if (value is String && value.trim().isNotEmpty) {
+            return value.trim();
+          }
+        }
+      }
+    } catch (_) {
+      // 解析失败就当没有名字，继续用文件名兜底。
+    }
+    return null;
+  }
+
+  List<Map<String, dynamic>> _parseJsonPlaylist(String jsonText) {
+    try {
+      final data = jsonDecode(jsonText);
+      if (data is List) {
+        return data.cast<Map<String, dynamic>>();
+      } else if (data is Map) {
+        if (data.containsKey('songs')) {
+          return (data['songs'] as List).cast<Map<String, dynamic>>();
+        }
+        return [data.cast<String, dynamic>()];
+      }
+      throw Exception('JSON 格式不正确');
+    } catch (e) {
+      throw Exception('解析 JSON 失败: $e');
+    }
+  }
+
+  List<Map<String, dynamic>> _convertCeruMusicPlaylistToSongs(
+    List<Map<String, dynamic>> ceruMusicPlaylist,
+  ) {
+    return ceruMusicPlaylist.map((item) {
+      final source = item['source']?.toString() ?? '';
+      final songmid = item['songmid']?.toString() ?? '';
+      final hash = item['hash']?.toString() ?? '';
+
+      final effectiveId = hash.isNotEmpty
+          ? '${source}_$hash'
+          : (source.isNotEmpty && songmid.isNotEmpty
+                ? '${source}_$songmid'
+                : songmid);
+
+      return {
+        'id': effectiveId,
+        'title': item['name']?.toString() ?? '未知歌曲',
+        'artist': item['singer']?.toString() ?? '未知歌手',
+        'album': item['albumName']?.toString() ?? '未知专辑',
+        'duration': _parseDuration(item['interval']?.toString() ?? '0:00'),
+        'coverUrl': item['img']?.toString() ?? '',
+        'source': source,
+        'sourceUrl': '',
+        'lrc': item['lrc']?.toString() ?? '',
+        'hash': hash.isNotEmpty ? hash : null,
+      };
+    }).toList();
+  }
+
+  int _parseDuration(String interval) {
+    if (interval.isEmpty) return 0;
+
+    try {
+      final parts = interval.split(':');
+      if (parts.length == 2) {
+        final minutes = int.tryParse(parts[0]) ?? 0;
+        final seconds = int.tryParse(parts[1]) ?? 0;
+        return minutes * 60 + seconds;
+      }
+      return 0;
+    } catch (_) {
+      return 0;
+    }
+  }
+}
+
+class _PlaylistAction extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _PlaylistAction({
+    required this.icon,
+    required this.label,
+    required this.color,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: color),
+          const SizedBox(width: 2),
+          Text(label, style: TextStyle(fontSize: 11, color: color)),
+        ],
+      ),
+    );
+  }
+}

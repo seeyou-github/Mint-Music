@@ -1,0 +1,896 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:flutter/foundation.dart' show listEquals;
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../../core/backup/webdav_service.dart';
+import '../../../core/storage/app_preferences.dart';
+import '../../../core/constants/app_constants.dart';
+import '../../../core/l10n/app_locale.dart';
+import '../../../core/l10n/l10n.dart';
+import '../../../core/platform/android_app_version.dart';
+import '../../../core/platform/download_paths.dart';
+import '../../../core/platform/windows_file_version.dart';
+import '../../../core/theme/builtin_blur_backgrounds.dart';
+import '../../../core/theme/theme_provider.dart';
+import '../../plugin/application/plugin_providers.dart';
+import '../../plugin/domain/plugin_types.dart';
+import '../../player/domain/models/desktop_lyric_settings.dart';
+import '../data/settings_service.dart';
+
+final settingsServiceProvider = FutureProvider<SettingsService>((ref) async {
+  final prefs = await AppPreferences.getInstance();
+  return SettingsService(prefs);
+});
+
+// -- audio quality --
+final audioQualityProvider = StateProvider<String>((ref) => '128k');
+
+// -- equalizer --
+final equalizerEnabledProvider = StateProvider<bool>((ref) => false);
+
+// -- playback --
+final playbackSpeedProvider = StateProvider<double>((ref) => 1.0);
+final autoPlayProvider = StateProvider<bool>((ref) => false);
+final rememberProgressProvider = StateProvider<bool>((ref) => false);
+
+/// 播放下载超时（秒）：音频加载/下载的等待上限，默认 15 秒。
+///
+/// 设置页里已按要求隐藏这一项，只保留默认值；用户改过的手上配置仍然生效。
+final playbackDownloadTimeoutProvider = StateProvider<int>((ref) => 15);
+
+/// 歌曲列表是否显示「VIP / 数字专辑 / 付费」标志（默认关闭）。
+///
+/// 与 [songListHideCoverProvider] 一起放在「设置 - 外观设置 - 歌曲列表」里。
+final songListShowAccessBadgeProvider = StateProvider<bool>((ref) => false);
+
+/// 是否记录并显示「已听 / 已听 N%」标记（默认开启）。
+///
+/// 开启后播放过的歌曲会按 1% 粒度把进度写进临时库，
+/// 歌曲列表在时长左侧显示已听进度；关闭后不再记录也不再显示。
+final markPlayedStatusProvider = StateProvider<bool>((ref) => true);
+
+/// 隐藏B站会员专属歌曲（默认开启）。
+///
+/// 开启时插件音源（如 bilibili）返回的会员专属歌曲（充电专属 / 大会员
+/// 专享）不出现在搜索、专辑、作者、榜单等歌曲列表里；已收藏的歌单详情
+/// 也按此开关过滤展示（歌曲仍保留在歌单数据里，关掉开关即恢复）。
+/// 真实过滤发生在 MusicSourceManager（由加载 / 切换设置时同步）。
+final hideVipExclusiveSongsProvider = StateProvider<bool>((ref) => true);
+
+// -- download --
+final downloadDirProvider = StateProvider<String>(
+  (ref) => defaultDownloadDirSync(),
+);
+final wifiOnlyDownloadProvider = StateProvider<bool>((ref) => false);
+
+// -- notification --
+// 播放通知默认开启（不再提供开关；Android 端播放时缺少通知权限会提示用户）。
+final notificationEnabledProvider = StateProvider<bool>((ref) => true);
+
+const kSourceNameToId = <String, String>{
+  '网易云': 'wy',
+  'QQ音乐': 'tx',
+  '酷狗': 'kg',
+  '酷我': 'kw',
+  '咪咕': 'mg',
+};
+
+const kSourceIdToName = <String, String>{
+  'wy': '网易云',
+  'tx': 'QQ音乐',
+  'kg': '酷狗',
+  'kw': '酷我',
+  'mg': '咪咕',
+};
+
+/// 用户最后切换的音源 id（持久化）。
+///
+/// 为空时表示用户还没有手动切换过音源，默认音源取「插件管理里第一个
+/// 启用的音源」。
+final defaultSourceIdSettingProvider = StateProvider<String>((ref) => '');
+
+/// 当前生效的默认音源 id。
+///
+/// 优先使用用户最后切换过的音源；没有记录时使用插件管理里第一个启用的
+/// 音源（插件就绪后会自动切换过去）。
+final defaultSourceIdProvider = Provider<String>((ref) {
+  final persisted = ref.watch(defaultSourceIdSettingProvider);
+  if (persisted.isNotEmpty) {
+    final switchable = ref.watch(switchableSourcesProvider);
+    // 插件还没加载完时不做判断；加载完发现这个音源已不在可切换列表里
+    // （例如卸载了，或它是落雪格式插件提供的），退回第一个可切换音源。
+    if (switchable.isEmpty || switchable.any((s) => s.id == persisted)) {
+      return persisted;
+    }
+  }
+  return ref.watch(firstEnabledSourceIdProvider);
+});
+
+/// 记录用户最后切换的音源，作为默认音源。
+Future<void> persistDefaultSourceId(
+  ProviderContainer container,
+  String sourceId,
+) async {
+  container.read(defaultSourceIdSettingProvider.notifier).state = sourceId;
+  try {
+    final svc = await container.read(settingsServiceProvider.future);
+    await svc.setDefaultSourceId(sourceId);
+  } catch (_) {}
+}
+
+/// 记录用户最后切换的音质：同步「默认音质」与「全局音质」。
+Future<void> persistUserQuality(
+  Ref ref, {
+  required String quality,
+  String? sourceId,
+}) async {
+  ref.read(globalQualityProvider.notifier).state = quality;
+  final sourceQuality = Map<String, String>.from(
+    ref.read(sourceQualityProvider),
+  );
+  // 同名插件的变体 id（'wy@插件id'）按平台部分匹配。
+  final name = sourceId == null
+      ? null
+      : kSourceIdToName[SourceInfo.baseIdOf(sourceId)];
+  if (name != null) {
+    sourceQuality[name] = quality;
+    ref.read(sourceQualityProvider.notifier).state = sourceQuality;
+  }
+  try {
+    final svc = await ref.read(settingsServiceProvider.future);
+    await svc.setGlobalQuality(quality);
+    if (name != null) {
+      await svc.setSourceQuality(sourceQuality);
+    }
+  } catch (_) {}
+}
+
+const kQualityDisplayName = <String, String>{
+  '64k': '流畅 64K',
+  '128k': '标准 128K',
+  '192k': '高品质 192K',
+  '320k': '超高品质 320K',
+  'flac': '无损 FLAC',
+  'flac24bit': '高解析度无损',
+  'hires': '高清臻音',
+  'atmos': '沉浸环绕声',
+  'master': '超清母带',
+};
+
+const kQualityDescription = <String, String>{
+  '64k': '最低音质，流量最省',
+  '128k': '基础音质，文件较小',
+  '192k': '良好音质，适合大多数场景',
+  '320k': '高品质音质，接近CD品质',
+  'flac': '无损音质，完美还原原始录音',
+  'flac24bit': '高解析度无损，最高192kHz/24bit',
+  'hires': '声音听感加强，96kHz/24bit',
+  'atmos': '沉浸式空间环绕音感',
+  'master': '母带级音质，192kHz/24bit',
+};
+
+const kSourceSupportedQualities = <String, List<String>>{
+  'wy': ['128k', '320k', 'flac', 'flac24bit', 'hires', 'atmos'],
+  'tx': ['128k', '320k', 'flac', 'hires', 'atmos', 'master'],
+  'kg': ['128k', '320k', 'flac', 'flac24bit', 'hires'],
+  'kw': ['128k', '320k', 'flac', 'flac24bit', 'hires'],
+  'mg': ['128k', '320k', 'flac', 'flac24bit', 'hires', 'atmos', 'master'],
+};
+
+List<String> getSupportedQualitiesForSource(String sourceName) {
+  final id = kSourceNameToId[sourceName];
+  if (id == null) return ['128k', '320k', 'flac'];
+  return kSourceSupportedQualities[id] ?? ['128k', '320k', 'flac'];
+}
+
+String getQualityDisplayName(String qualityId) {
+  return kQualityDisplayName[qualityId] ?? qualityId;
+}
+
+final sourceQualityProvider = StateProvider<Map<String, String>>(
+  (ref) => {
+    '网易云': '128k',
+    'QQ音乐': '128k',
+    '酷狗': '128k',
+    '酷我': '128k',
+    '咪咕': '128k',
+  },
+);
+
+final globalQualityProvider = StateProvider<String>((ref) => '128k');
+
+// -- cache --
+// 「最大缓存大小」已删除：在线歌曲只缓存在运行内存里（切歌即释放，不写
+// 磁盘），网络图片缓存由 flutter_cache_manager 按「2000 张 / 30 天」自行
+// 淘汰，都不需要用户再设一个字节上限。旧设置里的 `max_cache_size_mb`
+// 读出来也不再使用。
+
+// -- filename template（固定为「歌手名 - 歌曲名」） --
+final filenameTemplateProvider = StateProvider<String>((ref) => '%s - %t');
+
+// -- tag write --
+final tagWriteBasicInfoProvider = StateProvider<bool>((ref) => true);
+final tagWriteCoverProvider = StateProvider<bool>((ref) => true);
+final tagWriteLyricsProvider = StateProvider<bool>((ref) => true);
+final tagWriteDownloadLyricsProvider = StateProvider<bool>((ref) => false);
+final tagWriteLyricFormatProvider = StateProvider<String>(
+  (ref) => 'word-by-word',
+);
+
+// -- audio effects --
+final audioEffectEnabledProvider = StateProvider<bool>((ref) => false);
+final audioVisualizerEnabledProvider = StateProvider<bool>((ref) => false);
+
+// -- bass boost --
+final bassBoostEnabledProvider = StateProvider<bool>((ref) => false);
+final bassBoostGainProvider = StateProvider<double>((ref) => 6.0);
+final bassBoostPresetProvider = StateProvider<String>((ref) => 'medium');
+
+// -- surround --
+final surroundEnabledProvider = StateProvider<bool>((ref) => false);
+final surroundModeProvider = StateProvider<String>((ref) => 'small');
+
+// -- balance --
+final balanceEnabledProvider = StateProvider<bool>((ref) => false);
+final balanceValueProvider = StateProvider<double>((ref) => 0.0);
+
+// -- equalizer preset --
+final equalizerPresetProvider = StateProvider<String>((ref) => '流行');
+final equalizerBandsProvider = StateProvider<List<double>>(
+  (ref) => [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+);
+final equalizerCustomPresetsProvider =
+    StateProvider<List<Map<String, dynamic>>>((ref) => []);
+
+// -- lyric display --
+//
+// 这些开关已经从「歌词设置」里去掉了，行为固定下来：
+// 显示翻译=开、显示罗马音=关、模糊=关、缩放=关、歌词居中=开、
+// Apple Music 风格歌词=关。
+final lyricFontSizeProvider = StateProvider<double>((ref) => 1.0);
+final lyricShowTranslationProvider = StateProvider<bool>((ref) => true);
+final lyricShowRomanProvider = StateProvider<bool>((ref) => false);
+final lyricEnableBlurProvider = StateProvider<bool>((ref) => false);
+final lyricEnableScaleProvider = StateProvider<bool>((ref) => false);
+final lyricCenterAlignProvider = StateProvider<bool>((ref) => true);
+final lyricImmersiveColorProvider = StateProvider<bool>((ref) => true);
+
+/// 固定的歌词显示行为（不再由用户设置）。
+class LyricDisplayDefaults {
+  const LyricDisplayDefaults._();
+
+  static const bool showTranslation = true;
+  static const bool showRoman = false;
+  static const bool enableBlur = false;
+  static const bool enableScale = false;
+  static const bool centerAlign = true;
+}
+
+// -- lyric font --
+// 默认：思源宋体 / 90% / 字重 500。
+final lyricFontFamilyProvider = StateProvider<String>(
+  (ref) => 'SourceHanSerif',
+);
+final lyricFontRateProvider = StateProvider<double>((ref) => 0.9);
+final lyricFontWeightProvider = StateProvider<int>((ref) => 500);
+
+/// 平台 id → 优先插件音源。
+///
+/// 裸平台 id（wy / tx / kg / kw / mg）的歌曲由插件解析播放地址。这里记录
+/// 用户为每个平台指定的「优先插件音源」：解析播放地址时先试它，失败再按
+/// 原有顺序尝试其它音源。
+///
+/// 例：`{'wy': 'wy@luoxue', 'kg': 'kg@musicfree'}`
+final preferredSourceMapProvider = StateProvider<Map<String, String>>(
+  (ref) => const {},
+);
+
+/// 解析持久化的优先音源 JSON。
+Map<String, String> _decodePreferredSources(String raw) {
+  if (raw.trim().isEmpty) return const {};
+  try {
+    final decoded = jsonDecode(raw);
+    if (decoded is! Map) return const {};
+    final result = <String, String>{};
+    decoded.forEach((key, value) {
+      final k = '$key'.trim();
+      final v = '$value'.trim();
+      if (k.isNotEmpty && v.isNotEmpty) result[k] = v;
+    });
+    return result;
+  } catch (_) {
+    return const {};
+  }
+}
+
+/// 设置某个平台的优先插件音源（[sourceId] 为空表示清除）。
+Future<void> setPreferredSource(
+  WidgetRef ref, {
+  required String baseSourceId,
+  required String sourceId,
+}) async {
+  final base = baseSourceId.trim();
+  if (base.isEmpty) return;
+  final current = Map<String, String>.from(
+    ref.read(preferredSourceMapProvider),
+  );
+  if (sourceId.trim().isEmpty) {
+    current.remove(base);
+  } else {
+    current[base] = sourceId.trim();
+  }
+  ref.read(preferredSourceMapProvider.notifier).state = current;
+  try {
+    final svc = await ref.read(settingsServiceProvider.future);
+    await svc.setPreferredSourceMap(jsonEncode(current));
+  } catch (e) {
+    debugPrint('[Settings] 保存优先音源失败: $e');
+  }
+}
+
+/// 数据源 → 播放源**有序列表**（数据源插件 id → [平台id@插件id, ...]）。
+///
+/// 数据源插件只提供元数据（搜索 / 歌单 / 榜单 / 专辑 / 作者），不解析播放地址；
+/// 这里记录它可用的播放源顺序，播放时按顺序尝试、失败自动切换下一个。
+///
+/// 顺序来源：自动发现（同平台、已启用、能解析地址，按安装时间升序）+ 用户
+/// 在插件管理页拖动后的覆盖结果。列表为空表示「还没发现到可用的播放源」，
+/// 播放时会即时重新发现一次。
+final dataSourcePlaybackSourcesProvider =
+    StateProvider<Map<String, List<String>>>((ref) => const {});
+
+/// 解析持久化的「数据源 → 播放源」JSON。
+///
+/// 兼容两种历史格式（旧版本只存单个字符串）：
+/// * `{"pid": "wy@xxx"}` → `{"pid": ["wy@xxx"]}`
+/// * `{"pid": ["a", "b"]}` → 原样
+///
+/// 解析失败 / 非法项直接丢弃，绝不抛异常（旧数据不能让启动崩掉）。
+Map<String, List<String>> _decodeDataSourcePlaybackSources(String raw) {
+  if (raw.trim().isEmpty) return const {};
+  try {
+    final decoded = jsonDecode(raw);
+    if (decoded is! Map) return const {};
+    final result = <String, List<String>>{};
+    decoded.forEach((key, value) {
+      final k = '$key'.trim();
+      if (k.isEmpty) return;
+      final list = <String>[];
+      if (value is String) {
+        final single = value.trim();
+        if (single.isNotEmpty) list.add(single);
+      } else if (value is List) {
+        for (final item in value) {
+          final id = '$item'.trim();
+          if (id.isNotEmpty && !list.contains(id)) list.add(id);
+        }
+      }
+      if (list.isNotEmpty) result[k] = list;
+    });
+    return result;
+  } catch (_) {
+    return const {};
+  }
+}
+
+/// 保存某个数据源的播放源顺序（[sourceIds] 为空表示清除，回到自动发现）。
+Future<void> setDataSourcePlaybackSources(
+  WidgetRef ref, {
+  required String pluginId,
+  required List<String> sourceIds,
+}) async {
+  final key = pluginId.trim();
+  if (key.isEmpty) return;
+  final current = Map<String, List<String>>.from(
+    ref.read(dataSourcePlaybackSourcesProvider),
+  );
+  final cleaned = [
+    for (final id in sourceIds)
+      if (id.trim().isNotEmpty) id.trim(),
+  ];
+  if (cleaned.isEmpty) {
+    current.remove(key);
+  } else {
+    current[key] = cleaned;
+  }
+  ref.read(dataSourcePlaybackSourcesProvider.notifier).state = current;
+  try {
+    final svc = await ref.read(settingsServiceProvider.future);
+    await svc.setDataSourcePlaybackSources(jsonEncode(current));
+  } catch (e) {
+    debugPrint('[Settings] 保存数据源播放源失败: $e');
+  }
+}
+
+/// 给某个数据源指定单个播放源（[sourceId] 为空表示清除）。
+///
+/// 保留这个旧入口是为了兼容已有调用点；新代码请用
+/// [setDataSourcePlaybackSources] 传完整顺序。
+Future<void> setDataSourcePlaybackSource(
+  WidgetRef ref, {
+  required String pluginId,
+  required String sourceId,
+}) {
+  return setDataSourcePlaybackSources(
+    ref,
+    pluginId: pluginId,
+    sourceIds: sourceId.trim().isEmpty ? const [] : [sourceId.trim()],
+  );
+}
+
+/// 歌词字体颜色（hex ARGB 字符串，空表示使用默认/沉浸色）
+final lyricFontColorProvider = StateProvider<String>((ref) => '');
+
+// -- 备份还原 / WebDAV --
+
+/// WebDAV 备份配置（地址 / 账号 / 设备名 / 自动同步开关）。
+final webDavConfigProvider = StateProvider<WebDavConfig>((ref) {
+  return const WebDavConfig();
+});
+
+// -- appearance --
+final appearanceBgAnimationProvider = StateProvider<bool>((ref) => false);
+
+/// 「主题色 / 字体颜色 / 第二字体颜色 / 背景颜色」里用户新增的自定义颜色列表。
+///
+/// 颜色以 `#RRGGBB` 形式保存；选择面板里长按可以编辑或删除。
+/// 主题色深浅色共用，其余颜色各保存一套。
+final customThemeColorsProvider = StateProvider<List<String>>(
+  (ref) => const [],
+);
+final customFontColorsLightProvider = StateProvider<List<String>>(
+  (ref) => const [],
+);
+final customFontColorsDarkProvider = StateProvider<List<String>>(
+  (ref) => const [],
+);
+final customSecondaryFontColorsLightProvider = StateProvider<List<String>>(
+  (ref) => const [],
+);
+final customSecondaryFontColorsDarkProvider = StateProvider<List<String>>(
+  (ref) => const [],
+);
+final customBackgroundColorsLightProvider = StateProvider<List<String>>(
+  (ref) => const [],
+);
+final customBackgroundColorsDarkProvider = StateProvider<List<String>>(
+  (ref) => const [],
+);
+
+/// 「背景渐变 → 新增颜色」保存的自定义渐变（固定 3 个颜色，深浅色各一套）。
+///
+/// 面板里排在内置渐变之后，长按可以编辑或删除。
+final customBackgroundGradientsLightProvider =
+    StateProvider<List<List<String>>>((ref) => const []);
+final customBackgroundGradientsDarkProvider = StateProvider<List<List<String>>>(
+  (ref) => const [],
+);
+
+/// 桌面歌词(悬浮歌词窗)的完整配置。
+///
+/// 整体作为一个对象持久化(见 [SettingsService.setDesktopLyricSettings]),
+/// 避免为每个子项各建一个 provider 与 prefs key。
+final desktopLyricSettingsProvider = StateProvider<DesktopLyricSettings>(
+  (ref) => DesktopLyricSettings.defaults,
+);
+
+// -- auto cache music --
+final autoCacheMusicProvider = StateProvider<bool>((ref) => true);
+
+// -- auto update（默认关闭） --
+final autoUpdateProvider = StateProvider<bool>((ref) => false);
+final closeToTrayProvider = StateProvider<bool>((ref) => true);
+final cacheDirProvider = StateProvider<String>((ref) => '');
+
+/// 插件自动检测更新：固定关闭。
+///
+/// 插件管理页不再提供该开关，用户需要更新时用页面右上角的「检查更新」手动检查，
+/// 应用启动、进入插件管理页都不会自动检查插件更新。
+final pluginAutoCheckUpdateProvider = Provider<bool>((ref) => false);
+
+// -- app language (界面语言) --
+// 参考 Mio-Music 的 AppLocale 设置:默认简体中文,可切换繁体中文。
+final appLocaleProvider = StateProvider<AppLocale>((ref) => AppLocale.zhCn);
+
+/// 歌词语言模式:
+/// - 'follow' 跟随界面语言(默认)
+/// - 'zh-CN' 始终简体
+/// - 'zh-TW' 始终繁体
+final lyricLocaleModeProvider = StateProvider<String>((ref) => 'follow');
+
+/// 实际生效的歌词语言。
+final effectiveLyricLocaleProvider = Provider<AppLocale>((ref) {
+  final mode = ref.watch(lyricLocaleModeProvider);
+  if (mode == 'zh-TW') return AppLocale.zhTw;
+  if (mode == 'zh-CN') return AppLocale.zhCn;
+  return ref.watch(appLocaleProvider);
+});
+
+final downloadDirSizeProvider = FutureProvider<String>((ref) async {
+  final svc = await ref.watch(settingsServiceProvider.future);
+  final dir = ref.watch(downloadDirProvider);
+  return svc.getDirectorySize(dir);
+});
+
+final cacheDirSizeProvider = FutureProvider<String>((ref) async {
+  final svc = await ref.watch(settingsServiceProvider.future);
+  final dir = ref.watch(cacheDirProvider);
+  if (dir.isEmpty) return '0 B';
+  return svc.getDirectorySize(dir);
+});
+
+enum FullScreenBackgroundMode { theme, cover, dark }
+
+/// 播放详情页背景模式：**固定为「跟随主题」**。
+///
+/// 设置里的「播放详情页背景 → 背景模式」选项已删除（用户要求统一固定），
+/// 这里不再读取本地保存的旧值，用户的旧选择会在下次启动后被忽略。
+/// 保留枚举与播放页的分支实现，方便以后需要时再放开。
+final fullScreenBackgroundModeProvider = Provider<FullScreenBackgroundMode>(
+  (ref) => FullScreenBackgroundMode.theme,
+);
+
+/// 播放详情页 / 歌词页**实际**用的背景。
+///
+/// 「设置 → 外观设置 → 背景颜色模式」选的是高斯模糊时，这两页也跟着用
+/// 「封面糊化铺满 + 暗色遮罩」（[FullScreenBackgroundMode.cover]，参考
+/// Linthra 的播放页），这样主界面是模糊背景、点进播放页却变回渐变的情况就
+/// 不会出现；选背景渐变时仍按 [fullScreenBackgroundModeProvider] 的固定值。
+final playerBackgroundModeProvider = Provider<FullScreenBackgroundMode>((ref) {
+  if (ref.watch(backgroundModeProvider) == BackgroundMode.blur) {
+    return FullScreenBackgroundMode.cover;
+  }
+  return ref.watch(fullScreenBackgroundModeProvider);
+});
+
+// -- app version (loaded once) --
+/// 应用版本号：Android 显示固定的版本 id；Windows 显示「编译时间」，
+/// 格式 `年.月日.时分`（如 `2026.1110.0106`）。
+///
+/// * **Android**：读安装包的 `versionName`。Gradle 里固定写成 `20261111`
+///   （见 `android/app/build.gradle.kts`），本地和 GitHub Actions 打出来的
+///   包是同一个版本号，不随编译时间变化。
+/// * **Windows**：
+///   1. **exe 的版本资源**（`FileVersion`）：构建时由 CMake 生成的
+///      `build_stamp.h`（北京时间，见 `tool/win_build_stamp.dart`）写进
+///      `Runner.rc`，解压、拷贝、改名都不会变，是判断「这个 exe 是哪次编译
+///      出来的」最可靠的来源；
+///   2. 读不到时退回产物（exe / `app.so` / `kernel_blob.bin`）的修改时间，
+///      直接显示（与属性页一致：zip 解压会整体偏 8 小时，这里无法可靠还原，
+///      只作兜底）。
+/// * 都读不到（或其它平台）才用 [AppConstants.appVersion]。
+final appVersionProvider = FutureProvider<String>((ref) async {
+  if (Platform.isAndroid) {
+    final version = await readAndroidAppVersionName();
+    if (version != null) return version;
+  }
+  if (Platform.isWindows) {
+    final stamped = readWindowsFileVersion();
+    // 只认「年.月日.时分」这种编译时间；旧版本 exe 的 `2.0.0+1` 不显示。
+    if (stamped != null && RegExp(r'^\d{4}\.\d{4}\.\d{4}$').hasMatch(stamped)) {
+      return stamped;
+    }
+    try {
+      final exe = File(Platform.resolvedExecutable);
+      final dir = exe.parent.path;
+      // 取 exe 与 Dart 产物里「最后被写入」的那个时间：
+      // - release 构建的 Dart 代码在 data/app.so；
+      // - debug 构建在 data/flutter_assets/kernel_blob.bin；
+      // - 增量构建只改了 Dart 时 C++ 不会重新链接，exe 的修改时间不会更新，
+      //   只看 exe 会一直停在旧时间，所以这几个都要看。
+      final candidates = <File>[
+        File('$dir/data/app.so'),
+        File('$dir/data/flutter_assets/kernel_blob.bin'),
+        exe,
+      ];
+      DateTime? latest;
+      for (final file in candidates) {
+        if (!file.existsSync()) continue;
+        final modified = file.statSync().modified;
+        if (latest == null || modified.isAfter(latest)) latest = modified;
+      }
+      if (latest != null) {
+        // 兜底值：直接用文件时间，和资源管理器属性页看到的保持一致。
+        // zip 解压会把时间戳整体偏 8 小时（打包机按 UTC 记录、解压按本地时间
+        // 解释），这里没法可靠还原，所以**真实来源始终是 exe 的版本资源**，
+        // 只有它读不到（旧版 exe / 手工替换）时才会显示这个。
+        String two(int value) => value.toString().padLeft(2, '0');
+        return '${latest.year}.${two(latest.month)}${two(latest.day)}.'
+            '${two(latest.hour)}${two(latest.minute)}';
+      }
+    } catch (_) {
+      // 读不到文件信息就退回静态版本号。
+    }
+  }
+  return AppConstants.appVersion;
+});
+
+class EqPreset {
+  final String name;
+  final List<double> gains;
+  final List<double>? originalGains;
+  const EqPreset({required this.name, required this.gains, this.originalGains});
+  Map<String, dynamic> toJson() => {
+    'name': name,
+    'gains': gains,
+    'originalGains': originalGains,
+  };
+  factory EqPreset.fromJson(Map<String, dynamic> json) => EqPreset(
+    name: json['name'] as String,
+    gains: (json['gains'] as List).cast<double>(),
+    originalGains: (json['originalGains'] as List?)?.cast<double>(),
+  );
+}
+
+const kEqFrequencies = [32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
+
+const kBuiltInPresets = <EqPreset>[
+  EqPreset(name: 'Flat(原声)', gains: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+  EqPreset(name: 'Pop(流行)', gains: [1, 3, 4, 3, 1, -1, -1, 1, 2, 3]),
+  EqPreset(name: 'Rock(摇滚)', gains: [4, 3, 1, 0, -1, -1, 0, 2, 3, 4]),
+  EqPreset(name: 'Jazz(爵士)', gains: [3, 2, 1, 2, -1, -1, 0, 1, 2, 3]),
+  EqPreset(name: 'Classical(古典)', gains: [4, 3, 2, 1, -1, -1, 0, 2, 3, 4]),
+  EqPreset(name: 'Bass Boost(低音增强)', gains: [6, 5, 4, 2, 0, 0, 0, 0, 0, 0]),
+  EqPreset(name: 'Vocal Boost(人声增强)', gains: [-2, -1, 0, 2, 4, 4, 3, 1, 0, -1]),
+  EqPreset(name: 'Treble Boost(高音增强)', gains: [0, 0, 0, 0, 0, 1, 3, 5, 6, 6]),
+];
+
+// -- init: load all persisted settings into providers --
+final settingsInitProvider = FutureProvider<void>((ref) async {
+  final svc = await ref.watch(settingsServiceProvider.future);
+
+  // 界面语言固定简体中文、歌词语言固定简体中文（设置项已移除）。
+  const locale = AppLocale.zhCn;
+  ref.read(appLocaleProvider.notifier).state = locale;
+  currentLocale = locale;
+  ref.read(lyricLocaleModeProvider.notifier).state = 'zh-CN';
+
+  // 'light' / 'dark' / 'system'，未设置时默认跟随系统
+  ref.read(themeModeProvider.notifier).state = themeModeFromPref(
+    svc.getThemeMode(),
+  );
+  // 主题色浅色 / 深色各一套：切主题时各用各的，不再互相串色。
+  ref.read(lightThemePrimaryColorProvider.notifier).state = svc
+      .getThemePrimaryColorLight();
+  ref.read(darkThemePrimaryColorProvider.notifier).state = svc
+      .getThemePrimaryColorDark();
+  ref.read(lightThemeFontColorProvider.notifier).state = svc
+      .getThemeFontColorLight();
+  ref.read(darkThemeFontColorProvider.notifier).state = svc
+      .getThemeFontColorDark();
+  ref.read(lightThemeSecondaryFontColorProvider.notifier).state = svc
+      .getThemeSecondaryFontColorLight();
+  ref.read(darkThemeSecondaryFontColorProvider.notifier).state = svc
+      .getThemeSecondaryFontColorDark();
+  ref.read(lightThemeBackgroundColorsProvider.notifier).state = svc
+      .getThemeBackgroundColorsLight();
+  ref.read(darkThemeBackgroundColorsProvider.notifier).state = svc
+      .getThemeBackgroundColorsDark();
+  ref.read(customThemeColorsProvider.notifier).state = svc
+      .getCustomThemeColors();
+  ref.read(customFontColorsLightProvider.notifier).state = svc
+      .getCustomFontColorsLight();
+  ref.read(customFontColorsDarkProvider.notifier).state = svc
+      .getCustomFontColorsDark();
+  ref.read(customSecondaryFontColorsLightProvider.notifier).state = svc
+      .getCustomSecondaryFontColorsLight();
+  ref.read(customSecondaryFontColorsDarkProvider.notifier).state = svc
+      .getCustomSecondaryFontColorsDark();
+  ref.read(customBackgroundColorsLightProvider.notifier).state = svc
+      .getCustomBackgroundColorsLight();
+  ref.read(customBackgroundColorsDarkProvider.notifier).state = svc
+      .getCustomBackgroundColorsDark();
+  ref.read(coverBackgroundEnabledProvider.notifier).state = svc
+      .getCoverBackground();
+  // 背景颜色模式：背景渐变 / 高斯模糊（默认），以及模糊图相关的三项。
+  ref.read(backgroundModeProvider.notifier).state = svc.getBackgroundMode();
+  // 背景图：安装包内置 4 张，先确保它们复制进设置目录，再和用户自己加的图
+  // 合并成列表（内置的排前面）。文件被删掉时下次启动会补回来。
+  var blurImageName = svc.getBlurBackgroundImage();
+  // 多图列表：老版本只存了一张图的文件名，升级后把它补进列表，否则设置页
+  // 里一张图都不显示、主界面其实还在用那张图。
+  var blurImageNames = svc.getBlurBackgroundImages();
+  if (blurImageNames.isEmpty && blurImageName.trim().isNotEmpty) {
+    blurImageNames = [blurImageName];
+  }
+  final builtinNames = await ensureBuiltinBlurBackgrounds();
+  final mergedNames = [
+    ...builtinNames,
+    ...blurImageNames.where((name) => !builtinNames.contains(name)),
+  ];
+  if (!listEquals(mergedNames, blurImageNames)) {
+    await svc.setBlurBackgroundImages(mergedNames);
+  }
+  // 从没选过背景图的（新装 / 老版本没配过）默认用内置的 1.jpg；
+  // 用户主动清空过的话保持清空，继续用背景渐变。
+  if (blurImageName.trim().isEmpty &&
+      !svc.hasBlurBackgroundSelection() &&
+      builtinNames.isNotEmpty) {
+    blurImageName = builtinNames.first;
+    await svc.setBlurBackgroundImage(blurImageName);
+  }
+  ref.read(blurBackgroundImageNameProvider.notifier).state = blurImageName;
+  ref.read(blurBackgroundImageNamesProvider.notifier).state = mergedNames;
+  ref.read(blurBackgroundSigmaProvider.notifier).state = svc
+      .getBlurBackgroundSigma();
+  ref.read(lightBlurBrightnessProvider.notifier).state = svc
+      .getBlurBackgroundBrightness(light: true);
+  ref.read(darkBlurBrightnessProvider.notifier).state = svc
+      .getBlurBackgroundBrightness(light: false);
+  ref.read(lightBackgroundSaturationProvider.notifier).state = svc
+      .getBackgroundSaturation(light: true);
+  ref.read(darkBackgroundSaturationProvider.notifier).state = svc
+      .getBackgroundSaturation(light: false);
+  ref.read(blurBackgroundAutoDarkenProvider.notifier).state = svc
+      .getBlurBackgroundAutoDarken();
+  ref.read(songListHideCoverProvider.notifier).state = svc
+      .getSongListHideCover();
+  ref.read(songListShowAccessBadgeProvider.notifier).state = svc
+      .getSongListShowAccessBadge();
+  ref.read(customBackgroundGradientsLightProvider.notifier).state = svc
+      .getCustomBackgroundGradientsLight();
+  ref.read(customBackgroundGradientsDarkProvider.notifier).state = svc
+      .getCustomBackgroundGradientsDark();
+
+  ref.read(audioQualityProvider.notifier).state = svc.getAudioQuality();
+  ref.read(equalizerEnabledProvider.notifier).state = svc.getEqualizerEnabled();
+  ref.read(equalizerPresetProvider.notifier).state = svc.getEqualizerPreset();
+  final bandsStr = svc.getEqualizerBands();
+  if (bandsStr.isNotEmpty) {
+    try {
+      final list = (jsonDecode(bandsStr) as List)
+          .map((value) => (value as num).toDouble())
+          .toList();
+      ref.read(equalizerBandsProvider.notifier).state = list;
+    } catch (_) {}
+  }
+  final customPresetsStr = svc.getEqualizerCustomPresets();
+  try {
+    final list = (jsonDecode(customPresetsStr) as List)
+        .cast<Map<String, dynamic>>();
+    ref.read(equalizerCustomPresetsProvider.notifier).state = list;
+  } catch (_) {}
+  ref.read(playbackSpeedProvider.notifier).state = svc.getPlaybackSpeed();
+  ref.read(playbackDownloadTimeoutProvider.notifier).state = svc
+      .getPlaybackDownloadTimeout();
+  ref.read(downloadDirProvider.notifier).state = await svc.getDownloadDir();
+  // 下载网络不再受限制（仅WiFi下载设置项已移除）。
+  ref.read(wifiOnlyDownloadProvider.notifier).state = false;
+  ref.read(autoPlayProvider.notifier).state = svc.getAutoPlay();
+  ref.read(rememberProgressProvider.notifier).state = svc.getRememberProgress();
+  ref.read(markPlayedStatusProvider.notifier).state = svc.getMarkPlayedStatus();
+  final hideVipExclusive = svc.getHideVipExclusiveSongs();
+  ref.read(hideVipExclusiveSongsProvider.notifier).state = hideVipExclusive;
+  // 过滤行为在音源管理器里生效（解析插件歌曲列表时按开关隐藏会员专属）。
+  ref.read(musicSourceManagerProvider).hideVipExclusiveSongs = hideVipExclusive;
+  ref.read(notificationEnabledProvider.notifier).state = svc
+      .getNotificationEnabled();
+  ref.read(defaultSourceIdSettingProvider.notifier).state = svc
+      .getDefaultSourceId();
+  ref.read(sourceQualityProvider.notifier).state = svc.getSourceQuality();
+  ref.read(globalQualityProvider.notifier).state = svc.getGlobalQuality();
+  // 文件名格式固定为「歌手名 - 歌曲名」。
+  ref.read(filenameTemplateProvider.notifier).state = svc.getFilenameTemplate();
+  // 下载标签写入固定为：基础信息 + 封面 + 歌词（优先逐字，其次标准 LRC）。
+  ref.read(tagWriteBasicInfoProvider.notifier).state = true;
+  ref.read(tagWriteCoverProvider.notifier).state = true;
+  ref.read(tagWriteLyricsProvider.notifier).state = true;
+  ref.read(tagWriteDownloadLyricsProvider.notifier).state = false;
+  ref.read(tagWriteLyricFormatProvider.notifier).state = 'word-by-word';
+  ref.read(audioEffectEnabledProvider.notifier).state = svc
+      .getAudioEffectEnabled();
+  ref.read(audioVisualizerEnabledProvider.notifier).state = svc
+      .getAudioVisualizerEnabled();
+  ref.read(bassBoostEnabledProvider.notifier).state = svc.getBassBoostEnabled();
+  ref.read(bassBoostGainProvider.notifier).state = svc.getBassBoostGain();
+  ref.read(bassBoostPresetProvider.notifier).state = svc.getBassBoostPreset();
+  ref.read(surroundEnabledProvider.notifier).state = svc.getSurroundEnabled();
+  ref.read(surroundModeProvider.notifier).state = svc.getSurroundMode();
+  ref.read(balanceEnabledProvider.notifier).state = svc.getBalanceEnabled();
+  ref.read(balanceValueProvider.notifier).state = svc.getBalanceValue();
+  ref.read(lyricFontSizeProvider.notifier).state = svc.getLyricFontSize();
+  // 这些开关已从「歌词设置」移除，行为固定（不再读取用户旧设置）。
+  ref.read(lyricShowTranslationProvider.notifier).state =
+      LyricDisplayDefaults.showTranslation;
+  ref.read(lyricShowRomanProvider.notifier).state =
+      LyricDisplayDefaults.showRoman;
+  ref.read(lyricEnableBlurProvider.notifier).state =
+      LyricDisplayDefaults.enableBlur;
+  ref.read(lyricEnableScaleProvider.notifier).state =
+      LyricDisplayDefaults.enableScale;
+  ref.read(lyricCenterAlignProvider.notifier).state =
+      LyricDisplayDefaults.centerAlign;
+  ref.read(lyricImmersiveColorProvider.notifier).state = svc
+      .getLyricImmersiveColor();
+  ref.read(lyricFontFamilyProvider.notifier).state =
+      await _migrateLyricFontFamily(svc);
+  ref.read(lyricFontRateProvider.notifier).state = await _migrateLyricFontRate(
+    svc,
+  );
+  ref.read(lyricFontWeightProvider.notifier).state =
+      await _migrateLyricFontWeight(svc);
+
+  ref.read(lyricFontColorProvider.notifier).state = svc.getLyricFontColor();
+  // 平台 id → 优先插件音源（每个平台可单独指定）
+  ref.read(preferredSourceMapProvider.notifier).state = _decodePreferredSources(
+    svc.getPreferredSourceMap(),
+  );
+  // 数据源 → 播放源（每个数据源插件可单独指定）
+  final dataSourcePlaybackSources = _decodeDataSourcePlaybackSources(
+    svc.getDataSourcePlaybackSources(),
+  );
+  ref.read(dataSourcePlaybackSourcesProvider.notifier).state =
+      dataSourcePlaybackSources;
+  ref
+      .read(musicSourceManagerProvider)
+      .setDataSourcePlaybackSources(dataSourcePlaybackSources);
+  ref.read(appearanceBgAnimationProvider.notifier).state = svc
+      .getAppearanceBgAnimation();
+  // WebDAV / 备份配置
+  try {
+    final raw = svc.getWebDavConfigJson();
+    if (raw.isNotEmpty) {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) {
+        ref.read(webDavConfigProvider.notifier).state = WebDavConfig.fromJson(
+          decoded.map((k, v) => MapEntry('$k', v)),
+        );
+      }
+    }
+  } catch (e) {
+    debugPrint('[SettingsProviders] 读取 WebDAV 配置失败: $e');
+  }
+  ref.read(desktopLyricSettingsProvider.notifier).state =
+      DesktopLyricSettings.decode(svc.getDesktopLyricSettings());
+  ref.read(autoCacheMusicProvider.notifier).state = true;
+  ref.read(autoUpdateProvider.notifier).state = svc.getAutoUpdate();
+  ref.read(closeToTrayProvider.notifier).state = svc.getCloseToTray();
+  ref.read(cacheDirProvider.notifier).state = await svc.getCacheDir();
+});
+
+Future<void> persistSetting(
+  Ref ref,
+  Future<void> Function(SettingsService svc) saveFn,
+) async {
+  final svc = await ref.read(settingsServiceProvider.future);
+  await saveFn(svc);
+}
+
+// ---------------------------------------------------------------------------
+// 歌词字体默认值迁移
+//
+// 歌词字体三项（字体 / 字号 / 字重）已经移进「歌词设置」，默认值改成
+// 思源宋体 / 90% / 500。老用户本地存的还是旧默认值（system / 100% / 700），
+// 直接读会一直沿用旧值，这里做一次性迁移。
+// ---------------------------------------------------------------------------
+
+const String _oldLyricFontFamily = 'system';
+const String _defaultLyricFontFamily = 'SourceHanSerif';
+const double _oldLyricFontRate = 1.0;
+const double _defaultLyricFontRate = 0.9;
+const int _oldLyricFontWeight = 700;
+const int _defaultLyricFontWeight = 500;
+
+Future<String> _migrateLyricFontFamily(SettingsService svc) async {
+  final value = svc.getLyricFontFamily();
+  if (value != _oldLyricFontFamily) return value;
+  await svc.setLyricFontFamily(_defaultLyricFontFamily);
+  return _defaultLyricFontFamily;
+}
+
+Future<double> _migrateLyricFontRate(SettingsService svc) async {
+  final value = svc.getLyricFontRate();
+  if (value != _oldLyricFontRate) return value;
+  await svc.setLyricFontRate(_defaultLyricFontRate);
+  return _defaultLyricFontRate;
+}
+
+Future<int> _migrateLyricFontWeight(SettingsService svc) async {
+  final value = svc.getLyricFontWeight();
+  if (value != _oldLyricFontWeight) return value;
+  await svc.setLyricFontWeight(_defaultLyricFontWeight);
+  return _defaultLyricFontWeight;
+}

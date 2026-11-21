@@ -1,0 +1,83 @@
+import 'dart:io';
+
+import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../features/player/application/playback_controller.dart';
+import 'window_chrome.dart';
+
+/// Windows 任务栏缩略图工具栏。
+///
+/// 鼠标悬停任务栏图标时，系统会在缩略图下方显示一排按钮。原生侧
+/// （`windows/runner/thumbnail_toolbar.cpp`）通过 `ITaskbarList3` 把
+/// 「上一首 / 播放暂停 / 下一首」交给系统绘制，点击按钮后原生侧再通过
+/// 本通道通知 Dart 执行对应操作。
+class TaskbarThumbnailService {
+  TaskbarThumbnailService(this._ref) {
+    _channel.setMethodCallHandler(_handleNativeCall);
+    // 只监听 isPlaying：整个 PlaybackState 监听会把 200ms 一次的 position
+    // 更新也当成「状态变化」，向原生侧发 5 次/秒的平台通道调用（暂停时的
+    // 空闲状态也在发）。图标只关心播放 / 暂停，按切片监听即可。
+    _playbackSubscription = _ref.listen<bool>(
+      playbackControllerProvider.select((state) => state.isPlaying),
+      (previous, playing) => _notifyPlaybackState(playing),
+      fireImmediately: true,
+    );
+  }
+
+  static const MethodChannel _channel = MethodChannel('com.mintmusic/taskbar');
+
+  final Ref _ref;
+
+  ProviderSubscription<bool>? _playbackSubscription;
+
+  /// 处理原生侧发来的按钮事件。
+  Future<void> _handleNativeCall(MethodCall call) async {
+    switch (call.method) {
+      case 'playPause':
+        await _ref.read(playbackControllerProvider.notifier).togglePlayPause();
+        break;
+      case 'previous':
+        await _ref.read(playbackControllerProvider.notifier).previous();
+        break;
+      case 'next':
+        await _ref.read(playbackControllerProvider.notifier).next();
+        break;
+      case 'queryPlaybackState':
+        // 工具栏刚挂上时原生侧会来问一次当前播放状态，
+        // 保证播放 / 暂停图标正确。
+        final state = _ref.read(playbackControllerProvider);
+        _notifyPlaybackState(state.isPlaying);
+        break;
+      case 'windowBusyBegin':
+      case 'windowBusyEnd':
+        // 窗口拖动 / 缩放开始 / 结束（与任务栏共用同一条通道，见 WindowChrome
+        // 的说明）。现在只用来记日志 / 观测，背景模糊已经改成预烘焙位图，
+        // 拖动期间不再降级。
+        WindowChrome.handleNativeWindowState(call.method);
+        break;
+    }
+  }
+
+  /// 把播放状态回传给原生侧，用于切换播放 / 暂停图标。
+  void _notifyPlaybackState(bool playing) {
+    if (!Platform.isWindows) return;
+    _channel
+        .invokeMethod<void>('playbackState', {'playing': playing})
+        .catchError((Object _) {});
+  }
+
+  void dispose() {
+    _playbackSubscription?.close();
+    _playbackSubscription = null;
+  }
+}
+
+/// 任务栏缩略图工具栏服务（仅 Windows 生效，其它平台为空实现）。
+final taskbarThumbnailServiceProvider = Provider<TaskbarThumbnailService>((
+  ref,
+) {
+  final service = TaskbarThumbnailService(ref);
+  ref.onDispose(service.dispose);
+  return service;
+});

@@ -1,0 +1,546 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
+import 'package:flutter/material.dart';
+import '../services/app_image_cache.dart';
+import '../services/cover_cache_service.dart';
+import '../services/cover_memory_cache.dart';
+import '../../features/local/data/local_metadata_reader.dart';
+
+/// 统一的封面图片组件，支持：
+/// - HTTP/HTTPS URL（网络图片）
+/// - 本地文件路径（如 /data/.../*.jpg）
+/// - 无 URL 时通过 CoverCacheService 从 MediaStore 提取（songId + mediaStoreId）
+class MusicCoverImage extends StatefulWidget {
+  final String? url;
+  final String? songId;
+  final int? mediaStoreId;
+
+  /// 本地歌曲的音频文件路径（可选）。
+  ///
+  /// 封面缓存未命中时（扫描发生在标签写入之前 / 缓存被清理），用它现场
+  /// 从音频文件里提取内嵌封面并回填缓存——否则「文件明明有封面，播放页
+  /// 却不显示」。
+  final String? filePath;
+  final double? width;
+  final double? height;
+  final BoxFit fit;
+  final Widget? placeholder;
+  final Widget? errorWidget;
+  final BorderRadius? borderRadius;
+  final int? cacheWidth;
+  final int? cacheHeight;
+  final FilterQuality filterQuality;
+
+  /// 图片最终加载失败（含响应过小 / 本地读取失败）时回调。
+  /// 播放器封面用它触发 getPic 兜底换地址重试，与歌曲列表项行为一致。
+  final void Function()? onLoadFailed;
+
+  /// 图片真正取到字节并开始显示时回调（每张图一次），带原始字节。
+  /// 背景层用它把「上一张封面」原样冻结住。
+  final void Function(Uint8List bytes)? onLoaded;
+
+  const MusicCoverImage({
+    super.key,
+    this.url,
+    this.songId,
+    this.mediaStoreId,
+    this.filePath,
+    this.width,
+    this.height,
+    this.fit = BoxFit.cover,
+    this.placeholder,
+    this.errorWidget,
+    this.borderRadius,
+    this.cacheWidth,
+    this.cacheHeight,
+    this.filterQuality = FilterQuality.medium,
+    this.onLoadFailed,
+    this.onLoaded,
+  });
+
+  /// 封面被改动（编辑标签页上传 / 删除封面）后调用。
+  ///
+  /// 清掉这首歌的内存缓存，并让所有已构建的封面组件重新取图。
+  static void refresh(String songId) => _MusicCoverImageState.refresh(songId);
+
+  /// 响应体本身就是一行图片地址时，取出那个地址。
+  ///
+  /// 只认「短 + 单行 + 以 http(s):// 开头 + 不含 `<`」的响应，避免把
+  /// 错误页 / JSON 误当成地址。
+  @visibleForTesting
+  static String? extractImageUrlFromBody(Uint8List bytes) {
+    if (bytes.isEmpty || bytes.length > 512) return null;
+    String text;
+    try {
+      text = utf8.decode(bytes).trim();
+    } catch (_) {
+      return null;
+    }
+    if (text.length < 12 || text.length > 512) return null;
+    if (!text.startsWith('http://') && !text.startsWith('https://')) {
+      return null;
+    }
+    if (text.contains('<') || text.contains(RegExp(r'\s'))) return null;
+    return text;
+  }
+
+  @override
+  State<MusicCoverImage> createState() => _MusicCoverImageState();
+}
+
+class _MusicCoverImageState extends State<MusicCoverImage> {
+  /// 与本地封面共用一份字节预算（见 [CoverMemoryCache]）。
+  static final CoverMemoryCache _cache = CoverMemoryCache.instance;
+  static final Map<String, List<void Function(Uint8List)>> _pending = {};
+
+  /// 封面被改动（编辑标签页上传 / 删除封面）后自增，用来让所有封面组件
+  /// 丢掉旧字节重新取图 —— 否则列表、播放页会一直显示改动前的封面。
+  static int _revision = 0;
+
+  /// 通知所有封面组件：这张封面变了，请重新取图。
+  static void refresh(String songId) {
+    _cache.remove(songId);
+    _pending.remove(songId);
+    _revision++;
+  }
+
+  static final Dio _dio = Dio(
+    BaseOptions(
+      connectTimeout: const Duration(seconds: 10),
+      receiveTimeout: const Duration(seconds: 10),
+    ),
+  );
+
+  static final Dio _refererDio = Dio(
+    BaseOptions(
+      connectTimeout: const Duration(seconds: 10),
+      receiveTimeout: const Duration(seconds: 10),
+      headers: {
+        'User-Agent':
+            'Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36',
+      },
+    ),
+  );
+
+  Uint8List? _bytes;
+  bool _loading = true;
+  String? _lastKey;
+
+  /// 已经回调过 [MusicCoverImage.onLoaded] 的那张图（避免每次 build 都回调）。
+  String? _notifiedLoadedKey;
+
+  /// 上一次取图时的全局封面版本号（见 [_MusicCoverImageState.refresh]）。
+  int _seenRevision = _MusicCoverImageState._revision;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void didUpdateWidget(MusicCoverImage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.url != widget.url ||
+        oldWidget.songId != widget.songId ||
+        oldWidget.mediaStoreId != widget.mediaStoreId ||
+        oldWidget.filePath != widget.filePath) {
+      _load();
+      return;
+    }
+    // 封面被别处改过（上传 / 删除）：丢掉旧字节重新取图。
+    if (_seenRevision != _MusicCoverImageState._revision) {
+      _lastKey = null;
+      _bytes = null;
+      _load();
+    }
+  }
+
+  /// 换了一张图（列表复用组件、编辑标签后切歌）时先清掉旧字节。
+  ///
+  /// 否则旧图会一直留在 `_bytes` 里：新歌没有封面时 `_onError` 只把
+  /// `_loading` 置 false，`_bytes` 仍是上一张，于是「上一首的封面残留到
+  /// 下一首」（筛选后第一行显示成别的歌的封面就是这个原因）。
+  void _dropStaleBytes(String nextKey) {
+    if (_lastKey == nextKey) return;
+    _bytes = null;
+    _loading = true;
+  }
+
+  void _load() {
+    _seenRevision = _MusicCoverImageState._revision;
+    final url = widget.url;
+
+    // Case 1: 无 URL — 从 CoverCacheService 获取（MediaStore 提取 / 桌面端缓存）
+    if (url == null || url.isEmpty) {
+      if (widget.songId != null) {
+        _loadFromCoverCache();
+      } else {
+        setState(() {
+          _loading = false;
+          _bytes = null;
+        });
+      }
+      return;
+    }
+
+    // Case 2: 有 URL — 根据类型加载本地文件或网络图片
+    final cacheKey = url;
+
+    if (_lastKey == cacheKey && _bytes != null) {
+      setState(() {
+        _loading = false;
+      });
+      return;
+    }
+    _dropStaleBytes(cacheKey);
+    _lastKey = cacheKey;
+
+    // 内存缓存命中
+    final cached = _cache.get(cacheKey);
+    if (cached != null) {
+      setState(() {
+        _bytes = cached;
+        _loading = false;
+      });
+      return;
+    }
+
+    // 正在加载中，加入等待队列
+    if (_pending.containsKey(cacheKey)) {
+      _pending[cacheKey]!.add((bytes) {
+        if (mounted && _lastKey == cacheKey) {
+          setState(() {
+            _bytes = bytes;
+            _loading = false;
+          });
+        }
+      });
+      return;
+    }
+
+    _pending[cacheKey] = [];
+    _loading = true;
+
+    // 本地文件路径
+    if (_isLocalPath(url)) {
+      _readLocalFile(url, cacheKey);
+      return;
+    }
+
+    // 网络 URL：先查 image_cache 磁盘缓存，没有再下载
+    _loadFromImageCache(url, cacheKey);
+  }
+
+  bool _isLocalPath(String path) {
+    return path.startsWith('/') ||
+        path.startsWith('\\\\') ||
+        path.startsWith('file://');
+  }
+
+  Future<void> _readLocalFile(String path, String cacheKey) async {
+    try {
+      String filePath = path;
+      if (filePath.startsWith('file://')) {
+        filePath = filePath.substring(7);
+      }
+      final file = File(filePath);
+      if (await file.exists()) {
+        final bytes = await file.readAsBytes();
+        if (bytes.isNotEmpty) {
+          _putCache(cacheKey, bytes);
+          if (mounted && _lastKey == cacheKey) {
+            setState(() {
+              _bytes = bytes;
+              _loading = false;
+            });
+          }
+          _notifyPending(cacheKey, bytes);
+          return;
+        }
+      }
+    } catch (e) {
+      debugPrint('[MusicCoverImage] 本地文件读取失败: $path - $e');
+    }
+    _onError(cacheKey);
+  }
+
+  Future<void> _loadFromImageCache(String url, String cacheKey) async {
+    final bytes = await AppImageCache.read(url);
+    if (bytes != null && bytes.isNotEmpty) {
+      _putCache(cacheKey, bytes);
+      if (mounted && _lastKey == cacheKey) {
+        setState(() {
+          _bytes = bytes;
+          _loading = false;
+        });
+      }
+      _notifyPending(cacheKey, bytes);
+      return;
+    }
+    await _fetchImage(url, cacheKey);
+  }
+
+  void _loadFromCoverCache() {
+    final songId = widget.songId!;
+    final mediaStoreId = widget.mediaStoreId;
+
+    if (_lastKey == songId && _bytes != null) {
+      setState(() {
+        _loading = false;
+      });
+      return;
+    }
+    _dropStaleBytes(songId);
+    _lastKey = songId;
+
+    _loading = true;
+
+    // 异步从 CoverCacheService 获取
+    _fetchFromCoverCache(songId, mediaStoreId);
+  }
+
+  Future<void> _fetchFromCoverCache(String songId, int? mediaStoreId) async {
+    try {
+      final cache = CoverCacheService();
+      var bytes = await cache.getArtwork(songId, mediaStoreId: mediaStoreId);
+
+      // 缓存未命中但有本地文件：现场提取内嵌封面并回填缓存。
+      // 典型场景是「在线歌曲播放中点了下载，随即在本地音乐页播放」——
+      // 扫描可能发生在封面写入文件之前，索引里 hasCover=false 且缓存为空。
+      if ((bytes == null || bytes.isEmpty) &&
+          widget.filePath != null &&
+          widget.filePath!.isNotEmpty) {
+        try {
+          final metadata = await LocalMetadataReader.read(widget.filePath!);
+          final artwork = metadata.artwork;
+          if (artwork != null && artwork.isNotEmpty) {
+            unawaited(cache.putArtwork(songId, artwork));
+            bytes = artwork;
+          }
+        } catch (e) {
+          debugPrint('[MusicCoverImage] 从音频文件提取封面失败: $e');
+        }
+      }
+
+      if (bytes != null && bytes.isNotEmpty) {
+        _putCache(songId, bytes);
+        if (mounted && _lastKey == songId) {
+          setState(() {
+            _bytes = bytes;
+            _loading = false;
+          });
+        }
+        _notifyPending(songId, bytes);
+        return;
+      }
+    } catch (e) {
+      debugPrint('[MusicCoverImage] CoverCache 加载失败: $songId - $e');
+    }
+    _onError(songId);
+  }
+
+  void _putCache(String key, Uint8List bytes) {
+    _cache.put(key, bytes);
+  }
+
+  void _cacheImage(String cacheKey, Uint8List bytes) {
+    unawaited(AppImageCache.write(cacheKey, bytes));
+  }
+
+  void _notifyPending(String key, Uint8List bytes) {
+    final callbacks = _pending.remove(key);
+    if (callbacks != null) {
+      for (final cb in callbacks) {
+        cb(bytes);
+      }
+    }
+  }
+
+  Future<void> _fetchImage(
+    String imageUrl,
+    String cacheKey, {
+    bool allowRedirectFollow = true,
+  }) async {
+    // 有些插件自己拼协议头，会得到 `https:////host/x.jpg`（多余斜杠）。
+    // 这种 URL 在 Uri 里 host 会被解析成空，请求必然失败（表现为图片一直空白），
+    // 这里统一压成 `https://host/x.jpg`。
+    imageUrl = imageUrl.replaceFirstMapped(
+      RegExp(r'^(https?:)/+'),
+      (match) => '${match[1]}//',
+    );
+
+    // URL 处理：Referer 头、CDN 降级
+    var needsReferer = imageUrl.contains('music.126.net');
+    if (needsReferer && imageUrl.startsWith('http://')) {
+      imageUrl = 'https://${imageUrl.substring(7)}';
+    }
+    if ((imageUrl.contains('kwcdn.kuwo.cn') ||
+            imageUrl.contains('kuwo.cn') ||
+            imageUrl.contains('img1.kuwo.cn')) &&
+        imageUrl.startsWith('https://')) {
+      imageUrl = 'http://${imageUrl.substring(8)}';
+    }
+
+    try {
+      final dio = needsReferer ? _refererDio : _dio;
+      final options = Options(responseType: ResponseType.bytes);
+      if (needsReferer) {
+        options.headers = {'Referer': 'https://music.163.com'};
+      }
+
+      final response = await dio.get<List<int>>(imageUrl, options: options);
+
+      if (response.data == null) {
+        _onError(cacheKey);
+        return;
+      }
+
+      final bytes = Uint8List.fromList(response.data!);
+
+      // 有些封面接口返回的不是图片，而是一行纯文本的图片地址
+      // （酷我 `artistpicserver.kuwo.cn/pic.web` 就是这种：响应体是
+      //  `http://img1.kwcdn.kuwo.cn/star/albumcover/700/xxx.jpg`）。
+      // 直接当图片用会得到 60~70 字节的「响应过小」失败，表现为封面空白；
+      // 这里识别出来，按里面的地址再取一次。
+      if (allowRedirectFollow) {
+        final innerUrl = MusicCoverImage.extractImageUrlFromBody(bytes);
+        if (innerUrl != null) {
+          if (kDebugMode) {
+            debugPrint('[MusicCoverImage] 响应是文本地址，改用 $innerUrl');
+          }
+          await _fetchImage(innerUrl, cacheKey, allowRedirectFollow: false);
+          return;
+        }
+      }
+
+      if (bytes.length < 100) {
+        debugPrint(
+          '[MusicCoverImage] 响应过小 (${bytes.length} bytes)，可能不是图片: $imageUrl',
+        );
+        _onError(cacheKey);
+        return;
+      }
+
+      _putCache(cacheKey, bytes);
+      _cacheImage(cacheKey, bytes);
+
+      if (mounted && _lastKey == cacheKey) {
+        setState(() {
+          _bytes = bytes;
+          _loading = false;
+        });
+      }
+
+      _notifyPending(cacheKey, bytes);
+    } catch (e) {
+      if (!needsReferer) {
+        try {
+          debugPrint('[MusicCoverImage] 首次加载失败，带 User-Agent 重试: $imageUrl');
+          final response = await _refererDio.get<List<int>>(
+            imageUrl,
+            options: Options(responseType: ResponseType.bytes),
+          );
+          if (response.data != null && response.data!.length >= 100) {
+            final bytes = Uint8List.fromList(response.data!);
+            _putCache(cacheKey, bytes);
+            _cacheImage(cacheKey, bytes);
+            if (mounted && _lastKey == cacheKey) {
+              setState(() {
+                _bytes = bytes;
+                _loading = false;
+              });
+            }
+            _notifyPending(cacheKey, bytes);
+            return;
+          }
+        } catch (_) {}
+      }
+      debugPrint('[MusicCoverImage] 加载失败: $imageUrl - $e');
+      _onError(cacheKey);
+    }
+  }
+
+  void _onError(String cacheKey) {
+    _pending.remove(cacheKey);
+    if (mounted && _lastKey == cacheKey) {
+      setState(() {
+        _loading = false;
+      });
+      widget.onLoadFailed?.call();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_bytes != null) {
+      final loadedKey = _lastKey ?? '';
+      if (_notifiedLoadedKey != loadedKey) {
+        _notifiedLoadedKey = loadedKey;
+        final onLoaded = widget.onLoaded;
+        final bytes = _bytes!;
+        if (onLoaded != null) {
+          // 加载完成会触发 setState，不能在 build 里直接回调（调用方也常
+          // setState），推到当前帧结束之后。
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) onLoaded(bytes);
+          });
+        }
+      }
+    }
+
+    if (_loading && _bytes == null) {
+      return widget.errorWidget ?? _buildPlaceholder();
+    }
+
+    if (_bytes == null) {
+      return widget.errorWidget ?? _buildPlaceholder();
+    }
+
+    final image = Image.memory(
+      _bytes!,
+      width: widget.width,
+      height: widget.height,
+      fit: widget.fit,
+      gaplessPlayback: true,
+      cacheWidth: widget.cacheWidth ?? _decodeDimension(widget.width),
+      cacheHeight: widget.cacheHeight ?? _decodeDimension(widget.height),
+      filterQuality: widget.filterQuality,
+    );
+
+    if (widget.borderRadius != null) {
+      return ClipRRect(borderRadius: widget.borderRadius!, child: image);
+    }
+
+    return image;
+  }
+
+  static int _decodeDimension(double? dimension) {
+    if (dimension == null || !dimension.isFinite || dimension <= 0) {
+      return 512;
+    }
+    return (dimension * 2).round().clamp(64, 1024);
+  }
+
+  Widget _buildPlaceholder() {
+    if (widget.placeholder != null) return widget.placeholder!;
+    final container = Container(
+      width: widget.width,
+      height: widget.height,
+      color: Colors.grey.withValues(alpha: 0.15),
+      child: Icon(
+        Icons.music_note,
+        size: (widget.width ?? 48) * 0.5,
+        color: Colors.grey.withValues(alpha: 0.4),
+      ),
+    );
+    if (widget.borderRadius != null) {
+      return ClipRRect(borderRadius: widget.borderRadius!, child: container);
+    }
+    return container;
+  }
+}

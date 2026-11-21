@@ -1,0 +1,1631 @@
+import 'dart:convert';
+import 'dart:isolate';
+import 'dart:math';
+import 'package:flutter/foundation.dart';
+import '../models/lyric_line.dart';
+import 'lyric_sort.dart';
+import 'ttml_parser.dart';
+
+/// 行内 LRC 时间标签（宽松匹配：秒/毫秒 1~3 位、支持全角括号）。
+/// 如 `[02:13.20]`、`[2:13.2]`、`［02:13.20］`。
+final RegExp _lrcInlineTagRegExp = RegExp(
+  r'[\[\［]\d{1,2}:\d{1,2}(?:[.:]\d{1,3})?[\]\］]',
+);
+
+/// 交错式逐字标签（带捕获组，用于解析词级时间轴）。
+final RegExp _interleavedTagRegExp = RegExp(
+  r'[\[\［](\d{1,2}):(\d{1,2})(?:[.:](\d{1,3}))?[\]\］]',
+);
+
+/// 解析"交错式"逐字时间标签行：
+/// - `[00:12.00]我[00:12.30]感[00:13.00]觉`（行首标签后文字带标签）
+/// - `我[02:13.20]感[02:13.64]觉[02:14.53]`（首段无标签，用 [lineStartMs]）
+/// 返回 null 表示不是交错式格式。
+/// 解析"交错式"逐字时间标签行（词后置时间戳）：
+/// - `[00:12.00]我[00:12.30]感[00:13.00]觉`
+/// - `我[02:13.20]感[02:13.64]觉[02:14.53]`（首段无标签，[lineStartMs] 传 -1）
+/// 每个标签属于其前面紧邻的文本段。返回 null 表示不是交错式格式。
+List<LyricWord>? _parseInterleavedWords(String content, int lineStartMs) {
+  final matches = _interleavedTagRegExp.allMatches(content).toList();
+  if (matches.isEmpty) return null;
+
+  final words = <LyricWord>[];
+  var pos = 0;
+  for (var i = 0; i < matches.length; i++) {
+    final m = matches[i];
+    final text = content.substring(pos, m.start).trim();
+    if (text.isNotEmpty) {
+      var tagMs = _parseInterleavedTagMs(m);
+      // 标签时间小于行起始时视为相对偏移
+      if (tagMs < lineStartMs) tagMs += lineStartMs;
+      // 首段文字（第一个标签前）：有行首时间戳用行起始时间，
+      // 无行首时间戳（补偿解析，lineStartMs=-1）用第一个标签时间。
+      final startMs = i == 0 && lineStartMs >= 0 ? lineStartMs : tagMs;
+      final endMs = i < matches.length - 1
+          ? _parseInterleavedTagMs(matches[i + 1])
+          : tagMs + 500;
+      words.add(LyricWord(word: text, startTimeMs: startMs, endTimeMs: endMs));
+    }
+    pos = m.end;
+  }
+
+  // 最后一个标签之后的残留文本：独立成词（时间取最后标签），
+  // 避免与前一词合并丢失词级信息。
+  final tail = content.substring(pos).trim();
+  if (tail.isNotEmpty) {
+    if (words.isNotEmpty) {
+      final lastTagMs = _parseInterleavedTagMs(matches.last);
+      words.add(
+        LyricWord(
+          word: tail,
+          startTimeMs: lastTagMs,
+          endTimeMs: lastTagMs + 500,
+        ),
+      );
+    } else {
+      words.add(
+        LyricWord(word: tail, startTimeMs: lineStartMs, endTimeMs: lineStartMs),
+      );
+    }
+  }
+
+  if (words.isEmpty) return null;
+  return words;
+}
+
+int _parseInterleavedTagMs(Match m) {
+  final minutes = int.parse(m.group(1)!);
+  final seconds = int.parse(m.group(2)!);
+  var msStr = m.group(3) ?? '0';
+  if (msStr.length == 2) msStr = '${msStr}0';
+  if (msStr.length > 3) msStr = msStr.substring(0, 3);
+  return minutes * 60000 + seconds * 1000 + int.parse(msStr);
+}
+
+/// 剥离行内 LRC 时间标签，避免标签以文本形式显示。
+String _stripInlineLrcTags(String text) =>
+    text.replaceAll(_lrcInlineTagRegExp, '').trim();
+
+/// 剥离各类词级标记（`(ms,dur)`、`<rel,dur>`、内联 `[mm:ss.xx]`），
+/// 用于各格式解析器"无词标签回退"分支，避免标签以文本形式显示。
+String _stripWordTags(String text) => text
+    .replaceAll(RegExp(r'[(（]\d+[,，]\d+(?:[,，]\d+)?[)）]'), '')
+    .replaceAll(RegExp(r'<-?\d+(?:,-?\d+)+>'), '')
+    .replaceAll(_lrcInlineTagRegExp, '')
+    .trim();
+
+/// 一份歌词结果里「最该显示」的那份文本解析成的行：逐字（`crlyric`）优先，
+/// 没有逐字才用整行（`lrc`）。
+///
+/// 播放页、搜索歌词预览、「保存到歌曲文件」写文件、下载写标签都走这一个入口，
+/// 保证几处看到的是同一份歌词。
+List<LyricLine> parseBestLyricText(LyricResult result) {
+  final candidates = _lyricCandidates(result);
+
+  var lines = <LyricLine>[];
+  for (final candidate in candidates) {
+    final parsed = parseLyricAuto(candidate);
+    if (parsed.isEmpty) continue;
+    final hasYrc = parsed.any((line) => line.isYrc);
+    if (hasYrc || lines.isEmpty) lines = parsed;
+    if (hasYrc) break;
+  }
+  return lines;
+}
+
+/// [parseBestLyricText] 的 isolate 版本：TTML 可达数百 KB，主线程解析会卡住
+/// 切歌 / 打开预览的那一帧。
+Future<List<LyricLine>> parseBestLyricTextInIsolate(LyricResult result) async {
+  final candidates = _lyricCandidates(result);
+
+  var lines = <LyricLine>[];
+  for (final candidate in candidates) {
+    final parsed = await parseLyricAutoInIsolate(candidate);
+    if (parsed.isEmpty) continue;
+    final hasYrc = parsed.any((line) => line.isYrc);
+    if (hasYrc || lines.isEmpty) lines = parsed;
+    if (hasYrc) break;
+  }
+  return lines;
+}
+
+List<String> _lyricCandidates(LyricResult result) => <String>[
+  if (result.crlyric?.trim().isNotEmpty ?? false) result.crlyric!,
+  if (result.lrc?.trim().isNotEmpty ?? false) result.lrc!,
+];
+
+/// 文本是不是逐字（词级时间轴）歌词。
+///
+/// 只看格式特征，不做完整解析 —— TTML 可能几百 KB，这里只用来在「TTML 词库」
+/// 与「音源歌词」之间选一份。
+bool isWordLevelLyric(String? text) {
+  final trimmed = text?.trim() ?? '';
+  if (trimmed.isEmpty) return false;
+  return detectWordLyricFormat(extractEmbeddedLyricContent(trimmed)) != null;
+}
+
+/// TTML 是否带词级时间轴：逐字时间落在 `<span>` 上，只有 `<p>` 的是整行。
+bool _ttmlHasWordSpans(String ttml) =>
+    RegExp(r'<span[\s>]', caseSensitive: false).hasMatch(ttml);
+
+/// 把 TTML 词库与音源在线歌词合成「一份」最终歌词。
+///
+/// 选用规则（与播放页原逻辑一致）：
+/// * TTML 至少和在线歌词一样逐字（在线不是逐字，或 TTML 本身逐字）→ 用 TTML；
+/// * 否则用在线那份（它可能是 YRC / QRC / KRC / LRCX，也可能是整行 LRC）。
+///
+/// 翻译 / 音译始终沿用音源返回的那一份：TTML 词库只有原文，翻译来自音源。
+LyricResult? pickBestLyric({String? ttmlText, LyricResult? online}) {
+  final ttml = ttmlText?.trim() ?? '';
+  final onlineIsWordLevel = isWordLevelLyric(online?.crlyric);
+
+  if (ttml.isNotEmpty) {
+    if (!onlineIsWordLevel || _ttmlHasWordSpans(ttml)) {
+      return LyricResult(
+        lrc: ttml,
+        tlyric: online?.tlyric,
+        rlyric: online?.rlyric,
+      );
+    }
+  }
+
+  if (online == null) return null;
+  if ((online.lrc?.trim().isNotEmpty ?? false) ||
+      (online.crlyric?.trim().isNotEmpty ?? false) ||
+      (online.tlyric?.trim().isNotEmpty ?? false)) {
+    return online;
+  }
+  return null;
+}
+
+List<LyricLine> parseLrc(String lrcText, {String? tlyric, String? rlyric}) {
+  if (lrcText.isEmpty) return [];
+
+  final lines = <_RawLrcLine>[];
+  final lineRegExp = RegExp(r'^\[(\d{1,2}):(\d{2})\.(\d{2,3})\](.*)$');
+  final wordTagRegExp = RegExp(r'<\d{1,2}:\d{2}\.\d{2,3}>');
+  final offsetRegExp = RegExp(r'^\[offset:(-?\d+)\]$');
+
+  int globalOffset = 0;
+
+  for (final rawLine in lrcText.split('\n')) {
+    final trimmed = rawLine.trim();
+    if (trimmed.isEmpty) continue;
+
+    final offsetMatch = offsetRegExp.firstMatch(trimmed);
+    if (offsetMatch != null) {
+      globalOffset = int.tryParse(offsetMatch.group(1) ?? '0') ?? 0;
+      continue;
+    }
+
+    final match = lineRegExp.firstMatch(trimmed);
+    if (match == null) {
+      // 无行首时间戳但含交错式标签的行（`我[02:13.20]感[02:13.64]`）：
+      // 补偿解析为词级时间轴，避免整行丢弃或标签以文本显示。
+      final interWords = _parseInterleavedWords(trimmed, -1);
+      if (interWords != null) {
+        lines.add(
+          _RawLrcLine(
+            timestampMs: interWords.first.startTimeMs,
+            text: interWords.map((w) => w.word).join(),
+            words: interWords,
+          ),
+        );
+      }
+      continue;
+    }
+
+    final minutes = int.parse(match.group(1)!);
+    final seconds = int.parse(match.group(2)!);
+    var msStr = match.group(3)!;
+    if (msStr.length == 2) msStr = '${msStr}0';
+    final ms = int.parse(msStr);
+    var text = match.group(4)?.trim() ?? '';
+    final timestampMs = minutes * 60000 + seconds * 1000 + ms + globalOffset;
+
+    // 交错式逐字标签（`[00:12.00]我[00:12.30]感[00:13.00]觉`）：
+    // 解析为词级时间轴，标签不再作为文本显示。
+    final interWords = _parseInterleavedWords(text, timestampMs);
+    if (interWords != null) {
+      lines.add(
+        _RawLrcLine(
+          timestampMs: timestampMs,
+          text: interWords.map((w) => w.word).join(),
+          words: interWords,
+        ),
+      );
+      continue;
+    }
+
+    text = text.replaceAll(wordTagRegExp, '');
+    // 去掉所有内嵌的 LRC 时间标签（形如 `[00:00.47]`），避免污染歌词文本
+    // 这些标签可能出现在歌词文本的任意位置（行首、中间、行尾）
+    text = text.replaceAll(_lrcInlineTagRegExp, '');
+    if (text.isEmpty) continue;
+
+    lines.add(_RawLrcLine(timestampMs: timestampMs, text: text));
+  }
+
+  sortStableBy(lines, (line) => line.timestampMs);
+
+  final tlyricMap = _parseTranslationLrc(tlyric);
+  final rlyricMap = _parseTranslationLrc(rlyric);
+
+  final result = <LyricLine>[];
+  for (int i = 0; i < lines.length; i++) {
+    final line = lines[i];
+    final endTimeMs = i < lines.length - 1
+        ? lines[i + 1].timestampMs - 1
+        : line.timestampMs + 3000;
+
+    final translation = _findTranslation(tlyricMap, line.timestampMs);
+    final roman = _findTranslation(rlyricMap, line.timestampMs);
+
+    if (line.words != null) {
+      result.add(
+        LyricLine(
+          startTimeMs: line.timestampMs,
+          endTimeMs: endTimeMs,
+          words: line.words!,
+          translatedLyric: translation,
+          romanLyric: roman,
+        ),
+      );
+      continue;
+    }
+
+    result.add(
+      LyricLine(
+        startTimeMs: line.timestampMs,
+        endTimeMs: endTimeMs,
+        words: [
+          LyricWord(
+            word: line.text,
+            startTimeMs: line.timestampMs,
+            endTimeMs: endTimeMs,
+          ),
+        ],
+        translatedLyric: translation,
+        romanLyric: roman,
+      ),
+    );
+  }
+
+  return result;
+}
+
+class _RawLrcLine {
+  final int timestampMs;
+  final String text;
+  final List<LyricWord>? words;
+  const _RawLrcLine({
+    required this.timestampMs,
+    required this.text,
+    this.words,
+  });
+}
+
+/// Remove timed word tags like `(37196,207)` or `（37196，207）`
+/// from romanization text so only the readable text remains.
+String _stripTimedWordTags(String text) {
+  // ASCII parentheses: (ms,dur) or (ms,dur,extra)
+  // Chinese full-width: （ms，dur） or （ms，dur，extra）
+  return text.replaceAll(RegExp(r'[(（]\d+[,，]\d+(?:[,，]\d+)?[)）]'), '');
+}
+
+Map<int, String> _parseTranslationLrc(String? lrcText) {
+  if (lrcText == null || lrcText.isEmpty) return {};
+
+  final result = <int, String>{};
+  final lineRegExp = RegExp(r'^\[(\d{1,2}):(\d{2})\.(\d{2,3})\](.*)$');
+
+  for (final rawLine in lrcText.split('\n')) {
+    final match = lineRegExp.firstMatch(rawLine.trim());
+    if (match == null) continue;
+
+    final minutes = int.parse(match.group(1)!);
+    final seconds = int.parse(match.group(2)!);
+    var msStr = match.group(3)!;
+    if (msStr.length == 2) msStr = '${msStr}0';
+    final ms = int.parse(msStr);
+    final text = _stripTimedWordTags(match.group(4)?.trim() ?? '');
+    if (text.isEmpty) continue;
+
+    final timestampMs = minutes * 60000 + seconds * 1000 + ms;
+    result[timestampMs] = text;
+  }
+
+  return result;
+}
+
+String? _findTranslation(Map<int, String> map, int timestampMs) {
+  const tolerance = 300;
+  for (final entry in map.entries) {
+    if ((entry.key - timestampMs).abs() <= tolerance) {
+      return entry.value;
+    }
+  }
+  return map[timestampMs];
+}
+
+List<LyricLine> parseYrc(String yrcText) {
+  if (yrcText.isEmpty) return [];
+
+  yrcText = extractEmbeddedLyricContent(yrcText);
+  final lines = <LyricLine>[];
+  final lineRegExp = RegExp(r'^\[(\d+),(\d+)\](.*)$');
+  final lrcLineRegExp = RegExp(r'^\[(\d{1,2}):(\d{2})\.(\d{2,3})\](.*)$');
+
+  for (final rawLine in yrcText.split('\n')) {
+    final trimmed = rawLine.trim();
+    if (trimmed.isEmpty) continue;
+
+    final lineMatch = lineRegExp.firstMatch(trimmed);
+    final lrcLineMatch = lineMatch == null
+        ? lrcLineRegExp.firstMatch(trimmed)
+        : null;
+    if (lineMatch == null && lrcLineMatch == null) continue;
+
+    final startTime = lineMatch != null
+        ? int.parse(lineMatch.group(1)!)
+        : _parseLrcTimestamp(
+            lrcLineMatch!.group(1)!,
+            lrcLineMatch.group(2)!,
+            lrcLineMatch.group(3)!,
+          );
+    final duration = lineMatch != null ? int.parse(lineMatch.group(2)!) : 0;
+    final content = lineMatch != null
+        ? lineMatch.group(3)!
+        : lrcLineMatch!.group(4)!;
+    final endTime = duration > 0 ? startTime + duration : startTime;
+
+    final words = _parseTimedWords(
+      content: content,
+      lineStartTime: startTime,
+      lineEndTime: endTime,
+      wordRegExp: RegExp(r'\((\d+),(\d+)(?:,\d+)?\)'),
+      nextTagStart: '(',
+      wordBeforeTag: !content.startsWith('('),
+    );
+    if (words.isEmpty && content.isNotEmpty) {
+      final cleaned = _stripWordTags(content);
+      if (cleaned.isNotEmpty) {
+        words.add(
+          LyricWord(word: cleaned, startTimeMs: startTime, endTimeMs: endTime),
+        );
+      }
+    }
+    if (words.isEmpty) continue;
+    final resolvedEndTime = duration > 0
+        ? endTime
+        : words.fold<int>(
+            startTime,
+            (value, word) => max(value, word.endTimeMs),
+          );
+
+    lines.add(
+      LyricLine(
+        startTimeMs: startTime,
+        endTimeMs: resolvedEndTime,
+        words: words,
+      ),
+    );
+  }
+
+  sortStableBy(lines, (line) => line.startTimeMs);
+  return lines;
+}
+
+List<LyricLine> parseQrc(String qrcText) {
+  if (qrcText.isEmpty) return [];
+
+  qrcText = extractEmbeddedLyricContent(qrcText);
+  final lines = <LyricLine>[];
+  final lineRegExp = RegExp(r'^\[(\d+),(\d+)\](.*)$');
+
+  for (final rawLine in qrcText.split('\n')) {
+    final trimmed = rawLine.trim();
+    if (trimmed.isEmpty) continue;
+
+    final lineMatch = lineRegExp.firstMatch(trimmed);
+    if (lineMatch == null) continue;
+
+    final startTime = int.parse(lineMatch.group(1)!);
+    final duration = int.parse(lineMatch.group(2)!);
+    final endTime = startTime + duration;
+    final content = lineMatch.group(3)!;
+
+    final words = _parseTimedWords(
+      content: content,
+      lineStartTime: startTime,
+      lineEndTime: endTime,
+      wordRegExp: RegExp(r'\((\d+),(\d+),(\d+)\)'),
+      nextTagStart: '(',
+      wordBeforeTag: !content.startsWith('('),
+    );
+
+    if (words.isEmpty && content.isNotEmpty) {
+      final cleaned = _stripWordTags(content);
+      if (cleaned.isNotEmpty) {
+        words.add(
+          LyricWord(word: cleaned, startTimeMs: startTime, endTimeMs: endTime),
+        );
+      }
+    }
+
+    if (words.isNotEmpty) {
+      lines.add(
+        LyricLine(startTimeMs: startTime, endTimeMs: endTime, words: words),
+      );
+    }
+  }
+
+  sortStableBy(lines, (line) => line.startTimeMs);
+  return lines;
+}
+
+/// KRC 头部 `[language:<base64>]` 解出来的内容。
+class KrcLanguage {
+  const KrcLanguage({required this.lyric, this.translation, this.roman});
+
+  /// 剥掉 `[language:...]` 之后的 KRC 原文（这行原样留在歌词里就是一大坨
+  /// base64，播放器和歌词编辑器都会把它当歌词显示）。
+  final String lyric;
+  final String? translation;
+  final String? roman;
+}
+
+final RegExp _krcLanguageLineRegExp = RegExp(
+  r'^\[language:([^\]\r\n]*)\][ \t]*\r?\n?',
+  multiLine: true,
+);
+
+/// 把 KRC 里的 `[language:<base64>]` 拆出来：翻译 / 音译转成标准 LRC。
+///
+/// 酷狗把逐行翻译（`type: 1`）/ 音译（`type: 2`）塞在这个 base64 JSON 里，
+/// `lyricContent` 与 KRC 的 `[start,dur]` 行按顺序一一对应：
+///
+/// ```json
+/// {"content":[{"language":0,"type":1,
+///   "lyricContent":[[" "],["我看见你和她"],["在雨中漫步"]]}],"version":1}
+/// ```
+///
+/// 插件（`assets/plugins/kugou.js`）已经会解一次并交给 tlyric / rlyric，
+/// 这里是宿主侧的兜底：插件版本较旧、或换成别的酷狗插件时，翻译仍然能出来。
+KrcLanguage splitKrcLanguage(String text) {
+  final match = _krcLanguageLineRegExp.firstMatch(text);
+  if (match == null) return KrcLanguage(lyric: text);
+
+  final lyric = text.replaceRange(match.start, match.end, '');
+  final entries = _decodeKrcLanguage(match.group(1)!);
+  if (entries == null) return KrcLanguage(lyric: lyric);
+
+  // KRC 每一行的起始毫秒，翻译行按同样的索引取时间戳。
+  final starts = <int>[];
+  for (final line in text.split('\n')) {
+    final lineMatch = RegExp(r'^\[(\d+),(\d+)\]').firstMatch(line.trim());
+    if (lineMatch == null) continue;
+    starts.add(int.parse(lineMatch.group(1)!));
+  }
+  if (starts.isEmpty) return KrcLanguage(lyric: lyric);
+
+  String? translation;
+  String? roman;
+  for (final entry in entries) {
+    final buffer = StringBuffer();
+    for (var i = 0; i < entry.rows.length && i < starts.length; i++) {
+      final row = entry.rows[i].trim();
+      // 酷狗用空字符串 / "/" / "//" 占位「这一行没有翻译」。
+      if (row.isEmpty || row == '/' || row == '//') continue;
+      buffer.writeln('${_krcLrcTimestamp(starts[i])}$row');
+    }
+    final block = buffer.toString().trim();
+    if (block.isEmpty) continue;
+    if (entry.type == 2) {
+      roman ??= block;
+    } else {
+      translation ??= block;
+    }
+  }
+
+  return KrcLanguage(lyric: lyric, translation: translation, roman: roman);
+}
+
+/// 歌词结果归一化：KRC 原文里还带着 `[language:]` 且翻译 / 音译缺失时，
+/// 就地解出来补上对应通道（插件已经给过的那一份优先，不重复覆盖）。
+LyricResult normalizeKrcLanguage(LyricResult result) {
+  final needsTranslation = !(result.tlyric?.trim().isNotEmpty ?? false);
+  final needsRoman = !(result.rlyric?.trim().isNotEmpty ?? false);
+  if (!needsTranslation && !needsRoman) return result;
+
+  var word = result.crlyric;
+  var plain = result.lrc;
+  var translation = result.tlyric;
+  var roman = result.rlyric;
+  var changed = false;
+
+  final wordText = word?.trim() ?? '';
+  if (wordText.contains('[language:')) {
+    final split = splitKrcLanguage(wordText);
+    if (split.translation != null || split.roman != null) {
+      word = split.lyric;
+      if (needsTranslation) translation = split.translation;
+      if (needsRoman) roman = split.roman;
+      changed = true;
+    }
+  }
+
+  final plainText = plain?.trim() ?? '';
+  if (plainText.contains('[language:')) {
+    final split = splitKrcLanguage(plainText);
+    if (split.translation != null || split.roman != null) {
+      plain = split.lyric;
+      translation ??= split.translation;
+      roman ??= split.roman;
+      changed = true;
+    }
+  }
+
+  if (!changed) return result;
+  return LyricResult(
+    lrc: plain,
+    crlyric: word,
+    tlyric: translation,
+    rlyric: roman,
+  );
+}
+
+class _KrcLanguageEntry {
+  const _KrcLanguageEntry(this.type, this.rows);
+
+  /// 1 = 翻译，2 = 音译（酷狗的约定）。
+  final int type;
+  final List<String> rows;
+}
+
+List<_KrcLanguageEntry>? _decodeKrcLanguage(String encoded) {
+  dynamic decoded;
+  try {
+    decoded = jsonDecode(utf8.decode(base64.decode(base64.normalize(encoded))));
+  } catch (_) {
+    // 不是标准 base64 / 不是 JSON：当作没有翻译，原文该剥的已经剥了。
+    return null;
+  }
+  if (decoded is! Map) return null;
+  final contents = decoded['content'];
+  if (contents is! List) return null;
+
+  final entries = <_KrcLanguageEntry>[];
+  for (final item in contents) {
+    if (item is! Map) continue;
+    final rawRows = item['lyricContent'];
+    if (rawRows is! List) continue;
+    final rows = <String>[
+      for (final row in rawRows)
+        if (row is List)
+          row.map((cell) => '${cell ?? ''}').join()
+        else
+          '${row ?? ''}',
+    ];
+    if (rows.isEmpty) continue;
+    entries.add(_KrcLanguageEntry((item['type'] as num?)?.toInt() ?? 1, rows));
+  }
+  return entries.isEmpty ? null : entries;
+}
+
+/// KRC 毫秒 → `[mm:ss.cc]`（与插件生成的时间标签同一精度）。
+String _krcLrcTimestamp(int ms) {
+  final centis = ms < 0 ? 0 : ms ~/ 10;
+  final mm = (centis ~/ 6000).toString().padLeft(2, '0');
+  final ss = ((centis ~/ 100) % 60).toString().padLeft(2, '0');
+  final cc = (centis % 100).toString().padLeft(2, '0');
+  return '[$mm:$ss.$cc]';
+}
+
+List<LyricLine> parseKrc(String krcText) {
+  if (krcText.isEmpty) return [];
+
+  krcText = extractEmbeddedLyricContent(krcText);
+  final lines = <LyricLine>[];
+  final lineRegExp = RegExp(r'^\[(\d+),(\d+)\](.*)$');
+
+  for (final rawLine in krcText.split('\n')) {
+    final trimmed = rawLine.trim();
+    if (trimmed.isEmpty) continue;
+
+    final lineMatch = lineRegExp.firstMatch(trimmed);
+    if (lineMatch == null) continue;
+
+    final startTime = int.parse(lineMatch.group(1)!);
+    final duration = int.parse(lineMatch.group(2)!);
+    final endTime = startTime + duration;
+    final content = lineMatch.group(3)!;
+
+    // Convert KRC <relStart,dur,0> to YRC-style (absStart,dur,0), matching CeruMusic kg.js
+    final convertedContent = content.replaceAllMapped(
+      RegExp(r'<(\d+),(\d+),0>'),
+      (match) {
+        final relStart = int.parse(match.group(1)!);
+        final wordDur = int.parse(match.group(2)!);
+        final absStart = startTime + relStart;
+        return '($absStart,$wordDur,0)';
+      },
+    );
+
+    final words = _parseTimedWords(
+      content: convertedContent,
+      lineStartTime: startTime,
+      lineEndTime: endTime,
+      wordRegExp: RegExp(r'\((\d+),(\d+)(?:,\d+)?\)'),
+      nextTagStart: '(',
+      wordBeforeTag: false,
+    );
+
+    if (words.isEmpty && content.isNotEmpty) {
+      final cleaned = _stripWordTags(content);
+      if (cleaned.isNotEmpty) {
+        words.add(
+          LyricWord(word: cleaned, startTimeMs: startTime, endTimeMs: endTime),
+        );
+      }
+    }
+
+    if (words.isNotEmpty) {
+      lines.add(
+        LyricLine(startTimeMs: startTime, endTimeMs: endTime, words: words),
+      );
+    }
+  }
+
+  sortStableBy(lines, (line) => line.startTimeMs);
+  return lines;
+}
+
+List<LyricLine> parseMrc(String mrcText) {
+  if (mrcText.isEmpty) return [];
+
+  mrcText = extractEmbeddedLyricContent(mrcText);
+  final lines = <LyricLine>[];
+  final lineRegExp = RegExp(r'^\[(\d+),(\d+)\](.*)$');
+
+  for (final rawLine in mrcText.split('\n')) {
+    final trimmed = rawLine.trim();
+    if (trimmed.isEmpty) continue;
+
+    final lineMatch = lineRegExp.firstMatch(trimmed);
+    if (lineMatch == null) continue;
+
+    final startTime = int.parse(lineMatch.group(1)!);
+    final duration = int.parse(lineMatch.group(2)!);
+    final endTime = startTime + duration;
+    final content = lineMatch.group(3)!;
+
+    final words = _parseTimedWords(
+      content: content,
+      lineStartTime: startTime,
+      lineEndTime: endTime,
+      wordRegExp: RegExp(r'\((\d+),(\d+)\)'),
+      nextTagStart: '(',
+    );
+
+    if (words.isEmpty && content.isNotEmpty) {
+      final cleaned = _stripWordTags(content);
+      if (cleaned.isNotEmpty) {
+        words.add(
+          LyricWord(word: cleaned, startTimeMs: startTime, endTimeMs: endTime),
+        );
+      }
+    }
+
+    if (words.isNotEmpty) {
+      lines.add(
+        LyricLine(startTimeMs: startTime, endTimeMs: endTime, words: words),
+      );
+    }
+  }
+
+  sortStableBy(lines, (line) => line.startTimeMs);
+  return lines;
+}
+
+List<LyricLine> mergeTranslation(List<LyricLine> base, String? tlyric) {
+  if (tlyric == null || tlyric.isEmpty || base.isEmpty) return base;
+
+  final translated = parseLrc(tlyric);
+  if (translated.isEmpty) return base;
+
+  const matchWindow = 1500;
+
+  int? usedJ;
+  for (int i = 0; i < base.length; i++) {
+    if (base[i].plainText.isEmpty) continue;
+    if (base[i].translatedLyric != null) continue;
+
+    final startJ = usedJ != null ? usedJ + 1 : 0;
+    var bestJ = -1;
+    var bestDiff = double.infinity;
+    for (int j = startJ; j < translated.length; j++) {
+      final diff = (translated[j].startTimeMs - base[i].startTimeMs)
+          .abs()
+          .toDouble();
+      if (diff < bestDiff && diff <= matchWindow) {
+        bestDiff = diff;
+        bestJ = j;
+      }
+    }
+
+    if (bestJ >= 0) {
+      final text = translated[bestJ].plainText;
+      if (text.isNotEmpty && text != '//') {
+        base[i] = base[i].copyWith(translatedLyric: text);
+        usedJ = bestJ;
+      }
+    }
+  }
+
+  return base;
+}
+
+List<LyricLine> stripTranslationFromWords(List<LyricLine> lines) {
+  return lines.map((line) {
+    final tran = line.translatedLyric;
+    if (tran == null || tran.isEmpty || line.words.length <= 1) return line;
+
+    final hasCjkTran = tran.codeUnits.any((cu) => cu >= 0x4E00 && cu <= 0x9FFF);
+    if (!hasCjkTran) return line;
+
+    final filtered = <LyricWord>[];
+    for (final word in line.words) {
+      final hasCjk = word.word.codeUnits.any(
+        (cu) => cu >= 0x4E00 && cu <= 0x9FFF,
+      );
+      if (!hasCjk) {
+        filtered.add(word);
+      }
+    }
+
+    if (filtered.length == line.words.length || filtered.length < 2)
+      return line;
+
+    return line.copyWith(words: filtered);
+  }).toList();
+}
+
+List<LyricLine> extractAdLibWords(List<LyricLine> lines) {
+  for (int i = 0; i < lines.length; i++) {
+    final line = lines[i];
+    if (line.words.length < 2 || line.adLibText != null) continue;
+
+    var adLibStart = -1;
+    for (int j = line.words.length - 1; j >= 0; j--) {
+      final w = line.words[j].word.trimRight();
+      if (w.startsWith('(') ||
+          w.startsWith('（') ||
+          w.endsWith(')') ||
+          w.endsWith('）')) {
+        adLibStart = j;
+      } else {
+        if (adLibStart >= 0) break;
+      }
+    }
+    if (adLibStart < 0) continue;
+
+    final adLibWords = line.words.sublist(adLibStart);
+    final mainWords = line.words.sublist(0, adLibStart);
+    if (mainWords.length < 2) continue;
+
+    final adLibJoined = adLibWords.map((w) => w.word).join(' ');
+    final cleaned = adLibJoined
+        .replaceAll(RegExp(r'^[（(]\s*'), '')
+        .replaceAll(RegExp(r'\s*[）)]\s*$'), '');
+    if (cleaned.isEmpty) continue;
+
+    lines[i] = line.copyWith(words: mainWords, adLibText: cleaned);
+  }
+  return lines;
+}
+
+List<LyricLine> mergeRomanLyric(List<LyricLine> base, String? rlyric) {
+  if (rlyric == null || rlyric.isEmpty || base.isEmpty) return base;
+
+  final romanized = parseLrc(rlyric);
+  if (romanized.isEmpty) return base;
+
+  const tolerance = 300;
+  const ratioTolerance = 0.4;
+
+  int? anchorIndex;
+  var bestDiff = double.infinity;
+  for (int i = 0; i < romanized.length; i++) {
+    final firstDuration = (base[0].endTimeMs - base[0].startTimeMs).abs();
+    final firstTol = min(tolerance, firstDuration * ratioTolerance);
+    final diff = (romanized[i].startTimeMs - base[0].startTimeMs)
+        .abs()
+        .toDouble();
+    if (diff <= firstTol && diff < bestDiff) {
+      bestDiff = diff;
+      anchorIndex = i;
+    }
+  }
+
+  if (anchorIndex != null) {
+    var j = anchorIndex;
+    for (int i = 0; i < base.length && j < romanized.length; i++, j++) {
+      final romanText = _stripTimedWordTags(romanized[j].plainText);
+      if (romanText.isEmpty || base[i].plainText.isEmpty) continue;
+      if (base[i].romanLyric == null) {
+        base[i] = base[i].copyWith(romanLyric: romanText);
+      }
+    }
+  }
+
+  return base;
+}
+
+List<LyricLine> sanitizeLyricLines(List<LyricLine> lines) {
+  if (lines.isEmpty) return lines;
+
+  final sanitized = <LyricLine>[];
+
+  for (int i = 0; i < lines.length; i++) {
+    var line = lines[i];
+
+    if (line.startTimeMs < 0) {
+      line = line.copyWith(startTimeMs: 0);
+    }
+
+    if (line.endTimeMs <= line.startTimeMs) {
+      final defaultDuration = 3000;
+      final nextStart = i < lines.length - 1
+          ? lines[i + 1].startTimeMs
+          : line.startTimeMs + defaultDuration;
+      line = line.copyWith(
+        endTimeMs: nextStart > line.startTimeMs
+            ? nextStart - 1
+            : line.startTimeMs + defaultDuration,
+      );
+    }
+
+    final sanitizedWords = <LyricWord>[];
+    for (final word in line.words) {
+      var w = word;
+      if (w.startTimeMs < line.startTimeMs) {
+        w = w.copyWith(startTimeMs: line.startTimeMs);
+      }
+      if (w.endTimeMs > line.endTimeMs) {
+        w = w.copyWith(endTimeMs: line.endTimeMs);
+      }
+      if (w.endTimeMs <= w.startTimeMs) {
+        w = w.copyWith(
+          endTimeMs:
+              w.startTimeMs +
+              max(
+                100,
+                (line.endTimeMs - line.startTimeMs) ~/ line.words.length,
+              ),
+        );
+      }
+      sanitizedWords.add(w);
+    }
+
+    final lastWordEnd = sanitizedWords.isNotEmpty
+        ? sanitizedWords.last.endTimeMs
+        : line.startTimeMs;
+    if (line.endTimeMs < lastWordEnd) {
+      line = line.copyWith(endTimeMs: lastWordEnd);
+    }
+
+    sanitized.add(line.copyWith(words: sanitizedWords));
+  }
+
+  sortStableBy(sanitized, (line) => line.startTimeMs);
+  return sanitized;
+}
+
+bool isYrcFormat(String text) {
+  if (text.isEmpty) return false;
+  final firstLines = text.split('\n').take(80);
+  for (final line in firstLines) {
+    final trimmed = line.trim();
+    if (trimmed.isEmpty) continue;
+    if (RegExp(r'^\[\d+,\d+\].*\(\d+,\d+,\d+\)').hasMatch(trimmed) ||
+        RegExp(r'^\[\d+,\d+\].*\(\d+,\d+\)').hasMatch(trimmed) ||
+        (trimmed.startsWith('[') && trimmed.contains(']('))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool isEnhancedLrcFormat(String text) {
+  if (text.isEmpty) return false;
+  final firstLines = text.split('\n').take(80);
+  for (final line in firstLines) {
+    final trimmed = line.trim();
+    if (trimmed.isEmpty) continue;
+    if (RegExp(
+      r'^\[\d{1,2}:\d{2}\.\d{2,3}\].*<\d{1,2}:\d{2}\.\d{2,3}>',
+    ).hasMatch(trimmed)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool isKrcFormat(String text) {
+  if (text.isEmpty) return false;
+  final firstLines = text.split('\n').take(80);
+  for (final line in firstLines) {
+    final trimmed = line.trim();
+    if (trimmed.isEmpty) continue;
+    if (RegExp(r'^\[\d+,\d+\].*<\d+,\d+,\d+>').hasMatch(trimmed)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool isLrcxFormat(String text) {
+  if (text.isEmpty) return false;
+  final firstLines = text.split('\n').take(80);
+  for (final line in firstLines) {
+    final trimmed = line.trim();
+    if (trimmed.isEmpty) continue;
+    // 标准 LRCx：`[毫秒,时长]<相对起始,时长>字`
+    // 酷我 LRCX 的标签可能是负数（首字标签必为 `<x,-x>`），一并算作 LRCX。
+    if (RegExp(r'^\[\d+,\d+\].*<-?\d+,-?\d+>').hasMatch(trimmed)) {
+      return true;
+    }
+    // 咪咕（Migu）风格：LRC 行时间戳 + 相对字时间标签 `[mm:ss.mmm]<相对起始,时长>字`
+    if (RegExp(
+      r'^\[\d{1,2}:\d{2}\.\d{2,3}\].*<-?\d+,-?\d+>',
+    ).hasMatch(trimmed)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool isMrcFormat(String text) {
+  if (text.isEmpty) return false;
+  final firstLines = text.split('\n').take(80);
+  for (final line in firstLines) {
+    final trimmed = line.trim();
+    if (trimmed.isEmpty) continue;
+    if (RegExp(r'^\[\d+,\d+\].*\(\d+,\d+\)[^(]').hasMatch(trimmed)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool isTtmlFormat(String text) {
+  if (text.isEmpty) return false;
+  final trimmed = text.trimLeft();
+  return trimmed.startsWith('<tt') ||
+      (trimmed.contains('<tt') &&
+          trimmed.contains('<body') &&
+          trimmed.contains('<p'));
+}
+
+/// 逐字歌词的英文格式名（YRC / QRC / KRC / LRCX / MRC / TTML / ELRC）。
+///
+/// 只有逐字格式才返回名称，普通 LRC 返回 null。QRC 与 MRC 的行结构相同，
+/// 需要 [source]（wy / tx / kg / kw / mg）辅助区分；无法判断时按 QRC 处理。
+String? detectWordLyricFormat(String text, {String? source}) {
+  if (text.isEmpty) return null;
+  final content = extractEmbeddedLyricContent(text).trimLeft();
+  if (content.isEmpty) return null;
+
+  if (isTtmlFormat(content)) return 'TTML';
+  if (isNeteaseJsonYrcFormat(content)) return 'YRC';
+  if (isKrcFormat(content)) return 'KRC';
+  if (isLrcxFormat(content)) return 'LRCX';
+  if (isEnhancedLrcFormat(content)) return 'ELRC';
+
+  final lineRegExp = RegExp(r'^\[\d+,\d+\](.*)$');
+  final wordTagRegExp = RegExp(r'\(\d+,\d+(?:,\d+)?\)');
+  for (final rawLine in content.split('\n').take(80)) {
+    final line = rawLine.trim();
+    if (line.isEmpty) continue;
+    final match = lineRegExp.firstMatch(line);
+    if (match == null) continue;
+    final body = match.group(1) ?? '';
+    if (!wordTagRegExp.hasMatch(body)) continue;
+    // YRC：时间标签在前（`(start,dur,0)字`）；QRC / MRC：文字在前，
+    // 两者行结构相同，靠来源区分，无法判断时按 QRC 处理。
+    if (body.startsWith('(')) return 'YRC';
+    if (source == 'mg') return 'MRC';
+    return 'QRC';
+  }
+
+  // 交错式逐字 LRC：`[mm:ss.xx]字[mm:ss.xx]字`（也可能首段文字在标签前）。
+  if (RegExp(
+    r'^[^\n\[]*\[\d{1,2}:\d{2}(?:[.:]\d{1,3})?\][^\n\[]*\[\d{1,2}:\d{2}(?:[.:]\d{1,3})\]',
+    multiLine: true,
+  ).hasMatch(content)) {
+    return 'ELRC';
+  }
+  return null;
+}
+
+List<LyricLine> parseEnhancedLrc(String lrcText) {
+  if (lrcText.isEmpty) return [];
+
+  final rawLines = <_EnhancedRawLine>[];
+  final lineRegExp = RegExp(r'^\[(\d{1,2}):(\d{2})\.(\d{2,3})\](.*)$');
+
+  for (final rawLine in lrcText.split('\n')) {
+    final trimmed = rawLine.trim();
+    if (trimmed.isEmpty) continue;
+
+    final match = lineRegExp.firstMatch(trimmed);
+    if (match == null) continue;
+
+    final timestamp = _parseLrcTimestamp(
+      match.group(1)!,
+      match.group(2)!,
+      match.group(3)!,
+    );
+    final content = match.group(4)?.trim() ?? '';
+    if (content.isEmpty) continue;
+
+    rawLines.add(_EnhancedRawLine(timestampMs: timestamp, content: content));
+  }
+
+  sortStableBy(rawLines, (line) => line.timestampMs);
+
+  final result = <LyricLine>[];
+  for (var i = 0; i < rawLines.length; i++) {
+    final raw = rawLines[i];
+    final nextStart = i < rawLines.length - 1
+        ? rawLines[i + 1].timestampMs
+        : raw.timestampMs + 5000;
+    final lineEnd = max(raw.timestampMs + 500, nextStart - 1);
+    final words = _parseEnhancedLrcWords(raw.content, raw.timestampMs, lineEnd);
+    if (words.isEmpty) continue;
+
+    result.add(
+      LyricLine(
+        startTimeMs: raw.timestampMs,
+        endTimeMs: max(lineEnd, words.last.endTimeMs),
+        words: words,
+      ),
+    );
+  }
+
+  return result;
+}
+
+List<LyricWord> _parseEnhancedLrcWords(
+  String content,
+  int lineStartTime,
+  int lineEndTime,
+) {
+  final tagExp = RegExp(r'<(\d{1,2}):(\d{2})\.(\d{2,3})>');
+  final matches = tagExp.allMatches(content).toList();
+  if (matches.isEmpty) return [];
+
+  final words = <LyricWord>[];
+  for (var i = 0; i < matches.length; i++) {
+    final match = matches[i];
+    final nextMatch = i < matches.length - 1 ? matches[i + 1] : null;
+    final wordText = content
+        .substring(match.end, nextMatch?.start ?? content.length)
+        .replaceAll(tagExp, '');
+    if (wordText.isEmpty) continue;
+
+    final startTime = _parseLrcTimestamp(
+      match.group(1)!,
+      match.group(2)!,
+      match.group(3)!,
+    );
+    final endTime = nextMatch != null
+        ? _parseLrcTimestamp(
+            nextMatch.group(1)!,
+            nextMatch.group(2)!,
+            nextMatch.group(3)!,
+          )
+        : lineEndTime;
+
+    words.add(
+      LyricWord(
+        word: wordText,
+        startTimeMs: max(lineStartTime, startTime),
+        endTimeMs: max(startTime + 80, endTime),
+      ),
+    );
+  }
+
+  return words;
+}
+
+List<LyricLine> parseLrcx(String lrcxText) {
+  if (lrcxText.isEmpty) return [];
+
+  lrcxText = extractEmbeddedLyricContent(lrcxText);
+  final lines = <LyricLine>[];
+  final lineTimeExp = RegExp(r'^\[(\d+),(\d+)\]');
+  final lineTime2Exp = RegExp(r'^\[(\d{1,2}):(\d{2})\.(\d{2,3})\]');
+  final wordTimeExp = RegExp(r'<(-?\d+),(-?\d+)>');
+  // 酷我 LRCX 的字标签不是 `<起始,时长>`，而是「中点 ± 半宽」编码，
+  // 首字标签必带负数（如 `<52,-52>`），[kuwo:XYZ] 头给出两个除数。
+  final kuwo = _kuwoLrcxParams(lrcxText);
+
+  for (final rawLine in lrcxText.split('\n')) {
+    final trimmed = rawLine.trim();
+    if (trimmed.isEmpty) continue;
+
+    int? startTime;
+    int? duration;
+    String content;
+
+    final lineMatch = lineTimeExp.firstMatch(trimmed);
+    if (lineMatch != null) {
+      startTime = int.parse(lineMatch.group(1)!);
+      duration = int.parse(lineMatch.group(2)!);
+      content = trimmed.replaceFirst(lineTimeExp, '');
+    } else {
+      final lineMatch2 = lineTime2Exp.firstMatch(trimmed);
+      if (lineMatch2 == null) continue;
+      final m = int.parse(lineMatch2.group(1)!);
+      final s = int.parse(lineMatch2.group(2)!);
+      var msStr = lineMatch2.group(3)!;
+      if (msStr.length == 2) msStr = '${msStr}0';
+      startTime = m * 60000 + s * 1000 + int.parse(msStr);
+      content = trimmed.replaceFirst(lineTime2Exp, '');
+      duration = 5000;
+    }
+
+    var endTime = startTime + duration;
+    final words = <LyricWord>[];
+    var remaining = content;
+    var lastEnd = startTime;
+
+    while (remaining.isNotEmpty) {
+      final match = wordTimeExp.firstMatch(remaining);
+      if (match == null) break;
+
+      final textBefore = remaining.substring(0, match.start);
+      final rawStart = int.parse(match.group(1)!);
+      final rawDuration = int.parse(match.group(2)!);
+      final int wordStart;
+      final int wordEnd;
+      if (kuwo != null) {
+        final relStart = ((rawStart + rawDuration) / (kuwo.offset * 2))
+            .abs()
+            .truncate();
+        final relEnd =
+            ((rawStart - rawDuration) / (kuwo.offset2 * 2)).abs().truncate() +
+            relStart;
+        wordStart = startTime + relStart;
+        wordEnd = startTime + (relEnd > relStart ? relEnd : relStart);
+      } else {
+        wordStart = _resolveTimedWordStart(
+          lineStartTime: startTime,
+          lineEndTime: endTime,
+          rawStartTime: rawStart,
+          duration: rawDuration,
+        );
+        wordEnd = wordStart + rawDuration;
+      }
+
+      remaining = remaining.substring(match.end);
+
+      if (textBefore.isNotEmpty) {
+        words.add(
+          LyricWord(
+            word: textBefore,
+            startTimeMs: lastEnd,
+            endTimeMs: wordStart,
+          ),
+        );
+      }
+
+      String wordText = '';
+      if (remaining.isNotEmpty && !remaining.startsWith('<')) {
+        final nextTag = remaining.indexOf('<');
+        if (nextTag < 0) {
+          wordText = remaining;
+          remaining = '';
+        } else {
+          wordText = remaining.substring(0, nextTag);
+          remaining = remaining.substring(nextTag);
+        }
+      }
+
+      if (wordText.isNotEmpty) {
+        words.add(
+          LyricWord(word: wordText, startTimeMs: wordStart, endTimeMs: wordEnd),
+        );
+      }
+
+      lastEnd = wordEnd;
+    }
+
+    if (words.isEmpty && content.isNotEmpty) {
+      final cleanContent = _stripWordTags(content);
+      if (cleanContent.isNotEmpty) {
+        words.add(
+          LyricWord(
+            word: cleanContent,
+            startTimeMs: startTime,
+            endTimeMs: endTime,
+          ),
+        );
+      }
+    }
+
+    if (words.isNotEmpty) {
+      // 酷我 LRCX 没有行时长，行尾就是最后一个字的结束时间。
+      if (kuwo != null) endTime = words.last.endTimeMs;
+      lines.add(
+        LyricLine(startTimeMs: startTime, endTimeMs: endTime, words: words),
+      );
+    }
+  }
+
+  sortStableBy(lines, (line) => line.startTimeMs);
+  return lines;
+}
+
+/// 酷我 LRCX 的编码参数；返回 null 表示不是酷我 LRCX。
+///
+/// 标签 `<a,b>` 实际是「中点 ± 半宽」：起始 = |(a+b)/(offset*2)|，
+/// 结束 = |(a-b)/(offset2*2)| + 起始。两个除数来自 `[kuwo:XYZ]` 头，
+/// XYZ 按八进制读，十位是 offset、个位是 offset2，缺省都是 1。
+({int offset, int offset2})? _kuwoLrcxParams(String text) {
+  final hasNegativeTag = RegExp(r'<-\d+,-?\d+>|<\d+,-\d+>').hasMatch(text);
+  final tag = RegExp(r'\[kuwo:([^\[\]]+)\]').firstMatch(text);
+  if (!hasNegativeTag && tag == null) return null;
+
+  var offset = 1;
+  var offset2 = 1;
+  final content = tag?.group(1)?.split('][').first.trim();
+  final value = content == null ? null : int.tryParse(content, radix: 8);
+  if (value != null && value > 0) {
+    final first = value ~/ 10;
+    final second = value % 10;
+    if (first > 0 && second > 0) {
+      offset = first;
+      offset2 = second;
+    }
+  }
+  return (offset: offset, offset2: offset2);
+}
+
+/// 检测是否为 NetEase JSON-lines YRC 格式。
+/// 每行: {"t":ms,"c":[{"tx":"字","t":"m:ss.ms"},...]}
+bool isNeteaseJsonYrcFormat(String text) {
+  if (text.isEmpty) return false;
+  final firstLines = text.split('\n').take(20);
+  var jsonLineCount = 0;
+  for (final line in firstLines) {
+    final trimmed = line.trim();
+    if (trimmed.isEmpty) continue;
+    if (trimmed.startsWith('{"t":') || trimmed.startsWith('{"t" :')) {
+      jsonLineCount++;
+      if (jsonLineCount >= 2) return true;
+    }
+  }
+  return false;
+}
+
+/// 将 NetEase JSON-lines YRC 转换为标准 [startMs,duration](absMs,dur,0)字 格式。
+/// 非 JSON 行（标准 YRC / LRC 格式）原样透传，不会丢失。
+String _convertNeteaseJsonYrc(String yrcText) {
+  final rawLines = yrcText.split('\n');
+  final rawNonJson = <String>[];
+  final allLineStarts = <int>[];
+  final allLineChars = <List<_JsonChar>>[];
+
+  for (final rawLine in rawLines) {
+    final trimmed = rawLine.trim();
+    if (trimmed.isEmpty) continue;
+    if (!trimmed.startsWith('{')) {
+      rawNonJson.add(trimmed);
+      continue;
+    }
+    try {
+      final json = jsonDecode(trimmed) as Map?;
+      if (json == null) continue;
+      final lineStart = json['t'];
+      if (lineStart is! int) continue;
+      final chars = json['c'] as List?;
+      if (chars == null || chars.isEmpty) continue;
+
+      final charList = <_JsonChar>[];
+      for (final char in chars) {
+        if (char is! Map) continue;
+        final tx = char['tx']?.toString() ?? '';
+        if (tx.isEmpty) continue;
+        final tStr = char['t']?.toString();
+        int relStart;
+        if (tStr != null && tStr.isNotEmpty) {
+          final parts = tStr.split(':');
+          if (parts.length == 2) {
+            final minutes = int.tryParse(parts[0]) ?? 0;
+            final secParts = parts[1].split('.');
+            final seconds = int.tryParse(secParts[0]) ?? 0;
+            final ms = secParts.length > 1
+                ? int.tryParse(secParts[1].padRight(3, '0').substring(0, 3)) ??
+                      0
+                : 0;
+            relStart = minutes * 60000 + seconds * 1000 + ms;
+          } else {
+            relStart = charList.isEmpty ? 0 : charList.last.relStart + 200;
+          }
+        } else {
+          relStart = charList.isEmpty ? 0 : charList.last.relStart + 200;
+        }
+        charList.add(_JsonChar(tx, relStart));
+      }
+      if (charList.isNotEmpty) {
+        final hasTiming = chars.any(
+          (c) =>
+              c is Map && c['t'] != null && c['t'].toString().trim().isNotEmpty,
+        );
+        if (allLineStarts.length < 3) {
+          debugPrint(
+            '[YRC Convert] JSON line: lineStart=$lineStart chars=${chars.length} hasTiming=$hasTiming first3="${chars.take(3).map((c) => c is Map ? '${c["tx"]}@${c["t"]}' : '?').join(", ")}"',
+          );
+        }
+        if (!hasTiming) {
+          final txAll = chars
+              .map((c) => c is Map ? (c['tx']?.toString() ?? '') : '')
+              .join();
+          allLineStarts.add(lineStart);
+          allLineChars.add([_JsonChar(txAll, 0)]);
+        } else {
+          allLineStarts.add(lineStart);
+          allLineChars.add(charList);
+        }
+      }
+    } catch (_) {}
+  }
+
+  final resultLines = <String>[];
+  int jsonIdx = 0;
+
+  // Emit non-JSON lines and converted JSON lines in original order
+  for (final rawLine in rawLines) {
+    final trimmed = rawLine.trim();
+    if (trimmed.isEmpty) continue;
+    if (trimmed.startsWith('{')) {
+      // This was a JSON line; emit its converted form if available
+      if (jsonIdx < allLineStarts.length) {
+        final lineStart = allLineStarts[jsonIdx];
+        final chars = allLineChars[jsonIdx];
+        jsonIdx++;
+
+        final nextLineStart = jsonIdx < allLineStarts.length
+            ? allLineStarts[jsonIdx]
+            : lineStart + 5000;
+
+        final yrcWords = <String>[];
+        var maxWordEnd = lineStart;
+        for (int j = 0; j < chars.length; j++) {
+          final ch = chars[j];
+          final absStart = lineStart + ch.relStart;
+          final wordEnd = j < chars.length - 1
+              ? lineStart + chars[j + 1].relStart
+              : nextLineStart;
+          final dur = wordEnd - absStart;
+          yrcWords.add('($absStart,${dur > 0 ? dur : 100},0)${ch.tx}');
+          if (wordEnd > maxWordEnd) maxWordEnd = wordEnd;
+        }
+
+        final lineDuration = maxWordEnd - lineStart;
+        resultLines.add(
+          '[$lineStart,$lineDuration]${yrcWords.join('').trimRight()}',
+        );
+      }
+    } else {
+      resultLines.add(trimmed);
+    }
+  }
+
+  return resultLines.join('\n');
+}
+
+class _JsonChar {
+  final String tx;
+  final int relStart;
+  const _JsonChar(this.tx, this.relStart);
+}
+
+/// 小于这个长度的歌词留在当前 isolate 解析：spawn isolate 本身要几十毫秒
+/// 并拷贝整个对象图，比几 KB 文本的正则解析还慢，切歌时反而更晚出词。
+const int _isolateLyricThreshold = 32 * 1024;
+
+/// [parseLyricAuto] 的 isolate 版本：长歌词的逐行正则 + 合并 / 转换在主
+/// 线程同样会卡住切歌瞬间的那一帧（与 `parseTtmlInIsolate` 同理）。
+Future<List<LyricLine>> parseLyricAutoInIsolate(String lyric) =>
+    lyric.length < _isolateLyricThreshold
+    ? Future.value(parseLyricAuto(lyric))
+    : Isolate.run(() => parseLyricAuto(lyric));
+
+List<LyricLine> parseLyricAuto(String text) {
+  if (text.isEmpty) return [];
+
+  text = extractEmbeddedLyricContent(text);
+
+  List<LyricLine> result;
+  String format;
+
+  if (isTtmlFormat(text)) {
+    format = 'ttml';
+    result = parseTtml(text);
+  } else if (isNeteaseJsonYrcFormat(text)) {
+    text = _convertNeteaseJsonYrc(text);
+    format = 'netease-json-yrc';
+    result = parseYrc(text);
+  } else if (isYrcFormat(text)) {
+    format = 'yrc';
+    result = parseYrc(text);
+  } else if (isKrcFormat(text)) {
+    format = 'krc';
+    result = parseKrc(text);
+  } else if (isLrcxFormat(text)) {
+    format = 'lrcx';
+    result = parseLrcx(text);
+  } else if (isMrcFormat(text)) {
+    format = 'mrc';
+    result = parseMrc(text);
+  } else if (isEnhancedLrcFormat(text)) {
+    format = 'elrc';
+    result = parseEnhancedLrc(text);
+  } else {
+    format = 'lrc';
+    result = parseLrc(text);
+  }
+
+  debugPrint(
+    '[LyricParser] detected=$format textLen=${text.length} resultLines=${result.length}',
+  );
+  final nonEmptyLines = text
+      .split('\n')
+      .where((l) => l.trim().isNotEmpty)
+      .toList();
+  if (nonEmptyLines.isNotEmpty) {
+    debugPrint(
+      '[LyricParser] firstLine="${nonEmptyLines.first.trim().substring(0, (nonEmptyLines.first.trim().length).clamp(0, 80))}"',
+    );
+  }
+  return result;
+}
+
+class _EnhancedRawLine {
+  final int timestampMs;
+  final String content;
+
+  const _EnhancedRawLine({required this.timestampMs, required this.content});
+}
+
+int _parseLrcTimestamp(String minutes, String seconds, String milliseconds) {
+  var msStr = milliseconds;
+  if (msStr.length == 2) msStr = '${msStr}0';
+  if (msStr.length > 3) msStr = msStr.substring(0, 3);
+  return int.parse(minutes) * 60000 +
+      int.parse(seconds) * 1000 +
+      int.parse(msStr);
+}
+
+List<LyricWord> _parseTimedWords({
+  required String content,
+  required int lineStartTime,
+  required int lineEndTime,
+  required RegExp wordRegExp,
+  required String nextTagStart,
+  bool wordBeforeTag = true,
+}) {
+  final words = <LyricWord>[];
+  var remaining = content;
+
+  while (remaining.isNotEmpty) {
+    final match = wordRegExp.firstMatch(remaining);
+    if (match == null) break;
+
+    final rawWordStart = int.parse(match.group(1)!);
+    final wordDuration = int.parse(match.group(2)!);
+    final wordStart = _resolveTimedWordStart(
+      lineStartTime: lineStartTime,
+      lineEndTime: lineEndTime,
+      rawStartTime: rawWordStart,
+      duration: wordDuration,
+    );
+    final wordEnd = wordStart + wordDuration;
+
+    if (wordBeforeTag) {
+      // YRC/QRC convention: text(offset,dur) — text before tag is the word
+      final textBefore = remaining.substring(0, match.start);
+      remaining = remaining.substring(match.end);
+
+      if (textBefore.isNotEmpty) {
+        words.add(
+          LyricWord(
+            word: textBefore,
+            startTimeMs: wordStart,
+            endTimeMs: wordEnd,
+          ),
+        );
+      }
+    } else {
+      // KRC convention: (offset,dur)text — text after tag is the word
+      remaining = remaining.substring(match.end);
+
+      String wordText = '';
+      if (remaining.isNotEmpty && !remaining.startsWith(nextTagStart)) {
+        final nextTag = remaining.indexOf(nextTagStart);
+        if (nextTag < 0) {
+          wordText = remaining;
+          remaining = '';
+        } else {
+          wordText = remaining.substring(0, nextTag);
+          remaining = remaining.substring(nextTag);
+        }
+      }
+
+      if (wordText.isNotEmpty) {
+        words.add(
+          LyricWord(word: wordText, startTimeMs: wordStart, endTimeMs: wordEnd),
+        );
+      }
+    }
+  }
+
+  return words;
+}
+
+int _resolveTimedWordStart({
+  required int lineStartTime,
+  required int lineEndTime,
+  required int rawStartTime,
+  required int duration,
+}) {
+  // CeruMusic 的所有 crlyric 来源（wy/kg/kw/mg）在产出时都已转换为绝对时间戳。
+  // AMLL 的 parseYrc/parseQrc 始终按绝对时间戳处理。
+  // 只有 LRCx 的原始字时间戳是行内相对值，且始终 < lineStartTime。
+  // 因此仅靠 rawStartTime < lineStartTime 即可正确区分，去掉按 lineDuration 猜测的逻辑。
+  if (rawStartTime < lineStartTime) {
+    return lineStartTime + rawStartTime;
+  }
+
+  return rawStartTime;
+}
+
+String extractEmbeddedLyricContent(String text) {
+  if (!text.contains('LyricContent=')) return text.trim();
+
+  final match = RegExp(
+    r'''LyricContent\s*=\s*(["'])([\s\S]*?)\1''',
+    caseSensitive: false,
+  ).firstMatch(text);
+  if (match == null) return text.trim();
+
+  return _decodeXmlEntities(match.group(2) ?? '').trim();
+}
+
+String _decodeXmlEntities(String text) {
+  return text
+      .replaceAll(r'\n', '\n')
+      .replaceAll('&#10;', '\n')
+      .replaceAll('&#13;', '\r')
+      .replaceAll('&quot;', '"')
+      .replaceAll('&apos;', "'")
+      .replaceAll('&lt;', '<')
+      .replaceAll('&gt;', '>')
+      .replaceAll('&amp;', '&')
+      .replaceAllMapped(RegExp(r'&#x([0-9a-fA-F]+);'), (match) {
+        final codePoint = int.tryParse(match.group(1)!, radix: 16);
+        return codePoint == null
+            ? match.group(0)!
+            : String.fromCharCode(codePoint);
+      })
+      .replaceAllMapped(RegExp(r'&#(\d+);'), (match) {
+        final codePoint = int.tryParse(match.group(1)!);
+        return codePoint == null
+            ? match.group(0)!
+            : String.fromCharCode(codePoint);
+      });
+}

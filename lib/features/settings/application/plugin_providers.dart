@@ -1,0 +1,348 @@
+import 'dart:io';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../data/plugin_repository.dart';
+import '../domain/models/plugin_info.dart';
+import '../../discover/application/hot_board_providers.dart';
+import '../../plugin/application/plugin_providers.dart';
+import '../../plugin/data/plugin_service.dart' show PluginTypeUnknownException;
+import '../../plugin/domain/plugin_subscription.dart';
+
+export '../../plugin/application/plugin_providers.dart'
+    show
+        musicSourceManagerProvider,
+        pluginServiceProvider,
+        pluginInitializedProvider,
+        pluginSourceStateProvider,
+        pluginSupportedSourcesProvider,
+        pluginLoginStateRevisionProvider,
+        pluginSourceHealthRevisionProvider;
+
+final pluginRepositoryProvider = Provider<PluginRepository>((ref) {
+  return PluginRepository();
+});
+
+final pluginsProvider =
+    AsyncNotifierProvider<PluginsNotifier, List<PluginInfo>>(
+      PluginsNotifier.new,
+    );
+
+/// 插件图标的本地缓存路径（按插件 id 查）。
+///
+/// 图标在导入插件时下载并转成 PNG 缓存到插件目录的 `icons` 子目录
+/// （站点 favicon 多是 .ico，Flutter 解不了，缓存前先转成 PNG）。
+/// 文件不存在时返回 null，界面退回默认的平台圆标。
+final pluginIconPathProvider = Provider.family<String?, String>((
+  ref,
+  pluginId,
+) {
+  final plugins = ref.watch(pluginsProvider).valueOrNull;
+  if (plugins == null) return null;
+  for (final plugin in plugins) {
+    if (plugin.id != pluginId) continue;
+    final path = plugin.iconPath;
+    if (path == null || path.isEmpty) return null;
+    return File(path).existsSync() ? path : null;
+  }
+  return null;
+});
+
+/// Holds the results of the latest plugin update check.
+final pluginUpdateResultsProvider = StateProvider<List<PluginUpdateResult>>(
+  (ref) => [],
+);
+
+/// Holds plugin-initiated update notices (from `lx.send('updateAlert', ...)`).
+/// Each entry contains: pluginName, pluginVersion, pluginId, data (with log and updateUrl).
+final pluginScriptUpdateNoticesProvider =
+    StateProvider<List<Map<String, dynamic>>>((ref) => []);
+
+/// 批量安装插件的汇总结果。
+class PluginBatchInstallResult {
+  const PluginBatchInstallResult({
+    required this.installed,
+    required this.failed,
+    required this.unknownType,
+  });
+
+  /// 安装成功的插件。
+  final List<PluginInfo> installed;
+
+  /// 安装失败的文件：`(文件名, 失败原因)`。
+  final List<(String, String)> failed;
+
+  /// 自动识别不出格式的文件数量（批量时不弹类型选择，提示用户单独添加）。
+  final int unknownType;
+
+  bool get hasFailure => failed.isNotEmpty || unknownType > 0;
+}
+
+class PluginsNotifier extends AsyncNotifier<List<PluginInfo>> {
+  @override
+  Future<List<PluginInfo>> build() async {
+    // 等插件初始化完成再读列表：初始化时会补齐插件元数据（iconUrl）并下载
+    // 图标缓存（iconPath），早于它读取会拿到没有图标的旧数据，
+    // 界面上就表现为「插件都装了但一个图标都没有」。
+    try {
+      await ref.watch(pluginInitializedProvider.future);
+    } catch (_) {
+      // 初始化失败也要能打开插件管理页（至少能看列表 / 卸载）。
+    }
+    final repo = ref.read(pluginRepositoryProvider);
+    return repo.loadPlugins();
+  }
+
+  /// 通过文件选择器添加**一个**插件（多选时只装第一个）。
+  ///
+  /// 界面的「选择文件」按钮现在走 [addPluginsFromFiles] 批量路径，这个单文件
+  /// 入口保留给需要「识别失败 → 用户选类型 → 续装」的调用方。
+  ///
+  /// 识别失败抛出 [PluginTypeUnknownException]；用户在界面选好类型后调
+  /// `resume` 续装，这里把 resume 包了一层，续装成功同样会刷新插件列表。
+  Future<PluginInfo> selectAndAddPlugin({String? type}) async {
+    final pluginService = ref.read(pluginServiceProvider);
+    try {
+      final plugin = await pluginService.selectAndAddPlugin(type: type);
+      _afterPluginInstalled();
+      return plugin;
+    } on PluginTypeUnknownException catch (e) {
+      throw PluginTypeUnknownException((chosen) async {
+        final plugin = await e.resume(chosen);
+        _afterPluginInstalled();
+        return plugin;
+      });
+    }
+  }
+
+  /// 用已经下载好的代码安装插件（URL 添加走这条路）。
+  ///
+  /// 识别失败同样可以 `resume` 续装（用户在界面上选类型后不用重新下载）。
+  Future<PluginInfo> addPluginFromCode(String code, {String? sourceUrl}) async {
+    final pluginService = ref.read(pluginServiceProvider);
+    try {
+      final plugin = await pluginService.addPluginFromCode(
+        code,
+        sourceUrl: sourceUrl,
+      );
+      _afterPluginInstalled();
+      return plugin;
+    } on PluginTypeUnknownException catch (e) {
+      throw PluginTypeUnknownException((chosen) async {
+        final plugin = await e.resume(chosen);
+        _afterPluginInstalled();
+        return plugin;
+      });
+    }
+  }
+
+  /// 安装一份**订阅清单**（清单里每一项是一个插件 js 地址）。
+  ///
+  /// 与批量选文件同一套规则：单个失败不影响后续，识别不出格式只计数，
+  /// 全部装完只刷新一次插件列表。
+  Future<PluginBatchInstallResult> installPluginSubscription(
+    List<PluginSubscriptionEntry> entries, {
+    void Function(int done, int total)? onProgress,
+  }) async {
+    final pluginService = ref.read(pluginServiceProvider);
+    final installed = <PluginInfo>[];
+    final failed = <(String, String)>[];
+    var unknownType = 0;
+
+    for (var i = 0; i < entries.length; i++) {
+      final entry = entries[i];
+      final label = entry.name.isEmpty ? entry.url : entry.name;
+      try {
+        installed.add(await pluginService.downloadAndAddPlugin(entry.url));
+      } on PluginTypeUnknownException {
+        unknownType++;
+      } catch (error) {
+        failed.add((label, _installErrorText(error)));
+      }
+      onProgress?.call(i + 1, entries.length);
+    }
+
+    if (installed.isNotEmpty) _afterPluginInstalled();
+
+    return PluginBatchInstallResult(
+      installed: installed,
+      failed: failed,
+      unknownType: unknownType,
+    );
+  }
+
+  /// 从 URL 下载并安装插件；[type] 为 null 时自动识别类型。
+  Future<PluginInfo> downloadAndAddPlugin(String url, {String? type}) async {
+    final pluginService = ref.read(pluginServiceProvider);
+    try {
+      final plugin = await pluginService.downloadAndAddPlugin(url, type: type);
+      _afterPluginInstalled();
+      return plugin;
+    } on PluginTypeUnknownException catch (e) {
+      throw PluginTypeUnknownException((chosen) async {
+        final plugin = await e.resume(chosen);
+        _afterPluginInstalled();
+        return plugin;
+      });
+    }
+  }
+
+  void _afterPluginInstalled() {
+    // 安装时 `selectAndAddPlugin` 已经把新插件加载好并注册给了 PluginService
+    // （音源、图标、元数据都写完了），这里**不需要**再让
+    // `pluginInitializedProvider` 重建一次：那一轮会把所有插件的 JS 引擎
+    // 先 dispose 再重建，QuickJS 是同步 FFI、全在 UI 主线程上跑，连着装两个
+    // 插件时会明显卡住界面；两轮撞一起还会互相释放对方的引擎，插件加载停在
+    // 半路，发现页就一直取不到音源、点不动。
+    //
+    // 只刷新「插件列表 + 音源列表」就够了：新插件的音源默认启用（persist 的
+    // 关闭记录里没有它），列表重新读一遍即可。
+    Future.delayed(const Duration(milliseconds: 350), () {
+      try {
+        // 新音源出现后，之前按旧音源集合缓存的歌单 / 搜索结果直接丢弃。
+        ref.read(musicSourceManagerProvider).clearAllCaches();
+        ref.invalidate(pluginSourceStateProvider);
+        ref.invalidate(pluginSupportedSourcesProvider);
+        ref.invalidateSelf();
+      } catch (_) {
+        // notifier 已被其它操作重建（如连续安装）：新实例会自行读取
+        // 最新的插件列表，这里无需再刷。
+      }
+    });
+  }
+
+  /// 批量安装选中的插件文件。
+  ///
+  /// 逐个安装，单个文件失败不影响后面的文件：
+  /// - 自动识别不出格式 → 计入 [PluginBatchInstallResult.unknownType]，
+  ///   不在这里弹类型选择框（批量场景弹 N 个框会把人烦死），提示用户单独添加；
+  /// - 其它异常 → 记进 failed，附原因。
+  ///
+  /// [onProgress] 每装完一个文件回调一次 `(已完成, 总数)`，用于界面显示进度。
+  Future<PluginBatchInstallResult> addPluginsFromFiles(
+    List<String> paths, {
+    void Function(int done, int total)? onProgress,
+  }) async {
+    final pluginService = ref.read(pluginServiceProvider);
+    final installed = <PluginInfo>[];
+    final failed = <(String, String)>[];
+    var unknownType = 0;
+
+    for (var i = 0; i < paths.length; i++) {
+      final path = paths[i];
+      final name = _fileNameOf(path);
+      try {
+        installed.add(await pluginService.addPluginFromFile(path));
+      } on PluginTypeUnknownException {
+        unknownType++;
+      } catch (error) {
+        failed.add((name, _installErrorText(error)));
+      }
+      onProgress?.call(i + 1, paths.length);
+    }
+
+    // 全部装完只刷新一次：安装过程中每装一个就重建插件列表会反复重排，
+    // 也避免和「装完自动刷新」的逻辑撞在一起。
+    if (installed.isNotEmpty) _afterPluginInstalled();
+
+    return PluginBatchInstallResult(
+      installed: installed,
+      failed: failed,
+      unknownType: unknownType,
+    );
+  }
+
+  static String _fileNameOf(String path) {
+    final segments = path.split(RegExp(r'[\\/]'));
+    return segments.isEmpty ? path : segments.last;
+  }
+
+  static String _installErrorText(Object error) {
+    final text = error.toString();
+    return text.startsWith('Exception: ')
+        ? text.substring('Exception: '.length)
+        : text;
+  }
+
+  Future<void> uninstallPlugin(String id) async {
+    final pluginService = ref.read(pluginServiceProvider);
+    await pluginService.uninstallPlugin(id);
+    // 插件没了，它带来的热榜配置一起删掉（settings.json 里不再保留这个音源
+    // 的榜单）：音源 `平台id@插件id` 不会再出现，留着只是打不开的死配置。
+    // 重装插件后需要重新添加榜单。
+    await ref.read(hotBoardsProvider.notifier).removeForPlugin(id);
+    ref.invalidate(pluginInitializedProvider);
+    ref.invalidateSelf();
+  }
+
+  Future<void> togglePlugin(String id, bool isEnabled) async {
+    final previousPlugins = state.asData?.value;
+    if (previousPlugins != null) {
+      // Update the settings page before the plugin engine is initialized.
+      // The actual runtime switch and persistence continue below.
+      // 多个插件可以同时启用：只翻转目标插件，其它插件保持原状态。
+      final optimisticPlugins = previousPlugins.map((plugin) {
+        final nextIsEnabled = plugin.id == id ? isEnabled : plugin.isEnabled;
+        return plugin.copyWith(isEnabled: nextIsEnabled);
+      }).toList();
+      state = AsyncData(optimisticPlugins);
+    }
+
+    final pluginService = ref.read(pluginServiceProvider);
+    try {
+      await pluginService.togglePlugin(id, isEnabled);
+      ref.read(musicSourceManagerProvider).clearAllCaches();
+      ref.invalidate(pluginSupportedSourcesProvider);
+      final refreshedPlugins = await ref
+          .read(pluginRepositoryProvider)
+          .loadPlugins();
+      state = AsyncData(refreshedPlugins);
+    } catch (error, stackTrace) {
+      if (previousPlugins != null) {
+        state = AsyncData(previousPlugins);
+      } else {
+        state = AsyncError(error, stackTrace);
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> reorderPlugins({
+    required bool isDataSource,
+    required int oldIndex,
+    required int newIndex,
+  }) async {
+    final previousPlugins = state.requireValue;
+    final group = previousPlugins
+        .where((plugin) => plugin.isDataSource == isDataSource)
+        .toList();
+    if (newIndex > oldIndex) newIndex--;
+    if (newIndex == oldIndex) return;
+
+    group.insert(newIndex, group.removeAt(oldIndex));
+    var groupIndex = 0;
+    final reordered = [
+      for (final plugin in previousPlugins)
+        if (plugin.isDataSource == isDataSource)
+          group[groupIndex++]
+        else
+          plugin,
+    ];
+    state = AsyncData(reordered);
+    try {
+      final saved = await ref
+          .read(pluginServiceProvider)
+          .reorderPlugins(reordered.map((plugin) => plugin.id).toList());
+      state = AsyncData(saved);
+      ref.invalidate(pluginSupportedSourcesProvider);
+    } catch (_) {
+      state = AsyncData(previousPlugins);
+      rethrow;
+    }
+  }
+
+  /// Check all installed plugins for updates.
+  Future<void> checkForUpdates() async {
+    final repo = ref.read(pluginRepositoryProvider);
+    final results = await repo.checkAllPluginUpdates();
+    ref.read(pluginUpdateResultsProvider.notifier).state = results;
+  }
+}

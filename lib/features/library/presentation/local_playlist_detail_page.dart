@@ -1,0 +1,1817 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/gestures.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+
+import '../../../core/constants/app_routes.dart';
+import '../../../core/l10n/l10n.dart';
+import '../../../core/theme/app_spacing.dart';
+import '../../../core/theme/app_surface.dart';
+import '../../../core/theme/theme_provider.dart';
+import '../../../core/utils/responsive_layout.dart';
+import '../../../core/utils/scroll_locate.dart';
+import '../../../shared/pagination/page_slicer.dart';
+import '../../../shared/services/playlist_cmpl_codec.dart';
+import '../../../shared/widgets/page_bar.dart';
+import '../../../shared/widgets/song_action_sheet.dart';
+import '../../../shared/widgets/music_cover_image.dart';
+import '../../../shared/widgets/source_name_tag.dart';
+import '../../../shared/widgets/song_list_item.dart';
+import '../../../shared/widgets/song_selection.dart';
+import '../../plugin/application/plugin_providers.dart';
+import '../../discover/domain/models/search_collection.dart';
+import '../../discover/presentation/artist_albums_page.dart';
+import '../../discover/presentation/widgets/artist_intro_sheet.dart';
+import '../../player/application/mini_player_visibility.dart';
+import '../../settings/application/settings_providers.dart';
+import '../application/playlist_providers.dart';
+import '../domain/models/playlist.dart';
+import '../domain/models/recently_played.dart';
+import '../utils/favorite_playlist.dart';
+import '../../player/application/playback_context.dart';
+import '../../player/application/playback_controller.dart';
+import '../../player/domain/models/song.dart';
+
+enum SongSortMode { addedTime, title, artist, custom }
+
+class LocalPlaylistDetailPage extends ConsumerStatefulWidget {
+  const LocalPlaylistDetailPage({super.key, required this.playlistId});
+
+  final String playlistId;
+
+  @override
+  ConsumerState<LocalPlaylistDetailPage> createState() =>
+      _LocalPlaylistDetailPageState();
+}
+
+class _LocalPlaylistDetailPageState
+    extends ConsumerState<LocalPlaylistDetailPage> {
+  SongSortMode _sortMode = SongSortMode.addedTime;
+  bool _sortAscending = true;
+
+  /// 当前展示（已过滤会员专属 + 已排序）的歌曲，列表 / 播放 / 多选都用它。
+  List<Song> _sortedSongs = [];
+
+  /// 歌单里存储的完整歌曲，不因「隐藏会员专属」而丢失，写盘始终基于它。
+  List<Song> _originalSongs = [];
+  bool _isCustomSortMode = false;
+  bool _hideVipExclusive = false;
+
+  /// 正在按作者名搜索完整条目，准备打开作者专辑列表。
+  bool _openingAlbums = false;
+
+  /// 正在按作者名搜索完整条目，准备打开作者介绍。
+  bool _openingIntro = false;
+  final ScrollController _scrollController = ScrollController();
+
+  /// 歌曲列表分页：每页 50 首（拖拽排序时展示完整列表）。
+  final PageSlicer _pager = PageSlicer(pageSize: 50);
+
+  /// 批量选择控制器（长按歌曲或右上角菜单进入）。
+  final SongSelectionController _selection = SongSelectionController();
+
+  /// 已经记录过「最近打开」的歌单 id，避免每帧 rebuild 都写一次。
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    _selection.dispose();
+    super.dispose();
+  }
+
+  // ---------------------------------------------------------------- 批量选择
+
+  /// 长按歌曲进入批量选择模式并选中该首。
+  void _enterSelection(Song song) {
+    if (_selection.isActive) {
+      _selection.toggle(song.id);
+    } else {
+      _selection.enter(song.id);
+    }
+  }
+
+  void _toggleMultiSelectMode() {
+    if (_selection.isActive) {
+      _selection.exit();
+    } else {
+      _selection.enter();
+    }
+  }
+
+  List<Song> _selectedSongs() => _selection.selectedSongs(_sortedSongs);
+
+  void _batchPlayNext() {
+    final selected = _selectedSongs();
+    if (selected.isEmpty) return;
+    ref.read(playbackControllerProvider.notifier).insertNext(selected);
+    _showMessage('已将 ${selected.length} 首插入到下一首播放');
+  }
+
+  void _batchAddToQueue() {
+    final selected = _selectedSongs();
+    if (selected.isEmpty) return;
+    ref.read(playbackControllerProvider.notifier).appendToQueue(selected);
+    _showMessage('已将 ${selected.length} 首加入播放列表');
+  }
+
+  void _batchAddToPlaylist() {
+    final selected = _selectedSongs();
+    if (selected.isEmpty) return;
+    final colors = ref.read(themeColorsProvider);
+    unawaited(showAddSongsToPlaylistSheet(context, ref, colors, selected));
+  }
+
+  void _batchDownload() {
+    final selected = _selectedSongs();
+    if (selected.isEmpty) return;
+    unawaited(showBatchDownloadSheet(context, ref, selected));
+  }
+
+  Future<void> _batchFavorite() async {
+    final selected = _selectedSongs();
+    if (selected.isEmpty) return;
+    await ref
+        .read(playlistsProvider.notifier)
+        .addSongsToPlaylist('__favorites__', selected);
+  }
+
+  /// 批量从歌单移除：一次性写盘（逐首 removeSongFromPlaylist 会写 N 次）。
+  Future<void> _confirmRemoveSelected(Playlist playlist) async {
+    final selected = _selectedSongs();
+    if (selected.isEmpty) return;
+    final colors = ref.read(themeColorsProvider);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      useRootNavigator: true,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: colors.dialogSurface,
+        title: Text(
+          context.tr('从歌单移除'),
+          style: TextStyle(color: colors.textPrimary),
+        ),
+        content: Text(
+          context.tr('确定要从歌单中移除选中的 ${selected.length} 首歌曲吗？'),
+          style: TextStyle(color: colors.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(
+              context.tr('取消'),
+              style: TextStyle(color: colors.textHint),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(
+              context.tr('移除'),
+              style: TextStyle(color: colors.error),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final ids = selected.map((s) => s.id).toSet();
+    // 按原始顺序过滤，避免把当前排序结果固化成歌单存储顺序。
+    final remaining = _originalSongs.where((s) => !ids.contains(s.id)).toList();
+    await ref
+        .read(playlistsProvider.notifier)
+        .updatePlaylist(
+          playlist.copyWith(
+            songs: remaining,
+            // 收藏的专辑 / 作者保留封面；普通歌单只有封面跟随第一首歌时才更新。
+            coverImgUrl: playlistCoverAfterSongChange(playlist, remaining),
+          ),
+        );
+    if (!mounted) return;
+    _selection.exit();
+    _showMessage('已从歌单移除 ${ids.length} 首歌曲');
+  }
+
+  void _showMessage(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(context.tr(message)),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  /// 歌曲「更多」菜单里的「移除」：从当前歌单 / 收藏集合中移除这一首。
+  Future<void> _removeSongFromCurrentPlaylist(
+    Playlist playlist,
+    Song song,
+  ) async {
+    final colors = ref.read(themeColorsProvider);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      useRootNavigator: true,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: colors.dialogSurface,
+        title: Text(
+          context.tr('移除歌曲'),
+          style: TextStyle(color: colors.textPrimary),
+        ),
+        content: Text(
+          context.tr('确定要从「${playlist.displayName}」中移除《${song.title}》吗？'),
+          style: TextStyle(color: colors.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(
+              context.tr('取消'),
+              style: TextStyle(color: colors.textHint),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(
+              context.tr('移除'),
+              style: TextStyle(color: colors.error),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    await ref
+        .read(playlistsProvider.notifier)
+        .removeSongFromPlaylist(playlist.id, song.id);
+    if (!mounted) return;
+    _showMessage('已从歌单移除《${song.title}》');
+  }
+
+  List<Song> _applySort(List<Song> songs) {
+    final list = List<Song>.from(songs);
+    switch (_sortMode) {
+      case SongSortMode.addedTime:
+        if (!_sortAscending) {
+          list.sort((a, b) => songs.indexOf(b).compareTo(songs.indexOf(a)));
+        }
+        break;
+      case SongSortMode.title:
+        list.sort((a, b) {
+          final cmp = a.title.toLowerCase().compareTo(b.title.toLowerCase());
+          return _sortAscending ? cmp : -cmp;
+        });
+        break;
+      case SongSortMode.artist:
+        list.sort((a, b) {
+          final cmp = a.artist.toLowerCase().compareTo(b.artist.toLowerCase());
+          return _sortAscending ? cmp : -cmp;
+        });
+        break;
+      case SongSortMode.custom:
+        break;
+    }
+    return list;
+  }
+
+  void _updateSortedSongs(List<Song> songs) {
+    _originalSongs = List<Song>.from(songs);
+    _rebuildSortedSongs();
+  }
+
+  /// 按「隐藏会员专属」开关与排序方式重新计算展示列表。
+  ///
+  /// 自定义排序复用完整列表：列表里缺失的歌曲在保存时会被写掉，
+  /// 属于数据丢失，因此拖拽编辑时不做会员专属过滤。
+  void _rebuildSortedSongs() {
+    if (_isCustomSortMode) {
+      _sortedSongs = List<Song>.from(_originalSongs);
+      return;
+    }
+    _sortedSongs = _applySort(_visibleOriginalSongs());
+  }
+
+  /// 完整歌曲中当前允许展示的部分（按「隐藏会员专属」开关过滤）。
+  ///
+  /// 开关只对 B 站生效，别的平台的会员歌靠 [SongAccess] 标签提示，不隐藏。
+  List<Song> _visibleOriginalSongs() {
+    if (!_hideVipExclusive) return List<Song>.from(_originalSongs);
+    return _originalSongs
+        .where((s) => !(s.isVipExclusive && s.isBilibiliSource))
+        .toList();
+  }
+
+  void _onSortModeChanged(SongSortMode mode) {
+    setState(() {
+      _sortMode = mode;
+      _isCustomSortMode = mode == SongSortMode.custom;
+      _pager.reset();
+      _rebuildSortedSongs();
+    });
+    Navigator.pop(context);
+  }
+
+  void _onCustomReorder(int oldIndex, int newIndex) {
+    if (oldIndex < newIndex) newIndex--;
+    setState(() {
+      final song = _sortedSongs.removeAt(oldIndex);
+      _sortedSongs.insert(newIndex, song);
+    });
+  }
+
+  void _saveCustomSort() {
+    final playlistsAsync = ref.read(playlistsProvider);
+    playlistsAsync.whenData((playlists) {
+      final playlist = playlists
+          .where((p) => p.id == widget.playlistId)
+          .firstOrNull;
+      if (playlist != null) {
+        ref
+            .read(playlistsProvider.notifier)
+            .updatePlaylist(playlist.copyWith(songs: _sortedSongs));
+      }
+    });
+    setState(() {
+      _originalSongs = List<Song>.from(_sortedSongs);
+      _isCustomSortMode = false;
+      _pager.reset();
+      // 保存的是完整列表；退出拖拽编辑后按开关恢复会员专属过滤。
+      _rebuildSortedSongs();
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(context.tr('排序已保存')),
+        duration: const Duration(seconds: 1),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+    );
+  }
+
+  void _cancelCustomSort() {
+    setState(() {
+      _isCustomSortMode = false;
+      _sortMode = SongSortMode.addedTime;
+      _pager.reset();
+      _rebuildSortedSongs();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = ref.watch(themeColorsProvider);
+    final playlistsAsync = ref.watch(playlistsProvider);
+    // 开关切换后立即重算展示列表，已收藏的歌单也随之隐藏会员专属歌曲。
+    final hideVipExclusive = ref.watch(hideVipExclusiveSongsProvider);
+    if (hideVipExclusive != _hideVipExclusive) {
+      _hideVipExclusive = hideVipExclusive;
+      if (!_isCustomSortMode) _rebuildSortedSongs();
+    }
+
+    return ListenableBuilder(
+      listenable: _selection,
+      builder: (context, _) {
+        final selecting = _selection.isActive;
+        final currentPlaylist = _currentPlaylist(playlistsAsync);
+        return PopScope(
+          // 多选模式下先拦截返回键用于退出选择
+          canPop: !selecting,
+          onPopInvokedWithResult: (didPop, _) {
+            if (!didPop) _selection.exit();
+          },
+          child: Scaffold(
+            backgroundColor: Colors.transparent,
+            body: Stack(
+              children: [
+                Positioned.fill(
+                  child: SafeArea(
+                    // 顶部不避让：让头部渐变铺到状态栏（沉浸式）。
+                    top: false,
+                    child: playlistsAsync.when(
+                      data: (playlists) {
+                        final playlist = playlists
+                            .where((p) => p.id == widget.playlistId)
+                            .firstOrNull;
+                        if (playlist == null) {
+                          return Center(
+                            child: Text(
+                              context.tr('歌单未找到'),
+                              style: TextStyle(color: colors.textHint),
+                            ),
+                          );
+                        }
+                        if (_originalSongs.length != playlist.songs.length ||
+                            !_listEquals(_originalSongs, playlist.songs)) {
+                          _updateSortedSongs(playlist.songs);
+                        }
+                        return Column(
+                          children: [
+                            _buildHeader(context, ref, colors, playlist),
+                            if (selecting)
+                              SongSelectionBar(
+                                colors: colors,
+                                controller: _selection,
+                                songs: _sortedSongs,
+                              )
+                            else if (_isCustomSortMode)
+                              _buildCustomSortBar(colors),
+                            Expanded(
+                              // 多选优先：避免「选择栏 + 可拖拽列表」同时生效
+                              child: _isCustomSortMode && !selecting
+                                  ? _buildReorderableSongList(
+                                      ref,
+                                      colors,
+                                      playlist,
+                                    )
+                                  : _buildSongList(
+                                      context,
+                                      ref,
+                                      colors,
+                                      playlist,
+                                    ),
+                            ),
+                          ],
+                        );
+                      },
+                      loading: () =>
+                          const Center(child: CircularProgressIndicator()),
+                      error: (_, __) => Center(
+                        child: Text(
+                          context.tr('加载失败'),
+                          style: TextStyle(color: colors.textHint),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                if (selecting)
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    // 操作栏紧贴底部：有歌在播时贴着迷你播放器顶部，
+                    // 没歌（迷你播放器是空占位）或宽屏侧边栏布局时直接贴底。
+                    bottom: ResponsiveLayout.batchBarBottomInset(
+                      context,
+                      // 播放栏没显示时（没歌在播，或当前页面隐藏了播放栏）操作栏直接贴底。
+                      miniPlayerVisible: ref.watch(miniPlayerVisibleProvider),
+                    ),
+                    child: SongBatchActionBar(
+                      colors: colors,
+                      controller: _selection,
+                      onPlayNext: _batchPlayNext,
+                      onAddToQueue: _batchAddToQueue,
+                      onAddToPlaylist: _batchAddToPlaylist,
+                      onFavorite: _batchFavorite,
+                      onDownload: _batchDownload,
+                      onRemove: currentPlaylist == null
+                          ? null
+                          : () => _confirmRemoveSelected(currentPlaylist),
+                      removeLabel: '从歌单移除',
+                      removeIcon: Icons.remove_circle_outline,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Playlist? _currentPlaylist(AsyncValue<List<Playlist>> playlistsAsync) {
+    return playlistsAsync.valueOrNull
+        ?.where((p) => p.id == widget.playlistId)
+        .firstOrNull;
+  }
+
+  bool _listEquals(List<Song> a, List<Song> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i].id != b[i].id) return false;
+    }
+    return true;
+  }
+
+  Widget _buildCustomSortBar(ThemeColors colors) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.lg,
+        vertical: AppSpacing.sm,
+      ),
+      decoration: BoxDecoration(
+        color: colors.primary.withValues(alpha: 0.08),
+        border: Border(bottom: BorderSide(color: colors.divider, width: 0.5)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.drag_handle, size: 18, color: colors.primary),
+          const SizedBox(width: AppSpacing.sm),
+          Text(
+            context.tr('拖拽歌曲调整顺序'),
+            style: TextStyle(fontSize: 13, color: colors.primary),
+          ),
+          const Spacer(),
+          TextButton(
+            onPressed: _cancelCustomSort,
+            child: Text(
+              context.tr('取消'),
+              style: TextStyle(color: colors.textHint, fontSize: 13),
+            ),
+          ),
+          const SizedBox(width: AppSpacing.xs),
+          TextButton(
+            onPressed: _saveCustomSort,
+            child: Text(
+              context.tr('保存'),
+              style: TextStyle(
+                color: colors.primary,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 歌单页顶部：返回按钮 + 封面 + 名称 / 歌曲数量 + 操作按钮。
+  ///
+  /// 不显示歌单描述；名称 + 歌曲数量 + 按钮这一列的高度与歌单封面保持一致。
+  Widget _buildHeader(
+    BuildContext context,
+    WidgetRef ref,
+    ThemeColors colors,
+    Playlist playlist,
+  ) {
+    // 与歌单封面同高，去掉描述后顶部不会跳动
+    final headerHeight = ResponsiveLayout.isTablet(context) ? 96.0 : 72.0;
+    return Container(
+      // 顶栏是贴着页面顶部的一条半透明栏：不要圆角、不要阴影，也不留外边距，
+      // 宽度铺满、颜色一直铺到状态栏。
+      // 底色的取法见 detailPageHeaderSurfaceProvider：跟着背景渐变顶部色走，
+      // 只做半透明处理，让页面背景直接透上来，顶栏和列表是同一片背景。
+      padding: EdgeInsets.fromLTRB(
+        AppSpacing.md + AppSpacing.sm,
+        // 状态栏沉浸：色块铺到屏幕顶端，状态栏高度算进内边距，
+        // 内容位置与原来「外边距 + 内边距」时保持一致。
+        MediaQuery.paddingOf(context).top + AppSpacing.md + AppSpacing.sm,
+        AppSpacing.md + AppSpacing.lg,
+        AppSpacing.md + AppSpacing.sm,
+      ),
+      color: ref.watch(detailPageHeaderSurfaceProvider),
+      // 只给下限、不写死高度：名称 / 音源标签 / 操作按钮这三行在部分字体
+      // （比如内置的思源宋体）或系统大字号下会比 72 高几像素，写死高度就会报
+      // 「BOTTOM OVERFLOWED BY 5.0 PIXELS」。让它按内容自己撑开，
+      // 封面仍然固定 headerHeight。
+      child: ConstrainedBox(
+        constraints: BoxConstraints(minHeight: headerHeight),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            // 返回按钮：Android 靠系统返回手势 / 返回键，顶部不放返回箭头。
+            if (!Platform.isAndroid) ...[
+              GestureDetector(
+                onTap: () => context.pop(),
+                child: Padding(
+                  padding: const EdgeInsets.all(AppSpacing.xs),
+                  child: Icon(
+                    Icons.arrow_back,
+                    size: 24,
+                    color: colors.textPrimary,
+                  ),
+                ),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+            ],
+            // 歌单封面（没有封面时用第一首歌的封面）
+            ClipRRect(
+              borderRadius: BorderRadius.circular(AppRadius.md),
+              child: SizedBox(
+                width: headerHeight,
+                height: headerHeight,
+                child: _buildPlaylistCoverWidget(colors, playlist),
+              ),
+            ),
+            const SizedBox(width: AppSpacing.md),
+            // 第一行 名称 / 第二行 音源标签 / 第三行 操作按钮。
+            // 三行：名称 / 音源标签 / 操作按钮。高度不写死（见上方 ConstrainedBox），
+            // 内容比封面高时由外层撑开，不会溢出。
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Expanded(
+                        child: Row(
+                          children: [
+                            Flexible(
+                              child: Text(
+                                playlist.name,
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: colors.textPrimary,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            // 收藏作者的详情页与搜索里的作者详情一致，提供「作者介绍」。
+                            if (playlist.favoriteType ==
+                                PlaybackSourceType.artist) ...[
+                              const SizedBox(width: AppSpacing.sm),
+                              _introChip(
+                                colors,
+                                _artistIntroEnabled(playlist),
+                                () => unawaited(_showArtistIntro(playlist)),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: AppSpacing.sm),
+                      Text(
+                        // 与列表保持一致：隐藏会员专属时按可见歌曲数显示。
+                        context.tr('${_sortedSongs.length}首歌曲'),
+                        style: TextStyle(fontSize: 11, color: colors.textHint),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 2),
+                  // 音源标签：收藏的专辑 / 作者 / 歌单 / 榜单显示绑定的音源，
+                  // 点击可切换绑定（我的收藏等没有统一音源的不显示）。
+                  _buildSourceNameTag(ref, colors, playlist),
+                  const SizedBox(height: 2),
+                  ScrollConfiguration(
+                    behavior: const _HeaderScrollBehavior(),
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _buildActionButton(
+                            colors,
+                            Icons.play_arrow,
+                            context.tr('播放全部'),
+                            () {
+                              if (_sortedSongs.isNotEmpty) {
+                                PlaybackContext.instance.set(
+                                  PlaybackSourceType.playlist,
+                                  id: playlist.id,
+                                  name: playlist.name,
+                                );
+                                final controller = ref.read(
+                                  playbackControllerProvider.notifier,
+                                );
+                                controller.setQueue(
+                                  applyFavoriteSource(
+                                    _sortedSongs,
+                                    playlist.favoriteSource,
+                                  ),
+                                );
+                              }
+                            },
+                          ),
+                          const SizedBox(width: AppSpacing.sm),
+                          if (playlist.favoriteType ==
+                                  PlaybackSourceType.artist &&
+                              playlist.favoriteCollectionId != null) ...[
+                            _buildActionButton(
+                              colors,
+                              Icons.album_outlined,
+                              context.tr('专辑'),
+                              () => unawaited(_openArtistAlbums(playlist)),
+                            ),
+                            const SizedBox(width: AppSpacing.sm),
+                            _buildActionButton(
+                              colors,
+                              Icons.refresh,
+                              context.tr('更新'),
+                              () => context.push(
+                                AppRoutes.artistUpdate.replaceFirst(
+                                  ':id',
+                                  // 歌单 id 可能含 `/`、`?`（插件来源的 id），
+                                  // 不编码会切碎路由。
+                                  Uri.encodeComponent(playlist.id),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: AppSpacing.sm),
+                          ],
+                          _buildMoreButton(colors, playlist),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 打开收藏作者的专辑列表。
+  Future<void> _openArtistAlbums(Playlist playlist) async {
+    if (_openingAlbums) return;
+    setState(() => _openingAlbums = true);
+    try {
+      final artist = await _resolveFavoriteArtist(playlist);
+      if (!mounted) return;
+      if (artist == null) {
+        _showMessage('没有搜到该作者');
+        return;
+      }
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => ArtistAlbumsPage(artist: artist),
+        ),
+      );
+    } catch (_) {
+      if (mounted) _showMessage('打开作者专辑失败，请稍后重试');
+    } finally {
+      if (mounted) setState(() => _openingAlbums = false);
+    }
+  }
+
+  /// 收藏作者的「作者介绍」。
+  Future<void> _showArtistIntro(Playlist playlist) async {
+    if (_openingIntro) return;
+    setState(() => _openingIntro = true);
+    try {
+      final artist = await _resolveFavoriteArtist(playlist);
+      if (!mounted) return;
+      if (artist == null) {
+        _showMessage('没有搜到该作者');
+        return;
+      }
+      final intro = await ref
+          .read(musicSourceManagerProvider)
+          .getArtistInfo(artist);
+      if (!mounted) return;
+      if (intro == null || intro.isEmpty) {
+        _showMessage('该音源没有提供作者介绍');
+        return;
+      }
+      final colors = ref.read(themeColorsProvider);
+      await showArtistIntroSheet(
+        context,
+        intro: intro,
+        title: artist.title,
+        colors: colors,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      final message = e is CollectionDetailException ? e.message : '$e';
+      _showMessage('获取作者介绍失败：$message');
+    } finally {
+      if (mounted) setState(() => _openingIntro = false);
+    }
+  }
+
+  /// 收藏时只记了作者 id / 音源，按作者名搜一次拿回带插件原始字段的条目。
+  Future<SearchCollection?> _resolveFavoriteArtist(Playlist playlist) async {
+    final source = playlist.favoriteSource;
+    final artistId = playlist.favoriteCollectionId;
+    if (source == null || artistId == null) return null;
+    final search = await ref
+        .read(musicSourceManagerProvider)
+        .searchCollections(
+          playlist.displayName,
+          sourceId: source,
+          type: CollectionType.artist,
+        );
+    return search.items.where((item) => item.id == artistId).firstOrNull ??
+        search.items.firstOrNull;
+  }
+
+  /// 插件是否提供作者介绍（不支持时按钮置灰）。
+  bool _artistIntroEnabled(Playlist playlist) {
+    final source = playlist.favoriteSource;
+    if (source == null) return false;
+    return ref
+        .read(musicSourceManagerProvider)
+        .artistCapabilitiesOf(
+          SearchCollection(
+            id: playlist.favoriteCollectionId ?? '',
+            title: playlist.displayName,
+            type: CollectionType.artist,
+            source: source,
+          ),
+        )
+        .info;
+  }
+
+  /// 作者名右侧的「作者介绍」小按钮。
+  Widget _introChip(ThemeColors colors, bool enabled, VoidCallback onTap) {
+    final color = enabled ? colors.primary : colors.textHint;
+    return GestureDetector(
+      onTap: enabled ? onTap : null,
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.sm,
+          vertical: 2,
+        ),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(AppRadius.full),
+          border: Border.all(
+            color: enabled
+                ? colors.primary.withValues(alpha: 0.45)
+                : colors.divider,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.info_outline, size: 11, color: color),
+            const SizedBox(width: 3),
+            Text(
+              context.tr('作者介绍'),
+              style: TextStyle(fontSize: 11, color: color),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 更多操作：与「播放全部」同一款胶囊（侧栏「发现」激活样式）。
+  Widget _buildMoreButton(ThemeColors colors, Playlist playlist) {
+    return PopupMenuButton<String>(
+      tooltip: context.tr('更多'),
+      padding: EdgeInsets.zero,
+      color: colors.dialogSurface,
+      onSelected: (value) {
+        if (value == 'sort') {
+          _showSortBottomSheet(colors);
+        } else if (value == 'export') {
+          _exportPlaylist(context, ref, colors, playlist);
+        } else if (value == 'edit') {
+          _editPlaylist(context, ref, colors, playlist);
+        } else if (value == 'multiselect') {
+          _toggleMultiSelectMode();
+        }
+      },
+      itemBuilder: (context) => [
+        PopupMenuItem(
+          value: 'sort',
+          child: Row(
+            children: [
+              Icon(Icons.sort, size: 18, color: colors.textSecondary),
+              const SizedBox(width: 8),
+              Text(
+                context.tr('排序方式'),
+                style: TextStyle(color: colors.textPrimary),
+              ),
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: 'multiselect',
+          child: Row(
+            children: [
+              Icon(Icons.select_all, size: 18, color: colors.textSecondary),
+              const SizedBox(width: 8),
+              Text(
+                context.tr(_selection.isActive ? '取消批量选择' : '批量选择'),
+                style: TextStyle(color: colors.textPrimary),
+              ),
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: 'edit',
+          child: Text(
+            context.tr('编辑歌单'),
+            style: TextStyle(color: colors.textPrimary),
+          ),
+        ),
+        PopupMenuItem(
+          value: 'export',
+          child: Text(
+            context.tr('导出歌单'),
+            style: TextStyle(color: colors.textPrimary),
+          ),
+        ),
+      ],
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        // 同「播放全部」：侧栏「发现」那套激活样式。
+        decoration: activeChipDecoration(
+          colors,
+          radius: AppRadius.full,
+          withBorder: true,
+        ),
+        child: Icon(Icons.more_horiz, size: 14, color: colors.primary),
+      ),
+    );
+  }
+
+  void _showSortBottomSheet(ThemeColors colors) {
+    showModalBottomSheet(
+      useRootNavigator: true,
+      context: context,
+      backgroundColor: colors.dialogSurface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(AppRadius.xl)),
+      ),
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setModalState) {
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.lg,
+                    ),
+                    child: Row(
+                      children: [
+                        Text(
+                          context.tr('排序方式'),
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: colors.textPrimary,
+                          ),
+                        ),
+                        const Spacer(),
+                        GestureDetector(
+                          onTap: () {
+                            setModalState(() {
+                              _sortAscending = !_sortAscending;
+                            });
+                            setState(() {
+                              _pager.reset();
+                              _sortedSongs = _applySort(
+                                _isCustomSortMode
+                                    ? _originalSongs
+                                    : _visibleOriginalSongs(),
+                              );
+                            });
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: colors.surfaceVariant,
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  _sortAscending
+                                      ? Icons.arrow_upward
+                                      : Icons.arrow_downward,
+                                  size: 14,
+                                  color: colors.textSecondary,
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  context.tr(_sortAscending ? '升序' : '降序'),
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: colors.textSecondary,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                  _buildSortOption(
+                    colors: colors,
+                    icon: Icons.access_time,
+                    label: context.tr('按添加时间'),
+                    mode: SongSortMode.addedTime,
+                    setModalState: setModalState,
+                  ),
+                  _buildSortOption(
+                    colors: colors,
+                    icon: Icons.music_note,
+                    label: context.tr('按歌曲名'),
+                    mode: SongSortMode.title,
+                    setModalState: setModalState,
+                  ),
+                  _buildSortOption(
+                    colors: colors,
+                    icon: Icons.person,
+                    label: context.tr('按歌手名'),
+                    mode: SongSortMode.artist,
+                    setModalState: setModalState,
+                  ),
+                  _buildSortOption(
+                    colors: colors,
+                    icon: Icons.drag_handle,
+                    label: context.tr('自定义排序'),
+                    mode: SongSortMode.custom,
+                    setModalState: setModalState,
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildSortOption({
+    required ThemeColors colors,
+    required IconData icon,
+    required String label,
+    required SongSortMode mode,
+    required StateSetter setModalState,
+  }) {
+    final isActive = _sortMode == mode;
+    return ListTile(
+      leading: Icon(
+        icon,
+        size: 20,
+        color: isActive ? colors.primary : colors.textSecondary,
+      ),
+      title: Text(
+        label,
+        style: TextStyle(
+          fontSize: 14,
+          color: isActive ? colors.primary : colors.textPrimary,
+          fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
+        ),
+      ),
+      trailing: isActive
+          ? Icon(Icons.check, size: 18, color: colors.primary)
+          : null,
+      onTap: () {
+        setModalState(() {
+          _sortMode = mode;
+        });
+        _onSortModeChanged(mode);
+      },
+    );
+  }
+
+  /// 歌单封面：优先用歌单自己的封面，没有则用第一首歌的封面。
+  Widget _buildPlaylistCoverWidget(ThemeColors colors, Playlist playlist) {
+    if (playlist.coverImgUrl.isNotEmpty) {
+      return MusicCoverImage(
+        url: playlist.coverImgUrl,
+        fit: BoxFit.cover,
+        errorWidget: _coverFallback(colors),
+      );
+    }
+
+    final firstSong = playlist.songs.isNotEmpty ? playlist.songs.first : null;
+    if (firstSong == null) {
+      return _coverFallback(colors);
+    }
+
+    if (firstSong.mediaStoreId != null || firstSong.isLocal) {
+      return MusicCoverImage(
+        key: ValueKey('lp_cover_${firstSong.id}'),
+        songId: firstSong.id,
+        mediaStoreId: firstSong.mediaStoreId,
+        fit: BoxFit.cover,
+        errorWidget: _coverFallback(colors),
+      );
+    }
+
+    if (firstSong.coverUrl != null && firstSong.coverUrl!.isNotEmpty) {
+      return MusicCoverImage(
+        key: ValueKey('lp_cover_url_${firstSong.id}'),
+        url: firstSong.coverUrl,
+        fit: BoxFit.cover,
+        errorWidget: _coverFallback(colors),
+      );
+    }
+
+    return _coverFallback(colors);
+  }
+
+  Widget _coverFallback(ThemeColors colors) {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            colors.primary.withValues(alpha: 0.4),
+            colors.surfaceVariant,
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
+      child: Icon(Icons.music_note, size: 48, color: colors.textHint),
+    );
+  }
+
+  Widget _buildSongCover(ThemeColors colors, Song song) {
+    if (song.mediaStoreId != null || song.isLocal) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(AppRadius.sm),
+        child: MusicCoverImage(
+          key: ValueKey('lps_cover_${song.id}'),
+          songId: song.id,
+          filePath: song.filePath,
+          mediaStoreId: song.mediaStoreId,
+          fit: BoxFit.cover,
+          errorWidget: Icon(Icons.music_note, size: 20, color: colors.primary),
+        ),
+      );
+    }
+
+    if (song.coverUrl != null && song.coverUrl!.isNotEmpty) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(AppRadius.sm),
+        child: MusicCoverImage(
+          url: song.coverUrl,
+          fit: BoxFit.cover,
+          errorWidget: Icon(Icons.music_note, size: 20, color: colors.primary),
+        ),
+      );
+    }
+
+    return Icon(Icons.music_note, size: 20, color: colors.primary);
+  }
+
+  /// 头部音源标签：显示收藏时绑定的音源，点击弹出已安装的音源插件列表
+  /// 切换绑定（我的收藏 / 纯本地歌单没有统一音源，不显示标签）。
+  Widget _buildSourceNameTag(
+    WidgetRef ref,
+    ThemeColors colors,
+    Playlist playlist,
+  ) {
+    final binding = playlist.favoriteSource;
+    if (binding == null || binding.isEmpty) return const SizedBox.shrink();
+    final manager = ref.read(musicSourceManagerProvider);
+    final label = manager.sourceDisplayName(binding);
+    if (label.isEmpty) return const SizedBox.shrink();
+    return SourceNameTag(
+      label: label,
+      colors: colors,
+      fontSize: 10,
+      onTap: () => _rebindSource(colors, playlist),
+    );
+  }
+
+  /// 切换当前歌单绑定的音源插件：歌单内所有歌曲改为优先用所选音源播放。
+  Future<void> _rebindSource(ThemeColors colors, Playlist playlist) async {
+    final chosen = await showPluginSourcePicker(
+      context,
+      ref,
+      currentSourceId: playlist.favoriteSource,
+    );
+    if (chosen == null || chosen == playlist.favoriteSource) return;
+    if (!mounted) return;
+    try {
+      await ref
+          .read(playlistsProvider.notifier)
+          .updatePlaylist(
+            playlist.copyWith(
+              // 歌曲级：把「优先插件」改成新音源（收藏绑定的生效机制）。
+              songs: applyFavoriteSource(playlist.songs, chosen),
+              // 歌单级：专辑 / 作者标记里的音源、普通歌单的 source 字段。
+              description: upgradeFavoriteMarkerSource(
+                playlist.description,
+                chosen,
+              ),
+              source: playlist.favoriteType != null ? playlist.source : chosen,
+            ),
+          );
+      if (!mounted) return;
+      final name = ref
+          .read(musicSourceManagerProvider)
+          .sourceDisplayName(chosen);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(context.tr('已切换音源：$name')),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(context.tr('切换音源失败：$e')),
+          backgroundColor: colors.error,
+        ),
+      );
+    }
+  }
+
+  Widget _buildActionButton(
+    ThemeColors colors,
+    IconData icon,
+    String label,
+    VoidCallback onTap,
+  ) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        // 与侧栏「发现」的激活态一致：底色把主题色调暗一档，文字 / 图标用主题色。
+        decoration: activeChipDecoration(
+          colors,
+          radius: AppRadius.full,
+          withBorder: true,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 14, color: colors.primary),
+            const SizedBox(width: 3),
+            Text(
+              label,
+              style: TextStyle(fontSize: 11, color: colors.primary),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildReorderableSongList(
+    WidgetRef ref,
+    ThemeColors colors,
+    Playlist playlist,
+  ) {
+    if (_sortedSongs.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.music_off,
+              size: 48,
+              color: colors.textHint,
+            ),
+            const SizedBox(height: AppSpacing.md),
+            Text(context.tr('歌单为空'), style: TextStyle(color: colors.textHint)),
+          ],
+        ),
+      );
+    }
+
+    final hideCover = ref.watch(songListHideCoverProvider);
+    return ReorderableListView.builder(
+      // 预留迷你播放器高度（56px + 底部 20px 间距），保证最后一首歌曲
+      // 能滚动到迷你播放器上方而不被遮挡。
+      padding: const EdgeInsets.only(
+        bottom: AppSpacing.miniPlayerHeight + AppSpacing.lg,
+      ),
+      itemCount: _sortedSongs.length,
+      onReorder: _onCustomReorder,
+      proxyDecorator: (child, index, animation) {
+        return AnimatedBuilder(
+          animation: animation,
+          builder: (context, child) {
+            final double elevation = animation.value * 6;
+            return Material(
+              elevation: elevation,
+              color: colors.surface,
+              borderRadius: BorderRadius.circular(AppRadius.sm),
+              child: child,
+            );
+          },
+          child: child,
+        );
+      },
+      itemBuilder: (context, index) {
+        final song = _sortedSongs[index];
+        return ListTile(
+          key: Key('${playlist.id}_${song.id}_$index'),
+          leading: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.drag_handle, size: 20, color: colors.textHint),
+              if (!hideCover) ...[
+                const SizedBox(width: AppSpacing.xs),
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: colors.surfaceVariant,
+                    borderRadius: BorderRadius.circular(AppRadius.sm),
+                  ),
+                  child: _buildSongCover(colors, song),
+                ),
+              ],
+            ],
+          ),
+          title: Text(
+            song.title,
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              color: colors.textPrimary,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          subtitle: Text(
+            '${song.artist} - ${song.album}',
+            style: TextStyle(fontSize: 12, color: colors.textHint),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildSongList(
+    BuildContext context,
+    WidgetRef ref,
+    ThemeColors colors,
+    Playlist playlist,
+  ) {
+    if (_sortedSongs.isEmpty) {
+      final hiddenCount = _originalSongs.length - _sortedSongs.length;
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.music_off,
+              size: 48,
+              color: colors.textHint,
+            ),
+            const SizedBox(height: AppSpacing.md),
+            Text(
+              hiddenCount > 0
+                  ? context.tr('已隐藏 $hiddenCount 首会员专属歌曲')
+                  : context.tr('歌单为空'),
+              style: TextStyle(color: colors.textHint),
+            ),
+            if (hiddenCount == 0) ...[
+              const SizedBox(height: AppSpacing.sm),
+              Text(
+                context.tr('在发现页搜索歌曲并添加到歌单'),
+                style: TextStyle(
+                  fontSize: 12,
+                  color: colors.textHint,
+                ),
+              ),
+            ],
+          ],
+        ),
+      );
+    }
+
+    final selecting = _selection.isActive;
+    // 宽屏下内容区没有迷你播放器，列表底部只需避开批量操作栏。
+    final bottomInset = ResponsiveLayout.hasBottomMiniPlayer(context)
+        ? AppSpacing.miniPlayerHeight + AppSpacing.xxxl
+        : AppSpacing.xxxl;
+    // 多选时批量操作栏紧贴迷你播放器，列表底部要一并让开。
+    final batchBarInset = ResponsiveLayout.batchBarBottomInset(
+      context,
+      miniPlayerVisible: ref.watch(miniPlayerVisibleProvider),
+    );
+
+    // 只渲染当前页（每页 50 首）；播放 / 多选 / 右滑删除仍用完整列表。
+    _pager.clampTo(_sortedSongs.length, hasMore: false);
+    final visible = _pager.slice(_sortedSongs);
+    final pageCount = _pager.pageCount(_sortedSongs.length, hasMore: false);
+    final pageStart = _pager.start;
+    final list = Padding(
+      // 多选时分页条收起、底部换成批量操作栏，列表要给它让开位置。
+      padding: EdgeInsets.only(
+        bottom: selecting
+            ? bottomInset + SongBatchActionBar.height + batchBarInset
+            : AppSpacing.sm,
+      ),
+      child: CustomScrollView(
+        controller: _scrollController,
+        slivers: [
+          SliverList(
+            delegate: SliverChildBuilderDelegate(
+              (context, index) {
+                final song = visible[index];
+                // 序号按整体列表算，翻页后接着上一页继续编号。
+                final songIndex = pageStart + index;
+                // 高亮当前正在播放的歌曲，与本地音乐页面保持一致
+                final item = Builder(
+                  builder: (context) {
+                    final playbackState = ref.read(playbackControllerProvider);
+                    final isPlaying = playbackState.currentSong?.id == song.id;
+                    return SongListItem(
+                      song: song,
+                      index: songIndex,
+                      maxIndex: _sortedSongs.length,
+                      isPlaying: isPlaying,
+                      showPlayedTag: true,
+                      // 我的收藏 / 自建歌单里的歌可能来自不同音源，逐首显示
+                      // 所属音源标签（与搜索页歌曲分类的 SongListItem 同款）。
+                      // 收藏的第三方歌单 / 专辑 / 作者绑定统一音源，顶部已有
+                      // 可切换的音源按钮，列表里不再逐首标注。
+                      showSource: playlist.showsFavoriteHeart,
+                      // 收藏的第三方歌单 / 专辑 / 作者不提供取消收藏入口。
+                      showFavoriteHeart: playlist.showsFavoriteHeart,
+                      selectionMode: selecting,
+                      selected: _selection.isSelected(song.id),
+                      onSelectionToggle: (s) => _selection.toggle(s.id),
+                      // 长按进入批量选择模式
+                      onLongPress: () => _enterSelection(song),
+                      onPlayTap: () {
+                        PlaybackContext.instance.set(
+                          PlaybackSourceType.playlist,
+                          id: playlist.id,
+                          name: playlist.name,
+                        );
+                        final controller = ref.read(
+                          playbackControllerProvider.notifier,
+                        );
+                        controller.setQueue(
+                          applyFavoriteSource(
+                            _sortedSongs,
+                            playlist.favoriteSource,
+                          ),
+                          startIndex: songIndex,
+                        );
+                      },
+                      onMenuTap: () => SongActionSheet.show(
+                        context,
+                        song: song,
+                        playlistSongs: _sortedSongs,
+                        // 「我的收藏」本身用上面的收藏开关取消收藏即可，不再重复显示移除。
+                        showRemove: playlist.id != '__favorites__',
+                        onRemove: () =>
+                            _removeSongFromCurrentPlaylist(playlist, song),
+                      ),
+                    );
+                  },
+                );
+                // 多选模式下禁用右滑删除，避免与选择手势冲突
+                if (selecting) return item;
+                return Dismissible(
+                  key: Key('${playlist.id}_${song.id}'),
+                  direction: DismissDirection.endToStart,
+                  background: Container(
+                    alignment: Alignment.centerRight,
+                    padding: const EdgeInsets.only(right: AppSpacing.lg),
+                    color: colors.error,
+                    child: Icon(Icons.delete, color: colors.textOnPrimary),
+                  ),
+                  confirmDismiss: (_) =>
+                      _confirmRemoveSong(context, colors, playlist, song),
+                  onDismissed: (_) {
+                    ref
+                        .read(playlistsProvider.notifier)
+                        .removeSongFromPlaylist(playlist.id, song.id);
+                  },
+                  child: item,
+                );
+              },
+              childCount: visible.length,
+              addAutomaticKeepAlives: false,
+              addRepaintBoundaries: true,
+            ),
+          ),
+          // 分页条：内容不满一屏时贴到底部，满一屏时跟在列表后面。
+          if (!selecting)
+            PageBarFooterSliver(child: _buildPageFooter(pageCount)),
+        ],
+      ),
+    );
+    return Stack(
+      children: [
+        list,
+        // 定位当前播放歌曲的悬浮按钮（右下角，避开底部播放栏）
+        if (!selecting) _buildLocateFab(colors),
+      ],
+    );
+  }
+
+  /// 列表末尾的分页条：本地歌单 / 收藏的歌单 / 榜单 / 专辑 / 作者共用。
+  Widget _buildPageFooter(int pageCount) {
+    return PageBar(
+      currentPage: _pager.page,
+      pageCount: pageCount,
+      docked: true,
+      onChanged: _goToPage,
+    );
+  }
+
+  void _goToPage(int page) {
+    if (page < 1 || page == _pager.page) return;
+    setState(() => _pager.jumpTo(page));
+    if (_scrollController.hasClients) _scrollController.jumpTo(0);
+  }
+
+  /// 悬浮定位按钮：仅当当前播放的歌曲在本歌单中时显示，
+  /// 点击将歌曲列表滚动到正在播放的那一首。
+  Widget _buildLocateFab(ThemeColors colors) {
+    // select 当前歌曲：避免播放进度每 200ms 的整包 state 变化触发本页重建。
+    final currentSong = ref.watch(
+      playbackControllerProvider.select((s) => s.currentSong),
+    );
+    if (currentSong == null) return const SizedBox.shrink();
+    final index = _sortedSongs.indexWhere((s) => s.id == currentSong.id);
+    if (index == -1) return const SizedBox.shrink();
+
+    return Positioned(
+      right: AppSpacing.lg,
+      bottom: AppSpacing.miniPlayerHeight + AppSpacing.xxl,
+      child: GestureDetector(
+        onTap: () => _locateCurrentSong(),
+        child: Container(
+          width: 36,
+          height: 36,
+          decoration: BoxDecoration(
+            color: colors.surface,
+            shape: BoxShape.circle,
+            boxShadow: [
+              BoxShadow(
+                color: colors.shadow,
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Icon(Icons.my_location, size: 18, color: colors.primary),
+        ),
+      ),
+    );
+  }
+
+  void _locateCurrentSong() {
+    final currentSong = ref.read(playbackControllerProvider).currentSong;
+    if (currentSong == null) return;
+    final index = _sortedSongs.indexWhere((s) => s.id == currentSong.id);
+    if (index == -1) return;
+
+    // 目标歌曲不在当前页时先翻到它所在的页，再滚到页内位置。
+    final page = index ~/ _pager.pageSize + 1;
+    if (page != _pager.page) {
+      setState(() => _pager.jumpTo(page));
+      if (_scrollController.hasClients) _scrollController.jumpTo(0);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_scrollController.hasClients) return;
+        unawaited(
+          scrollToItemIndex(
+            _scrollController,
+            index: index - _pager.start,
+            itemExtent: SongListItem.itemExtent,
+          ),
+        );
+      });
+      return;
+    }
+
+    if (!_scrollController.hasClients) return;
+    unawaited(
+      scrollToItemIndex(
+        _scrollController,
+        index: index - _pager.start,
+        itemExtent: SongListItem.itemExtent,
+      ),
+    );
+  }
+
+  /// 右滑删除前的确认弹窗，避免误删
+  Future<bool> _confirmRemoveSong(
+    BuildContext context,
+    ThemeColors colors,
+    Playlist playlist,
+    Song song,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: colors.dialogSurface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadius.lg),
+        ),
+        title: Text(
+          context.tr('删除歌曲'),
+          style: TextStyle(color: colors.textPrimary, fontSize: 16),
+        ),
+        content: Text(
+          context.tr('确定要从歌单「${playlist.name}」中删除《${song.title}》吗？'),
+          style: TextStyle(color: colors.textSecondary, fontSize: 14),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(
+              context.tr('取消'),
+              style: TextStyle(color: colors.textHint),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(
+              context.tr('删除'),
+              style: TextStyle(
+                color: colors.error,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    return confirmed ?? false;
+  }
+
+  Future<void> _exportPlaylist(
+    BuildContext context,
+    WidgetRef ref,
+    ThemeColors colors,
+    Playlist playlist,
+  ) async {
+    try {
+      // Convert MintMusic songs to CeruMusic-compatible format
+      final List<Map<String, dynamic>> ceruSongs = playlist.songs.map((s) {
+        // Derive songmid: strip source prefix from id, or use hash
+        String songmid = s.hash ?? s.id;
+        if (songmid.startsWith('${s.source}_')) {
+          songmid = songmid.substring(s.source!.length + 1);
+        }
+
+        return {
+          'songmid': songmid,
+          'name': s.title,
+          'singer': s.artist,
+          'albumName': s.album,
+          'albumId': '',
+          'source': s.source ?? 'local',
+          'interval': s.displayDuration,
+          'img': s.coverUrl ?? '',
+          'lrc': s.lrc,
+          'hash': s.hash ?? '',
+          'types': <String>[],
+          '_types': <String, dynamic>{},
+          'typeUrl': <String, dynamic>{},
+          'url': '',
+        };
+      }).toList();
+
+      // Encode the array to .cmpl format (AES encrypt + gzip compress)
+      final json = jsonEncode(ceruSongs);
+      final cmplBytes = Uint8List.fromList(encodeCmpl(json));
+
+      // 直接弹出系统「保存文件」对话框，让用户自己选保存位置
+      // （Windows 是系统另存为对话框，Android 是系统文件选择界面）。
+      final safeName = playlist.name.replaceAll(
+        RegExp(r'[^\w\u4e00-\u9fff\- ]'),
+        '_',
+      );
+      final savedPath = await FilePicker.platform.saveFile(
+        dialogTitle: context.tr('保存歌单'),
+        fileName: '$safeName.cmpl',
+        type: FileType.any,
+        bytes: cmplBytes,
+      );
+      if (savedPath == null) {
+        // 用户取消了保存
+        return;
+      }
+      // 部分平台（返回的是 content URI）不会自动写内容，这里对真实路径再兜底写一次
+      try {
+        final file = File(savedPath);
+        if (!await file.exists() || await file.length() != cmplBytes.length) {
+          await file.writeAsBytes(cmplBytes, flush: true);
+        }
+      } catch (_) {
+        // Android 返回的是 content URI，内容已由系统文件选择器写入
+      }
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(context.tr('歌单已保存')),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(context.tr('导出歌单失败：$e')),
+            duration: const Duration(seconds: 3),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  void _editPlaylist(
+    BuildContext context,
+    WidgetRef ref,
+    ThemeColors colors,
+    Playlist playlist,
+  ) {
+    final nameController = TextEditingController(text: playlist.name);
+    final descController = TextEditingController(text: playlist.description);
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: colors.dialogSurface,
+        title: Text(
+          context.tr('编辑歌单'),
+          style: TextStyle(color: colors.textPrimary),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: nameController,
+              autofocus: true,
+              decoration: InputDecoration(
+                hintText: context.tr('歌单名称'),
+                hintStyle: TextStyle(color: colors.textHint),
+                enabledBorder: UnderlineInputBorder(
+                  borderSide: BorderSide(color: colors.divider),
+                ),
+                focusedBorder: UnderlineInputBorder(
+                  borderSide: BorderSide(color: colors.primary),
+                ),
+              ),
+              style: TextStyle(color: colors.textPrimary),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            TextField(
+              controller: descController,
+              decoration: InputDecoration(
+                hintText: context.tr('歌单描述（可选）'),
+                hintStyle: TextStyle(color: colors.textHint),
+                enabledBorder: UnderlineInputBorder(
+                  borderSide: BorderSide(color: colors.divider),
+                ),
+                focusedBorder: UnderlineInputBorder(
+                  borderSide: BorderSide(color: colors.primary),
+                ),
+              ),
+              style: TextStyle(color: colors.textPrimary),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(
+              context.tr('取消'),
+              style: TextStyle(color: colors.textHint),
+            ),
+          ),
+          TextButton(
+            onPressed: () {
+              final name = nameController.text.trim();
+              if (name.isNotEmpty) {
+                ref
+                    .read(playlistsProvider.notifier)
+                    .updatePlaylist(
+                      playlist.copyWith(
+                        name: name,
+                        description: descController.text.trim(),
+                      ),
+                    );
+                Navigator.pop(ctx);
+              }
+            },
+            child: Text(
+              context.tr('保存'),
+              style: TextStyle(color: colors.primary),
+            ),
+          ),
+        ],
+      ),
+      // 保存 / 取消都在弹窗关闭前就读完了文本，路由移除后控制器不再被引用。
+    ).whenComplete(() {
+      nameController.dispose();
+      descController.dispose();
+    });
+  }
+}
+
+/// 顶部操作按钮在窄屏放不下时允许触屏 / 鼠标 / 触控板横向拖动。
+class _HeaderScrollBehavior extends MaterialScrollBehavior {
+  const _HeaderScrollBehavior();
+
+  @override
+  Set<PointerDeviceKind> get dragDevices => const {
+    PointerDeviceKind.touch,
+    PointerDeviceKind.stylus,
+    PointerDeviceKind.invertedStylus,
+    PointerDeviceKind.mouse,
+    PointerDeviceKind.trackpad,
+    PointerDeviceKind.unknown,
+  };
+}

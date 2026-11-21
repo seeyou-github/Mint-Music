@@ -1,0 +1,1098 @@
+import 'dart:async';
+import 'dart:io' as io;
+import 'dart:math' as math;
+
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/l10n/l10n.dart';
+import '../../core/theme/app_spacing.dart';
+import '../../core/theme/theme_provider.dart';
+import '../../features/blacklist/application/blacklist_providers.dart';
+import '../../features/discover/presentation/song_parts_navigation.dart';
+import '../../features/player/application/play_progress_providers.dart';
+import '../../features/player/domain/models/song.dart';
+import '../../features/settings/application/settings_providers.dart';
+import '../../shared/services/app_image_cache.dart';
+import '../../shared/services/cover_fetcher.dart';
+import '../../features/plugin/application/music_source_manager.dart';
+import '../../features/plugin/domain/plugin_types.dart';
+import '../../features/plugin/application/plugin_providers.dart';
+import 'music_cover_image.dart';
+import 'song_index_width.dart';
+import 'song_row_spacing.dart';
+import 'song_row_hover.dart';
+import 'song_favorite_heart.dart';
+import 'source_name_tag.dart';
+import 'song_action_sheet.dart';
+
+class SongListItem extends ConsumerWidget {
+  static const double itemExtent = 60;
+
+  /// 多选模式勾选框的最小占位宽度。
+  ///
+  /// 序号列宽度是按位数动态算的（两位数只有十几像素），勾选框塞不进去，
+  /// 所以多选模式下至少留这么宽。
+  static const double _checkboxWidth = 34;
+
+  final Song song;
+  final int? index;
+
+  /// 列表里的最大序号（通常是歌曲总数）：用来算序号列该占多宽。
+  ///
+  /// 不传时退化成按本行序号算，只适合「一行一首、序号固定」的孤立场景。
+  final int? maxIndex;
+  final bool showIndex;
+  final bool showCover;
+  final bool showQuality;
+
+  /// 是否在歌曲名下方显示音源名称。
+  ///
+  /// 默认关闭：各处的歌曲列表（歌单、榜单、我的收藏、收藏的歌单、搜索结果、
+  /// 搜索的歌单、下载列表）都不再显示音源名。
+  final bool showSource;
+  final bool showDuration;
+  final bool showMenuButton;
+
+  /// 是否在时长左侧显示「已听 / 已听 N%」标签。
+  ///
+  /// 只在搜索、歌单、专辑 / 作者、榜单等浏览类列表里打开；
+  /// 下载管理等列表不需要这个标记。
+  final bool showPlayedTag;
+
+  /// 是否在时长左侧显示「已收藏」的常驻实心红心。
+  ///
+  /// 悬停时的收藏红心（空心 / 实心）不受它限制，所有列表都有；这一项只决定
+  /// 鼠标移开后已收藏的歌曲要不要继续显示红心。收藏的第三方歌单 / 专辑 /
+  /// 作者传 false，避免在那里提供取消收藏入口。
+  final bool showFavoriteHeart;
+
+  final VoidCallback? onTap;
+  final VoidCallback? onPlayTap;
+  final VoidCallback? onMenuTap;
+  final bool isPlaying;
+  final List<String>? supportedQualities;
+
+  /// 是否处于批量选择模式。为 true 时序号列变成勾选框、整行点击切换选中，
+  /// 并隐藏「更多」按钮（避免与选择手势冲突）。
+  final bool selectionMode;
+
+  /// 当前歌曲是否被选中（仅在 [selectionMode] 下生效）。
+  final bool selected;
+
+  /// 选中状态切换回调（整行点击或勾选框点击都会走这里）。
+  final ValueChanged<Song>? onSelectionToggle;
+
+  /// 长按回调：页面通常在这里进入批量选择模式并选中该曲。
+  final VoidCallback? onLongPress;
+
+  /// 自定义右侧区域。
+  ///
+  /// 非空时替代「时长 / 更多按钮」，用于下载管理等需要自己放置操作按钮的列表。
+  final Widget? trailing;
+
+  /// 右侧附加标记（例如作者更新页的「新增」），显示在「已听 / 时长 / 更多」之前。
+  final Widget? trailingBadge;
+
+  /// 行下方的附加内容（进度条、状态提示等）。
+  final Widget? footer;
+
+  const SongListItem({
+    super.key,
+    required this.song,
+    this.index,
+    this.maxIndex,
+    this.showIndex = true,
+    this.showCover = true,
+    this.showQuality = true,
+    this.showSource = false,
+    this.showDuration = true,
+    this.showMenuButton = true,
+    this.showPlayedTag = false,
+    this.showFavoriteHeart = true,
+    this.onTap,
+    this.onPlayTap,
+    this.onMenuTap,
+    this.isPlaying = false,
+    this.supportedQualities,
+    this.selectionMode = false,
+    this.selected = false,
+    this.onSelectionToggle,
+    this.onLongPress,
+    this.trailing,
+    this.trailingBadge,
+    this.footer,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    // 行内实际只用到这 6 个颜色：按它们切片订阅，而不是 watch 整个
+    // [themeColorsProvider]。
+    //
+    // 主题色是「背景渐变中间色」派生出来的：开着「跟随封面变色」时每切一首歌
+    // 整套 ThemeColors 都会变一次。整对象 watch 会让长列表（几十上百行）在
+    // 每次切歌时全量重建；只订阅用得到的字段后，只有这几个颜色真的变了才重建。
+    // 取色对象用 read：上面这次 select 已经保证「这 6 个字段变了会重建」，
+    // 读到的对象一定是最新的。
+    ref.watch(
+      themeColorsProvider.select(
+        (c) => (
+          c.primary,
+          c.textPrimary,
+          c.textSecondary,
+          c.textHint,
+          c.surfaceVariant,
+          c.error,
+        ),
+      ),
+    );
+    final colors = ref.read(themeColorsProvider);
+    // All scrolling song lists already enable Sliver repaint boundaries.
+    // Adding another boundary per row increases layer count and GPU
+    // composition work without isolating any additional repaint.
+    return _buildItem(colors, context, ref);
+  }
+
+  Widget _buildItem(ThemeColors colors, BuildContext context, WidgetRef ref) {
+    // 竖屏或窄窗口下右侧空间紧张，把「已听」标签挪到时长下方。
+    final narrow =
+        MediaQuery.orientationOf(context) == Orientation.portrait ||
+        MediaQuery.sizeOf(context).width < 520;
+    final blocked = ref.watch(blacklistProvider).isBlocked(song);
+    // 设置里关掉封面后不构建封面控件，也就不再触发封面加载。
+    final hideCover = ref.watch(songListHideCoverProvider);
+    // 行尾是不是「更多」按钮（自定义 trailing / 多选 / 关掉菜单时都不是）。
+    final hasMenuButton = trailing == null && showMenuButton && !selectionMode;
+    final effectiveTap = selectionMode
+        ? () => onSelectionToggle?.call(song)
+        : blocked
+        ? () => _showBlockedHint(context)
+        : () {
+            // 分 P 歌曲：点击直接进专辑页列出全部分 P，不直接播放第一 P。
+            if (openSongPartsIfNeeded(context, song)) return;
+            if (onTap != null) {
+              onTap!();
+              return;
+            }
+            _defaultOnTap(context);
+          };
+    return SongRowHover(child: InkWell(
+      onTap: effectiveTap,
+      onLongPress: onLongPress,
+      // 歌曲行不要点击效果：水波纹 + 按下高亮都是纯装饰，长列表里每次点击
+      // 都要新建一个动画层重绘整行；行的反馈由「正在播放」高亮和 hover 承担。
+      splashFactory: NoSplash.splashFactory,
+      highlightColor: Colors.transparent,
+      child: Container(
+        color: selected
+            ? colors.primary.withValues(alpha: 0.08)
+            : Colors.transparent,
+        child: Padding(
+          // Windows 上统一放宽左右留白：行外侧 12dp + 序号列 / 更多按钮各
+          // 自带 12dp 内侧留白 = 序号文字与 ⋮ 距屏幕边缘都是 24dp，
+          // 左右严格对齐。其它平台沿用原来的紧凑布局：
+          // 行左 12dp，行尾是「更多」按钮时不额外留白，靠按钮内部留白让
+          // 三个点距屏幕右缘 ≈12dp。
+          padding: EdgeInsets.only(
+            left: useWideSongRowSpacing ? wideSongRowPadding : AppSpacing.md,
+            right: useWideSongRowSpacing
+                ? wideSongRowPadding
+                : (hasMenuButton ? 0 : AppSpacing.md / 2),
+            top: AppSpacing.sm,
+            bottom: AppSpacing.sm,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  if (showIndex)
+                    selectionMode
+                        ? _buildCheckbox(colors, indexColumnWidth(context))
+                        : _buildIndex(colors, indexColumnWidth(context)),
+                  if (showCover && !hideCover) ...[
+                    const SizedBox(width: AppSpacing.sm),
+                    _buildCover(colors, ref),
+                  ],
+                  const SizedBox(width: AppSpacing.sm),
+                  Expanded(
+                    child: _buildSongInfo(colors, context, ref, blocked),
+                  ),
+                  if (trailing != null)
+                    trailing!
+                  else
+                    _buildTrailing(colors, context, ref, narrow: narrow),
+                ],
+              ),
+              if (footer != null) ...[
+                const SizedBox(height: AppSpacing.xs),
+                footer!,
+              ],
+            ],
+          ),
+        ),
+      ),
+    ));
+  }
+
+  /// 序号列宽度：按最大序号位数自适应；多选模式至少留出勾选框的位置。
+  ///
+  /// Windows 上再给序号左右各加 [wideSongIndexInset]，把序号从屏幕边缘和
+  /// 封面之间都拉开；多选模式显示的是勾选框，不加这段宽度以免挤压它。
+  double indexColumnWidth(BuildContext context) {
+    var width = songIndexWidth(
+      context,
+      maxIndex: maxIndex ?? ((index ?? 0) + 1),
+      fontSize: 13,
+    );
+    if (useWideSongRowSpacing && !selectionMode) {
+      width += wideSongIndexExtra;
+    }
+    return selectionMode ? math.max(width, _checkboxWidth) : width;
+  }
+
+  /// 多选模式下的勾选框。
+  ///
+  /// 用 [IgnorePointer] 包住，让它只负责展示：整行的点击统一由外层 InkWell
+  /// 处理，避免「点勾选框触发两次切换导致状态不变」。
+  Widget _buildCheckbox(ThemeColors colors, double width) {
+    return SizedBox(
+      width: width,
+      child: IgnorePointer(
+        child: Checkbox(
+          value: selected,
+          onChanged: (_) {},
+          activeColor: colors.primary,
+          visualDensity: VisualDensity.compact,
+          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildIndex(ThemeColors colors, double width) {
+    return SizedBox(
+      width: width,
+      // 序号贴着列的内容区左边（不再在固定宽度里居中）；Windows 上左右各
+      // 留 [wideSongIndexInset]，序号列变宽、序号不贴边也不贴封面。
+      child: Padding(
+        padding: EdgeInsets.symmetric(
+          horizontal: useWideSongRowSpacing ? wideSongIndexInset : 0,
+        ),
+        child: isPlaying
+            ? Icon(Icons.play_arrow, size: 18, color: colors.primary)
+            : Text(
+                index != null ? '${index! + 1}' : '',
+                maxLines: 1,
+                softWrap: false,
+                style: TextStyle(
+                  fontSize: 13,
+                  // 序号用「第二字体颜色」：textHint 在浅色主题下几乎糊在背景里。
+                  color: colors.textSecondary,
+                  fontWeight: FontWeight.w500,
+                ),
+                textAlign: TextAlign.left,
+              ),
+      ),
+    );
+  }
+
+  Widget _buildCover(ThemeColors colors, WidgetRef ref) {
+    final coverUrl = song.coverUrl;
+    final hasCoverUrl = coverUrl != null && coverUrl.isNotEmpty;
+    // 本地歌曲的封面不在线上市，而是扫描时写进封面缓存 / 内嵌在音频文件里：
+    // 直接交给 MusicCoverImage，按 songId + filePath 从本地取。
+    if (song.isLocal) {
+      return MusicCoverImage(
+        url: hasCoverUrl ? coverUrl : null,
+        songId: song.id,
+        filePath: song.filePath,
+        mediaStoreId: song.mediaStoreId,
+        width: 44,
+        height: 44,
+        borderRadius: BorderRadius.circular(AppRadius.sm),
+        placeholder: _buildCoverPlaceholder(colors),
+        errorWidget: _buildCoverPlaceholder(colors),
+      );
+    }
+    if (song.source == null && !hasCoverUrl) {
+      return _buildCoverPlaceholder(colors);
+    }
+
+    return _SongCover(
+      song: song,
+      initialUrl: coverUrl,
+      colors: colors,
+      sourceManager: ref.read(musicSourceManagerProvider),
+    );
+  }
+
+  Widget _buildCoverPlaceholder(ThemeColors colors) {
+    return Container(
+      width: 44,
+      height: 44,
+      decoration: BoxDecoration(
+        color: colors.surfaceVariant,
+        borderRadius: BorderRadius.circular(AppRadius.sm),
+      ),
+      child: Icon(Icons.music_note, size: 20, color: colors.primary),
+    );
+  }
+
+  Widget _buildSongInfo(
+    ThemeColors colors,
+    BuildContext context,
+    WidgetRef ref,
+    bool blocked,
+  ) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          song.title,
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
+            // 黑名单里的歌名颜色更浅，一眼能看出这首放不了。
+            color: blocked
+                ? colors.textPrimary.withValues(alpha: 0.45)
+                : (isPlaying ? colors.primary : colors.textPrimary),
+          ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        const SizedBox(height: 2),
+        Row(
+          children: [
+            if (blocked) _buildBlacklistTag(colors, context),
+            if (showQuality) _buildQualityTag(colors, context),
+            if (showSource && song.source != null)
+              _buildSourceTag(colors, context, ref),
+            _buildAccessTag(colors, context, ref),
+            Expanded(
+              child: Text(
+                song.artist,
+                // 歌手名属于「次要但必须看清」的文字：用第二字体颜色，
+                // textHint 在浅色主题下几乎糊在背景里。
+                style: TextStyle(fontSize: 12, color: colors.textSecondary),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  /// 黑名单标签（与音质 / 音源标签同一行）。
+  Widget _buildBlacklistTag(ThemeColors colors, BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(right: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+      decoration: BoxDecoration(
+        color: colors.error.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(2),
+      ),
+      child: Text(
+        context.tr('黑名单'),
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+          color: colors.error,
+        ),
+      ),
+    );
+  }
+
+  /// 「非免费」标签：显示在歌手名左侧。
+  ///
+  /// 由数据源插件声明（`access: vip / album / paid / offline / nocopyright`），
+  /// 不区分音质。B 站那套会员专属标记仍走右侧的 [_buildVipTag]，两者互不影响。
+  ///
+  /// 默认**不显示**：开关在「设置 - 外观设置 - 歌曲列表 - 显示 VIP 标志」，
+  /// 打开后才渲染（列表里满屏 VIP / 数字专辑标记对大部分人只是噪音）。
+  Widget _buildAccessTag(
+    ThemeColors colors,
+    BuildContext context,
+    WidgetRef ref,
+  ) {
+    if (!ref.watch(songListShowAccessBadgeProvider)) {
+      return const SizedBox.shrink();
+    }
+    final label = song.access.label;
+    if (label == null || selectionMode) return const SizedBox.shrink();
+    final color = _accessColor(colors);
+    return Container(
+      margin: const EdgeInsets.only(right: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(2),
+      ),
+      child: Text(
+        context.tr(label),
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+          color: color,
+        ),
+      ),
+    );
+  }
+
+  /// 各状态的颜色：会员金、数字专辑紫、单曲付费橙、下架/无版权灰。
+  Color _accessColor(ThemeColors colors) {
+    switch (song.access) {
+      case SongAccess.vip:
+        return const Color(0xFFE6A23C);
+      case SongAccess.album:
+        return const Color(0xFF9C6ADE);
+      case SongAccess.paid:
+        return const Color(0xFFE6704B);
+      case SongAccess.offline:
+      case SongAccess.noCopyright:
+        return colors.textHint;
+      case SongAccess.free:
+        return colors.textHint;
+    }
+  }
+
+  /// 点到黑名单歌曲时给个提示，避免看起来像「点了没反应」。
+  void _showBlockedHint(BuildContext context) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(context.tr('这首歌在黑名单里，已跳过播放')),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  Widget _buildQualityTag(ThemeColors colors, BuildContext context) {
+    final quality = _getHighestQuality();
+    if (quality == null) return const SizedBox.shrink();
+
+    return Container(
+      margin: const EdgeInsets.only(right: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+      decoration: BoxDecoration(
+        color: _getQualityColor(quality).withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(2),
+      ),
+      child: Text(
+        context.tr(quality),
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+          color: _getQualityColor(quality),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSourceTag(
+    ThemeColors colors,
+    BuildContext context,
+    WidgetRef ref,
+  ) {
+    // 插件搜索出来的歌，song.source 只记平台 id（播放 / 歌词仍按平台处理），
+    // 真正用的是哪个插件记在 preferredSource 里。只读 source 会把「用元力KW
+    // 搜出来的歌」全部标成「酷我音乐」，看起来像根本没走插件。
+    // 收藏时绑定的优先插件同理，这里统一优先显示它（见 [Song.displaySource]）。
+    final displaySource = song.displaySource ?? song.source!;
+    // 名称最长 10 个字，超出省略（与详情页头部的音源标签一致）。
+    final sourceName = SourceNameTag.shorten(
+      _getSourceName(displaySource, ref),
+    );
+    return Container(
+      margin: const EdgeInsets.only(right: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+      decoration: BoxDecoration(
+        color: _getSourceColor(displaySource).withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(2),
+      ),
+      child: Text(
+        context.tr(sourceName),
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+          color: _getSourceColor(displaySource),
+        ),
+      ),
+    );
+  }
+
+  /// 右侧「已听标签 / 时长 / 更多」区域。
+  ///
+  /// 窄屏时标签换到时长下方并右对齐：时长与歌名同一行、标签与歌手同一行。
+  Widget _buildTrailing(
+    ThemeColors colors,
+    BuildContext context,
+    WidgetRef ref, {
+    required bool narrow,
+  }) {
+    final playedTag = showPlayedTag && !selectionMode
+        ? _buildPlayedTag(colors, context, ref, compact: !narrow)
+        : null;
+    // 悬停时在时长左侧给出收藏入口（空心 / 实心），多选模式下不显示。
+    final heart = selectionMode
+        ? null
+        : SongFavoriteHeart(
+            song: song,
+            showWhenFavorited: showFavoriteHeart,
+          );
+    final vipTag = _buildVipTag(colors, compact: !narrow);
+    final partsTag = _buildPartsTag(colors, compact: !narrow);
+    final duration = showDuration && !selectionMode
+        ? _buildDuration(colors, padded: !narrow)
+        : null;
+    final menu = showMenuButton && !selectionMode
+        ? _buildMenuButton(colors, context)
+        : null;
+
+    if (narrow && playedTag != null) {
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ?trailingBadge,
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              if (duration != null || partsTag != null) ...[
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [?partsTag, ?duration],
+                ),
+                const SizedBox(height: 2),
+              ],
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [playedTag, ?heart, ?vipTag],
+              ),
+            ],
+          ),
+          ?menu,
+        ],
+      );
+    }
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        ?trailingBadge,
+        ?playedTag,
+        ?heart,
+        ?vipTag,
+        ?partsTag,
+        ?duration,
+        ?menu,
+      ],
+    );
+  }
+
+  /// 「已听 / 已听 N%」标签：进度不足 1% 或开关关闭时不显示。
+  Widget? _buildPlayedTag(
+    ThemeColors colors,
+    BuildContext context,
+    WidgetRef ref, {
+    bool compact = true,
+  }) {
+    if (!ref.watch(markPlayedStatusProvider)) return null;
+    // select 只在本行这首歌曲的进度变化时重建，列表其它行不受影响。
+    final ratio = ref.watch(
+      playedProgressProvider.select((map) => map[song.id]),
+    );
+    final label = playedProgressLabel(ratio);
+    if (label == null) return null;
+    final done = (ratio ?? 0) >= 0.999;
+    return Padding(
+      padding: EdgeInsets.only(left: compact ? AppSpacing.sm : 0),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+        decoration: BoxDecoration(
+          color: colors.primary.withValues(alpha: done ? 0.16 : 0.10),
+          borderRadius: BorderRadius.circular(AppRadius.xs),
+        ),
+        child: Text(
+          context.tr(label),
+          style: TextStyle(
+            fontSize: compact ? 10 : 12,
+            height: 1.2,
+            fontWeight: done ? FontWeight.w600 : FontWeight.w500,
+            color: colors.primary,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 「会员」标签：B 站充电专属 / 大会员专享作品，显示在「已听」标签右侧。
+  /// 琥珀金配色与「已听」的主题色标签区分开。
+  Widget? _buildVipTag(ThemeColors colors, {bool compact = true}) {
+    if (!song.isVipExclusive || selectionMode) return null;
+    const vipColor = Color(0xFFE6A23C);
+    return Padding(
+      padding: EdgeInsets.only(left: compact ? AppSpacing.sm : 0),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+        decoration: BoxDecoration(
+          color: vipColor.withValues(alpha: 0.16),
+          borderRadius: BorderRadius.circular(AppRadius.xs),
+        ),
+        child: Text(
+          '会员',
+          style: TextStyle(
+            fontSize: compact ? 10 : 12,
+            height: 1.2,
+            fontWeight: FontWeight.w600,
+            color: vipColor,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 「分P」标签：视频选集（多分 P）歌曲显示在时长左侧，
+  /// 点击整行由 [openSongPartsIfNeeded] 打开专辑页。
+  Widget? _buildPartsTag(ThemeColors colors, {bool compact = true}) {
+    if (song.partsCount <= 1 || selectionMode) return null;
+    return Padding(
+      padding: EdgeInsets.only(
+        left: compact ? AppSpacing.sm : 0,
+        right: compact ? 0 : AppSpacing.sm,
+      ),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+        decoration: BoxDecoration(
+          color: colors.surfaceVariant,
+          borderRadius: BorderRadius.circular(AppRadius.xs),
+        ),
+        child: Text(
+          '分P',
+          style: TextStyle(
+            fontSize: compact ? 10 : 12,
+            height: 1.2,
+            fontWeight: FontWeight.w600,
+            color: colors.textSecondary,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget? _buildDuration(ThemeColors colors, {bool padded = true}) {
+    if (song.duration <= 0) return null;
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: padded ? AppSpacing.sm : 0),
+      child: Text(
+        song.displayDuration,
+        style: TextStyle(fontSize: 12, color: colors.textSecondary),
+      ),
+    );
+  }
+
+  /// 「更多」按钮的宽度：图标 20，左右各留 4。
+  ///
+  /// 三个点到按钮右缘 ≈12dp。非 Windows 上行尾内边距 0、行左 12dp，左右
+  /// 正好对齐；Windows 上行左右各 [wideSongRowPadding]（12dp），两侧再加
+  /// 这段 12dp，序号文字与 ⋮ 距屏幕边缘都是 24dp。
+  static const double _menuButtonWidth = 28;
+
+  /// 「更多」按钮的高度（与行内其它元素居中对齐即可，撑满行高的点击区）。
+  static const double _menuButtonHeight = 36;
+
+  Widget _buildMenuButton(ThemeColors colors, BuildContext context) {
+    // 外面再套一层固定尺寸：IconButton 的 tapTargetSize / 默认 48dp 最小点击区
+    // 在不同 Flutter 版本里的生效方式不一致，只写 style 有可能被忽略，结果是
+    // 按钮仍有 48dp 宽、图标被推到里面 14dp，右侧间距怎么调都下不去。
+    // 用 SizedBox 给死尺寸，子级必然按 28×36 布局，图标严格居中。
+    return SizedBox(
+      width: _menuButtonWidth,
+      height: _menuButtonHeight,
+      child: IconButton(
+        icon: Icon(Icons.more_vert, size: 20, color: colors.textSecondary),
+        onPressed: onMenuTap ?? () => SongActionSheet.show(context, song: song),
+        padding: EdgeInsets.zero,
+        style: IconButton.styleFrom(
+          padding: EdgeInsets.zero,
+          minimumSize: const Size(_menuButtonWidth, _menuButtonHeight),
+          maximumSize: const Size(_menuButtonWidth, _menuButtonHeight),
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+      ),
+    );
+  }
+
+  void _defaultOnTap(BuildContext context) {
+    if (onPlayTap != null) {
+      onPlayTap!();
+    }
+  }
+
+  String? _getHighestQuality() {
+    // 本地文件的码率是读文件算出来的，不是平台的音质档位，列表里不显示标签。
+    if (song.isLocal) return null;
+    if (supportedQualities != null && supportedQualities!.isNotEmpty) {
+      return supportedQualities!.last;
+    }
+    if (song.bitrate != null) {
+      if (song.bitrate! >= 1900000) return 'Hi-Res';
+      if (song.bitrate! >= 1000000) return '无损';
+      if (song.bitrate! >= 320000) return '320k';
+      if (song.bitrate! >= 192000) return '192k';
+      if (song.bitrate! >= 128000) return '128k';
+    }
+    return null;
+  }
+
+  Color _getQualityColor(String quality) {
+    switch (quality) {
+      case 'Hi-Res':
+      case '母带':
+        return const Color(0xFFFFD700);
+      case '无损':
+      case 'SQ':
+        return const Color(0xFFE5484D);
+      case '320k':
+      case 'HQ':
+        return const Color(0xFF31C27C);
+      case '192k':
+        return const Color(0xFF2EADFB);
+      case '128k':
+        return const Color(0xFF888888);
+      default:
+        return const Color(0xFF888888);
+    }
+  }
+
+  Color _getSourceColor(String source) {
+    switch (SourceInfo.baseIdOf(source)) {
+      case 'wy':
+        return const Color(0xFFE60026);
+      case 'kg':
+        return const Color(0xFF2EADFB);
+      case 'kw':
+        return const Color(0xFFFF8500);
+      case 'tx':
+        return const Color(0xFF31C27C);
+      case 'mg':
+        return const Color(0xFFFF7E00);
+      case 'local':
+        return const Color(0xFF666666);
+      default:
+        return const Color(0xFF888888);
+    }
+  }
+
+  String _getSourceName(String source, WidgetRef ref) {
+    // 插件音源（平台id@插件id）显示为「平台名-插件名」，裸平台 id 显示平台名。
+    final display = ref
+        .read(musicSourceManagerProvider)
+        .sourceDisplayName(source);
+    if (display.isNotEmpty && display != source) return display;
+    switch (source) {
+      case 'wy':
+        return '网易';
+      case 'kg':
+        return '酷狗';
+      case 'kw':
+        return '酷我';
+      case 'tx':
+        return 'QQ';
+      case 'mg':
+        return '咪咕';
+      case 'local':
+        return '本地';
+      default:
+        return source.toUpperCase();
+    }
+  }
+}
+
+class _SongCover extends StatefulWidget {
+  final Song song;
+  final String? initialUrl;
+  final ThemeColors colors;
+  final MusicSourceManager sourceManager;
+
+  const _SongCover({
+    required this.song,
+    required this.initialUrl,
+    required this.colors,
+    required this.sourceManager,
+  });
+
+  @override
+  State<_SongCover> createState() => _SongCoverState();
+}
+
+class _SongCoverState extends State<_SongCover> {
+  /// 单张封面的下载超时。封面文件通常只有几十 KB，超过这个时间基本就是
+  /// 请求卡住了；不设超时的话这一行会一直停在占位图，只能靠滚动重建行来重试。
+  static const Duration _downloadTimeout = Duration(seconds: 10);
+
+  /// 每个候选地址最多尝试几次、失败后等多久再试。
+  static const int _maxAttemptsPerUrl = 2;
+  static const Duration _retryDelay = Duration(milliseconds: 500);
+
+  /// 所有候选地址都失败后，隔一段时间整体重试一次：CDN 抖动 / 风控恢复后
+  /// 自动补上封面，不需要用户滚动到下方再滚回来触发重建。只补重试一轮。
+  ///
+  /// 15 秒起步：3 秒太短，封面源整体挂掉时整屏行会在 3 秒后一起再打一轮请求，
+  /// 上下滚动时尤其明显（每重建一次行就重来一轮）。
+  static const Duration _healDelay = Duration(seconds: 15);
+  static const int _maxRounds = 2;
+
+  /// 当前显示 / 正在尝试的地址（解码失败、兜底取图时用）。
+  String? _url;
+
+  /// 已下载到本地缓存的文件；为 null 时显示占位图。
+  io.File? _file;
+
+  /// 本轮加载里已经确认不可用的地址（交给 getPic 时排除，避免又拿回同一个）。
+  final Set<String> _failedUrls = <String>{};
+
+  /// 已知坏掉的地址：下载下来是错误页 / 空文件，或解码失败。
+  ///
+  /// 必须是 static：列表滚动会把行回收重建，实例字段随之丢失，同一个坏地址
+  /// 会被反复重试——一个源整体挂掉时，滑一次就是一串重复请求。跨实例共享后
+  /// 每个坏地址整个进程只试一次。
+  static final Set<String> _brokenUrls = <String>{};
+
+  /// 坏地址集合上限：插件可以给任意地址，避免长会话里无界增长。
+  static const int _maxBrokenUrls = 512;
+
+  static void _markBroken(String url) {
+    if (_brokenUrls.length < _maxBrokenUrls) _brokenUrls.add(url);
+  }
+
+  /// 是否已经向音源要过兜底地址：之后再要时绕过它缓存的空结果（可能只是
+  /// 上一次插件 / 网络抖动导致的失败）。
+  bool _picRequested = false;
+
+  /// 每次重新加载都自增，用来让上一轮还没结束的异步结果自行放弃。
+  int _loadSeq = 0;
+
+  /// 重试等待用的计时器：退出页面时要能立刻取消，而不是等它自然到期。
+  Timer? _waitTimer;
+  Completer<void>? _waitCompleter;
+
+  @override
+  void initState() {
+    super.initState();
+    _url = widget.initialUrl;
+    _startLoad(widget.initialUrl);
+  }
+
+  @override
+  void didUpdateWidget(covariant _SongCover oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.song.id != widget.song.id ||
+        oldWidget.initialUrl != widget.initialUrl) {
+      _file = null;
+      _url = widget.initialUrl;
+      _failedUrls.clear();
+      // _brokenUrls 是跨实例共享的全局集合，换歌时不能清（清了等于让已经
+      // 确认坏掉的地址在所有行上重新试一遍）。
+      _picRequested = false;
+      // 换了一首歌（含切换分页）：立刻停掉上一首还在等待的重试，重新开始加载。
+      _cancelWait();
+      _startLoad(widget.initialUrl);
+    }
+  }
+
+  @override
+  void dispose() {
+    // 退出页面（这一行被销毁）后立即停止重试和兜底流程：作废进行中的加载，
+    // 并取消还在等待的重试计时器。切换分页只是换成另一批歌，各行会重新开始
+    // 加载，不受影响。
+    _loadSeq++;
+    _cancelWait();
+    super.dispose();
+  }
+
+  bool _isCurrent(int seq) => mounted && seq == _loadSeq;
+
+  /// 可取消的等待：dispose 时 [Completer] 立即完成，调用方随即检查
+  /// [_isCurrent] 退出，不会残留在后台继续重试。
+  Future<void> _wait(Duration duration) {
+    _cancelWait();
+    final completer = Completer<void>();
+    _waitCompleter = completer;
+    _waitTimer = Timer(duration, () {
+      _waitTimer = null;
+      _waitCompleter = null;
+      if (!completer.isCompleted) completer.complete();
+    });
+    return completer.future;
+  }
+
+  void _cancelWait() {
+    _waitTimer?.cancel();
+    _waitTimer = null;
+    final pending = _waitCompleter;
+    _waitCompleter = null;
+    if (pending != null && !pending.isCompleted) pending.complete();
+  }
+
+  /// 先试歌曲自带封面，失败后再向音源要兜底地址；整轮都失败时隔
+  /// [_healDelay] 再从头试一次（只补一次，且已知坏掉的地址会被跳过）。
+  Future<void> _startLoad(String? initialUrl) async {
+    final seq = ++_loadSeq;
+    for (var round = 0; round < _maxRounds; round++) {
+      if (round > 0) {
+        await _wait(_healDelay);
+        if (!_isCurrent(seq)) return;
+      }
+      if (await _loadRound(seq, initialUrl)) return;
+      if (!_isCurrent(seq)) return;
+    }
+  }
+
+  Future<bool> _loadRound(int seq, String? initialUrl) async {
+    final primary = initialUrl == null || initialUrl.isEmpty
+        ? const <String>[]
+        : CoverFetcher.candidatesOf(initialUrl, netEaseThumbSize: 200);
+    if (await _tryUrls(seq, primary)) return true;
+    if (!_isCurrent(seq)) return false;
+
+    final fallback = await widget.sourceManager.getPic(
+      widget.song,
+      excludedUrls: {..._failedUrls, ...primary},
+      refresh: _picRequested,
+    );
+    _picRequested = true;
+    if (!_isCurrent(seq) || fallback == null || fallback.isEmpty) return false;
+    final candidates = CoverFetcher.candidatesOf(
+      fallback,
+      netEaseThumbSize: 200,
+    );
+    return _tryUrls(seq, candidates);
+  }
+
+  Future<bool> _tryUrls(int seq, List<String> urls) async {
+    for (final url in urls) {
+      if (_brokenUrls.contains(url)) continue;
+      for (var attempt = 0; attempt < _maxAttemptsPerUrl; attempt++) {
+        if (attempt > 0) {
+          await _wait(_retryDelay);
+          if (!_isCurrent(seq)) return false;
+        }
+        final file = await _fetch(url, attempt);
+        if (!_isCurrent(seq)) return false;
+        if (file != null) {
+          setState(() {
+            _url = url;
+            _file = file;
+          });
+          return true;
+        }
+        _failedUrls.add(url);
+      }
+    }
+    return false;
+  }
+
+  Future<io.File?> _fetch(String url, int attempt) async {
+    try {
+      final headers = CoverFetcher.headersFor(url, retry: attempt > 0);
+      final file = attempt == 0
+          // 先走缓存：已经下载过的封面直接读取，不发请求。
+          ? await AppImageCache.manager
+                .getSingleFile(url, headers: headers ?? const {})
+                .timeout(_downloadTimeout)
+          // 上一次可能卡在同一个下载上：强制重新请求，不再复用那条挂住的连接。
+          : (await AppImageCache.manager
+                    .downloadFile(url, authHeaders: headers, force: true)
+                    .timeout(_downloadTimeout))
+                .file;
+      final local = io.File(file.path);
+      final exists = await local.exists();
+      final size = exists ? await local.length() : 0;
+      if (!exists || size < 100) {
+        // 缓存里存的是错误页 / 空文件（或文件已被缓存清理删掉）：
+        // 删掉索引，别让下次直接复用它。
+        await _removeFromCache(url);
+        // 文件确实在、只是内容过小 → 这个地址本身给的就是错误页 / 空响应，
+        // 标 broken，其它行不必再试；文件只是不存在（缓存被清）不算。
+        if (exists) _markBroken(url);
+        return null;
+      }
+      return local;
+    } catch (e) {
+      debugPrint('[SongListItem] 封面加载失败: $url - $e');
+      return null;
+    }
+  }
+
+  Future<void> _removeFromCache(String url) async {
+    try {
+      await AppImageCache.manager.removeFile(url);
+    } catch (_) {}
+  }
+
+  /// 下载成功但解码失败：缓存文件坏了，删掉它并换下一个候选地址重新加载。
+  void _handleDecodeError(String? url) {
+    if (url == null || _brokenUrls.contains(url) || url != _url) return;
+    _markBroken(url);
+    _failedUrls.add(url);
+    setState(() => _file = null);
+    unawaited(_removeFromCache(url));
+    _startLoad(widget.initialUrl);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final file = _file;
+    final url = _url;
+    return Container(
+      width: 44,
+      height: 44,
+      decoration: BoxDecoration(
+        color: widget.colors.surfaceVariant,
+        borderRadius: BorderRadius.circular(AppRadius.sm),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(AppRadius.sm),
+        child: file == null
+            ? _buildPlaceholder()
+            : Image.file(
+                file,
+                width: 44,
+                height: 44,
+                fit: BoxFit.cover,
+                cacheWidth: 132,
+                cacheHeight: 132,
+                gaplessPlayback: true,
+                filterQuality: FilterQuality.low,
+                // 解码要一两帧时间，这期间继续显示占位图，避免封面位置闪一下空白。
+                frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+                  if (wasSynchronouslyLoaded || frame != null) return child;
+                  return _buildPlaceholder();
+                },
+                errorBuilder: (context, error, stackTrace) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (mounted) _handleDecodeError(url);
+                  });
+                  return _buildPlaceholder();
+                },
+              ),
+      ),
+    );
+  }
+
+  Widget _buildPlaceholder() {
+    return Container(
+      width: 44,
+      height: 44,
+      decoration: BoxDecoration(
+        color: widget.colors.surfaceVariant,
+        borderRadius: BorderRadius.circular(AppRadius.sm),
+      ),
+      child: Icon(Icons.music_note, size: 20, color: widget.colors.primary),
+    );
+  }
+}

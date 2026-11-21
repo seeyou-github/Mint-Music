@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 没有封面时的占位块（本地歌还没提取到内嵌封面 / 网络图未加载完）。 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#40808080" />
+    <corners android:radius="14dp" />
+</shape>

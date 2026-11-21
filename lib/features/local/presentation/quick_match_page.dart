@@ -1,0 +1,790 @@
+import 'dart:async';
+
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+
+import '../../../core/constants/app_routes.dart';
+import '../../../core/l10n/l10n.dart';
+import '../../../core/theme/app_spacing.dart';
+import '../../../core/theme/app_surface.dart';
+import '../../../core/theme/theme_provider.dart';
+import '../../../shared/widgets/music_cover_image.dart';
+import '../../player/domain/models/song.dart';
+import '../../player/domain/services/lyric_cache.dart';
+import '../application/local_providers.dart';
+import '../domain/local_song_filter.dart';
+import '../domain/services/embedded_lyric_presence.dart';
+
+/// 「匹配歌曲」页面。
+///
+/// 顶部是扫描目录下拉（默认 [initialDir]；没传或已不在目录列表里时用第一个
+/// 目录），下面是字段「有 / 无」筛选栏，再下面是歌曲列表：封面、歌名、歌手、
+/// 专辑、年份、流派、注释、歌词状态，每行右侧有「编辑标签」与「匹配」两个
+/// 图标按钮。
+class QuickMatchPage extends ConsumerStatefulWidget {
+  const QuickMatchPage({super.key, this.initialDir});
+
+  /// 进入时默认选中的目录（本地页当前选中的那个文件夹）。
+  final String? initialDir;
+
+  @override
+  ConsumerState<QuickMatchPage> createState() => _QuickMatchPageState();
+}
+
+class _QuickMatchPageState extends ConsumerState<QuickMatchPage> {
+  /// 当前目录；空串表示「全部目录」。
+  String _dir = '';
+
+  /// 是否已经按「第一个目录」初始化过（目录列表是异步来的）。
+  bool _dirInitialized = false;
+
+  final Map<LocalSongField, FieldFilter> _filters = {
+    for (final field in LocalSongField.values) field: FieldFilter.any,
+  };
+
+  /// 歌曲 id → 歌词状态（内嵌歌词 + 歌词缓存）。
+  Map<String, LyricPresence> _lyricStatus = const {};
+  bool _loadingStatus = true;
+
+  /// 算过歌词状态时的歌曲对象快照（id → Song 实例）。
+  ///
+  /// 曲库更新会给被修改的歌换一个新的 Song 实例，靠实例比对就能找出
+  /// 「被改过」的歌只重算这几首，而不是整页重算一遍。
+  final Map<String, Song> _statusSongs = <String, Song>{};
+
+  /// 正在批量算歌词状态（防止 build 里重复排队）。
+  bool _statusRunning = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _initDir());
+  }
+
+  void _initDir() {
+    final dirs =
+        ref.read(scannedDirectoriesProvider).valueOrNull ?? const <String>[];
+    // 目录列表可能还在异步加载：等它出来再初始化，build 里会重新触发。
+    if (!mounted || dirs.isEmpty) return;
+    // 从本地页某个文件夹进来时默认选中它；没传或目录已被移除再退回第一个。
+    final initial = widget.initialDir;
+    setState(() {
+      _dir = initial != null && dirs.contains(initial) ? initial : dirs.first;
+      _dirInitialized = true;
+    });
+  }
+
+  // ------------------------------------------------------------ 歌词状态
+
+  /// 批量算一遍歌词状态：歌词缓存 + 文件里的内嵌歌词（实时读）。
+  ///
+  /// 内嵌状态**不再取自曲库索引**：索引不会随文件被外部工具改写而更新，
+  /// 会出现「播放页显示 QRC、这里没有逐字标签」。这里先按歌词缓存给出
+  /// 初值，再逐批读文件补全，读一批刷一次界面，几百首歌也不会白屏等。
+  Future<void> _loadLyricStatus(List<Song> songs) async {
+    if (!mounted || _statusRunning) return;
+    if (songs.isEmpty) {
+      // 没有歌就没什么可算的：把「正在算」的标志复位，别让界面一直转圈。
+      setState(() => _loadingStatus = false);
+      return;
+    }
+    _statusRunning = true;
+    setState(() => _loadingStatus = true);
+    final entries = await LyricCache.readMany(songs);
+    if (!mounted) {
+      _statusRunning = false;
+      return;
+    }
+    final initial = <String, LyricPresence>{};
+    for (final song in songs) {
+      final entry = entries[LyricCache.keyFor(song)];
+      final cachedLrc = <String?>[
+        entry?.lrc,
+        entry?.crlyric,
+        entry?.ttml,
+      ].any((text) => (text ?? '').trim().isNotEmpty);
+      final cachedWord = <String?>[
+        entry?.crlyric,
+        entry?.ttml,
+      ].any((text) => (text ?? '').trim().isNotEmpty);
+      final ownLrc = song.lrc?.trim() ?? '';
+      initial[song.id] = LyricPresence(
+        hasLyric: cachedLrc || ownLrc.isNotEmpty,
+        hasWordLyric: cachedWord || isWordLyricText(ownLrc),
+      );
+      _statusSongs[song.id] = song;
+    }
+    setState(() {
+      _lyricStatus = {..._lyricStatus, ...initial};
+    });
+
+    // 再读文件：文件里有的内嵌歌词覆盖缓存结论（两者取「或」）。
+    await EmbeddedLyricPresence.readMany(
+      songs,
+      onBatch: (batch) {
+        if (!mounted) return;
+        final merged = <String, LyricPresence>{};
+        for (final item in batch.entries) {
+          final before = _lyricStatus[item.key] ?? LyricPresence.none;
+          merged[item.key] = LyricPresence(
+            hasLyric: before.hasLyric || item.value.hasLyric,
+            hasWordLyric: before.hasWordLyric || item.value.hasWordLyric,
+          );
+        }
+        setState(() {
+          _lyricStatus = {..._lyricStatus, ...merged};
+        });
+      },
+    );
+    if (!mounted) {
+      _statusRunning = false;
+      return;
+    }
+    setState(() => _loadingStatus = false);
+    _statusRunning = false;
+  }
+
+  /// 打开「编辑标签」页；[autoSearch] 为 true 时直接进在线搜索并搜一次。
+  ///
+  /// 匹配界面已经并入编辑标签页，这里不再单独开一个匹配页。回来时强制
+  /// 重建一次，build 里会按曲库最新的歌曲对象刷新被改过的那几行。
+  Future<void> _openEditor(Song song, {bool autoSearch = false}) async {
+    final query = autoSearch
+        ? '?songId=${song.id}&autoSearch=1'
+        : '?songId=${song.id}';
+    await context.push('${AppRoutes.tagEditor}$query');
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  /// 目录为空时引导用户添加一个扫描目录。
+  Future<void> _addDirectory() async {
+    final result = await FilePicker.platform.getDirectoryPath(
+      dialogTitle: context.tr('选择音乐目录'),
+    );
+    if (result == null || result.isEmpty) return;
+    final dirs = [
+      ...(ref.read(scannedDirectoriesProvider).valueOrNull ?? const <String>[]),
+    ];
+    if (!dirs.contains(result)) {
+      dirs.add(result);
+      await ref.read(localMusicNotifierProvider.notifier).setDirectories(dirs);
+      await ref.read(localMusicNotifierProvider.notifier).scanAll();
+    }
+    if (!mounted) return;
+    setState(() {
+      _dir = result;
+      _dirInitialized = true;
+    });
+  }
+
+  // ------------------------------------------------------------ 过滤
+
+  /// 当前是否有任何筛选条件（用于显示「清空筛选」）。
+  bool get _hasActiveFilter =>
+      _filters.values.any((state) => state != FieldFilter.any);
+
+  /// 按目录 + 字段筛选（纯逻辑在 domain/local_song_filter.dart）。
+  List<Song> _filtered(List<Song> songs) {
+    final result = filterLocalSongs(
+      songs,
+      directory: _dir,
+      filters: _filters,
+      lyricStatus: _lyricStatus,
+    );
+    result.sort(compareSongByArtistFirstChar);
+    return result;
+  }
+
+  void _cycleFilter(LocalSongField field) {
+    setState(() {
+      _filters[field] = nextFieldFilter(_filters[field] ?? FieldFilter.any);
+    });
+  }
+
+  // ------------------------------------------------------------ UI
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = ref.watch(themeColorsProvider);
+    final songsAsync = ref.watch(localMusicNotifierProvider);
+    final dirs =
+        ref.watch(scannedDirectoriesProvider).valueOrNull ?? const <String>[];
+    if (!_dirInitialized && dirs.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _initDir());
+    }
+
+    final allSongs = songsAsync.valueOrNull ?? const <Song>[];
+    // 首次进入、新扫描出来的歌、以及被改过的歌（实例变了）都要算歌词状态。
+    final staleSongs = <Song>[
+      for (final song in allSongs)
+        if (!identical(_statusSongs[song.id], song)) song,
+    ];
+    if (staleSongs.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_loadLyricStatus(staleSongs));
+      });
+    }
+    final songs = _filtered(allSongs);
+
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      body: SafeArea(
+        bottom: false,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _buildHeader(colors, dirs, songs.length, allSongs.length),
+            _buildFilterBar(colors),
+            const SizedBox(height: AppSpacing.xs),
+            _buildListHeader(colors),
+            Expanded(
+              child: songsAsync.when(
+                data: (_) =>
+                    // 只在「有歌但歌词状态还没算完」时转圈；完全没有歌曲时
+                    // 直接走空状态（提示添加扫描目录），否则会永远转下去——
+                    // _loadLyricStatus 对空列表直接返回，_loadingStatus 不会复位。
+                    _loadingStatus && allSongs.isNotEmpty && songs.isEmpty
+                    ? const Center(child: CircularProgressIndicator())
+                    : songs.isEmpty
+                    ? _buildEmpty(colors, dirs, allSongs)
+                    : _buildSongList(colors, songs),
+                loading: () =>
+                    // 曲库还在加载且连扫描目录都没设置：不会有歌出来，直接提示。
+                    dirs.isEmpty && allSongs.isEmpty
+                    ? _buildEmpty(colors, dirs, allSongs)
+                    : const Center(child: CircularProgressIndicator()),
+                error: (e, _) => Center(
+                  child: Text('$e', style: TextStyle(color: colors.textHint)),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeader(
+    ThemeColors colors,
+    List<String> dirs,
+    int shown,
+    int total,
+  ) {
+    final current = dirs.contains(_dir)
+        ? _dir
+        : (dirs.isEmpty ? '' : dirs.first);
+    final label = current.isEmpty ? context.tr('全部目录') : _dirName(current);
+    return Padding(
+      // 右侧只留 4：关闭 IconButton 自带 12px 内边距，图标到屏幕右缘
+      // 的视觉间距正好 = 16（lg），与左侧标题的间距一致。
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.lg,
+        AppSpacing.md,
+        4,
+        AppSpacing.sm,
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              context.tr('匹配歌曲'),
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: colors.textPrimary,
+              ),
+            ),
+          ),
+          // 目录下拉：默认第一个目录，可切到别的目录 / 全部目录。
+          PopupMenuButton<String>(
+            enabled: dirs.isNotEmpty,
+            tooltip: context.tr('选择目录'),
+            color: colors.dialogSurface,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(AppRadius.md),
+            ),
+            onSelected: (value) => setState(() => _dir = value),
+            itemBuilder: (_) => [
+              for (final dir in dirs)
+                PopupMenuItem<String>(
+                  value: dir,
+                  height: 44,
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.folder_outlined,
+                        size: 16,
+                        color: dir == current
+                            ? colors.primary
+                            : colors.textHint,
+                      ),
+                      const SizedBox(width: AppSpacing.sm),
+                      Expanded(
+                        child: Text(
+                          _dirName(dir),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: dir == current
+                                ? colors.primary
+                                : colors.textPrimary,
+                          ),
+                        ),
+                      ),
+                      if (dir == current)
+                        Icon(Icons.check, size: 16, color: colors.primary),
+                    ],
+                  ),
+                ),
+            ],
+            child: Container(
+              constraints: const BoxConstraints(maxWidth: 260),
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.md,
+                vertical: AppSpacing.sm,
+              ),
+              decoration: BoxDecoration(
+                color: colors.surface,
+                borderRadius: BorderRadius.circular(AppRadius.full),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.folder_open, size: 16, color: colors.textHint),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 13, color: colors.textPrimary),
+                    ),
+                  ),
+                  Icon(Icons.arrow_drop_down, size: 18, color: colors.textHint),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: AppSpacing.md),
+          Text(
+            '$shown / $total',
+            style: TextStyle(fontSize: 12, color: colors.textHint),
+          ),
+          IconButton(
+            onPressed: () => context.pop(),
+            icon: Icon(Icons.close, color: colors.textHint),
+            tooltip: context.tr('关闭'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 筛选栏：点一次「有」，再点「无」，第三次取消（默认没有任何过滤）。
+  Widget _buildFilterBar(ThemeColors colors) {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+      child: Row(
+        children: [
+          Text(
+            context.tr('筛选'),
+            style: TextStyle(fontSize: 12, color: colors.textHint),
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          for (final field in LocalSongField.values) ...[
+            _buildFilterChip(colors, field),
+            const SizedBox(width: AppSpacing.xs),
+          ],
+          if (_hasActiveFilter)
+            // 不能用 TextButton：它自带 40~48 的最小高度和点击扩展区，
+            // 一旦出现就会把整行撑高，其它筛选按钮被垂直居中 → 上方凭空
+            // 多出一截空白。这里用和筛选按钮同高的普通文本。
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => setState(() {
+                for (final field in LocalSongField.values) {
+                  _filters[field] = FieldFilter.any;
+                }
+              }),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.xs,
+                  vertical: 5,
+                ),
+                child: Text(
+                  context.tr('清空筛选'),
+                  style: TextStyle(
+                    fontSize: 12,
+                    height: 1.2,
+                    color: colors.primary,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFilterChip(ThemeColors colors, LocalSongField field) {
+    final state = _filters[field] ?? FieldFilter.any;
+    final active = state != FieldFilter.any;
+    final color = state == FieldFilter.lacks ? colors.error : colors.primary;
+    return GestureDetector(
+      onTap: () => _cycleFilter(field),
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.sm,
+          vertical: 5,
+        ),
+        decoration: BoxDecoration(
+          color: active ? color.withValues(alpha: 0.14) : colors.surface,
+          borderRadius: BorderRadius.circular(AppRadius.full),
+          border: Border.all(
+            color: active ? color.withValues(alpha: 0.8) : colors.divider,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              context.tr(_fieldLabel(field)),
+              style: TextStyle(
+                fontSize: 12,
+                // 固定行高：选中后会多出「有 / 无」这两个小字，字号不同会
+                // 让行高变化，筛选栏跟着忽高忽低。锁定 1.2 倍后两种状态
+                // 的高度一致，点筛选按钮不再顶动下面的列表。
+                height: 1.2,
+                color: active ? color : colors.textSecondary,
+                fontWeight: active ? FontWeight.w600 : FontWeight.normal,
+              ),
+            ),
+            if (active) ...[
+              const SizedBox(width: 4),
+              Text(
+                state == FieldFilter.has ? context.tr('有') : context.tr('无'),
+                style: TextStyle(
+                  fontSize: 11,
+                  height: 1.2,
+                  fontWeight: FontWeight.w700,
+                  color: color,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 列表列头（与每一行对齐）。
+  ///
+  /// 列宽比例：图标 : 名称 : 年份 : 歌词 : 编辑 : 匹配 = 2 : 5 : 2 : 2 : 1 : 1；
+  /// 宽屏（>=900）再在名称后插专辑、年份后插流派 / 注释。
+  Widget _buildListHeader(ThemeColors colors) {
+    final wide = MediaQuery.sizeOf(context).width >= 900;
+    final style = TextStyle(fontSize: 11, color: colors.textHint);
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.lg,
+        vertical: AppSpacing.xs,
+      ),
+      child: Row(
+        children: [
+          const Expanded(flex: 2, child: SizedBox.shrink()),
+          Expanded(flex: 5, child: Text(context.tr('名称'), style: style)),
+          if (wide)
+            Expanded(flex: 3, child: Text(context.tr('专辑'), style: style)),
+          Expanded(flex: 2, child: Text(context.tr('年份'), style: style)),
+          if (wide) ...[
+            Expanded(flex: 2, child: Text(context.tr('流派'), style: style)),
+            Expanded(flex: 2, child: Text(context.tr('注释'), style: style)),
+          ],
+          Expanded(flex: 2, child: Text(context.tr('歌词'), style: style)),
+          // 操作区两列（编辑 1 + 匹配 1）共用一个弹性空间。
+          const Expanded(flex: 2, child: SizedBox.shrink()),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSongList(ThemeColors colors, List<Song> songs) {
+    final wide = MediaQuery.sizeOf(context).width >= 900;
+    return ListView.builder(
+      padding: const EdgeInsets.only(bottom: AppSpacing.xxxl),
+      itemCount: songs.length,
+      itemExtent: _rowHeight,
+      itemBuilder: (context, index) {
+        final song = songs[index];
+        return _buildRow(colors, song, wide: wide);
+      },
+    );
+  }
+
+  Widget _buildRow(ThemeColors colors, Song song, {required bool wide}) {
+    final lyric = _lyricStatus[song.id];
+    final hasLyric = lyric?.hasLyric ?? false;
+    final hasWord = lyric?.hasWordLyric ?? false;
+
+    return InkWell(
+      // 点整行进「编辑标签 - 在线搜索」，回来时列表会刷新被改过的那一行。
+      onTap: () => unawaited(_openEditor(song, autoSearch: true)),
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.lg,
+          vertical: AppSpacing.xs,
+        ),
+        decoration: BoxDecoration(
+          border: Border(
+            bottom: BorderSide(color: colors.divider.withValues(alpha: 0.4)),
+          ),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              flex: 2,
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(AppRadius.sm),
+                  child: MusicCoverImage(
+                    url: song.coverUrl,
+                    songId: song.id,
+                    filePath: song.filePath,
+                    width: _coverSize,
+                    height: _coverSize,
+                    errorWidget: Container(
+                      width: _coverSize,
+                      height: _coverSize,
+                      color: colors.surfaceVariant,
+                      child: Icon(
+                        Icons.music_note,
+                        size: 18,
+                        color: colors.textHint,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: AppSpacing.sm),
+            Expanded(
+              flex: 5,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    song.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                      color: colors.textPrimary,
+                    ),
+                  ),
+                  Text(
+                    song.artist,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 11, color: colors.textHint),
+                  ),
+                ],
+              ),
+            ),
+            if (wide) Expanded(flex: 3, child: _cell(colors, song.album)),
+            Expanded(
+              flex: 2,
+              child: _cell(colors, song.year?.toString() ?? ''),
+            ),
+            if (wide) ...[
+              Expanded(flex: 2, child: _cell(colors, song.genre)),
+              Expanded(flex: 2, child: _cell(colors, song.comment)),
+            ],
+            Expanded(
+              flex: 2,
+              // 歌词徽标（「歌词」「逐字」两个并排）可能比 flex 2 宽，
+              // 用 FittedBox 缩一下避免溢出。
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: _buildLyricBadges(colors, hasLyric, hasWord),
+              ),
+            ),
+            _actionCell(
+              colors,
+              icon: Icons.edit,
+              tooltip: context.tr('编辑标签'),
+              onTap: () => unawaited(_openEditor(song)),
+            ),
+            _actionCell(
+              colors,
+              icon: Icons.auto_fix_high,
+              tooltip: context.tr('匹配'),
+              onTap: () => unawaited(_openEditor(song, autoSearch: true)),
+              alignEnd: true,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _cell(ThemeColors colors, String? text) {
+    final value = (text ?? '').trim();
+    return Text(
+      value.isEmpty ? '-' : value,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(fontSize: 12, color: colors.textSecondary),
+    );
+  }
+
+  Widget _buildLyricBadges(ThemeColors colors, bool hasLyric, bool hasWord) {
+    if (!hasLyric) {
+      return Text('-', style: TextStyle(fontSize: 12, color: colors.textHint));
+    }
+    return Row(
+      children: [
+        _badge(colors, context.tr('歌词'), colors.primary),
+        if (hasWord) ...[
+          const SizedBox(width: 4),
+          _badge(colors, context.tr('逐字'), colors.error),
+        ],
+      ],
+    );
+  }
+
+  Widget _badge(ThemeColors colors, String label, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(AppRadius.xs),
+        border: Border.all(color: color.withValues(alpha: 0.6)),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+          color: color,
+        ),
+      ),
+    );
+  }
+
+  /// 行尾操作按钮（flex 1 弹性列，编辑与匹配各占 1 份）。
+  ///
+  /// [alignEnd] 为 true 时图标贴列右缘（「匹配」是最后一列），
+  /// 让图标到屏幕右缘的间距 = 行内边距 lg，与左侧封面到左缘的间距一致。
+  /// FittedBox 兜底：极窄屏幕下列宽不够时整体缩小，不溢出。
+  Widget _actionCell(
+    ThemeColors colors, {
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback onTap,
+    bool alignEnd = false,
+  }) {
+    return Expanded(
+      flex: 1,
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        alignment: alignEnd ? Alignment.centerRight : Alignment.center,
+        child: Tooltip(
+          message: tooltip,
+          child: InkResponse(
+            onTap: onTap,
+            radius: 18,
+            child: Padding(
+              padding: EdgeInsets.only(
+                left: 4,
+                right: alignEnd ? 0 : 4,
+                top: 6,
+                bottom: 6,
+              ),
+              child: Icon(icon, size: 18, color: colors.textSecondary),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmpty(ThemeColors colors, List<String> dirs, List<Song> all) {
+    // 还没有扫描目录、曲库也是空的：提示先添加一个（否则匹配无从谈起）。
+    if (dirs.isEmpty && all.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.folder_off_outlined, size: 44, color: colors.textHint),
+            const SizedBox(height: AppSpacing.md),
+            Text(
+              context.tr('还没有添加扫描目录'),
+              style: TextStyle(color: colors.textHint),
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            Text(
+              context.tr('先添加一个音乐目录，扫描后才能匹配本地歌曲'),
+              style: TextStyle(fontSize: 12, color: colors.textHint),
+            ),
+            const SizedBox(height: AppSpacing.md),
+            FilledButton.icon(
+              onPressed: () => unawaited(_addDirectory()),
+              // 与侧栏「发现」的激活态一致：主题色调暗做底、文字用主题色。
+              style: FilledButton.styleFrom(
+                backgroundColor: activeChipColor(colors),
+                foregroundColor: colors.primary,
+                side: BorderSide(color: colors.primary.withValues(alpha: 0.5)),
+              ),
+              icon: const Icon(Icons.create_new_folder_outlined, size: 18),
+              label: Text(context.tr('添加扫描目录')),
+            ),
+          ],
+        ),
+      );
+    }
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.filter_alt_off_outlined, size: 44, color: colors.textHint),
+          const SizedBox(height: AppSpacing.md),
+          Text(
+            _hasActiveFilter ? context.tr('没有符合条件的歌曲') : context.tr('暂无歌曲'),
+            style: TextStyle(color: colors.textHint),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _fieldLabel(LocalSongField field) => switch (field) {
+    LocalSongField.cover => '封面',
+    LocalSongField.title => '歌名',
+    LocalSongField.artist => '歌手',
+    LocalSongField.album => '专辑',
+    LocalSongField.year => '年份',
+    LocalSongField.genre => '流派',
+    LocalSongField.comment => '注释',
+    LocalSongField.lyric => '歌词',
+    LocalSongField.wordLyric => '逐字歌词',
+  };
+
+  /// 目录只显示最后一级，完整路径放在 tooltip 里。
+  String _dirName(String dir) {
+    final parts = dir.split(RegExp(r'[/\\]'))
+      ..removeWhere((part) => part.isEmpty);
+    return parts.isEmpty ? dir : parts.last;
+  }
+
+  static const double _coverSize = 40;
+  static const double _rowHeight = 58;
+}

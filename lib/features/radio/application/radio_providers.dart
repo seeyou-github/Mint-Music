@@ -1,0 +1,232 @@
+import 'dart:async';
+
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../player/domain/services/cover_color_extractor.dart';
+import '../data/radio_cover_cache.dart';
+import '../data/radio_store.dart';
+import '../domain/models/radio_station.dart';
+
+export '../data/radio_store.dart' show RadioStore;
+export '../domain/models/radio_station.dart';
+
+final radioStoreProvider = Provider<RadioStore>((ref) => RadioStore());
+
+/// 电台封面的整体亮度（0..1），按封面地址缓存。
+///
+/// 深色模式下用来判断亮色封面要不要压一层黑；取不到时为 null（不压暗）。
+final radioCoverLuminanceProvider = FutureProvider.family<double?, String>(
+  (ref, source) => CoverColorExtractor.averageLuminanceFromUrl(source),
+);
+
+/// 电台数据（分类 + 电台列表）。
+///
+/// 与黑名单一样是「同步可读、启动后异步补齐」：界面需要立刻画出分类栏和电台。
+final radioProvider = NotifierProvider<RadioNotifier, RadioData>(
+  RadioNotifier.new,
+);
+
+class RadioNotifier extends Notifier<RadioData> {
+  bool _loaded = false;
+
+  @override
+  RadioData build() {
+    if (!_loaded) unawaited(_load());
+    return const RadioData();
+  }
+
+  Future<void> _load() async {
+    final data = await ref.read(radioStoreProvider).load();
+    _loaded = true;
+    try {
+      state = data;
+    } catch (_) {}
+  }
+
+  Future<void> _persist() async {
+    await ref.read(radioStoreProvider).save(state);
+  }
+
+  /// 重新从设置文件里读一遍电台数据（备份还原后调用）。
+  Future<void> reload() => _load();
+
+  /// 分类栏用：第一项固定是「全部」。
+  List<RadioCategory> get categories => [
+    RadioCategory.all,
+    ...state.categories,
+  ];
+
+  RadioCategory? categoryById(String id) {
+    if (id == RadioCategory.allId) return RadioCategory.all;
+    for (final category in state.categories) {
+      if (category.id == id) return category;
+    }
+    return null;
+  }
+
+  Future<RadioCategory> addCategory(String name) async {
+    final now = DateTime.now();
+    final category = RadioCategory(
+      id: 'cat_${now.millisecondsSinceEpoch}',
+      name: name.trim(),
+    );
+    state = state.copyWithCategories([...state.categories, category]);
+    await _persist();
+    return category;
+  }
+
+  /// 删除分类：该分类下的电台挪回「全部」，不跟着删。
+  Future<void> removeCategory(String id) async {
+    if (id == RadioCategory.allId) return;
+    final categories = state.categories
+        .where((e) => e.id != id)
+        .toList(growable: false);
+    final stations = [
+      for (final station in state.stations)
+        if (station.categoryId == id)
+          station.copyWith(categoryId: RadioCategory.allId)
+        else
+          station,
+    ];
+    state = state.copyWith(categories: categories, stations: stations);
+    await _persist();
+  }
+
+  /// 重命名分类（「全部」不可改）。
+  Future<void> renameCategory(String id, String name) async {
+    if (id == RadioCategory.allId) return;
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return;
+    state = state.copyWithCategories([
+      for (final category in state.categories)
+        if (category.id == id)
+          RadioCategory(id: category.id, name: trimmed)
+        else
+          category,
+    ]);
+    await _persist();
+  }
+
+  /// 分类拖动排序。
+  Future<void> reorderCategories(int oldIndex, int newIndex) async {
+    final categories = [...state.categories];
+    if (oldIndex < 0 || oldIndex >= categories.length) return;
+    if (newIndex > oldIndex) newIndex -= 1;
+    if (newIndex < 0 || newIndex > categories.length) return;
+    final moved = categories.removeAt(oldIndex);
+    categories.insert(newIndex, moved);
+    state = state.copyWithCategories(categories);
+    await _persist();
+  }
+
+  /// 新增 / 更新电台（封面会先缓存到本地）。
+  Future<RadioStation> saveStation(RadioStation station) async {
+    var saved = station;
+    final source = station.coverUrl.trim();
+    if (source.isEmpty) {
+      // 没设封面（或封面被清空）：不能沿用上一次的缓存文件。
+      saved = station.copyWith(clearCoverPath: true);
+      final old = station.coverPath?.trim() ?? '';
+      if (old.isNotEmpty) await RadioCoverCache.remove(old);
+    } else {
+      final cached = await RadioCoverCache.cache(source);
+      if (cached != null) {
+        // 本地图片统一以缓存副本为准：设置文件里不保留用户选择的原始路径
+        // （相册 / 临时文件可能被清理），只保留 AppData 下的副本。
+        saved = station.copyWith(
+          coverUrl: _isRemoteCover(source) ? source : cached,
+          coverPath: cached,
+        );
+        // 换了封面：把旧文件删掉，避免堆垃圾。
+        final old = station.coverPath?.trim() ?? '';
+        if (old.isNotEmpty && old != cached) {
+          await RadioCoverCache.remove(old);
+        }
+      }
+    }
+    final index = state.stations.indexWhere((e) => e.id == saved.id);
+    final stations = [...state.stations];
+    if (index >= 0) {
+      stations[index] = saved.copyWith(updateTime: DateTime.now());
+    } else {
+      stations.add(saved);
+    }
+    state = state.copyWith(stations: stations);
+    await _persist();
+    return index >= 0 ? stations[index] : saved;
+  }
+
+  /// 保存内置「随机电台」的可选配置（封面会先缓存到本地）。
+  Future<RadioStation> saveRandomStation(RadioStation station) async {
+    final previous = state.randomStation;
+    var saved = station;
+    final source = station.coverUrl.trim();
+    if (source.isEmpty) {
+      // 没设封面（或封面被清空）：不能沿用上一次的缓存文件。
+      saved = station.copyWith(clearCoverPath: true);
+    } else {
+      final cached = await RadioCoverCache.cache(source);
+      if (cached != null) {
+        saved = station.copyWith(
+          coverUrl: _isRemoteCover(source) ? station.coverUrl : cached,
+          coverPath: cached,
+        );
+      }
+    }
+    final old = previous?.coverPath?.trim() ?? '';
+    final keep = saved.coverPath?.trim() ?? '';
+    if (old.isNotEmpty && old != keep) {
+      await RadioCoverCache.remove(old);
+    }
+    state = state.copyWith(randomStation: saved);
+    await _persist();
+    return saved;
+  }
+
+  /// 重置随机电台：删除封面，并清空音源 / 歌单分类 / 搜索关键词设置。
+  Future<void> resetRandomStation() async {
+    final old = state.randomStation;
+    if (old == null) return;
+    state = state.copyWith(clearRandomStation: true);
+    await _persist();
+    await RadioCoverCache.remove(old.coverPath);
+  }
+
+  Future<void> removeStation(String id) async {
+    RadioStation? removed;
+    final stations = <RadioStation>[];
+    for (final station in state.stations) {
+      if (station.id == id) {
+        removed = station;
+      } else {
+        stations.add(station);
+      }
+    }
+    if (removed == null) return;
+    state = state.copyWith(stations: stations);
+    await _persist();
+    await RadioCoverCache.remove(removed.coverPath);
+  }
+
+  /// 电台拖动排序：电台页（「全部」与各分类）都按这个全局顺序展示。
+  Future<void> reorderStations(int oldIndex, int newIndex) async {
+    final stations = [...state.stations];
+    if (oldIndex < 0 || oldIndex >= stations.length) return;
+    if (newIndex > oldIndex) newIndex -= 1;
+    if (newIndex < 0 || newIndex > stations.length) return;
+    final moved = stations.removeAt(oldIndex);
+    stations.insert(newIndex, moved);
+    state = state.copyWith(stations: stations);
+    await _persist();
+  }
+}
+
+extension RadioDataX on RadioData {
+  RadioData copyWithCategories(List<RadioCategory> categories) =>
+      copyWith(categories: categories);
+}
+
+bool _isRemoteCover(String source) {
+  final value = source.trim();
+  return value.startsWith('http://') || value.startsWith('https://');
+}

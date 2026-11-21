@@ -1,0 +1,170 @@
+import 'dart:async';
+
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../player/domain/models/song.dart';
+import '../data/hot_board_store.dart';
+import '../domain/models/hot_board.dart';
+import 'discover_providers.dart';
+
+final hotBoardStoreProvider = Provider<HotBoardStore>((ref) => HotBoardStore());
+
+/// 用户添加的全部热榜**配置**（跨音源聚合展示，不随主页音源切换）。
+///
+/// state 里带 `songs`，但那是内存缓存：落盘只写配置，歌曲每次进「热榜」时
+/// 用 [HotBoardsNotifier.refreshSongs] 重新拉。
+final hotBoardsProvider =
+    AsyncNotifierProvider<HotBoardsNotifier, List<HotBoard>>(
+      HotBoardsNotifier.new,
+    );
+
+/// 「哪些音源有用户新增的热榜」标志位（音源 id 集合），**同步**可读。
+///
+/// 榜单默认分类只看它，热榜配置加载完成前也能立刻判断。
+/// 现在配置本身就在 settings.json 里、体积很小（只有音源 / 名称 / 封面），
+/// 直接从配置算即可，不再单独存一份标志位。
+final hotBoardSourceIdsProvider = Provider<Set<String>>((ref) {
+  final boards = ref.watch(hotBoardsProvider).valueOrNull;
+  if (boards != null) {
+    return {
+      for (final board in boards)
+        if (board.source.isNotEmpty) board.source,
+    };
+  }
+  return ref.read(hotBoardStoreProvider).loadSourceIdsSync();
+});
+
+class HotBoardsNotifier extends AsyncNotifier<List<HotBoard>> {
+  /// 热榜里每个榜单最多保存 / 展示多少首歌。
+  static const int maxSongs = 10;
+
+  @override
+  Future<List<HotBoard>> build() {
+    return ref.read(hotBoardStoreProvider).load();
+  }
+
+  /// 添加榜单：同一榜单（id + 音源）重复添加时覆盖配置，其它榜单原样保留。
+  ///
+  /// 只保存配置（音源 / 名称 / 封面）。歌曲不落盘，调用方需要的话用
+  /// [refreshBoard] 立刻取一次（加完就能在卡片上看到前十首）。
+  Future<void> add(HotBoard board) async {
+    final boards = [...await future];
+    final index = boards.indexWhere(
+      (item) => item.id == board.id && item.source == board.source,
+    );
+    if (index >= 0) {
+      boards[index] = board;
+    } else {
+      boards.add(board);
+    }
+    await _update(boards);
+  }
+
+  Future<void> remove(HotBoard board) async {
+    final boards = [
+      for (final item in await future)
+        if (item.id != board.id || item.source != board.source) item,
+    ];
+    await _update(boards);
+  }
+
+  /// 调整全部榜单的顺序（弹框里跨音源拖动排序）。
+  Future<void> reorder(int oldIndex, int newIndex) async {
+    final boards = [...await future];
+    if (oldIndex < 0 || oldIndex >= boards.length) return;
+    if (newIndex > oldIndex) newIndex -= 1;
+    newIndex = newIndex.clamp(0, boards.length - 1);
+    final moved = boards.removeAt(oldIndex);
+    boards.insert(newIndex, moved);
+    await _update(boards);
+  }
+
+  /// 插件被卸载 / 删除：它带来的榜单配置一起删掉（settings.json 里不再保留）。
+  ///
+  /// 榜单 `source` 是 `平台id@插件id`（例如 `wy@1a19ca50dfa`）；同一个插件
+  /// 存在重复音源时后缀还会带序号（`wy@1a19ca50dfa2`），所以按「后缀是插件
+  /// id + 可选数字」匹配。插件卸载后这些音源不可能再出现，留着只会让热榜
+  /// 列表里多出一堆打不开的榜单。用户重装插件后需要重新添加榜单。
+  Future<void> removeForPlugin(String pluginId) async {
+    if (pluginId.isEmpty) return;
+    final suffix = RegExp('@${RegExp.escape(pluginId)}\\d*\$');
+    final boards = [...await future];
+    final kept = [
+      for (final board in boards)
+        if (board.source != pluginId && !suffix.hasMatch(board.source)) board,
+    ];
+    if (kept.length == boards.length) return;
+    await _update(kept);
+  }
+
+  /// 拉取**还没有歌曲**的热榜（进入「热榜」时调用）。
+  ///
+  /// 热榜跨音源聚合展示，这里会把所有音源里缺歌曲的榜单一起补齐。
+  /// 只改内存里的 state，不写 settings.json、也不进数据库。
+  ///
+  /// 每个榜单在一次运行里只取一次网络：内存里已经有歌曲的榜单直接跳过，
+  /// 正在取（[HotBoard.songsLoading]）的也跳过，避免反复点「热榜」时重复请求；
+  /// 取失败（歌曲为空）的榜单下次进来会再试一次。
+  Future<void> refreshSongs() async {
+    final boards = [...await future];
+    final targets = [
+      for (final board in boards)
+        if (board.songs.isEmpty && !board.songsLoading) board,
+    ];
+    if (targets.isEmpty) return;
+    // 先把要取的标成「加载中」：卡片各自转圈，而不是一片空白。
+    state = AsyncData([
+      for (final board in boards)
+        targets.any(
+              (item) => item.id == board.id && item.source == board.source,
+            )
+            ? board.withLoading()
+            : board,
+    ]);
+    await Future.wait([for (final board in targets) _loadSongs(board)]);
+  }
+
+  /// 重新拉取单个榜单的歌曲（卡片上的「点击重试」）。
+  Future<void> refreshBoard(HotBoard board) async {
+    _patch(board, (item) => item.withLoading());
+    await _loadSongs(board);
+  }
+
+  /// 从插件取这个榜单的前 [maxSongs] 首歌，合进内存里的 state。
+  Future<void> _loadSongs(HotBoard board) async {
+    var songs = const <Song>[];
+    String? error;
+    try {
+      final page = await ref
+          .read(discoverRepositoryProvider)
+          .getLeaderboardDetail(board.id, sourceId: board.source);
+      songs = (page?.songs ?? const <Song>[])
+          .take(maxSongs)
+          .toList(growable: false);
+      if (songs.isEmpty) error = 'empty';
+    } catch (e) {
+      error = e.toString().replaceFirst('Exception: ', '');
+    }
+    _patch(board, (item) => item.withSongs(songs, error: error));
+  }
+
+  /// 把某个榜单（按 id + 音源定位）换成 [update] 的结果。
+  ///
+  /// 拉取过程中用户可能已经删掉这个榜单 / 换了音源，找不到就丢弃这次结果。
+  void _patch(HotBoard target, HotBoard Function(HotBoard board) update) {
+    final current = state.valueOrNull;
+    if (current == null) return;
+    final index = current.indexWhere(
+      (item) => item.id == target.id && item.source == target.source,
+    );
+    if (index < 0) return;
+    final next = [...current];
+    next[index] = update(current[index]);
+    state = AsyncData(next);
+  }
+
+  Future<void> _update(List<HotBoard> boards) async {
+    state = AsyncData(boards);
+    await ref.read(hotBoardStoreProvider).save(boards);
+  }
+}

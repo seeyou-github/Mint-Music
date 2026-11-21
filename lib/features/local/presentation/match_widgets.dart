@@ -1,0 +1,668 @@
+import 'dart:ui' as ui;
+
+import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
+import 'package:flutter/material.dart';
+
+import '../../../core/l10n/l10n.dart';
+import '../../../core/theme/app_spacing.dart';
+import '../../../core/theme/theme_provider.dart';
+import '../../../shared/services/cover_cache_service.dart';
+import '../../../shared/widgets/music_cover_image.dart';
+import '../../player/domain/models/song.dart';
+
+/// 「编辑标签 - 在线搜索」里的匹配界面组件。
+///
+/// 原来这里是独立的「匹配歌曲信息」整页（match_song_page.dart），现在搬进
+/// 编辑标签的在线搜索页，复用同一套候选卡片 + 三行对比布局。
+
+/// 横向候选列表（桌面端允许鼠标 / 触摸板拖动），默认选中第一个。
+class MatchCandidateStrip extends StatelessWidget {
+  const MatchCandidateStrip({
+    super.key,
+    required this.colors,
+    required this.results,
+    required this.selectedIndex,
+    required this.onSelect,
+  });
+
+  final ThemeColors colors;
+  final List<Song> results;
+  final int selectedIndex;
+  final ValueChanged<int> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 96,
+      child: ScrollConfiguration(
+        behavior: const _DragScrollBehavior(),
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+          itemCount: results.length,
+          separatorBuilder: (_, _) => const SizedBox(width: AppSpacing.sm),
+          itemBuilder: (context, index) => _CandidateCard(
+            song: results[index],
+            selected: index == selectedIndex,
+            colors: colors,
+            onTap: () => onSelect(index),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 候选卡片：封面 + 歌名 + 歌手。
+class _CandidateCard extends StatelessWidget {
+  const _CandidateCard({
+    required this.song,
+    required this.selected,
+    required this.colors,
+    required this.onTap,
+  });
+
+  final Song song;
+  final bool selected;
+  final ThemeColors colors;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 210,
+        padding: const EdgeInsets.all(AppSpacing.xs),
+        decoration: BoxDecoration(
+          color: selected
+              ? colors.primary.withValues(alpha: 0.12)
+              : colors.surface,
+          borderRadius: BorderRadius.circular(AppRadius.md),
+          border: Border.all(
+            color: selected ? colors.primary : colors.divider,
+            width: selected ? 1.6 : 1,
+          ),
+        ),
+        child: Row(
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(AppRadius.sm),
+              child: MusicCoverImage(
+                url: song.coverUrl,
+                songId: song.id,
+                filePath: song.filePath,
+                width: 56,
+                height: 56,
+                errorWidget: Container(
+                  width: 56,
+                  height: 56,
+                  color: colors.surfaceVariant,
+                  child: Icon(
+                    Icons.music_note,
+                    size: 20,
+                    color: colors.textHint,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: AppSpacing.sm),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    song.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: selected ? colors.primary : colors.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    song.artist,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 11, color: colors.textHint),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 三行对比：封面 / 歌曲信息 / 歌词。
+///
+/// 每一行左「原歌曲」右「匹配结果」，点哪张就选中哪张（绿框 + 红色「已选择」）。
+class MatchCompareView extends StatelessWidget {
+  const MatchCompareView({
+    super.key,
+    required this.colors,
+    required this.original,
+    required this.candidate,
+    required this.originalYear,
+    required this.candidateYear,
+    required this.originalLyric,
+    required this.candidateLyric,
+    required this.loadingCandidateLyric,
+    required this.useCover,
+    required this.useInfo,
+    required this.useLyric,
+    required this.onUseCover,
+    required this.onUseInfo,
+    required this.onUseLyric,
+  });
+
+  final ThemeColors colors;
+  final Song original;
+  final Song candidate;
+  final int? originalYear;
+  final int? candidateYear;
+  final String? originalLyric;
+  final String? candidateLyric;
+  final bool loadingCandidateLyric;
+  final bool useCover;
+  final bool useInfo;
+  final bool useLyric;
+  final ValueChanged<bool> onUseCover;
+  final ValueChanged<bool> onUseInfo;
+  final ValueChanged<bool> onUseLyric;
+
+  @override
+  Widget build(BuildContext context) {
+    final sideBySide = MediaQuery.sizeOf(context).width >= 760;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _buildRow(
+          context,
+          sideBySide: sideBySide,
+          useCandidate: useCover,
+          onSelect: onUseCover,
+          originalChild: _CoverPreview(colors: colors, song: original),
+          candidateChild: _CoverPreview(colors: colors, song: candidate),
+        ),
+        const SizedBox(height: AppSpacing.md),
+        _buildRow(
+          context,
+          sideBySide: sideBySide,
+          useCandidate: useInfo,
+          onSelect: onUseInfo,
+          originalChild: _InfoPreview(
+            colors: colors,
+            song: original,
+            year: originalYear,
+          ),
+          candidateChild: _InfoPreview(
+            colors: colors,
+            song: candidate,
+            year: candidateYear,
+          ),
+        ),
+        const SizedBox(height: AppSpacing.md),
+        _buildRow(
+          context,
+          sideBySide: sideBySide,
+          useCandidate: useLyric,
+          onSelect: onUseLyric,
+          originalChild: _LyricPreview(
+            colors: colors,
+            text: originalLyric,
+            loading: false,
+            emptyText: context.tr('原歌曲没有歌词'),
+          ),
+          candidateChild: _LyricPreview(
+            colors: colors,
+            text: candidateLyric,
+            loading: loadingCandidateLyric,
+            emptyText: context.tr('匹配结果没有歌词'),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildRow(
+    BuildContext context, {
+    required bool sideBySide,
+    required bool useCandidate,
+    required ValueChanged<bool> onSelect,
+    required Widget originalChild,
+    required Widget candidateChild,
+  }) {
+    final originalBox = _SideBox(
+      colors: colors,
+      title: context.tr('原歌曲'),
+      selected: !useCandidate,
+      onTap: () => onSelect(false),
+      child: originalChild,
+    );
+    final candidateBox = _SideBox(
+      colors: colors,
+      title: context.tr('匹配结果'),
+      selected: useCandidate,
+      onTap: () => onSelect(true),
+      child: candidateChild,
+    );
+    if (!sideBySide) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          originalBox,
+          const SizedBox(height: AppSpacing.sm),
+          candidateBox,
+        ],
+      );
+    }
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(child: originalBox),
+          const SizedBox(width: AppSpacing.md),
+          Expanded(child: candidateBox),
+        ],
+      ),
+    );
+  }
+}
+
+/// 对比里的一侧（可点击选中）。
+class _SideBox extends StatelessWidget {
+  const _SideBox({
+    required this.colors,
+    required this.title,
+    required this.selected,
+    required this.onTap,
+    required this.child,
+  });
+
+  final ThemeColors colors;
+  final String title;
+  final bool selected;
+  final VoidCallback onTap;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: selected
+          ? colors.primary.withValues(alpha: 0.10)
+          : colors.surfaceVariant.withValues(alpha: 0.55),
+      borderRadius: BorderRadius.circular(AppRadius.md),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.all(AppSpacing.sm),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(AppRadius.md),
+            border: Border.all(
+              color: selected ? colors.primary : colors.divider,
+              width: selected ? 1.4 : 1,
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: selected ? colors.primary : colors.textHint,
+                      ),
+                    ),
+                  ),
+                  if (selected) ...[
+                    const SizedBox(width: AppSpacing.xs),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 1,
+                      ),
+                      decoration: BoxDecoration(
+                        color: colors.error.withValues(alpha: 0.10),
+                        borderRadius: BorderRadius.circular(AppRadius.xs),
+                        border: Border.all(
+                          color: colors.error.withValues(alpha: 0.75),
+                        ),
+                      ),
+                      child: Text(
+                        context.tr('已选择'),
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: colors.error,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              const SizedBox(height: 6),
+              SizedBox(width: double.infinity, child: child),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 封面预览（底部叠加显示图片分辨率；本地封面与网络封面都要显示）。
+class _CoverPreview extends StatefulWidget {
+  const _CoverPreview({required this.colors, required this.song});
+
+  final ThemeColors colors;
+  final Song song;
+
+  @override
+  State<_CoverPreview> createState() => _CoverPreviewState();
+}
+
+class _CoverPreviewState extends State<_CoverPreview> {
+  static const double _size = 132;
+
+  /// 分辨率缓存（url / 本地封面 → 「宽 × 高」），换候选时不用重复下载解码。
+  /// Dart 的 Map 保序：命中时挪到末尾、超上限淘汰最旧，避免候选越刷越多
+  /// 时缓存无界增长。
+  static const int _maxResolutionCache = 200;
+  static final Map<String, String> _resolutionCache = {};
+
+  /// 网络封面下载复用同一个 Dio，避免每个候选都新建连接池。
+  static final Dio _resolutionDio = Dio();
+
+  static String? _cachedResolution(String key) {
+    final value = _resolutionCache.remove(key);
+    if (value == null) return null;
+    _resolutionCache[key] = value;
+    return value;
+  }
+
+  static void _cacheResolution(String key, String value) {
+    _resolutionCache.remove(key);
+    _resolutionCache[key] = value;
+    while (_resolutionCache.length > _maxResolutionCache) {
+      _resolutionCache.remove(_resolutionCache.keys.first);
+    }
+  }
+
+  String? _resolution;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadResolution();
+  }
+
+  @override
+  void didUpdateWidget(covariant _CoverPreview oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.song.id != widget.song.id ||
+        oldWidget.song.coverUrl != widget.song.coverUrl ||
+        oldWidget.song.hasCover != widget.song.hasCover) {
+      _loadResolution();
+    }
+  }
+
+  /// 当前封面的缓存键：网络封面用地址，本地封面用歌曲 id。
+  String get _cacheKey {
+    final url = widget.song.coverUrl ?? '';
+    return url.isNotEmpty ? 'url:$url' : 'local:${widget.song.id}';
+  }
+
+  Future<void> _loadResolution() async {
+    final key = _cacheKey;
+    final cached = _cachedResolution(key);
+    if (cached != null) {
+      if (mounted && key == _cacheKey) {
+        setState(() => _resolution = cached);
+      }
+      return;
+    }
+    if (mounted) setState(() => _resolution = null);
+    try {
+      Uint8List? bytes;
+      final url = widget.song.coverUrl ?? '';
+      if (url.isNotEmpty) {
+        final response = await _resolutionDio.get<List<int>>(
+          url,
+          options: Options(responseType: ResponseType.bytes),
+        );
+        final data = response.data;
+        if (data != null && data.isNotEmpty) bytes = Uint8List.fromList(data);
+      } else if (widget.song.hasCover) {
+        bytes = await CoverCacheService().getArtwork(
+          widget.song.id,
+          mediaStoreId: widget.song.mediaStoreId,
+        );
+      }
+      if (bytes == null || bytes.isEmpty) return;
+      ui.Codec? codec;
+      ui.FrameInfo? frame;
+      try {
+        codec = await ui.instantiateImageCodec(bytes);
+        frame = await codec.getNextFrame();
+        final text = '${frame.image.width} × ${frame.image.height}';
+        _cacheResolution(key, text);
+        if (!mounted) return;
+        if (key == _cacheKey) setState(() => _resolution = text);
+      } finally {
+        // 只需要宽高：解码出的原图和 codec 用完立刻释放，否则每浏览一个
+        // 候选就漏一张高清图的原生内存。
+        frame?.image.dispose();
+        codec?.dispose();
+      }
+    } catch (_) {
+      // 分辨率拿不到（下载失败 / 解码失败）就不显示，不影响封面本身。
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = widget.colors;
+    final hasRemote = (widget.song.coverUrl ?? '').isNotEmpty;
+    if (!hasRemote && !widget.song.hasCover) {
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: Container(
+          width: _size,
+          height: _size,
+          decoration: BoxDecoration(
+            color: colors.surfaceVariant,
+            borderRadius: BorderRadius.circular(AppRadius.md),
+          ),
+          child: Icon(Icons.music_note, size: 32, color: colors.textHint),
+        ),
+      );
+    }
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        child: SizedBox(
+          width: _size,
+          height: _size,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              MusicCoverImage(
+                url: widget.song.coverUrl,
+                songId: widget.song.id,
+                mediaStoreId: widget.song.mediaStoreId,
+                // 缓存 / MediaStore 都没有时，现场从音频文件里抽内嵌封面。
+                filePath: widget.song.filePath,
+                width: _size,
+                height: _size,
+                fit: BoxFit.cover,
+                errorWidget: Container(
+                  width: _size,
+                  height: _size,
+                  color: colors.surfaceVariant,
+                  child: Icon(
+                    Icons.music_note,
+                    size: 32,
+                    color: colors.textHint,
+                  ),
+                ),
+              ),
+              if (_resolution != null)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  child: Container(
+                    color: Colors.black.withValues(alpha: 0.55),
+                    padding: const EdgeInsets.symmetric(vertical: 2),
+                    child: Text(
+                      _resolution!,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 10,
+                        color: Colors.white,
+                        fontFeatures: [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 歌曲信息预览（歌曲 / 歌手 / 专辑 / 年份）。
+class _InfoPreview extends StatelessWidget {
+  const _InfoPreview({required this.colors, required this.song, this.year});
+
+  final ThemeColors colors;
+  final Song song;
+  final int? year;
+
+  @override
+  Widget build(BuildContext context) {
+    Widget field(String label, String value, {bool strong = false}) {
+      final labelStyle = TextStyle(
+        fontSize: 12,
+        fontWeight: strong ? FontWeight.w600 : FontWeight.w400,
+        color: strong ? colors.textPrimary : colors.textHint,
+      );
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 4),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 38,
+              child: Text(label, textAlign: TextAlign.right, style: labelStyle),
+            ),
+            Text('：', style: labelStyle),
+            Expanded(
+              child: Text(
+                value.isEmpty ? '-' : value,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: strong ? FontWeight.w600 : FontWeight.w400,
+                  color: strong ? colors.textPrimary : colors.textSecondary,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        field(context.tr('歌曲'), song.title, strong: true),
+        field(context.tr('歌手'), song.artist),
+        field(context.tr('专辑'), song.album),
+        field(context.tr('年份'), (year ?? song.year)?.toString() ?? ''),
+      ],
+    );
+  }
+}
+
+/// 歌词预览（固定高度，可滚动）。
+class _LyricPreview extends StatelessWidget {
+  const _LyricPreview({
+    required this.colors,
+    required this.text,
+    required this.loading,
+    required this.emptyText,
+  });
+
+  final ThemeColors colors;
+  final String? text;
+  final bool loading;
+  final String emptyText;
+
+  static const double _height = 150;
+
+  @override
+  Widget build(BuildContext context) {
+    if (loading) {
+      return const SizedBox(
+        height: _height,
+        child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+      );
+    }
+    final content = (text == null || text!.trim().isEmpty)
+        ? Text(
+            emptyText,
+            style: TextStyle(fontSize: 12, color: colors.textHint),
+          )
+        : Text(
+            text!,
+            style: TextStyle(
+              fontSize: 12,
+              color: colors.textSecondary,
+              height: 1.5,
+            ),
+          );
+    return SizedBox(
+      width: double.infinity,
+      height: _height,
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.only(right: 6),
+        child: content,
+      ),
+    );
+  }
+}
+
+/// 桌面端允许用鼠标 / 触摸板拖动横向列表（Material 默认只接受触摸）。
+class _DragScrollBehavior extends MaterialScrollBehavior {
+  const _DragScrollBehavior();
+
+  @override
+  Set<PointerDeviceKind> get dragDevices => const {
+    PointerDeviceKind.touch,
+    PointerDeviceKind.stylus,
+    PointerDeviceKind.invertedStylus,
+    PointerDeviceKind.mouse,
+    PointerDeviceKind.trackpad,
+    PointerDeviceKind.unknown,
+  };
+}
