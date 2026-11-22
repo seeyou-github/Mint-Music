@@ -15,21 +15,34 @@ class EmbeddedLyricsExtractor {
         return null;
       }
 
+      // 内嵌歌词统一交给 [LocalMetadataReader.readLyrics]：曲库扫描、编辑标签页、
+      // 下载写标签走的都是它（只遍历标签帧、不解码封面，单文件几毫秒）。
+      //
+      // 这里以前自己维护了一份「只认 ID3 USLT」的解析，于是把歌词写在
+      // `TXXX:LYRICS` 里的文件（Mp3tag / MusicTag 等打标工具很常见）在播放页
+      // 直接显示「无法获取歌词」，而同一个文件在编辑标签页却能正常读到。
+      // 两套解析还容易在编码、FLAC 键名、MP4 atom 上各自跑偏，索性统一入口。
+      final unified = await LocalMetadataReader.readLyrics(filePath);
+      final text = unified?.trim() ?? '';
+      if (text.isNotEmpty) return text;
+
+      // 兜底：老解析器还认 FLAC 的 `LYRICS-xxx` 这类非标准键名，
+      // 以及扩展名不认识、但带 ID3 标签的文件。
       final ext = filePath.toLowerCase();
-      if (ext.endsWith('.flac')) {
-        return _extractFromFlac(filePath);
-      } else if (ext.endsWith('.mp3')) {
-        return _extractFromId3(filePath);
-      } else if (ext.endsWith('.m4a') || ext.endsWith('.mp4')) {
-        // MP4 容器（m4a）：歌词在 moov/udta/meta/ilst 的 ©lyr。
-        // 复用曲库扫描那套解析（readLyrics 只遍历标签、不解码封面），
-        // 避免这里再维护一份 MP4 atom 遍历、两边行为走偏。
-        debugPrint('EmbeddedLyricsExtractor: extracting from MP4 ©lyr');
-        return LocalMetadataReader.readLyrics(filePath);
-      } else {
-        debugPrint('EmbeddedLyricsExtractor: unsupported format, trying ID3');
-        return _extractFromId3(filePath);
+      if (ext.endsWith('.flac')) return _extractFromFlac(filePath);
+      if (ext.endsWith('.mp3') ||
+          ext.endsWith('.m4a') ||
+          ext.endsWith('.mp4') ||
+          ext.endsWith('.aac') ||
+          ext.endsWith('.ogg') ||
+          ext.endsWith('.oga')) {
+        // 这些格式 readLyrics 已覆盖（USLT / TXXX / ©lyr / Vorbis），
+        // 没读到就是文件里确实没有歌词，不必再扫一遍。
+        debugPrint('EmbeddedLyricsExtractor: no embedded lyrics found');
+        return null;
       }
+      debugPrint('EmbeddedLyricsExtractor: unsupported format, trying ID3');
+      return _extractFromId3(filePath);
     } catch (e) {
       debugPrint('EmbeddedLyricsExtractor: error = $e');
       return null;
