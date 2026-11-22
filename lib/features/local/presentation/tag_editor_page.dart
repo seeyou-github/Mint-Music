@@ -108,7 +108,13 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
   /// 排序（匹配的排最前 / 最左，其余结果保持原顺序跟在后面，全部显示）。
   bool _splitSearchFields = false;
 
-  /// 自动搜索只触发一次（从快速匹配页的「匹配」按钮进来时）。
+  /// 本次页面生命周期内是否已经搜过一次（自动 / 手动都算）。
+  ///
+  /// 切回「在线搜索」时据此决定要不要自动搜：搜过就保留现有结果和已选候选，
+  /// 不重搜。
+  bool _hasSearched = false;
+
+  /// 是否已经安排过自动搜索（从快速匹配页进来 + 手动切到在线搜索共用）。
   bool _autoSearchTriggered = false;
 
   /// 上一次实际用来搜索的关键词（编辑信息里改了歌名 / 歌手时据此同步输入框）。
@@ -190,7 +196,8 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
     });
   }
 
-  /// 切到「在线搜索」时，用歌曲名 / 歌手输入框的**当前**内容重建关键词。
+  /// 切到「在线搜索」时，用歌曲名 / 歌手输入框的**当前**内容重建关键词，
+  /// 并在还没搜过时自动搜一次。
   ///
   /// 用户很可能在「编辑信息」里改过歌名或歌手（比如去掉多余的括号、修正错别字），
   /// 搜索时必须用改后的内容，而不是加载时缓存下来的旧关键词。
@@ -209,10 +216,16 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
     _maybeAutoSearch();
   }
 
-  /// 从快速匹配页的「匹配」按钮进来时，切到在线搜索后自动搜一次。
+  /// 切到「在线搜索」时自动搜一次，省掉手动点搜索按钮。
+  ///
+  /// 只在本次页面还没搜过时触发：已有结果 / 已选候选时切回来不重搜，
+  /// 避免把用户挑好的候选清掉；手动搜过（含搜不到结果）也不再自动搜。
+  /// 从快速匹配页进来（`widget.autoSearch`）走的也是这里。
   void _maybeAutoSearch() {
-    if (!widget.autoSearch || _autoSearchTriggered) return;
+    if (_autoSearchTriggered || _hasSearched) return;
     if (_song == null) return;
+    // 歌名 / 歌手都空：没有可搜的关键词。
+    if (_queryText().isEmpty) return;
     _autoSearchTriggered = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) unawaited(_autoSearch());
@@ -265,6 +278,10 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
     _loadFileMetadata(song);
     if (widget.autoSearch) {
       _tabController.animateTo(1);
+      _maybeAutoSearch();
+    } else if (_tabController.index == 1) {
+      // 用户抢在歌曲加载完之前就点了「在线搜索」：那时还没有歌名 / 歌手，
+      // 自动搜索被跳过；这里补一次。
       _maybeAutoSearch();
     }
   }
@@ -1524,10 +1541,16 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
   Future<void> _handleSearch() async {
     // 「上次使用的音源」是异步读的：任何搜索（含进页自动搜索）都等它应用
     // 完，否则这次搜索会退回「跟随当前音源」。
-    await _lastUsedSourceFuture;
+    try {
+      await _lastUsedSourceFuture;
+    } catch (_) {
+      // 读偏好失败不影响搜索：按「跟随当前音源」继续。
+    }
     final keyword = _queryText();
     if (keyword.isEmpty || _searching) return;
     _lastSearchKeyword = keyword;
+    // 本次页面已经搜过：之后切回「在线搜索」不再自动重搜。
+    _hasSearched = true;
 
     setState(() {
       _searching = true;
