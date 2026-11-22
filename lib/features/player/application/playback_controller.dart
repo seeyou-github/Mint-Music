@@ -101,6 +101,12 @@ final playbackControllerProvider =
         // / 续播的需求（升级时会清掉库里已有的本地记录）。下载的歌是
         // 「在线歌用本地文件播」，id 仍是在线歌曲，进度照常保存。
         if (song.isLocal) return;
+        // 「听完」的兜底触发：有些播放器到结尾只报 idle / playing=false，
+        // 不一定发 completed。播到剩余 ≤1.5 秒时也触发一次离线缓存，
+        // `SongAudioCache.store` 自带去重，重复调用不会重复下载。
+        if (durationMs > 0 && positionMs >= durationMs - 1500) {
+          unawaited(cachePlayedSongForOffline(ref, song));
+        }
         if (!ref.read(markPlayedStatusProvider)) return;
         playedProgress.record(
           songId: song.id,

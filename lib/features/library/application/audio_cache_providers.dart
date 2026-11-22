@@ -1,32 +1,25 @@
-import 'dart:async';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../player/domain/models/song.dart';
 import '../../player/platform/audio_handler.dart';
 import '../data/song_audio_cache.dart';
-import '../domain/models/playlist.dart';
-import '../utils/offline_cache_rules.dart';
 import 'playlist_providers.dart';
 
-/// 取当前歌单列表（未加载完时等一小会儿）。
+/// 这首歌是否属于「我的收藏 / 自建歌单」。
 ///
-/// 播放链路里不能因为歌单还没加载完就永远错过缓存：启动后立刻恢复队列时，
-/// 首次播放可能正好赶上歌单初始化。等 3 秒仍拿不到就按「不是收藏歌曲」处理，
-/// 走在线播放不会出错。
-Future<List<Playlist>?> playlistsForSongCache(Ref ref) async {
+/// 直接查库（`PlaylistRepository.isSongInOfflineCachePlaylist`），不依赖
+/// `playlistsProvider` 的加载状态：播完回调常常发生在后台 / 歌单页已关闭的
+/// 时刻，读内存状态可能还没加载完，会静默漏掉缓存。
+Future<bool> songIsInOfflineCachePlaylist(Ref ref, String songId) async {
+  if (songId.isEmpty) return false;
   try {
-    final current = ref.read(playlistsProvider);
-    final value = current.valueOrNull;
-    if (value != null) return value;
     return await ref
-        .read(playlistsProvider.future)
-        .timeout(const Duration(seconds: 3));
+        .read(playlistRepositoryProvider)
+        .isSongInOfflineCachePlaylist(songId);
   } catch (e) {
-    // provider 已销毁 / 歌单加载失败：本次按「没有缓存」处理，不影响播放。
-    debugPrint('[SongAudioCache] 读取歌单失败，本次按无缓存处理: $e');
-    return null;
+    debugPrint('[SongAudioCache] 歌单判定失败: $e');
+    return false;
   }
 }
 
@@ -39,12 +32,11 @@ Future<String?> findOfflineAudioForSong(
   String quality = '',
 }) async {
   if (song.isLocal || song.id.isEmpty) return null;
-  final playlists = await playlistsForSongCache(ref);
-  if (playlists == null || !playlistsHoldSong(playlists, song.id)) return null;
+  if (!await songIsInOfflineCachePlaylist(ref, song.id)) return null;
   return SongAudioCache.findFile(song.id, quality: quality);
 }
 
-/// 一首歌自然播完后的静默缓存。
+/// 一首歌听完后的静默缓存。
 ///
 /// * 本地文件 / 已下载文件不处理（本来就在硬盘上）；
 /// * 只有收藏 / 自建歌单里的在线歌曲才下载；
@@ -52,19 +44,31 @@ Future<String?> findOfflineAudioForSong(
 ///   否则部分 CDN 会拒绝或只返回试听片段；
 /// * 失败只打日志：缓存是锦上添花，不能影响播放。
 Future<void> cachePlayedSongForOffline(Ref ref, Song song) async {
-  if (song.isLocal || song.playedFromDownload) return;
+  if (song.isLocal) return;
+  if (song.playedFromDownload) {
+    debugPrint('[SongAudioCache] 跳过（已在下载目录）: ${song.title}');
+    return;
+  }
   final url = song.sourceUrl?.trim() ?? '';
-  if (!url.startsWith('http')) return;
-  final playlists = await playlistsForSongCache(ref);
-  if (playlists == null || !playlistsHoldSong(playlists, song.id)) return;
+  if (!url.startsWith('http')) {
+    debugPrint('[SongAudioCache] 跳过（没有可下载地址）: ${song.title} url=$url');
+    return;
+  }
+  if (!await songIsInOfflineCachePlaylist(ref, song.id)) {
+    debugPrint(
+      '[SongAudioCache] 跳过（不在收藏 / 自建歌单）: ${song.title} id=${song.id}',
+    );
+    return;
+  }
   final headers = MusicAudioHandler.audioHeadersForUrl(
     url,
     songHeaders: song.sourceHeaders,
   );
-  await SongAudioCache.store(
+  final ok = await SongAudioCache.store(
     song,
     url: url,
     headers: headers,
     quality: song.sourceQuality ?? '',
   );
+  debugPrint('[SongAudioCache] 播完缓存${ok ? '成功' : '失败'}: ${song.title}');
 }

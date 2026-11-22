@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
+import '../../../core/platform/app_paths.dart';
 import '../../../core/storage/app_database.dart';
 import '../../../shared/services/cache_paths.dart';
 import '../../player/domain/models/song.dart';
@@ -49,7 +50,12 @@ class SongAudioCache {
   /// 最多缓存多少首。超出后淘汰「最久没有听过」的那些。
   static const int maxEntries = 200;
 
-  /// 缓存子目录名（相对缓存根目录，默认 `AppData\temp\audio_cache`）。
+  /// 缓存子目录名：固定放在数据目录的 `temp\audio_cache`
+  /// （Windows / Android 都是 `AppData\temp\audio_cache`）。
+  ///
+  /// **不跟「设置 - 缓存目录」**：那是给封面 / 图片缓存用的，用户可能指到别的
+  /// 盘；离线音频属于「收藏歌曲的播放缓存」，需求明确要落在 AppData\temp，
+  /// 而且换目录后几百首歌重新下载的代价太大。
   static const String directoryName = CachePaths.audioCache;
 
   static const String _table = 'audio_cache_entries';
@@ -71,9 +77,18 @@ class SongAudioCache {
   )?
   debugDownloader;
 
-  /// 缓存目录（自动创建）。
-  static Future<Directory> directory() =>
-      CachePaths.subDirectory(directoryName);
+  /// 缓存目录（自动创建）：固定为 `AppData\temp\audio_cache`。
+  ///
+  /// 不用 [CachePaths.subDirectory]：那条路会跟随用户自定义的缓存目录，
+  /// 实际文件就不在 `AppData\temp` 下了（需求要求的固定位置）。
+  static Future<Directory> directory() async {
+    final base = await AppPaths.tempDirectory();
+    final dir = Directory(p.join(base.path, directoryName));
+    if (!await dir.exists()) {
+      await dir.create(recursive: true);
+    }
+    return dir;
+  }
 
   /// 当前缓存里的全部记录（最近使用在前）。
   static Future<List<AudioCacheEntry>> entries() async {

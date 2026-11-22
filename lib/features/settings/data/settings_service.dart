@@ -826,10 +826,10 @@ class SettingsService {
   // -- cache clearing (non-persistent action) --
   /// 清理应用缓存的子目录（不删除用户选择的目录本身）。
   ///
-  /// 只清理应用自己创建的本地歌曲封面（`local_songs_image_cache`）、
-  /// 图片缓存（`image_cache`）和收藏 / 自建歌单的离线音频缓存
-  /// （`audio_cache`），不会误删用户缓存目录里的其它文件，
-  /// 也不再动系统临时目录。索引行由 [AppDatabase.clearCacheData] 一起清掉。
+  /// 清理应用自己创建的本地歌曲封面（`local_songs_image_cache`）、图片缓存
+  /// （`image_cache`），以及固定在 `AppData\temp` 下的离线音频缓存
+  /// （`audio_cache`），不会误删用户缓存目录里的其它文件。
+  /// 索引行由 [AppDatabase.clearCacheData] 一起清掉。
   Future<int> clearCache() async {
     int total = 0;
     final roots = <Directory>[];
@@ -841,6 +841,8 @@ class SettingsService {
       roots.add(await AppPaths.cacheRootDirectory());
     } catch (_) {}
 
+    // `audio_cache` 实际固定在 `AppData\temp\audio_cache`（不跟缓存目录设置）；
+    // 两个根都扫一遍，是为了顺手清掉旧版本跟随缓存目录写下的那份残留。
     const subDirectories = [
       CachePaths.localSongsImageCache,
       CachePaths.imageCache,

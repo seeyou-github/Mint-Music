@@ -26,18 +26,18 @@ class CachePaths {
   /// `flutter_cache_manager` 按「最多 2000 张 / 30 天未使用」自行淘汰。
   static const String imageCache = 'image_cache';
 
-  /// 「我的收藏 / 自建歌单」歌曲的离线音频缓存目录（`audio_cache`）。
+  /// 「我的收藏 / 自建歌单」歌曲的离线音频缓存目录名。
   ///
-  /// 只存用户常听的收藏 / 自建歌单歌曲：听完一首后静默写入，播放前优先
-  /// 命中，最多 200 首（按最久没听过淘汰）。索引在 `AppData\temp\db` 的
-  /// `audio_cache_entries` 表里，见 `SongAudioCache`。
+  /// 实际位置**固定**在 `AppData\temp\audio_cache`（见 `SongAudioCache`），
+  /// 不跟「设置 - 缓存目录」：那是封面 / 图片缓存的根目录，用户可能指到
+  /// 别的盘；离线音频换目录要重下几百首歌。这里保留常量只是为了在
+  /// 「清除缓存」时按名字删掉。
   static const String audioCache = 'audio_cache';
 
   /// 应用自己管理的缓存子目录（会创建 / 统计 / 清理）。
   static const List<String> managedSubDirectories = [
     localSongsImageCache,
     imageCache,
-    audioCache,
   ];
 
   /// 由设置初始化 / 修改缓存目录时调用；传空表示使用系统应用缓存目录。
