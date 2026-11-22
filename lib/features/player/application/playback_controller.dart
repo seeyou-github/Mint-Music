@@ -23,8 +23,6 @@ import '../../blacklist/application/blacklist_providers.dart';
 import '../../settings/application/settings_providers.dart';
 import 'play_progress_providers.dart';
 import '../../library/application/recently_played_providers.dart';
-import '../../library/application/audio_cache_providers.dart';
-import '../../library/data/song_audio_cache.dart';
 import '../../local/application/local_providers.dart';
 import '../../download/data/download_record.dart';
 
@@ -107,17 +105,6 @@ final playbackControllerProvider =
           positionMs: positionMs,
           durationMs: durationMs,
         );
-      };
-
-      // 「我的收藏 / 自建歌单」的在线歌曲：播放前优先读硬盘缓存；播放到
-      // 总时长一半时静默写入缓存（最多 200 首，超出淘汰最久没听过的）。
-      // 缓存目录固定为 `AppData\temp\audio_cache`。
-      controller.resolveCachedAudioFile = (song, quality) =>
-          findOfflineAudioForSong(ref, song, quality: quality);
-      controller.discardCachedAudioFile = SongAudioCache.remove;
-      controller.onSongCacheRequested = (song) {
-        if (disposed) return;
-        unawaited(cachePlayedSongForOffline(ref, song));
       };
 
       ref.listen(preferredSourceMapProvider, (prev, next) {
@@ -340,24 +327,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   /// 播放位置变化时回调（写「已听 N%」进度）。位置 / 时长单位均为毫秒。
   void Function(Song song, int positionMs, int durationMs)? onProgress;
 
-  /// 播放到**一半**（总时长 50%）时回调一次（收藏 / 自建歌单据此写离线缓存）。
-  ///
-  /// 同一首歌、同一音质只触发一次；切歌或切换音质会重新武装。播完时也会
-  /// 兜底判断一次（位置已过 50%，只是 key 可能已经记过而不会重复）。
-  void Function(Song song)? onSongCacheRequested;
-
-  /// 查这首歌在本机的离线缓存文件（收藏 / 自建歌单专用）。
-  ///
-  /// 由宿主注入：控制器不直接依赖歌单模块，也方便测试时替换成固定路径。
-  /// 返回 null 表示没有缓存，继续按在线地址播放。[quality] 是本次要播的
-  /// 档位，缓存音质不一致时也应返回 null（重新解析后写入新档位）。
-  Future<String?> Function(Song song, String quality)? resolveCachedAudioFile;
-
-  /// 缓存文件放不出来（损坏 / 被截断 / 格式异常）。
-  ///
-  /// 由宿主注入删除动作，控制器收到后会回退到在线播放，而不是直接报错。
-  Future<void> Function(String songId)? discardCachedAudioFile;
-
   /// 读取某首歌「接着上次继续播放」的位置。
   ///
   /// 由宿主注入，按「已听 N%」那份最远进度折算；没记录 / 已听完 / 已接近
@@ -412,11 +381,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   String? _lastResolveError;
   Duration _lastEmittedPosition = Duration.zero;
   static const Duration _positionThrottle = Duration(milliseconds: 200);
-
-  /// 已经为哪首歌 / 哪个音质请求过离线缓存（`songId|quality`）。
-  ///
-  /// 播到 50% 只触发一次；切歌或换音质后 key 不同，重新触发。
-  String? _cacheRequestedKey;
 
   /// 快速连切时的防抖等待时长（单次切歌不等，见 [playSongAt]）。
   static const Duration _switchDebounce = Duration(milliseconds: 300);
@@ -631,32 +595,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   ///
   /// 现在改为：重新计时 + 记录基准进度 + 真正「没有进度」才算卡死，
   /// 并且 App 不在前台时一律不判定。
-  /// 播放到总时长一半时请求一次离线缓存（收藏 / 自建歌单才真正下载）。
-  ///
-  /// 同一首歌、同一音质只请求一次：位置流每 200ms 回调一次，不能每次都打
-  /// 数据库 / 网络。切歌或切换音质后 key 变了会重新触发。
-  ///
-  /// [completed] 为 true 表示「已经播完」——此时位置可能差最后几百毫秒没上报，
-  /// 直接视为已过半，作为兜底。
-  void _maybeRequestOfflineCache(
-    Duration position, {
-    bool completed = false,
-  }) {
-    final callback = onSongCacheRequested;
-    if (callback == null) return;
-    final song = state.currentSong;
-    if (song == null) return;
-    final durationMs = state.duration.inMilliseconds > 0
-        ? state.duration.inMilliseconds
-        : song.duration * 1000;
-    if (durationMs <= 0) return;
-    if (!completed && position.inMilliseconds * 2 < durationMs) return;
-    final key = '${song.id}|${state.currentQuality}';
-    if (_cacheRequestedKey == key) return;
-    _cacheRequestedKey = key;
-    callback(song);
-  }
-
   void _armStallWatchdog() {
     _loadingTimer?.cancel();
     _stallBaselinePosition = state.position;
@@ -1089,8 +1027,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
         _lastEmittedPosition = position;
         state = state.copyWith(position: position);
       }
-      // 播到总时长一半：该把这首歌写进离线缓存了（收藏 / 自建歌单才写）。
-      _maybeRequestOfflineCache(position);
     });
     _bufferedSub = _audioHandler.bufferedPositionStream.listen((buffered) {
       if (mounted) {
@@ -1209,9 +1145,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
           // 这里不再重复记录。
           if (!_settingQueue) {
             _recordCompletedListen();
-            // 兜底：极短音频 / 位置流没上报到 50% 就结束时，这里补一次
-            // （同一首歌同一音质的 key 去重，正常不会重复请求）。
-            _maybeRequestOfflineCache(state.position, completed: true);
           }
         }
         state = state.copyWith(
@@ -1624,53 +1557,6 @@ class PlaybackController extends StateNotifier<PlaybackState> {
               ),
             );
             return;
-          }
-        }
-      }
-
-      // 收藏 / 自建歌单的在线歌曲：硬盘缓存优先（`AppData\temp\audio_cache`）。
-      // 命中就直接播缓存文件，不再联网解析地址；缓存坏了就删掉记录、继续走
-      // 在线播放，不打断用户。
-      //
-      // 注意这里**不改** currentSong 的 filePath：缓存对用户是透明的，歌曲
-      // 仍然是在线歌曲（收藏 / 分享 / 编辑标签等入口都按原样处理）。
-      if (!isLocal) {
-        String? cachedPath;
-        try {
-          cachedPath = await resolveCachedAudioFile?.call(
-            song,
-            state.currentQuality,
-          );
-        } catch (e) {
-          debugPrint('[PlaybackController] 查询音频缓存失败: $e');
-        }
-        if (_currentPlayRequestId != requestId) return;
-        if (cachedPath != null && cachedPath.isNotEmpty) {
-          final cachedSong = currentSongToPlay.copyWith(filePath: cachedPath);
-          try {
-            await _audioHandler
-                .setAudioSource(
-                  cachedPath,
-                  song: cachedSong,
-                  initialPosition: _initialPositionOf(song, resumeTarget),
-                )
-                .timeout(_audioSetTimeout);
-            await _startPlayback(requestId: requestId);
-            await _applyResumeTarget(song, resumeTarget, requestId: requestId);
-            state = state.copyWith(isLoading: false);
-            if (kDebugMode) {
-              debugPrint('[PlaybackController] 命中音频缓存: ${song.title}');
-            }
-            return;
-          } catch (error) {
-            if (_currentPlayRequestId != requestId) return;
-            debugPrint(
-              '[PlaybackController] 缓存文件不可用，回退在线播放: '
-              '$error（$cachedPath）',
-            );
-            unawaited(
-              discardCachedAudioFile?.call(song.id) ?? Future<void>.value(),
-            );
           }
         }
       }

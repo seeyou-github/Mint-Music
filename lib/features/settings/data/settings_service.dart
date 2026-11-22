@@ -809,9 +809,10 @@ class SettingsService {
   /// 清理应用缓存的子目录。
   ///
   /// 缓存位置固定为 `AppData\temp`；这里删掉其中由应用自己创建的
-  /// `local_songs_image_cache`、`image_cache`、`audio_cache`，不会碰同级
-  /// 其它文件。旧版本允许自定义缓存目录，若设置里还留着旧值，顺手把那边
-  /// 的残留一起清掉。索引行由 [AppDatabase.clearCacheData] 一起清。
+  /// `local_songs_image_cache`、`image_cache`（以及旧版本离线音频缓存留下的
+  /// `audio_cache`），不会碰同级其它文件。旧版本允许自定义缓存目录，若设置里
+  /// 还留着旧值，顺手把那边的残留一起清掉。索引行由
+  /// [AppDatabase.clearCacheData] 一起清。
   Future<int> clearCache() async {
     int total = 0;
     final roots = <Directory>{};
@@ -840,7 +841,7 @@ class SettingsService {
         } catch (_) {}
       }
     }
-    // 歌词 / 图片 / 音频缓存的索引都在临时库，这里一起清掉。
+    // 歌词 / 图片缓存的索引都在临时库，这里一起清掉。
     await AppDatabase.clearCacheData();
     _dirSizeCache.clear();
     return total;

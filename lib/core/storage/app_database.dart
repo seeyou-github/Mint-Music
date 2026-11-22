@@ -107,7 +107,6 @@ class AppDatabase {
       final db = await cacheDatabase();
       await db.delete('lyrics');
       await db.delete('cache_index');
-      await db.delete('audio_cache_entries');
     } catch (e) {
       debugPrint('[AppDatabase] 清除缓存数据失败: $e');
     }
@@ -369,14 +368,15 @@ class AppDatabase {
       //     recently_played_playlists / play_events / download_tasks 不再建表，
       //     老库升级时直接删掉（下载列表改为只留内存）。
       // v9：搜索历史只留内存，不再建 search_history 表，老库升级时删掉。
-      // v10：新增 audio_cache_entries（收藏 / 自建歌单的离线音频缓存索引）。
+      // v10：曾新增 audio_cache_entries（收藏 / 自建歌单的离线音频缓存索引）。
       // v11：新增 download_entries（已下载歌曲的下载记录，永久保存）。
+      // v12：删除 audio_cache_entries（离线音频缓存功能已移除），老库升级时删表。
       //
       // 热榜不进这一版：它又搬回了 settings.json，而且只存「哪个音源加了
       // 哪个榜单」（音源 / 名称 / 封面），歌曲每次进页面实时拉取。所以
       // `hot_boards` 表不再创建；老库里残留的表由 `HotBoardStore` 首次读取
       // 时把配置转存进设置后删掉（见 hot_board_store.dart）。
-      version: 11,
+      version: 12,
       onConfigure: (db) async {
         // NORMAL：写 WAL 不用每次 fsync，浏览时缓存索引写入不至于卡顿。
         // 关键数据（本地歌曲 / 最近播放）写完后会显式
@@ -401,6 +401,8 @@ class AppDatabase {
           'play_events',
           'download_tasks',
           'search_history',
+          // v12：离线音频缓存功能已移除，旧库里只剩一张没人读的索引表。
+          'audio_cache_entries',
         ]) {
           await db.execute('DROP TABLE IF EXISTS $table');
         }
@@ -492,30 +494,6 @@ class AppDatabase {
             touched INTEGER NOT NULL DEFAULT 0
           )
         ''');
-    // 「我的收藏 / 自建歌单」歌曲的离线音频缓存索引（对应缓存根目录下的
-    // `audio_cache` 目录，默认 `AppData\temp\audio_cache`）。
-    //
-    // 只记「哪首歌对应哪个文件」，音频本体在缓存目录里。表存在的原因：
-    // 1. 缓存文件名带时间戳 / 安全化后的 id，不能靠 song id 反推，播放前
-    //    查缓存必须先查这张表拿真实文件名；
-    // 2. 「最多缓存 200 首」要靠 last_used_at 排序淘汰最久没听过的。
-    // 缓存跨会话保留（启动不清理），只有超出 200 首或用户手动「清除本地缓存」
-    // 时才删行删文件。见 `SongAudioCache`。
-    await db.execute('''
-          CREATE TABLE IF NOT EXISTS audio_cache_entries (
-            song_id TEXT PRIMARY KEY,
-            file_name TEXT NOT NULL DEFAULT '',
-            quality TEXT NOT NULL DEFAULT '',
-            bytes INTEGER NOT NULL DEFAULT 0,
-            cached_at INTEGER NOT NULL DEFAULT 0,
-            last_used_at INTEGER NOT NULL DEFAULT 0
-          )
-        ''');
-    await db.execute(
-      'CREATE INDEX IF NOT EXISTS idx_audio_cache_used '
-      'ON audio_cache_entries (last_used_at DESC)',
-    );
-
     // 已下载歌曲的「下载记录」。**永久保存**（不跟缓存一起清）：播放时先查
     // 这张表，命中且文件还在就直接播本地文件，不再走网络。
     //

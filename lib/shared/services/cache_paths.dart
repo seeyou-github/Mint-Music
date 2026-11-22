@@ -12,7 +12,7 @@ import '../../core/platform/app_paths.dart';
 /// * 其它平台：应用缓存目录（保持系统惯例）
 ///
 /// 以前「设置 - 存储管理」允许自定义缓存目录，用户一旦换盘 / 换目录，封面、
-/// 媒体通知的封面路径和离线音频缓存都要重新生成，容易留下找不到的旧文件。
+/// 媒体通知的封面路径都要重新生成，容易留下找不到的旧文件。
 /// 现在统一由 [AppPaths.cacheRootDirectory] 决定，所有缓存写入都走本类。
 class CachePaths {
   CachePaths._();
@@ -29,10 +29,10 @@ class CachePaths {
   /// `flutter_cache_manager` 按「最多 2000 张 / 30 天未使用」自行淘汰。
   static const String imageCache = 'image_cache';
 
-  /// 「我的收藏 / 自建歌单」歌曲的离线音频缓存目录名。
+  /// 旧版本「我的收藏 / 自建歌单」离线音频缓存的目录名。
   ///
-  /// 位置同样是固定的 `AppData\temp\audio_cache`（见 `SongAudioCache`）；
-  /// 这里保留常量只是为了在「清除缓存」时按名字删掉。
+  /// 该功能已移除（代码与索引表都已删除），这里保留常量只是为了「清除本地
+  /// 缓存」时把老版本留在 `AppData\temp\audio_cache` 里的文件一并删掉。
   static const String audioCache = 'audio_cache';
 
   /// 应用自己管理的缓存子目录（会创建 / 统计 / 清理）。

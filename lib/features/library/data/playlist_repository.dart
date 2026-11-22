@@ -9,7 +9,6 @@ import '../../../core/storage/app_database.dart';
 import '../../../core/storage/app_preferences.dart';
 import '../domain/models/playlist.dart';
 import '../utils/favorite_playlist.dart';
-import '../utils/offline_cache_rules.dart';
 import '../../player/domain/models/song.dart';
 import 'playlist_store.dart';
 
@@ -596,34 +595,6 @@ class PlaylistRepository {
       songs: songs,
       meta: AppDatabase.decodeMap(row['meta']),
     );
-  }
-
-  /// 这首歌是否还在「我的收藏 / 自建歌单」里（离线音频缓存用）。
-  ///
-  /// 直接查库，不读 `playlistsProvider`：播完回调可能发生在后台、歌单
-  /// provider 尚未加载完成（甚至已被销毁）的时刻，依赖内存状态会静默漏掉
-  /// 缓存。这里只查 `playlist_songs` 命中的那几行歌单元信息，一次两表 join
-  /// 就能判断，比全量加载歌单轻得多。
-  Future<bool> isSongInOfflineCachePlaylist(String songId) async {
-    if (songId.isEmpty) return false;
-    try {
-      await _migrateLegacyFile();
-      final db = await AppDatabase.importantDatabase();
-      final rows = await db.rawQuery(
-        'SELECT p.* FROM playlist_songs ps '
-        'JOIN playlists p ON p.id = ps.playlist_id '
-        'WHERE ps.song_id = ?',
-        [songId],
-      );
-      for (final row in rows) {
-        if (isOfflineCachePlaylist(_playlistFromRow(row, const []))) {
-          return true;
-        }
-      }
-    } catch (e) {
-      debugPrint('[PlaylistRepository] 查询歌曲所属歌单失败: $e');
-    }
-    return false;
   }
 
   Future<Playlist?> _playlistById(DatabaseExecutor db, String id) async {    final rows = await db.query(
