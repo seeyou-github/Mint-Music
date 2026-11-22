@@ -117,6 +117,10 @@ int songMatchPriority(Song candidate, LocalSongMatchFields local) {
   final artistExact = localArtist.isNotEmpty && candidateArtist == localArtist;
   final titleContains = _containsEither(candidateTitle, localTitle);
   final artistContains = _containsEither(candidateArtist, localArtist);
+  // 本地没有歌手信息（文件名解析不出歌手）：歌手这一维不参与判断，
+  // 否则任何候选都会因为「歌手既不精确也不包含」掉到「其它」，
+  // 整张结果表退回音源原序。此时按「歌手视为精确」排序。
+  final artistUnknown = localArtist.isEmpty;
 
   // 歌名既不相等也不互相包含：无论歌手多准都只能算「其它」。
   if (!titleContains) return _otherPriority;
@@ -126,20 +130,20 @@ int songMatchPriority(Song candidate, LocalSongMatchFields local) {
     local.durationSeconds,
   );
 
-  if (titleExact && artistExact) {
+  if (titleExact && (artistExact || artistUnknown)) {
     if (!durationOk) return 8;
     final albumOk = _exactNonEmpty(candidate.album, local.album);
     final yearOk = _yearMatches(candidate.year, local.year);
     if (albumOk) return yearOk ? 1 : 2;
     return yearOk ? 3 : 4;
   }
-  if (titleExact && artistContains) {
+  if (titleExact && (artistContains || artistUnknown)) {
     return durationOk ? 5 : 9;
   }
-  if (titleContains && artistExact) {
+  if (titleContains && (artistExact || artistUnknown)) {
     return durationOk ? 6 : 9;
   }
-  if (titleContains && artistContains) {
+  if (titleContains && (artistContains || artistUnknown)) {
     return durationOk ? 7 : 9;
   }
   // 歌名命中但歌手既不精确也不包含。

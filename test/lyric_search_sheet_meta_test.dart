@@ -19,6 +19,7 @@ import 'package:mintmusic/features/plugin/application/music_source_manager.dart'
 import 'package:mintmusic/features/plugin/application/plugin_providers.dart';
 import 'package:mintmusic/features/plugin/domain/plugin_types.dart';
 import 'package:mintmusic/shared/widgets/source_icon.dart';
+import 'package:mintmusic/shared/widgets/source_selector_row.dart';
 
 /// 假播放器 / 假音源：搜索结果带全字段（专辑 / 年份 / 时长）。
 class _MemoryAudioHandler implements MusicAudioHandler {
@@ -378,6 +379,46 @@ void main() {
     expect(find.text('年份：—'), findsOneWidget);
     // 两个不同专辑各查一次；同一专辑的重复候选不会重复请求。
     expect(sources.resolveCalls, 2);
+  });
+
+  testWidgets('音源超过 4 个：平铺行改为横向滚动，不溢出、鼠标可拖动', (tester) async {
+    const sources = [
+      SourceInfo(id: 'wy@a', name: '网易'),
+      SourceInfo(id: 'tx@a', name: 'QQ'),
+      SourceInfo(id: 'kg@a', name: '酷狗'),
+      SourceInfo(id: 'kw@a', name: '酷我'),
+      SourceInfo(id: 'mg@a', name: '咪咕'),
+    ];
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [themeColorsProvider.overrideWithValue(_colors())],
+        child: MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: SizedBox(
+                width: 400,
+                child: SourceSelectorRow(
+                  sources: sources,
+                  selectedId: 'wy@a',
+                  onSelected: (_) {},
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byType(SourceIcon), findsNWidgets(5));
+    expect(find.byKey(const ValueKey('source_dot_mg@a')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    // 桌面默认不允许鼠标拖动：放开后第 5 个音源才能拖进视野。
+    await tester.drag(find.byType(SingleChildScrollView), const Offset(-120, 0));
+    await tester.pump();
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets(

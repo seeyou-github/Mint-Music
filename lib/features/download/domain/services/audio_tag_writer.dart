@@ -1058,14 +1058,42 @@ class AudioTagWriter {
     } catch (_) {
       // 某些平台上 rename 不能覆盖已存在的文件。
     }
+
     // 退一步：把新内容直接写进目标文件（文件正被播放器占用时通常仍可写）。
     // 这里故意不「先删目标再改名」——那样一旦改名失败，原文件就没了。
-    final bytes = await temp.readAsBytes();
-    await target.writeAsBytes(bytes, flush: true);
+    //
+    // 但直接写有一半失败的风险（磁盘满 / 进程被杀），原文件会被截断成半截。
+    // 所以先复制一份 `.tagbak`，写完再删；写失败时用备份盖回去。
+    final backup = File('${target.path}.tagbak');
+    var backedUp = false;
     try {
-      await temp.delete();
+      await target.copy(backup.path);
+      backedUp = true;
     } catch (_) {
-      // 临时文件删不掉不影响结果，下次写同一个文件会覆盖它。
+      debugPrint('[AudioTagWriter] 备份原文件失败，写入失败时将无法回滚: ${target.path}');
+    }
+
+    try {
+      final bytes = await temp.readAsBytes();
+      await target.writeAsBytes(bytes, flush: true);
+      try {
+        if (backedUp) await backup.delete();
+      } catch (_) {}
+      try {
+        await temp.delete();
+      } catch (_) {
+        // 临时文件删不掉不影响结果，下次写同一个文件会覆盖它。
+      }
+    } catch (e) {
+      if (backedUp) {
+        try {
+          await backup.copy(target.path);
+          debugPrint('[AudioTagWriter] 写入失败，已从备份恢复: ${target.path}');
+        } catch (restoreError) {
+          debugPrint('[AudioTagWriter] 写入失败且恢复失败: $restoreError');
+        }
+      }
+      rethrow;
     }
   }
 

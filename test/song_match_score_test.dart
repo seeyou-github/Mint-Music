@@ -133,6 +133,31 @@ void main() {
     });
   });
 
+  test('本地歌手为空：歌手维度不参与，仍按歌名/时长/专辑年份分档', () {
+    const localNoArtist = LocalSongMatchFields(
+      title: '晴天',
+      artist: '',
+      album: '叶惠美',
+      year: 2003,
+      durationSeconds: 269,
+    );
+    // 五字段里除歌手外全中 → 第 1 档，而不是掉到「其它」。
+    expect(songMatchPriority(_song(title: '晴天'), localNoArtist), 1);
+    // 专辑不中、年份中 → 第 3 档。
+    expect(
+      songMatchPriority(_song(title: '晴天', album: '别的专辑'), localNoArtist),
+      3,
+    );
+    // 歌名包含、时长不匹配 → 第 9 档（歌名包含 + 歌手视为精确的时长不符档）。
+    expect(
+      songMatchPriority(
+        _song(title: '晴天 (Live)', duration: 300),
+        localNoArtist,
+      ),
+      9,
+    );
+  });
+
   group('字段缺失不算「精确」', () {
     test('候选专辑为空：不能凭「空 vs 空」进第 1 档', () {
       // 专辑不匹配、年份匹配 → 3。

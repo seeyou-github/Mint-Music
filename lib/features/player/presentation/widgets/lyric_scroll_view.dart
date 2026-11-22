@@ -134,6 +134,10 @@ class _LyricScrollViewState extends State<LyricScrollView>
   ui.Shader? _fadeShader;
   Rect? _fadeShaderBounds;
 
+  /// 本视图自己的排版缓存。切歌 / 关闭只清这一份，不影响同时打开的其它
+  /// 歌词视图（例如搜索歌词弹层预览）。
+  final _layoutCaches = _LyricLayoutCaches();
+
   @override
   void initState() {
     super.initState();
@@ -156,8 +160,7 @@ class _LyricScrollViewState extends State<LyricScrollView>
       // 歌词整份换了（切歌 / 换词源）：旧行的排版不会再命中，直接摘出缓存
       // 并释放（正在画的等画笔被替换后再释放）。只靠 LRU 淘汰的话，切歌时
       // 每首都会新建一整份排版，旧的 native Paragraph 要等 GC 才归还。
-      _PlainLineLayout.clear();
-      _YrcLineLayout.clear();
+      _layoutCaches.clear();
       _ensureLineKeys();
       _scrollTargetIndex = -1;
       _syncClock(widget.currentTimeMs, widget.isPlaying);
@@ -207,10 +210,9 @@ class _LyricScrollViewState extends State<LyricScrollView>
     _clock.dispose();
     _scrollController.removeListener(_handleScroll);
     _scrollController.dispose();
-    // 页面关掉后这份歌词不会再画：把排版缓存摘掉，别让 native Paragraph
-    // 一直挂到下一次 GC。
-    _PlainLineLayout.clear();
-    _YrcLineLayout.clear();
+    // 页面关掉后这份歌词不会再画：把本视图的排版缓存摘掉，别让 native
+    // Paragraph 一直挂到下一次 GC。
+    _layoutCaches.clear();
     super.dispose();
   }
 
@@ -665,6 +667,7 @@ class _LyricScrollViewState extends State<LyricScrollView>
                       final isActive = index == activeIndex;
                       return _LyricLineWidget(
                         key: _lineKeys[index],
+                        caches: _layoutCaches,
                         line: widget.lines[index],
                         clock: _clock,
                         staticTimeMs: _clock.timeMs,
@@ -697,6 +700,7 @@ class _LyricScrollViewState extends State<LyricScrollView>
 }
 
 class _LyricLineWidget extends StatelessWidget {
+  final _LyricLayoutCaches caches;
   final LyricLine line;
   final _LyricClock clock;
   final int staticTimeMs;
@@ -717,6 +721,7 @@ class _LyricLineWidget extends StatelessWidget {
 
   const _LyricLineWidget({
     super.key,
+    required this.caches,
     required this.line,
     required this.clock,
     required this.staticTimeMs,
@@ -914,6 +919,7 @@ class _LyricLineWidget extends StatelessWidget {
       // 普通 LRC 只有「行级」时间戳，按播放时间估算这一句唱到哪里了，
       // 用像素级裁剪把已经唱过的部分线性填充成已播放颜色。
       return _PaintedPlainLine(
+        cache: caches.plain,
         line: line,
         clock: isActive ? clock : null,
         staticTimeMs: staticTimeMs,
@@ -928,6 +934,7 @@ class _LyricLineWidget extends StatelessWidget {
     }
 
     return _PaintedYrcLine(
+      cache: caches.yrc,
       line: line,
       clock: isActive ? clock : null,
       staticTimeMs: staticTimeMs,
@@ -972,6 +979,7 @@ bool _linePhaseChanged(LyricLine line, int oldMs, int newMs) =>
 ///   整字跳变成已播放颜色；
 /// * 不再每帧重新排版整句文字，长句歌词的滚动/填充不会再卡顿。
 class _PaintedPlainLine extends StatelessWidget {
+  final _PlainLineLayoutCache cache;
   final LyricLine line;
   final _LyricClock? clock;
   final int staticTimeMs;
@@ -984,6 +992,7 @@ class _PaintedPlainLine extends StatelessWidget {
   final FontWeight fontWeight;
 
   const _PaintedPlainLine({
+    required this.cache,
     required this.line,
     required this.clock,
     required this.staticTimeMs,
@@ -1003,7 +1012,7 @@ class _PaintedPlainLine extends StatelessWidget {
         final maxWidth = constraints.maxWidth.isFinite
             ? constraints.maxWidth
             : MediaQuery.sizeOf(context).width - 60;
-        final layout = _PlainLineLayout.cached(
+        final layout = cache.cached(
           text: line.plainText,
           fontSize: fontSize,
           activeColor: activeColor,
@@ -1151,10 +1160,64 @@ int debugLyricLayoutDisposedCount() => _DeferredLayoutDisposal.debugDisposedCoun
 /// 普通 LRC 一行歌词的排版缓存（未唱 / 已唱两份同形排版）。
 ///
 /// 单行排版、不换行：超过控件宽度的长句交给画笔横向滚动。
-class _PlainLineLayout {
-  static final Map<int, _PlainLineLayout> _cache = {};
+/// 一份歌词视图自己的普通行排版缓存。
+///
+/// 以前是 static 全局缓存：任一切歌 / 关闭都会 clear，把另一个视图
+/// （播放页歌词与搜索歌词弹层预览可能同时存在）正在绘制的 TextPainter
+/// 一起释放，对方下一帧 paint 会直接抛「TextPainter 已释放」。
+/// 缓存跟着视图实例走，谁清谁自己的，跨视图互不影响。
+class _PlainLineLayoutCache {
   static const _maxCacheEntries = 120;
+  final Map<int, _PlainLineLayout> _cache = {};
 
+  _PlainLineLayout cached({
+    required String text,
+    required double fontSize,
+    required Color activeColor,
+    required Color inactiveColor,
+    required String? fontFamily,
+    required FontWeight fontWeight,
+    required Locale? locale,
+  }) {
+    final key = Object.hash(
+      text,
+      (fontSize * 100).round(),
+      activeColor.toARGB32(),
+      inactiveColor.toARGB32(),
+      fontFamily ?? '',
+      fontWeight.value,
+      locale?.toLanguageTag() ?? '',
+    );
+    final cached = _cache[key];
+    if (cached != null) return cached;
+
+    final layout = _PlainLineLayout.build(
+      text: text,
+      fontSize: fontSize,
+      activeColor: activeColor,
+      inactiveColor: inactiveColor,
+      fontFamily: fontFamily,
+      fontWeight: fontWeight,
+      locale: locale,
+    );
+    if (_cache.length >= _maxCacheEntries) {
+      final oldest = _cache.remove(_cache.keys.first);
+      if (oldest != null) _DeferredLayoutDisposal.add(oldest._disposePainters);
+    }
+    _cache[key] = layout;
+    return layout;
+  }
+
+  /// 切歌 / 视图关闭：本视图的旧排版不会再命中。
+  void clear() {
+    for (final layout in _cache.values) {
+      _DeferredLayoutDisposal.add(layout._disposePainters);
+    }
+    _cache.clear();
+  }
+}
+
+class _PlainLineLayout {
   final double height;
 
   /// 文字完整宽度（不换行）。
@@ -1182,56 +1245,6 @@ class _PlainLineLayout {
   }
 
   bool _disposed = false;
-
-  static void _evictOldest() {
-    final oldest = _cache.remove(_cache.keys.first);
-    if (oldest != null) _DeferredLayoutDisposal.add(oldest._disposePainters);
-  }
-
-  /// 整份歌词换掉（切歌 / 页面关闭）时清空：旧歌词的排版不会再被用到。
-  static void clear() {
-    for (final layout in _cache.values) {
-      _DeferredLayoutDisposal.add(layout._disposePainters);
-    }
-    _cache.clear();
-  }
-
-  static _PlainLineLayout cached({
-    required String text,
-    required double fontSize,
-    required Color activeColor,
-    required Color inactiveColor,
-    required String? fontFamily,
-    required FontWeight fontWeight,
-    required Locale? locale,
-  }) {
-    final key = Object.hash(
-      text,
-      (fontSize * 100).round(),
-      activeColor.toARGB32(),
-      inactiveColor.toARGB32(),
-      fontFamily ?? '',
-      fontWeight.value,
-      locale?.toLanguageTag() ?? '',
-    );
-    final cached = _cache[key];
-    if (cached != null) return cached;
-
-    final layout = build(
-      text: text,
-      fontSize: fontSize,
-      activeColor: activeColor,
-      inactiveColor: inactiveColor,
-      fontFamily: fontFamily,
-      fontWeight: fontWeight,
-      locale: locale,
-    );
-    if (_cache.length >= _maxCacheEntries) {
-      _evictOldest();
-    }
-    _cache[key] = layout;
-    return layout;
-  }
 
   static _PlainLineLayout build({
     required String text,
@@ -1281,6 +1294,7 @@ class _PlainLineLayout {
 }
 
 class _PaintedYrcLine extends StatelessWidget {
+  final _YrcLineLayoutCache cache;
   final LyricLine line;
   final _LyricClock? clock;
   final int staticTimeMs;
@@ -1293,6 +1307,7 @@ class _PaintedYrcLine extends StatelessWidget {
   final FontWeight fontWeight;
 
   const _PaintedYrcLine({
+    required this.cache,
     required this.line,
     required this.clock,
     required this.staticTimeMs,
@@ -1312,7 +1327,7 @@ class _PaintedYrcLine extends StatelessWidget {
         final maxWidth = constraints.maxWidth.isFinite
             ? constraints.maxWidth
             : MediaQuery.of(context).size.width - 60;
-        final layout = _YrcLineLayout.cached(
+        final layout = cache.cached(
           line: line,
           maxWidth: maxWidth,
           fontSize: fontSize,
@@ -1504,51 +1519,12 @@ class _YrcLinePainter extends CustomPainter {
   }
 }
 
-class _YrcLineLayout {
-  static final Map<int, _YrcLineLayout> _cache = {};
+/// 逐字歌词的实例级排版缓存（理由见 [_PlainLineLayoutCache]）。
+class _YrcLineLayoutCache {
   static const _maxCacheEntries = 120;
+  final Map<int, _YrcLineLayout> _cache = {};
 
-  final double width;
-  final double height;
-  final double fontSize;
-
-  /// 整行歌词的完整宽度（不换行）。
-  final double contentWidth;
-  final List<_WordPaintData> words;
-
-  _YrcLineLayout({
-    required this.width,
-    required this.height,
-    required this.fontSize,
-    required this.contentWidth,
-    required this.words,
-  });
-
-  /// 释放整行所有词的 Paragraph（同 [_PlainLineLayout]）。
-  void _disposePainters() {
-    if (_disposed) return;
-    _disposed = true;
-    for (final word in words) {
-      word.dispose();
-    }
-  }
-
-  bool _disposed = false;
-
-  static void _evictOldest() {
-    final oldest = _cache.remove(_cache.keys.first);
-    if (oldest != null) _DeferredLayoutDisposal.add(oldest._disposePainters);
-  }
-
-  /// 切歌时清空（见 [_PlainLineLayout.clear]）。
-  static void clear() {
-    for (final layout in _cache.values) {
-      _DeferredLayoutDisposal.add(layout._disposePainters);
-    }
-    _cache.clear();
-  }
-
-  static _YrcLineLayout cached({
+  _YrcLineLayout cached({
     required LyricLine line,
     required double maxWidth,
     required double fontSize,
@@ -1580,7 +1556,7 @@ class _YrcLineLayout {
     final cached = _cache[key];
     if (cached != null) return cached;
 
-    final layout = build(
+    final layout = _YrcLineLayout.build(
       line: line,
       maxWidth: maxWidth,
       fontSize: fontSize,
@@ -1592,11 +1568,59 @@ class _YrcLineLayout {
       fontWeight: fontWeight,
     );
     if (_cache.length >= _maxCacheEntries) {
-      _evictOldest();
+      final oldest = _cache.remove(_cache.keys.first);
+      if (oldest != null) _DeferredLayoutDisposal.add(oldest._disposePainters);
     }
     _cache[key] = layout;
     return layout;
   }
+
+  void clear() {
+    for (final layout in _cache.values) {
+      _DeferredLayoutDisposal.add(layout._disposePainters);
+    }
+    _cache.clear();
+  }
+}
+
+/// 一个歌词视图持有的两份排版缓存（普通行 + 逐字行）。
+class _LyricLayoutCaches {
+  final plain = _PlainLineLayoutCache();
+  final yrc = _YrcLineLayoutCache();
+
+  void clear() {
+    plain.clear();
+    yrc.clear();
+  }
+}
+
+class _YrcLineLayout {
+  final double width;
+  final double height;
+  final double fontSize;
+
+  /// 整行歌词的完整宽度（不换行）。
+  final double contentWidth;
+  final List<_WordPaintData> words;
+
+  _YrcLineLayout({
+    required this.width,
+    required this.height,
+    required this.fontSize,
+    required this.contentWidth,
+    required this.words,
+  });
+
+  /// 释放整行所有词的 Paragraph（同 [_PlainLineLayout]）。
+  void _disposePainters() {
+    if (_disposed) return;
+    _disposed = true;
+    for (final word in words) {
+      word.dispose();
+    }
+  }
+
+  bool _disposed = false;
 
   static _YrcLineLayout build({
     required LyricLine line,

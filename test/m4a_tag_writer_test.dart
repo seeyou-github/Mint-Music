@@ -52,6 +52,20 @@ void main() {
     expect(meta.lyrics, '[00:01.000]第一行\n[00:02.000]第二行');
   });
 
+  test('替换文件后不留下 .tagtmp / .tagbak', () async {
+    final path = '${dir.path}${Platform.pathSeparator}notmp.m4a';
+    await File(path).writeAsBytes(_buildM4a());
+
+    expect(await AudioTagWriter.write(path, title: '清理临时文件'), isTrue);
+
+    final names = Directory(dir.path)
+        .listSync()
+        .map((entity) => entity.path.split(Platform.pathSeparator).last)
+        .where((name) => name.endsWith('.tagtmp') || name.endsWith('.tagbak'))
+        .toList(growable: false);
+    expect(names, isEmpty, reason: '写成功后临时文件 / 备份都要清掉');
+  });
+
   test('播放页的 EmbeddedLyricsExtractor 能读到写入的 ©lyr', () async {
     final path = '${dir.path}${Platform.pathSeparator}player.m4a';
     await File(path).writeAsBytes(_buildM4a());

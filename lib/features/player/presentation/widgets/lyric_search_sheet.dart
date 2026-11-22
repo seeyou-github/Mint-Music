@@ -208,9 +208,13 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
     final groups = byAlbum.entries.toList(growable: false);
     const batchSize = 4;
     for (var start = 0; start < groups.length; start += batchSize) {
+      // 上一批 await 期间可能已经重新搜索（_results 被清空 / 换掉），
+      // 再按下标取 _results 就会越界；先确认还是同一批结果。
+      if (!mounted || seq != _searchSeq) return;
+      final snapshot = _results;
       final batch = groups.skip(start).take(batchSize).toList(growable: false);
       final years = await Future.wait(
-        batch.map((group) => manager.resolveSongYear(_results[group.value.first])),
+        batch.map((group) => manager.resolveSongYear(snapshot[group.value.first])),
       );
       // 期间重新搜过：这批结果已经不对应当前列表了。
       if (!mounted || seq != _searchSeq) return;

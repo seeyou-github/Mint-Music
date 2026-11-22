@@ -93,6 +93,56 @@ void main() {
     expect(find.byType(LyricScrollView), findsOneWidget);
   });
 
+  testWidgets('两个歌词视图同时存在：切其中一个不会释放另一个的排版', (tester) async {
+    Widget twoViews(List<LyricLine> aLines, List<LyricLine> bLines) {
+      return MaterialApp(
+        home: Scaffold(
+          body: Row(
+            children: [
+              SizedBox(
+                width: 300,
+                height: 300,
+                child: LyricScrollView(
+                  key: const ValueKey('a'),
+                  lines: aLines,
+                  currentTimeMs: 1200,
+                  hasYrc: false,
+                  mainFontSize: 20,
+                  enableScale: false,
+                ),
+              ),
+              SizedBox(
+                width: 300,
+                height: 300,
+                child: LyricScrollView(
+                  key: const ValueKey('b'),
+                  lines: bLines,
+                  currentTimeMs: 1200,
+                  hasYrc: false,
+                  mainFontSize: 20,
+                  enableScale: false,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final bLines = [plainLine('B 视图的歌词')];
+    await tester.pumpWidget(twoViews([plainLine('A 第一首')], bLines));
+    await tester.pump();
+
+    // A 切歌。旧实现会 clear 全局缓存，把 B 正在绘制的 TextPainter 一起
+    // dispose，B 下一帧 paint 会抛 StateError。
+    await tester.pumpWidget(twoViews([plainLine('A 第二首')], bLines));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(tester.takeException(), isNull);
+    expect(find.byType(LyricScrollView), findsNWidgets(2));
+  });
+
   testWidgets('歌词没变时不重复重建排版', (tester) async {
     final lines = [plainLine('同一份歌词')];
     await pumpLyric(tester, lines, hasYrc: false);

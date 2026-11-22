@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -10,8 +11,9 @@ import 'source_icon.dart';
 /// 「单个按钮 + 弹出菜单」要多点一次才能看到有哪些音源；这里直接并排铺开，
 /// 点哪个就切到哪个（切换后的重新搜索由调用方负责）。选中项加主题色描边。
 ///
-/// 音源多于 [maxVisible] 个时整行可横向滚动，不会继续往右挤占搜索框。
-class SourceSelectorRow extends ConsumerWidget {
+/// 音源多于 [maxVisible] 个时整行可横向滚动。桌面默认不允许鼠标拖动滚动区、
+/// 也不显示滚动条，这里显式放开（否则第 5 个以后的音源用鼠标根本点不到）。
+class SourceSelectorRow extends ConsumerStatefulWidget {
   const SourceSelectorRow({
     super.key,
     required this.sources,
@@ -41,33 +43,68 @@ class SourceSelectorRow extends ConsumerWidget {
   final int maxVisible;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    if (sources.isEmpty) return const SizedBox.shrink();
+  ConsumerState<SourceSelectorRow> createState() => _SourceSelectorRowState();
+}
+
+class _SourceSelectorRowState extends ConsumerState<SourceSelectorRow> {
+  final _scrollController = ScrollController();
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.sources.isEmpty) return const SizedBox.shrink();
     final colors = ref.watch(themeColorsProvider);
 
     final row = Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        for (var i = 0; i < sources.length; i++) ...[
-          if (i > 0) SizedBox(width: spacing),
+        for (var i = 0; i < widget.sources.length; i++) ...[
+          if (i > 0) SizedBox(width: widget.spacing),
           _SourceDot(
-            key: ValueKey('source_dot_${sources[i].id}'),
-            source: sources[i],
-            selected: sources[i].id == selectedId,
-            size: size,
+            key: ValueKey('source_dot_${widget.sources[i].id}'),
+            source: widget.sources[i],
+            selected: widget.sources[i].id == widget.selectedId,
+            size: widget.size,
             accent: colors.primary,
-            onTap: onSelected,
+            onTap: widget.onSelected,
           ),
         ],
       ],
     );
 
-    if (sources.length <= maxVisible) return row;
+    if (widget.sources.length <= widget.maxVisible) return row;
+
+    final width =
+        widget.maxVisible * widget.size +
+        (widget.maxVisible - 1) * widget.spacing;
     return SizedBox(
-      width: maxVisible * size + (maxVisible - 1) * spacing,
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: row,
+      width: width,
+      child: ScrollConfiguration(
+        behavior: ScrollConfiguration.of(context).copyWith(
+          // 桌面默认 dragDevices 不含鼠标：不放开的话多出来的音源没法拖出来。
+          dragDevices: {
+            PointerDeviceKind.touch,
+            PointerDeviceKind.mouse,
+            PointerDeviceKind.trackpad,
+            PointerDeviceKind.stylus,
+          },
+          // 滚动条由下面显式创建，避免桌面行为再套一条。
+          scrollbars: false,
+        ),
+        child: Scrollbar(
+          controller: _scrollController,
+          thumbVisibility: true,
+          child: SingleChildScrollView(
+            controller: _scrollController,
+            scrollDirection: Axis.horizontal,
+            child: row,
+          ),
+        ),
       ),
     );
   }
