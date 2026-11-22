@@ -1246,19 +1246,19 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
   /// 搜索输入区。
   ///
   /// 文件里歌名 + 歌手都有标签时是「两个输入框各占一行」，右侧各配一个按钮
-  /// （第一行音源、第二行搜索）——两个框并排放在一行里时，手机宽度下每个只剩
-  /// 一百来像素，歌名稍长就看不全，用户会以为输入框坏了。
+  /// ——两个框并排放在一行里时，手机宽度下每个只剩一百来像素，歌名稍长就
+  /// 看不全，用户会以为输入框坏了。
+  ///
+  /// 布局与「搜索歌词」弹框保持一致：第一行歌曲名 + 搜索，第二行歌手名 +
+  /// 音源；Windows 上音源直接平铺（点一下切源并重新搜索），其它平台是
+  /// 单个音源按钮 + 弹出菜单。
   /// 只有一个关键词框时仍是一行：输入框 + 搜索 + 音源。
   Widget _buildSearchHeader(
     ThemeColors colors,
     List<SourceInfo> sources,
     String sourceId,
   ) {
-    // Windows：音源直接平铺，点一下即切源并重新搜索；其它平台仍用
-    // 「单按钮 + 弹出菜单」，避免手机窄屏被多个图标挤掉输入宽度。
-    final sourceSelector = Platform.isWindows
-        ? _buildFlatSources(sources, sourceId)
-        : _buildSourceButton(colors, sources, sourceId);
+    final flatSources = Platform.isWindows;
 
     if (_splitSearchFields) {
       return Column(
@@ -1273,7 +1273,7 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
                 ),
               ),
               const SizedBox(width: AppSpacing.sm),
-              sourceSelector,
+              _buildSearchButton(colors, sources),
             ],
           ),
           const SizedBox(height: AppSpacing.sm),
@@ -1287,7 +1287,10 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
                 ),
               ),
               const SizedBox(width: AppSpacing.sm),
-              _buildSearchButton(colors, sources),
+              if (flatSources)
+                _buildFlatSources(sources, sourceId)
+              else
+                _buildSourceButton(colors, sources, sourceId),
             ],
           ),
         ],
@@ -1306,7 +1309,10 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
         const SizedBox(width: AppSpacing.sm),
         _buildSearchButton(colors, sources),
         const SizedBox(width: AppSpacing.sm),
-        sourceSelector,
+        if (flatSources)
+          _buildFlatSources(sources, sourceId)
+        else
+          _buildSourceButton(colors, sources, sourceId),
       ],
     );
   }
