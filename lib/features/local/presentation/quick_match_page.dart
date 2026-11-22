@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -325,16 +326,21 @@ class _QuickMatchPageState extends ConsumerState<QuickMatchPage> {
       ),
       child: Row(
         children: [
-          Expanded(
-            child: Text(
-              context.tr('匹配歌曲'),
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-                color: colors.textPrimary,
+          // Android 顶部已经有自己的页面标题，「匹配歌曲」不再重复显示；
+          // 用 Spacer 占住同一段弹性空间，右侧按钮仍然贴右。
+          if (Platform.isAndroid)
+            const Spacer()
+          else
+            Expanded(
+              child: Text(
+                context.tr('匹配歌曲'),
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: colors.textPrimary,
+                ),
               ),
             ),
-          ),
           // 「匹配歌词」：批量给缺歌词 / 缺逐字的歌匹配逐字歌词并写进文件。
           OutlinedButton.icon(
             onPressed: songs.isEmpty
