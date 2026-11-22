@@ -16,7 +16,8 @@ import 'package:path_provider/path_provider.dart';
 ///     db\              重要数据库（我的收藏、收藏歌单、已听进度）
 ///     plugin\          插件文件
 ///   download_music\    默认下载目录（仅 Windows）
-///   temp\              临时 / 缓存文件（含 temp\db 里的临时数据库）
+///   temp\              临时 / 缓存文件（含 temp\db 里的临时数据库、
+///                      temp\audio_cache 里收藏 / 自建歌单歌曲的离线音频缓存）
 /// ```
 ///
 /// 除「设置 - 下载目录 / 缓存目录」用户自定义的路径外，应用生成的其它文件、
@@ -362,10 +363,11 @@ class AppPaths {
         Directory(p.join(temp.path, name)),
       );
     }
-    // 新版不再使用这三个目录：`covers` 是封面副本，`image_discovery_cache`
+    // 这三个旧目录直接删：`covers` 是封面副本，`image_discovery_cache`
     // 已经并入 `image_cache`（文件名体系不同，搬过去也没有索引能对上）；
-    // `audio_cache` 是旧版的「在线歌曲音频缓存」，新版只缓存在运行内存里、
-    // 不再写磁盘，旧目录留着只是垃圾，直接删。
+    // 旧的 `audio_cache` 在**系统缓存目录**里，而新版离线音频缓存改放在
+    // `AppData\temp\audio_cache`（见 CachePaths / SongAudioCache），内容体系
+    // 与索引都对不上，留着只是垃圾。
     for (final name in const [
       'covers',
       'image_discovery_cache',

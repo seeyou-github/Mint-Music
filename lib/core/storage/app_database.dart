@@ -369,7 +369,7 @@ class AppDatabase {
       //     recently_played_playlists / play_events / download_tasks 不再建表，
       //     老库升级时直接删掉（下载列表改为只留内存）。
       // v9：搜索历史只留内存，不再建 search_history 表，老库升级时删掉。
-      // v10：新增 audio_cache_entries（旧版在线歌曲音频缓存索引，已废弃）。
+      // v10：新增 audio_cache_entries（收藏 / 自建歌单的离线音频缓存索引）。
       // v11：新增 download_entries（已下载歌曲的下载记录，永久保存）。
       //
       // 热榜不进这一版：它又搬回了 settings.json，而且只存「哪个音源加了
@@ -492,16 +492,15 @@ class AppDatabase {
             touched INTEGER NOT NULL DEFAULT 0
           )
         ''');
-    // 旧版：在线歌曲的音频缓存索引（对应 `audio_cache` 目录里的文件）。
-    // 现在在线歌曲只缓存在运行内存里、不写盘，这张表只为兼容旧库保留，
-    // 不会再写入。
+    // 「我的收藏 / 自建歌单」歌曲的离线音频缓存索引（对应缓存根目录下的
+    // `audio_cache` 目录，默认 `AppData\temp\audio_cache`）。
     //
     // 只记「哪首歌对应哪个文件」，音频本体在缓存目录里。表存在的原因：
-    // 1. 缓存文件名带歌手 / 歌名，不能靠 song id 反推，播放前查缓存必须
-    //    先查这张表拿真实文件名；
-    // 2. 「最多缓存最近播放的 10 首」要靠 last_used_at 排序淘汰。
-    // 缓存跨会话保留（启动不清理），只有超出 10 首或用户手动「清除本地缓存」
-    // 时才会删行删文件。
+    // 1. 缓存文件名带时间戳 / 安全化后的 id，不能靠 song id 反推，播放前
+    //    查缓存必须先查这张表拿真实文件名；
+    // 2. 「最多缓存 200 首」要靠 last_used_at 排序淘汰最久没听过的。
+    // 缓存跨会话保留（启动不清理），只有超出 200 首或用户手动「清除本地缓存」
+    // 时才删行删文件。见 `SongAudioCache`。
     await db.execute('''
           CREATE TABLE IF NOT EXISTS audio_cache_entries (
             song_id TEXT PRIMARY KEY,

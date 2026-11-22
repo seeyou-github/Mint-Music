@@ -827,9 +827,9 @@ class SettingsService {
   /// 清理应用缓存的子目录（不删除用户选择的目录本身）。
   ///
   /// 只清理应用自己创建的本地歌曲封面（`local_songs_image_cache`）、
-  /// 图片缓存（`image_cache`），以及旧版本留下的音频缓存目录
-  /// （`audio_cache`，新版不再写），不会误删用户缓存目录里的其它文件，
-  /// 也不再动系统临时目录。
+  /// 图片缓存（`image_cache`）和收藏 / 自建歌单的离线音频缓存
+  /// （`audio_cache`），不会误删用户缓存目录里的其它文件，
+  /// 也不再动系统临时目录。索引行由 [AppDatabase.clearCacheData] 一起清掉。
   Future<int> clearCache() async {
     int total = 0;
     final roots = <Directory>[];

@@ -10,8 +10,10 @@ import '../../../core/backup/sync_timeout.dart';
 import '../../../core/backup/webdav_service.dart';
 import '../../settings/application/settings_providers.dart';
 import '../data/playlist_repository.dart';
+import '../data/song_audio_cache.dart';
 import '../domain/models/playlist.dart';
 import '../utils/favorite_playlist.dart';
+import '../utils/offline_cache_rules.dart';
 import '../../player/domain/models/song.dart';
 
 final playlistRepositoryProvider = Provider<PlaylistRepository>((ref) {
@@ -188,9 +190,31 @@ class PlaylistsNotifier extends AsyncNotifier<List<Playlist>> {
 
   Future<void> deletePlaylist(String id) async {
     final repo = ref.read(playlistRepositoryProvider);
+    // 删除「自建歌单 / 我的收藏」时，里面的歌可能只在别处还留着。先算出
+    // 删完后「已经不属于任何收藏 / 自建歌单」的歌，删成功后再清它们的硬盘
+    // 缓存（缓存目录 `AppData\temp\audio_cache`）。
+    final current = state.valueOrNull;
+    var orphanedSongIds = <String>{};
+    if (current != null) {
+      final target = current
+          .where((playlist) => playlist.id == id)
+          .firstOrNull;
+      if (target != null && isOfflineCachePlaylist(target)) {
+        final remaining = current
+            .where((playlist) => playlist.id != id)
+            .toList(growable: false);
+        orphanedSongIds = {
+          for (final song in target.songs)
+            if (!playlistsHoldSong(remaining, song.id)) song.id,
+        };
+      }
+    }
     await repo.deletePlaylist(id);
     ref.invalidateSelf();
     _syncToRemote();
+    for (final songId in orphanedSongIds) {
+      unawaited(SongAudioCache.remove(songId));
+    }
   }
 
   /// 调整歌单顺序：先同步更新内存状态让弹窗 / 收藏页立即换位，再落库。
@@ -282,22 +306,26 @@ class PlaylistsNotifier extends AsyncNotifier<List<Playlist>> {
     // 磁盘持久化随后异步完成，成功后 invalidateSelf 从磁盘重读保持一致；
     // 失败时 finally 中 invalidateSelf 回滚为磁盘真实状态。
     final current = state.valueOrNull;
+    // 移除后这首歌是否还被别的收藏 / 自建歌单持有（决定要不要删硬盘缓存）。
+    var stillKept = true;
     if (current != null) {
-      state = AsyncData(
-        current
-            .map(
-              (p) => p.id == playlistId
-                  ? p.copyWith(
-                      songs: p.songs.where((s) => s.id != songId).toList(),
-                    )
-                  : p,
-            )
-            .toList(),
-      );
+      final updated = current
+          .map(
+            (p) => p.id == playlistId
+                ? p.copyWith(
+                    songs: p.songs.where((s) => s.id != songId).toList(),
+                  )
+                : p,
+          )
+          .toList();
+      state = AsyncData(updated);
+      stillKept = playlistsHoldSong(updated, songId);
     }
     final repo = ref.read(playlistRepositoryProvider);
     try {
       await repo.removeSongFromPlaylist(playlistId, songId);
+      // 已经不在任何收藏 / 自建歌单里：连带删掉它的离线音频缓存。
+      if (!stillKept) unawaited(SongAudioCache.remove(songId));
     } catch (e) {
       // ignore: avoid_print
       print('removeSongFromPlaylist error: $e');

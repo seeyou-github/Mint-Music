@@ -23,6 +23,8 @@ import '../../blacklist/application/blacklist_providers.dart';
 import '../../settings/application/settings_providers.dart';
 import 'play_progress_providers.dart';
 import '../../library/application/recently_played_providers.dart';
+import '../../library/application/audio_cache_providers.dart';
+import '../../library/data/song_audio_cache.dart';
 import '../../local/application/local_providers.dart';
 import '../../download/data/download_record.dart';
 
@@ -105,6 +107,17 @@ final playbackControllerProvider =
           positionMs: positionMs,
           durationMs: durationMs,
         );
+      };
+
+      // 「我的收藏 / 自建歌单」的在线歌曲：播放前优先读硬盘缓存，听完一首后
+      // 静默写入缓存（最多 200 首，超出淘汰最久没听过的）。缓存目录是缓存根
+      // 目录下的相对子目录 `audio_cache`，默认 `AppData\temp\audio_cache`。
+      controller.resolveCachedAudioFile = (song, quality) =>
+          findOfflineAudioForSong(ref, song, quality: quality);
+      controller.discardCachedAudioFile = SongAudioCache.remove;
+      controller.onSongFullyPlayed = (song) {
+        if (disposed) return;
+        unawaited(cachePlayedSongForOffline(ref, song));
       };
 
       ref.listen(preferredSourceMapProvider, (prev, next) {
@@ -326,6 +339,23 @@ class PlaybackController extends StateNotifier<PlaybackState> {
 
   /// 播放位置变化时回调（写「已听 N%」进度）。位置 / 时长单位均为毫秒。
   void Function(Song song, int positionMs, int durationMs)? onProgress;
+
+  /// 一首歌**自然播到结尾**时回调（收藏 / 自建歌单据此写离线音频缓存）。
+  ///
+  /// 只在真正「播完」那一次触发：暂停 / 续播重复报 completed 不算。
+  void Function(Song song)? onSongFullyPlayed;
+
+  /// 查这首歌在本机的离线缓存文件（收藏 / 自建歌单专用）。
+  ///
+  /// 由宿主注入：控制器不直接依赖歌单模块，也方便测试时替换成固定路径。
+  /// 返回 null 表示没有缓存，继续按在线地址播放。[quality] 是本次要播的
+  /// 档位，缓存音质不一致时也应返回 null（重新解析后写入新档位）。
+  Future<String?> Function(Song song, String quality)? resolveCachedAudioFile;
+
+  /// 缓存文件放不出来（损坏 / 被截断 / 格式异常）。
+  ///
+  /// 由宿主注入删除动作，控制器收到后会回退到在线播放，而不是直接报错。
+  Future<void> Function(String songId)? discardCachedAudioFile;
 
   /// 读取某首歌「接着上次继续播放」的位置。
   ///
@@ -1143,7 +1173,15 @@ class PlaybackController extends StateNotifier<PlaybackState> {
           _justCompleted = true;
           // 换队列期间收到的 completed 属于上一首，setQueue 已经结算过，
           // 这里不再重复记录。
-          if (!_settingQueue) _recordCompletedListen();
+          if (!_settingQueue) {
+            _recordCompletedListen();
+            // 收藏 / 自建歌单的歌曲：听完后静默写入离线缓存。回调内部是
+            // 「不 await 的后台任务」，不会拖慢下一首的切换。
+            final finishedSong = state.currentSong;
+            if (finishedSong != null) {
+              onSongFullyPlayed?.call(finishedSong);
+            }
+          }
         }
         state = state.copyWith(
           isPlaying: false,
@@ -1555,6 +1593,53 @@ class PlaybackController extends StateNotifier<PlaybackState> {
               ),
             );
             return;
+          }
+        }
+      }
+
+      // 收藏 / 自建歌单的在线歌曲：硬盘缓存优先（`AppData\temp\audio_cache`）。
+      // 命中就直接播缓存文件，不再联网解析地址；缓存坏了就删掉记录、继续走
+      // 在线播放，不打断用户。
+      //
+      // 注意这里**不改** currentSong 的 filePath：缓存对用户是透明的，歌曲
+      // 仍然是在线歌曲（收藏 / 分享 / 编辑标签等入口都按原样处理）。
+      if (!isLocal) {
+        String? cachedPath;
+        try {
+          cachedPath = await resolveCachedAudioFile?.call(
+            song,
+            state.currentQuality,
+          );
+        } catch (e) {
+          debugPrint('[PlaybackController] 查询音频缓存失败: $e');
+        }
+        if (_currentPlayRequestId != requestId) return;
+        if (cachedPath != null && cachedPath.isNotEmpty) {
+          final cachedSong = currentSongToPlay.copyWith(filePath: cachedPath);
+          try {
+            await _audioHandler
+                .setAudioSource(
+                  cachedPath,
+                  song: cachedSong,
+                  initialPosition: _initialPositionOf(song, resumeTarget),
+                )
+                .timeout(_audioSetTimeout);
+            await _startPlayback(requestId: requestId);
+            await _applyResumeTarget(song, resumeTarget, requestId: requestId);
+            state = state.copyWith(isLoading: false);
+            if (kDebugMode) {
+              debugPrint('[PlaybackController] 命中音频缓存: ${song.title}');
+            }
+            return;
+          } catch (error) {
+            if (_currentPlayRequestId != requestId) return;
+            debugPrint(
+              '[PlaybackController] 缓存文件不可用，回退在线播放: '
+              '$error（$cachedPath）',
+            );
+            unawaited(
+              discardCachedAudioFile?.call(song.id) ?? Future<void>.value(),
+            );
           }
         }
       }
