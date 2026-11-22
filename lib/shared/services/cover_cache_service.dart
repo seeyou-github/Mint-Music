@@ -28,22 +28,16 @@ class CoverCacheService {
   /// 正在进行的提取任务，防止重复提取
   final Map<String, Future<Uint8List?>> _pending = {};
 
-  /// 获取磁盘缓存目录（跟随「设置 - 存储管理 - 缓存目录」）
+  /// 获取磁盘缓存目录（固定为 `AppData\temp\local_songs_image_cache`）。
   Future<Directory> _getCacheDir() async {
     final cached = _cacheDir;
     // 不再每次 stat 目录：缓存目录被外部删掉时，读取会抛
     // FileSystemException，写入侧（_writeToDisk / ensureDiskFile）负责重建。
-    if (cached != null && _cacheRoot == CachePaths.root) {
-      return cached;
-    }
+    if (cached != null) return cached;
     final dir = await CachePaths.subDirectory(CachePaths.localSongsImageCache);
     _cacheDir = dir;
-    _cacheRoot = CachePaths.root;
     return dir;
   }
-
-  /// 当前缓存目录对应的根目录，用于感知「缓存目录」设置变化。
-  String? _cacheRoot;
 
   /// 磁盘缓存文件路径
   Future<String> _diskPath(String songId) async {

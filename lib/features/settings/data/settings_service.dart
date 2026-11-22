@@ -755,26 +755,8 @@ class SettingsService {
       _prefs.setString('desktop_lyric_settings', v);
 
   // -- cache directory --
-  Future<String> getCacheDir() async {
-    final persisted = _prefs.getString('cache_dir');
-    if (persisted != null && persisted.isNotEmpty) {
-      // 便携版搬目录后，旧安装位置下的默认缓存目录要换回当前位置。
-      final portable = AppPaths.normalizePortableDefault(
-        persisted,
-        AppPaths.tempFolderName,
-      );
-      if (portable != persisted) {
-        // 默认目录不该落盘：清掉存值，下次按当前安装位置重新解析。
-        unawaited(setCacheDir(''));
-      }
-      return portable;
-    }
-    // 默认使用应用自己的缓存目录，避免把缓存写进系统共享临时目录。
-    final cache = await AppPaths.cacheRootDirectory();
-    return cache.path;
-  }
-
-  Future<void> setCacheDir(String v) => _prefs.setString('cache_dir', v);
+  // 缓存目录固定为 `AppData\temp`（见 CachePaths），不再持久化、也不提供
+  // 设置项；旧版本存下的 `cache_dir` 值会被忽略（不会删，留着无害）。
 
   // -- directory size calculation --
 
@@ -824,25 +806,23 @@ class SettingsService {
   }
 
   // -- cache clearing (non-persistent action) --
-  /// 清理应用缓存的子目录（不删除用户选择的目录本身）。
+  /// 清理应用缓存的子目录。
   ///
-  /// 清理应用自己创建的本地歌曲封面（`local_songs_image_cache`）、图片缓存
-  /// （`image_cache`），以及固定在 `AppData\temp` 下的离线音频缓存
-  /// （`audio_cache`），不会误删用户缓存目录里的其它文件。
-  /// 索引行由 [AppDatabase.clearCacheData] 一起清掉。
+  /// 缓存位置固定为 `AppData\temp`；这里删掉其中由应用自己创建的
+  /// `local_songs_image_cache`、`image_cache`、`audio_cache`，不会碰同级
+  /// 其它文件。旧版本允许自定义缓存目录，若设置里还留着旧值，顺手把那边
+  /// 的残留一起清掉。索引行由 [AppDatabase.clearCacheData] 一起清。
   Future<int> clearCache() async {
     int total = 0;
-    final roots = <Directory>[];
-    final configured = _prefs.getString('cache_dir');
-    if (configured != null && configured.isNotEmpty) {
-      roots.add(Directory(configured));
-    }
+    final roots = <Directory>{};
     try {
       roots.add(await AppPaths.cacheRootDirectory());
     } catch (_) {}
+    final legacy = _prefs.getString('cache_dir')?.trim();
+    if (legacy != null && legacy.isNotEmpty) {
+      roots.add(Directory(legacy));
+    }
 
-    // `audio_cache` 实际固定在 `AppData\temp\audio_cache`（不跟缓存目录设置）；
-    // 两个根都扫一遍，是为了顺手清掉旧版本跟随缓存目录写下的那份残留。
     const subDirectories = [
       CachePaths.localSongsImageCache,
       CachePaths.imageCache,

@@ -11,6 +11,7 @@ import '../../../core/constants/app_constants.dart';
 import '../../../core/l10n/app_locale.dart';
 import '../../../core/l10n/l10n.dart';
 import '../../../core/platform/android_app_version.dart';
+import '../../../core/platform/app_paths.dart';
 import '../../../core/platform/download_paths.dart';
 import '../../../core/platform/windows_file_version.dart';
 import '../../../core/theme/builtin_blur_backgrounds.dart';
@@ -483,7 +484,6 @@ final autoCacheMusicProvider = StateProvider<bool>((ref) => true);
 // -- auto update（默认关闭） --
 final autoUpdateProvider = StateProvider<bool>((ref) => false);
 final closeToTrayProvider = StateProvider<bool>((ref) => true);
-final cacheDirProvider = StateProvider<String>((ref) => '');
 
 /// 插件自动检测更新：固定关闭。
 ///
@@ -515,11 +515,17 @@ final downloadDirSizeProvider = FutureProvider<String>((ref) async {
   return svc.getDirectorySize(dir);
 });
 
+/// 缓存根目录的展示路径（固定，不可修改）。
+final cacheRootPathProvider = FutureProvider<String>((ref) async {
+  final dir = await AppPaths.cacheRootDirectory();
+  return dir.path;
+});
+
+/// 缓存目录大小：位置固定（`AppData\temp`），设置页只展示、不可修改。
 final cacheDirSizeProvider = FutureProvider<String>((ref) async {
   final svc = await ref.watch(settingsServiceProvider.future);
-  final dir = ref.watch(cacheDirProvider);
-  if (dir.isEmpty) return '0 B';
-  return svc.getDirectorySize(dir);
+  final dir = await AppPaths.cacheRootDirectory();
+  return svc.getDirectorySize(dir.path);
 });
 
 enum FullScreenBackgroundMode { theme, cover, dark }
@@ -848,7 +854,6 @@ final settingsInitProvider = FutureProvider<void>((ref) async {
   ref.read(autoCacheMusicProvider.notifier).state = true;
   ref.read(autoUpdateProvider.notifier).state = svc.getAutoUpdate();
   ref.read(closeToTrayProvider.notifier).state = svc.getCloseToTray();
-  ref.read(cacheDirProvider.notifier).state = await svc.getCacheDir();
 });
 
 Future<void> persistSetting(

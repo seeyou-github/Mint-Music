@@ -101,12 +101,6 @@ final playbackControllerProvider =
         // / 续播的需求（升级时会清掉库里已有的本地记录）。下载的歌是
         // 「在线歌用本地文件播」，id 仍是在线歌曲，进度照常保存。
         if (song.isLocal) return;
-        // 「听完」的兜底触发：有些播放器到结尾只报 idle / playing=false，
-        // 不一定发 completed。播到剩余 ≤1.5 秒时也触发一次离线缓存，
-        // `SongAudioCache.store` 自带去重，重复调用不会重复下载。
-        if (durationMs > 0 && positionMs >= durationMs - 1500) {
-          unawaited(cachePlayedSongForOffline(ref, song));
-        }
         if (!ref.read(markPlayedStatusProvider)) return;
         playedProgress.record(
           songId: song.id,
@@ -115,13 +109,13 @@ final playbackControllerProvider =
         );
       };
 
-      // 「我的收藏 / 自建歌单」的在线歌曲：播放前优先读硬盘缓存，听完一首后
-      // 静默写入缓存（最多 200 首，超出淘汰最久没听过的）。缓存目录是缓存根
-      // 目录下的相对子目录 `audio_cache`，默认 `AppData\temp\audio_cache`。
+      // 「我的收藏 / 自建歌单」的在线歌曲：播放前优先读硬盘缓存；播放到
+      // 总时长一半时静默写入缓存（最多 200 首，超出淘汰最久没听过的）。
+      // 缓存目录固定为 `AppData\temp\audio_cache`。
       controller.resolveCachedAudioFile = (song, quality) =>
           findOfflineAudioForSong(ref, song, quality: quality);
       controller.discardCachedAudioFile = SongAudioCache.remove;
-      controller.onSongFullyPlayed = (song) {
+      controller.onSongCacheRequested = (song) {
         if (disposed) return;
         unawaited(cachePlayedSongForOffline(ref, song));
       };
@@ -346,10 +340,11 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   /// 播放位置变化时回调（写「已听 N%」进度）。位置 / 时长单位均为毫秒。
   void Function(Song song, int positionMs, int durationMs)? onProgress;
 
-  /// 一首歌**自然播到结尾**时回调（收藏 / 自建歌单据此写离线音频缓存）。
+  /// 播放到**一半**（总时长 50%）时回调一次（收藏 / 自建歌单据此写离线缓存）。
   ///
-  /// 只在真正「播完」那一次触发：暂停 / 续播重复报 completed 不算。
-  void Function(Song song)? onSongFullyPlayed;
+  /// 同一首歌、同一音质只触发一次；切歌或切换音质会重新武装。播完时也会
+  /// 兜底判断一次（位置已过 50%，只是 key 可能已经记过而不会重复）。
+  void Function(Song song)? onSongCacheRequested;
 
   /// 查这首歌在本机的离线缓存文件（收藏 / 自建歌单专用）。
   ///
@@ -417,6 +412,11 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   String? _lastResolveError;
   Duration _lastEmittedPosition = Duration.zero;
   static const Duration _positionThrottle = Duration(milliseconds: 200);
+
+  /// 已经为哪首歌 / 哪个音质请求过离线缓存（`songId|quality`）。
+  ///
+  /// 播到 50% 只触发一次；切歌或换音质后 key 不同，重新触发。
+  String? _cacheRequestedKey;
 
   /// 快速连切时的防抖等待时长（单次切歌不等，见 [playSongAt]）。
   static const Duration _switchDebounce = Duration(milliseconds: 300);
@@ -631,6 +631,32 @@ class PlaybackController extends StateNotifier<PlaybackState> {
   ///
   /// 现在改为：重新计时 + 记录基准进度 + 真正「没有进度」才算卡死，
   /// 并且 App 不在前台时一律不判定。
+  /// 播放到总时长一半时请求一次离线缓存（收藏 / 自建歌单才真正下载）。
+  ///
+  /// 同一首歌、同一音质只请求一次：位置流每 200ms 回调一次，不能每次都打
+  /// 数据库 / 网络。切歌或切换音质后 key 变了会重新触发。
+  ///
+  /// [completed] 为 true 表示「已经播完」——此时位置可能差最后几百毫秒没上报，
+  /// 直接视为已过半，作为兜底。
+  void _maybeRequestOfflineCache(
+    Duration position, {
+    bool completed = false,
+  }) {
+    final callback = onSongCacheRequested;
+    if (callback == null) return;
+    final song = state.currentSong;
+    if (song == null) return;
+    final durationMs = state.duration.inMilliseconds > 0
+        ? state.duration.inMilliseconds
+        : song.duration * 1000;
+    if (durationMs <= 0) return;
+    if (!completed && position.inMilliseconds * 2 < durationMs) return;
+    final key = '${song.id}|${state.currentQuality}';
+    if (_cacheRequestedKey == key) return;
+    _cacheRequestedKey = key;
+    callback(song);
+  }
+
   void _armStallWatchdog() {
     _loadingTimer?.cancel();
     _stallBaselinePosition = state.position;
@@ -1063,6 +1089,8 @@ class PlaybackController extends StateNotifier<PlaybackState> {
         _lastEmittedPosition = position;
         state = state.copyWith(position: position);
       }
+      // 播到总时长一半：该把这首歌写进离线缓存了（收藏 / 自建歌单才写）。
+      _maybeRequestOfflineCache(position);
     });
     _bufferedSub = _audioHandler.bufferedPositionStream.listen((buffered) {
       if (mounted) {
@@ -1181,12 +1209,9 @@ class PlaybackController extends StateNotifier<PlaybackState> {
           // 这里不再重复记录。
           if (!_settingQueue) {
             _recordCompletedListen();
-            // 收藏 / 自建歌单的歌曲：听完后静默写入离线缓存。回调内部是
-            // 「不 await 的后台任务」，不会拖慢下一首的切换。
-            final finishedSong = state.currentSong;
-            if (finishedSong != null) {
-              onSongFullyPlayed?.call(finishedSong);
-            }
+            // 兜底：极短音频 / 位置流没上报到 50% 就结束时，这里补一次
+            // （同一首歌同一音质的 key 去重，正常不会重复请求）。
+            _maybeRequestOfflineCache(state.position, completed: true);
           }
         }
         state = state.copyWith(

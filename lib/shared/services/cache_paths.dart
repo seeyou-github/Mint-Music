@@ -4,15 +4,18 @@ import 'package:path/path.dart' as p;
 
 import '../../core/platform/app_paths.dart';
 
-/// 全局缓存目录配置。
+/// 全局缓存目录。
 ///
-/// 之前「设置 - 存储管理 - 缓存目录」只用于展示目录大小，实际的封面/图片缓存
-/// 仍然写在系统临时目录。这里统一成唯一来源：所有缓存写入都通过本类取目录，
-/// 设置变化后重新调用 [configure] 即可。
+/// **位置固定，不再提供设置项**：
+/// * Windows：`<exe 同级>\AppData\temp`
+/// * Android：`/data/data/<包名>/AppData/temp`
+/// * 其它平台：应用缓存目录（保持系统惯例）
+///
+/// 以前「设置 - 存储管理」允许自定义缓存目录，用户一旦换盘 / 换目录，封面、
+/// 媒体通知的封面路径和离线音频缓存都要重新生成，容易留下找不到的旧文件。
+/// 现在统一由 [AppPaths.cacheRootDirectory] 决定，所有缓存写入都走本类。
 class CachePaths {
   CachePaths._();
-
-  static String? _root;
 
   /// 本地歌曲内嵌封面的磁盘缓存（原 `artwork_cache`，文件名 `<歌曲id>.jpg`）。
   ///
@@ -28,10 +31,8 @@ class CachePaths {
 
   /// 「我的收藏 / 自建歌单」歌曲的离线音频缓存目录名。
   ///
-  /// 实际位置**固定**在 `AppData\temp\audio_cache`（见 `SongAudioCache`），
-  /// 不跟「设置 - 缓存目录」：那是封面 / 图片缓存的根目录，用户可能指到
-  /// 别的盘；离线音频换目录要重下几百首歌。这里保留常量只是为了在
-  /// 「清除缓存」时按名字删掉。
+  /// 位置同样是固定的 `AppData\temp\audio_cache`（见 `SongAudioCache`）；
+  /// 这里保留常量只是为了在「清除缓存」时按名字删掉。
   static const String audioCache = 'audio_cache';
 
   /// 应用自己管理的缓存子目录（会创建 / 统计 / 清理）。
@@ -40,28 +41,13 @@ class CachePaths {
     imageCache,
   ];
 
-  /// 由设置初始化 / 修改缓存目录时调用；传空表示使用系统应用缓存目录。
-  static void configure(String? root) {
-    final trimmed = root?.trim();
-    _root = (trimmed == null || trimmed.isEmpty) ? null : trimmed;
-  }
-
-  static String? get root => _root;
-
-  /// 当前生效的缓存根目录（绝对路径，已展开默认目录）。
-  static Future<String> currentRootPath() async => (await rootDirectory()).path;
-
-  /// 缓存根目录：优先使用用户指定的目录，否则使用应用缓存目录。
+  /// 缓存根目录（固定：`AppData\temp`，其它平台走系统缓存目录）。
   static Future<Directory> rootDirectory() async {
-    final root = _root;
-    if (root != null && root.trim().isNotEmpty) {
-      final dir = Directory(root);
-      if (!await dir.exists()) {
-        await dir.create(recursive: true);
-      }
-      return dir;
+    final dir = await AppPaths.cacheRootDirectory();
+    if (!await dir.exists()) {
+      await dir.create(recursive: true);
     }
-    return AppPaths.cacheRootDirectory();
+    return dir;
   }
 
   /// 缓存根目录下的子目录（会自动创建）。
@@ -74,38 +60,10 @@ class CachePaths {
     return dir;
   }
 
-  /// 缓存目录切换后调用：删掉旧目录里的本地歌曲封面缓存。
-  ///
-  /// 封面跟着「缓存目录」设置走，新目录会重新从音频文件 / MediaStore 提取，
-  /// 旧目录留着只会占空间。[keepRoot] 与 [rootPath] 是同一个目录时不做任何事
-  /// （用户可能只是重新选了同一个目录，别把还能用的封面删了）。
-  static Future<void> deleteLocalSongsImageCacheAt(
-    String? rootPath, {
-    String? keepRoot,
-  }) async {
-    final root = rootPath?.trim();
-    if (root == null || root.isEmpty) return;
-    final keep = keepRoot?.trim();
-    if (keep != null &&
-        keep.isNotEmpty &&
-        p.equals(p.normalize(root), p.normalize(keep))) {
-      return;
-    }
-    try {
-      final dir = Directory(p.join(root, localSongsImageCache));
-      if (!await dir.exists()) return;
-      await dir.delete(recursive: true);
-    } catch (_) {
-      // 删不掉（文件被占用）就留着，不影响功能。
-    }
-  }
-
   /// 把旧版缓存子目录迁到当前结构。
   ///
   /// * `artwork_cache` → [localSongsImageCache]（只是改名，文件继续可用）；
   /// * `covers`、`image_discovery_cache`：新版本不再使用，直接删掉。
-  ///
-  /// 必须在 [configure] 之后调用（才知道真实的缓存根目录，含用户自定义）。
   static Future<void> migrateLegacySubDirectories() async {
     try {
       final base = await rootDirectory();

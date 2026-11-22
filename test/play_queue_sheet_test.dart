@@ -11,7 +11,7 @@ import 'package:mintmusic/features/player/application/playback_controller.dart';
 import 'package:mintmusic/features/player/domain/models/playback_state.dart';
 import 'package:mintmusic/features/player/domain/models/song.dart';
 import 'package:mintmusic/features/player/presentation/widgets/play_queue_sheet.dart';
-import 'package:mintmusic/shared/services/cache_paths.dart';
+import 'package:mintmusic/core/platform/app_paths.dart';
 
 class _QueueController extends StateNotifier<PlaybackState>
     implements PlaybackController {
@@ -136,14 +136,16 @@ void _expectCurrentSongPosition(
 
 void main() {
   late Directory cacheDirectory;
-  String? previousCacheRoot;
+  String? previousRootOverride;
   setUpAll(() async {
-    previousCacheRoot = CachePaths.root;
+    // 缓存目录固定为 AppData\temp：测试里把数据根目录指到临时目录，
+    // 避免往 flutter_tester 所在目录写 AppData。
+    previousRootOverride = AppPaths.debugRootOverride;
     cacheDirectory = await Directory.systemTemp.createTemp('queue_sheet_test_');
-    CachePaths.configure(cacheDirectory.path);
+    AppPaths.debugRootOverride = cacheDirectory.path;
   });
   tearDownAll(() async {
-    CachePaths.configure(previousCacheRoot);
+    AppPaths.debugRootOverride = previousRootOverride;
     await cacheDirectory.delete(recursive: true);
   });
 

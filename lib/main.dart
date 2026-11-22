@@ -103,14 +103,13 @@ void main() async {
     }),
   );
 
-  // 缓存目录：封面 / 网络图片等缓存统一写到「设置 - 存储管理」里指定的目录。
+  // 缓存目录固定为 `AppData\temp`（Windows / Android），不再有设置项。
+  // 这里只做旧缓存子目录改名 / 清理（artwork_cache → local_songs_image_cache，
+  // 删掉不再使用的 covers / image_discovery_cache）与图片缓存配置。
   try {
-    CachePaths.configure(container.read(cacheDirProvider));
-    // 旧缓存子目录改名 / 清理（artwork_cache → local_songs_image_cache，
-    // 删掉不再使用的 covers / image_discovery_cache）。
     await CachePaths.migrateLegacySubDirectories();
     await AppImageCache.configure();
-    print('>>> main: 缓存目录 -> ${CachePaths.root ?? "应用默认缓存目录"}');
+    print('>>> main: 缓存目录 -> ${(await CachePaths.rootDirectory()).path}');
   } catch (e) {
     print('>>> main: 缓存目录初始化失败: $e');
   }

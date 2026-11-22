@@ -34,9 +34,8 @@ class AudioCacheEntry {
 ///
 /// 设计要点：
 ///
-/// * **目录**：`CachePaths.audioCache`（相对路径 `audio_cache`），落在缓存根
-///   目录下——默认就是 `AppData\temp\audio_cache`（见 [CachePaths]）。配置里
-///   只存相对目录名，跟着缓存目录设置整体搬动也不会失效；
+/// * **目录**：`AppData\temp\audio_cache`（Windows 与 Android 一致，见
+///   [AppPaths.tempDirectory]）。缓存位置全局固定，不提供设置项；
 /// * **索引**：`AppDatabase.cacheDatabase()`（`AppData\temp\db`）里的
 ///   `audio_cache_entries` 表，只记「哪首歌 → 哪个文件」，音频本体在目录里；
 /// * **上限**：最多 [maxEntries] 首，超出后按 `last_used_at` 升序删掉最久
@@ -52,10 +51,6 @@ class SongAudioCache {
 
   /// 缓存子目录名：固定放在数据目录的 `temp\audio_cache`
   /// （Windows / Android 都是 `AppData\temp\audio_cache`）。
-  ///
-  /// **不跟「设置 - 缓存目录」**：那是给封面 / 图片缓存用的，用户可能指到别的
-  /// 盘；离线音频属于「收藏歌曲的播放缓存」，需求明确要落在 AppData\temp，
-  /// 而且换目录后几百首歌重新下载的代价太大。
   static const String directoryName = CachePaths.audioCache;
 
   static const String _table = 'audio_cache_entries';
@@ -79,8 +74,8 @@ class SongAudioCache {
 
   /// 缓存目录（自动创建）：固定为 `AppData\temp\audio_cache`。
   ///
-  /// 不用 [CachePaths.subDirectory]：那条路会跟随用户自定义的缓存目录，
-  /// 实际文件就不在 `AppData\temp` 下了（需求要求的固定位置）。
+  /// 显式取 `AppPaths.tempDirectory()`，不经过 [CachePaths]：离线音频缓存
+  /// 要的是「数据目录下的 temp」，这样即使以后封面缓存换位置也不会跟着跑。
   static Future<Directory> directory() async {
     final base = await AppPaths.tempDirectory();
     final dir = Directory(p.join(base.path, directoryName));

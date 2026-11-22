@@ -29,8 +29,12 @@ class _FakeAudioHandler implements MusicAudioHandler {
 
   @override
   Stream<PlayerState> get playerStateStream => _states.stream;
+  final _positions = StreamController<Duration>.broadcast();
+
   @override
-  Stream<Duration> get positionStream => const Stream.empty();
+  Stream<Duration> get positionStream => _positions.stream;
+
+  void emitPosition(Duration position) => _positions.add(position);
   @override
   Stream<Duration> get bufferedPositionStream => const Stream.empty();
   @override
@@ -99,7 +103,10 @@ class _FakeAudioHandler implements MusicAudioHandler {
   @override
   Future<void> stop() async {}
   @override
-  Future<void> dispose() => _states.close();
+  Future<void> dispose() async {
+    await _states.close();
+    await _positions.close();
+  }
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -229,9 +236,33 @@ void main() {
     expect(sources.resolveCalls, 1);
   });
 
-  test('自然播完一整首时把当前歌曲交给缓存回调', () async {
-    final finished = <String>[];
-    controller.onSongFullyPlayed = (song) => finished.add(song.id);
+  test('播到总时长一半时请求一次缓存，之后不重复', () async {
+    final requested = <String>[];
+    controller.onSongCacheRequested = (song) => requested.add(song.id);
+
+    await controller.setQueue([_song('s1')], startIndex: 0);
+    await Future<void>.delayed(Duration.zero);
+
+    // 180 秒的歌：60 秒（1/3）不触发。
+    audio.emitPosition(const Duration(seconds: 60));
+    await Future<void>.delayed(Duration.zero);
+    expect(requested, isEmpty);
+
+    // 90 秒（恰好一半）触发一次。
+    audio.emitPosition(const Duration(seconds: 90));
+    await Future<void>.delayed(Duration.zero);
+    expect(requested, ['s1']);
+
+    // 继续往后播不会重复请求。
+    audio.emitPosition(const Duration(seconds: 120));
+    audio.emitPosition(const Duration(seconds: 170));
+    await Future<void>.delayed(Duration.zero);
+    expect(requested, ['s1']);
+  });
+
+  test('播完时兜底触发一次（位置流没跑到一半也能缓存）', () async {
+    final requested = <String>[];
+    controller.onSongCacheRequested = (song) => requested.add(song.id);
 
     await controller.setQueue([_song('s1')], startIndex: 0);
     await Future<void>.delayed(Duration.zero);
@@ -241,6 +272,6 @@ void main() {
     audio.emitState(PlayerState(false, ProcessingState.completed));
     await Future<void>.delayed(const Duration(milliseconds: 50));
 
-    expect(finished, ['s1']);
+    expect(requested, ['s1']);
   });
 }

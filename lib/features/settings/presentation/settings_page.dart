@@ -22,8 +22,6 @@ import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
 import 'backup_restore_content.dart';
 import '../../blacklist/presentation/blacklist_settings_content.dart';
-import '../../../shared/services/app_image_cache.dart';
-import '../../../shared/services/cache_paths.dart';
 import '../../../shared/widgets/hsv_color_picker.dart';
 import '../application/font_providers.dart';
 import '../application/settings_providers.dart';
@@ -3996,73 +3994,35 @@ class _StorageContent extends ConsumerWidget {
     );
   }
 
-  /// 缓存目录：路径 + 选择 / 打开目录 + 清除缓存。
+  /// 缓存：位置固定（`AppData\temp`），只展示占用并提供「清除缓存」。
   Widget _buildCacheGroup(
     BuildContext context,
     WidgetRef ref,
     ThemeColors colors,
   ) {
-    final cacheDir = ref.watch(cacheDirProvider);
+    final cachePath = ref.watch(cacheRootPathProvider);
     final cacheDirSize = ref.watch(cacheDirSizeProvider);
 
     return SettingGroup(
-      title: '缓存目录',
+      title: '缓存',
       colors: colors,
       children: [
         _buildPathField(
           context,
           colors,
-          path: cacheDir.isEmpty ? context.tr('未设置') : cacheDir,
+          path: cachePath.valueOrNull ?? context.tr('应用数据目录 / temp'),
           sizeAsync: cacheDirSize,
           badgeColor: colors.primary,
         ),
         const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(
-              child: OutlinedButton(
-                onPressed: () async {
-                  try {
-                    final result = await FilePicker.platform.getDirectoryPath();
-                    if (result != null && context.mounted) {
-                      final container = ProviderScope.containerOf(context);
-                      final previousRoot = await CachePaths.currentRootPath();
-                      container.read(cacheDirProvider.notifier).state = result;
-                      // 让后续的封面 / 图片缓存真正写入新目录。
-                      CachePaths.configure(result);
-                      // 旧目录里的本地歌曲封面不再使用：新目录会重新提取，
-                      // 旧文件留着只会占空间。
-                      await CachePaths.deleteLocalSongsImageCacheAt(
-                        previousRoot,
-                        keepRoot: result,
-                      );
-                      await AppImageCache.configure();
-                      container.invalidate(cacheDirSizeProvider);
-                      unawaited(
-                        _doPersist(container, (s) => s.setCacheDir(result)),
-                      );
-                    }
-                  } catch (_) {}
-                },
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: colors.textSecondary,
-                  side: BorderSide(color: colors.divider),
-                ),
-                child: Text(context.tr('选择目录')),
-              ),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: Text(
+            context.tr(
+              '缓存位置固定、不可修改：Windows 为程序同级 AppData/temp，Android 为应用数据目录 AppData/temp。',
             ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: OutlinedButton(
-                onPressed: () => _openDirectory(cacheDir),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: colors.textSecondary,
-                  side: BorderSide(color: colors.divider),
-                ),
-                child: Text(context.tr('打开目录')),
-              ),
-            ),
-          ],
+            style: TextStyle(fontSize: 12, color: colors.textHint),
+          ),
         ),
         const SizedBox(height: AppSpacing.md),
         SizedBox(
@@ -4242,27 +4202,13 @@ class _StorageContent extends ConsumerWidget {
               Navigator.pop(ctx);
               final container = ProviderScope.containerOf(context);
               final defaultDownload = await defaultDownloadDir();
-              // 默认缓存目录使用应用缓存目录，不再指向系统临时目录。
-              final appCacheDir = await AppPaths.cacheRootDirectory();
               container.read(downloadDirProvider.notifier).state =
                   defaultDownload;
-              container.read(cacheDirProvider.notifier).state =
-                  appCacheDir.path;
-              final previousRoot = await CachePaths.currentRootPath();
-              CachePaths.configure(appCacheDir.path);
-              // 旧目录里的本地歌曲封面不再使用（新目录重新提取）。
-              await CachePaths.deleteLocalSongsImageCacheAt(
-                previousRoot,
-                keepRoot: appCacheDir.path,
-              );
-              await AppImageCache.configure();
-              container.invalidate(cacheDirSizeProvider);
               unawaited(
                 _doPersist(container, (s) async {
                   // 默认目录不落盘（绝对路径会在搬目录 / 还原后失效），
                   // 清空存值即可回到「按当前安装位置解析默认目录」。
                   await s.setDownloadDir('');
-                  await s.setCacheDir('');
                 }),
               );
               if (context.mounted)

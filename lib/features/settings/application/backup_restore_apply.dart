@@ -9,7 +9,6 @@ import '../../../core/theme/app_font_manager.dart';
 import '../../../core/theme/app_typography.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../shared/services/app_image_cache.dart';
-import '../../../shared/services/cache_paths.dart';
 import '../../blacklist/application/blacklist_providers.dart';
 import '../../custom_sheet/application/custom_sheet_providers.dart';
 import '../../discover/application/hot_board_providers.dart';
@@ -104,12 +103,11 @@ Future<bool> applyRestoredBackup(
     debugPrint('[BackupRestore] 刷新模糊背景图失败: $e');
   }
 
-  // 缓存目录可能也变了：重新配置并重建图片缓存。
+  // 还原后重建图片缓存（缓存目录固定，只需按新的设置重新配置一次）。
   try {
-    CachePaths.configure(container.read(cacheDirProvider));
     await AppImageCache.configure();
   } catch (e) {
-    debugPrint('[BackupRestore] 重新配置缓存目录失败: $e');
+    debugPrint('[BackupRestore] 重新配置图片缓存失败: $e');
   }
 
   // 字体：清单和选中项都可能变了，重新读文件并应用。
