@@ -23,6 +23,7 @@
 library;
 
 import '../../features/player/domain/models/song.dart';
+import 'song_field_display.dart';
 
 /// 匹配时忽略的字符：空白与常见标点 / 括号（全角半角都算），
 /// 「你的样子（女版）」与「你的样子 (女版)」这种排版差异不影响匹配。
@@ -51,11 +52,14 @@ class LocalSongMatchFields {
   });
 
   /// 从本地歌曲对象构造。
+  ///
+  /// 没有专辑信息时（空串或老索引的「未知专辑」占位）按空串参与匹配：
+  /// 专辑这一项永远不会命中，也不会把占位文案拿去和在线结果比对。
   factory LocalSongMatchFields.fromSong(Song song) {
     return LocalSongMatchFields(
       title: song.title,
       artist: song.artist,
-      album: song.album,
+      album: albumForEdit(song.album),
       year: song.year ?? 0,
       durationSeconds: song.duration,
     );

@@ -12,6 +12,7 @@ import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/app_surface.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../shared/services/cover_cache_service.dart';
+import '../../../shared/utils/song_field_display.dart';
 import '../../../shared/utils/song_match_score.dart';
 import '../../../shared/widgets/source_icon.dart';
 import '../../../shared/widgets/source_selector_row.dart';
@@ -279,7 +280,9 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
       _loadingSong = false;
       _titleController.text = song.title;
       _artistController.text = song.artist;
-      _albumController.text = song.album;
+      // 老索引可能存着「未知专辑」占位：编辑框里按空处理，避免把占位文案
+      // 当成真实专辑再写回文件（用户看到的也是空，符合「没有专辑」）。
+      _albumController.text = albumForEdit(song.album);
       _yearController.text = song.year?.toString() ?? '';
       _genreController.text = song.genre ?? '';
       _commentController.text = song.comment ?? '';

@@ -52,7 +52,8 @@ void main() {
       expect(song, isNotNull);
       expect(song!.title, '没有标签的歌');
       expect(song.artist, '未知艺术家');
-      expect(song.album, '未知专辑');
+      // 专辑不补占位：界面按「没有专辑」显示 -，也不参与专辑匹配。
+      expect(song.album, isEmpty);
     } finally {
       await dir.delete(recursive: true);
     }

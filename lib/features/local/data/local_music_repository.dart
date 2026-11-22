@@ -12,6 +12,7 @@ import '../../../core/storage/app_database.dart';
 import '../../../core/storage/app_preferences.dart';
 import '../../../shared/services/cover_cache_service.dart';
 import '../../../shared/utils/local_song_id.dart';
+import '../../../shared/utils/song_field_display.dart';
 import '../../player/domain/models/song.dart';
 import 'local_metadata_reader.dart';
 
@@ -763,14 +764,18 @@ class LocalMusicRepository {
     // MediaStore 对没有专辑标签的文件（通话录音、下载的音频…）会拿
     // **所在文件夹名**当专辑。文件标签里读到专辑就以标签为准；标签里没有时，
     // 只有 MediaStore 给的值不像文件夹名才采用，否则按「无专辑」处理。
-    final tagAlbum = metadata?.album?.trim() ?? '';
+    //
+    // 「无专辑」统一存空串（不写「未知专辑」占位）：界面显示 `-`，
+    // 也不会把占位文案当成真实专辑名参与匹配 / 写回文件。
+    final tagAlbum = albumForEdit(metadata?.album);
     final mediaAlbum = rawAlbum.trim();
     final album = tagAlbum.isNotEmpty
         ? tagAlbum
         : (mediaAlbum.isEmpty ||
                   mediaAlbum == '<unknown>' ||
+                  mediaAlbum == unknownAlbum ||
                   _isFolderNameFallback(mediaAlbum, filePath)
-              ? '未知专辑'
+              ? ''
               : mediaAlbum);
     final duration = (audio.duration ?? 0) ~/ 1000;
 
@@ -808,9 +813,8 @@ class LocalMusicRepository {
     final artist = (metadata.artist?.isNotEmpty ?? false)
         ? metadata.artist!
         : '未知艺术家';
-    final album = (metadata.album?.isNotEmpty ?? false)
-        ? metadata.album!
-        : '未知专辑';
+    // 空专辑留空串（原因见 [_songFromMediaStore]）。
+    final album = albumForEdit(metadata.album);
 
     return Song(
       id: _genId(filePath),
@@ -883,7 +887,7 @@ class LocalMusicRepository {
       id: a.id,
       title: pick(a.title, b.title, '未知曲目'),
       artist: pick(a.artist, b.artist, '未知艺术家'),
-      album: pick(a.album, b.album, '未知专辑'),
+      album: pick(a.album, b.album),
       duration: a.duration > 0 ? a.duration : b.duration,
       coverUrl: a.coverUrl ?? b.coverUrl,
       sourceUrl: a.sourceUrl ?? b.sourceUrl,

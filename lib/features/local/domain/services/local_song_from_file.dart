@@ -2,6 +2,7 @@ import 'dart:io';
 
 import '../../../player/domain/models/song.dart';
 import '../../../../shared/utils/local_song_id.dart';
+import '../../../../shared/utils/song_field_display.dart';
 import '../../data/local_metadata_reader.dart';
 
 /// 按文件路径构造一个「不在曲库索引里」的本地歌曲对象。
@@ -36,7 +37,9 @@ Future<Song?> buildLocalSongFromFile(String filePath) async {
     id: localSongIdForPath(filePath),
     title: pick(metadata.title, baseName),
     artist: pick(metadata.artist, '未知艺术家'),
-    album: pick(metadata.album, '未知专辑'),
+    // 没有专辑就留空：界面显示 `-`，不参与专辑匹配，也不会把「未知专辑」
+    // 当成真实专辑写回文件。
+    album: albumForEdit(metadata.album),
     duration: metadata.durationSeconds ?? 0,
     source: 'local',
     filePath: filePath,

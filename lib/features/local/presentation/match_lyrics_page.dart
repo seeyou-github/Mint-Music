@@ -7,6 +7,7 @@ import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../shared/widgets/music_cover_image.dart';
+import '../../../shared/utils/song_field_display.dart';
 import '../../player/application/lyric_controller.dart';
 import '../../player/application/lyric_resolver.dart';
 import '../../player/application/playback_context.dart';
@@ -63,9 +64,10 @@ class _MatchLyricsPageState extends ConsumerState<MatchLyricsPage> {
           // 已有逐字歌词的不需要再匹配；只有整行歌词（缺逐字）或没歌词的才进队列。
           if (hasLyric && hasWord) return false;
           // 五字段完全匹配的前提：歌名 / 歌手 / 专辑 / 年份 / 时长都齐备。
+          // 专辑按 [hasAlbumInfo] 判断：空串与老数据的「未知专辑」占位都算没有。
           return song.title.trim().isNotEmpty &&
               song.artist.trim().isNotEmpty &&
-              song.album.trim().isNotEmpty &&
+              hasAlbumInfo(song.album) &&
               (song.year ?? 0) > 0 &&
               song.duration > 0;
         })
@@ -383,7 +385,7 @@ class _MatchLyricsPageState extends ConsumerState<MatchLyricsPage> {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    '${song.artist} · ${song.album}',
+                    '${song.artist} · ${displayAlbum(song.album)}',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(fontSize: 11, color: colors.textHint),

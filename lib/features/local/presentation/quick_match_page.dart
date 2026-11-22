@@ -11,6 +11,7 @@ import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/app_surface.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../shared/widgets/music_cover_image.dart';
+import '../../../shared/utils/song_field_display.dart';
 import '../../library/domain/models/recently_played.dart';
 import '../../player/application/playback_context.dart';
 import '../../player/application/playback_controller.dart';
@@ -655,7 +656,7 @@ class _QuickMatchPageState extends ConsumerState<QuickMatchPage> {
                 ],
               ),
             ),
-            if (wide) Expanded(flex: 3, child: _cell(colors, song.album)),
+            if (wide) Expanded(flex: 3, child: _cell(colors, displayAlbum(song.album))),
             Expanded(
               flex: 2,
               child: _cell(colors, song.year?.toString() ?? ''),

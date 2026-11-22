@@ -9,6 +9,7 @@ import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../shared/services/cover_cache_service.dart';
+import '../../../shared/utils/song_field_display.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../../player/domain/models/song.dart';
 
@@ -597,7 +598,7 @@ class _InfoPreview extends StatelessWidget {
       children: [
         field(context.tr('歌曲'), song.title, strong: true),
         field(context.tr('歌手'), song.artist),
-        field(context.tr('专辑'), song.album),
+        field(context.tr('专辑'), displayAlbum(song.album)),
         field(context.tr('年份'), (year ?? song.year)?.toString() ?? ''),
         // 时长仅展示用：左侧是本地歌曲（扫描索引里记的），右侧是搜索结果
         // （插件给了就显示，没给显示 -）。不参与写文件。

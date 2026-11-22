@@ -11,6 +11,7 @@ import '../../../../core/theme/app_surface.dart';
 import '../../../../core/theme/theme_provider.dart';
 import '../../../../shared/widgets/music_cover_image.dart';
 import '../../../../shared/utils/song_match_score.dart';
+import '../../../../shared/utils/song_field_display.dart';
 import '../../../../shared/widgets/source_icon.dart';
 import '../../../../shared/widgets/source_selector_row.dart';
 import '../../../local/application/local_providers.dart';
@@ -724,7 +725,8 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
   Widget _buildLocalSongInfo(ThemeColors colors) {
     final song = widget.song;
     final parts = <String>[
-      if (song.album.trim().isNotEmpty) '${context.tr('专辑')}：${song.album}',
+      // 没有专辑信息（空 / 老数据的「未知专辑」占位）显示 `-`，与结果卡片一致。
+      '${context.tr('专辑')}：${displayAlbum(song.album)}',
       if ((song.year ?? 0) > 0) '${context.tr('年份')}：${song.year}',
       if (song.displayDuration.isNotEmpty)
         '${context.tr('时长')}：${song.displayDuration}',
@@ -840,9 +842,7 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
                           ),
                           const SizedBox(height: 2),
                           Text(
-                            song.album.trim().isEmpty
-                                ? context.tr('专辑：—')
-                                : '${context.tr('专辑')}：${song.album}',
+                            '${context.tr('专辑')}：${displayAlbum(song.album)}',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(

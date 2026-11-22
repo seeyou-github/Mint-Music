@@ -8,6 +8,7 @@ import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/theme_provider.dart';
 import '../../../../core/utils/scroll_locate.dart';
 import '../../../../shared/widgets/music_cover_image.dart';
+import '../../../../shared/utils/song_field_display.dart';
 import '../../../../shared/widgets/song_index_width.dart';
 import '../../../blacklist/application/blacklist_providers.dart';
 import '../../application/playback_controller.dart';
@@ -371,7 +372,7 @@ class _PlayQueueSheetContentState
                                 ],
                                 Expanded(
                                   child: Text(
-                                    '${queueSong.artist} - ${queueSong.album}',
+                                    '${queueSong.artist} - ${displayAlbum(queueSong.album)}',
                                     style: TextStyle(
                                       fontSize: 12,
                                       // 跟随「外观设置 → 第二文字颜色」，不再用

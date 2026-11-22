@@ -316,7 +316,7 @@ void main() {
     expect(find.text('年份：2023'), findsOneWidget);
     expect(find.text('时长：5:00'), findsOneWidget);
     // 卡片 2：三者皆缺 → 显示 —。
-    expect(find.text('专辑：—'), findsOneWidget);
+    expect(find.text('专辑：-'), findsOneWidget);
     expect(find.text('年份：—'), findsOneWidget);
     expect(find.text('时长：—'), findsOneWidget);
   });

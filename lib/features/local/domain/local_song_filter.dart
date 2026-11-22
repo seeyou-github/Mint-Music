@@ -1,5 +1,6 @@
 import '../../player/domain/models/song.dart';
 import '../../player/domain/services/lyric_parser.dart';
+import '../../../shared/utils/song_field_display.dart';
 
 /// 快速匹配页里可以筛选 / 展示的字段。
 enum LocalSongField {
@@ -53,7 +54,7 @@ bool songHasField(Song song, LocalSongField field, {LyricPresence? lyric}) {
           song.artist != '未知艺术家' &&
           song.artist != '未知歌手';
     case LocalSongField.album:
-      return song.album.trim().isNotEmpty && song.album != '未知专辑';
+      return hasAlbumInfo(song.album);
     case LocalSongField.year:
       return (song.year ?? 0) > 0;
     case LocalSongField.genre:
