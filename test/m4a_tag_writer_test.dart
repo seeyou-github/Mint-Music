@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mintmusic/features/download/domain/services/audio_tag_writer.dart';
 import 'package:mintmusic/features/local/data/local_metadata_reader.dart';
+import 'package:mintmusic/features/player/domain/services/embedded_lyrics_extractor.dart';
 
 /// M4A / MP4 标签写入。
 ///
@@ -49,6 +50,17 @@ void main() {
     expect(meta.genre, '流行');
     expect(meta.comment, '备注');
     expect(meta.lyrics, '[00:01.000]第一行\n[00:02.000]第二行');
+  });
+
+  test('播放页的 EmbeddedLyricsExtractor 能读到写入的 ©lyr', () async {
+    final path = '${dir.path}${Platform.pathSeparator}player.m4a';
+    await File(path).writeAsBytes(_buildM4a());
+    const lyric = '[00:01.000]第一行\n[00:02.000]第二行';
+    expect(await AudioTagWriter.write(path, lyrics: lyric), isTrue);
+
+    // 播放详情页读本地歌曲的内嵌歌词走这个入口
+    // （LyricController 的本地分支），曾经只认 mp3 / flac。
+    expect(await EmbeddedLyricsExtractor.extract(path), lyric);
   });
 
   test('封面能写进去，也能删掉', () async {

@@ -3,6 +3,8 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 
+import '../../../local/data/local_metadata_reader.dart';
+
 class EmbeddedLyricsExtractor {
   static Future<String?> extract(String filePath) async {
     debugPrint('EmbeddedLyricsExtractor: extracting from $filePath');
@@ -18,6 +20,12 @@ class EmbeddedLyricsExtractor {
         return _extractFromFlac(filePath);
       } else if (ext.endsWith('.mp3')) {
         return _extractFromId3(filePath);
+      } else if (ext.endsWith('.m4a') || ext.endsWith('.mp4')) {
+        // MP4 容器（m4a）：歌词在 moov/udta/meta/ilst 的 ©lyr。
+        // 复用曲库扫描那套解析（readLyrics 只遍历标签、不解码封面），
+        // 避免这里再维护一份 MP4 atom 遍历、两边行为走偏。
+        debugPrint('EmbeddedLyricsExtractor: extracting from MP4 ©lyr');
+        return LocalMetadataReader.readLyrics(filePath);
       } else {
         debugPrint('EmbeddedLyricsExtractor: unsupported format, trying ID3');
         return _extractFromId3(filePath);
