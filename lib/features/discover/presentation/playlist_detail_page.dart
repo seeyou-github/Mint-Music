@@ -837,6 +837,8 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
                   ),
                   isPlaying: isPlaying,
                   showPlayedTag: true,
+                  // 歌单 / 榜单详情：收藏红心常驻显示（已收藏实心、未收藏空心）。
+                  alwaysShowFavoriteHeart: true,
                   selectionMode: selecting,
                   selected: _selection.isSelected(song.id),
                   onSelectionToggle: (s) => _selection.toggle(s.id),

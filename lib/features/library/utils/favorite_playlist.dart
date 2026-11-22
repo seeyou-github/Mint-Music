@@ -36,11 +36,14 @@ extension FavoritePlaylistX on Playlist {
     return meta['discoverId'] == null;
   }
 
-  /// 歌曲列表里是否显示收藏红心。
+  /// 歌曲列表里是否逐首标注音源。
   ///
-  /// 只有自己的内容（「我的收藏」、自建歌单）提供取消收藏入口；
-  /// 收藏的第三方歌单 / 专辑 / 作者是远端内容，列表中不显示红心。
-  bool get showsFavoriteHeart => id == '__favorites__' || isUserCreated;
+  /// 「我的收藏」/ 自建歌单里的歌可能来自不同音源，逐首标出来有用；收藏的
+  /// 第三方歌单 / 专辑 / 作者绑定统一音源，顶部已有可切换的音源按钮，
+  /// 列表里不再逐首标注。
+  ///
+  /// 收藏红心不跟这个走：所有歌曲列表都显示（见 `SongListItem.showFavoriteHeart`）。
+  bool get showsSourceTag => id == '__favorites__' || isUserCreated;
 
   /// 去掉「专辑：」「作者：」前缀后的展示名称。
   String get displayName {

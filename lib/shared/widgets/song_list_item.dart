@@ -59,11 +59,17 @@ class SongListItem extends ConsumerWidget {
   /// 下载管理等列表不需要这个标记。
   final bool showPlayedTag;
 
+  /// 是否在时长左侧常驻显示收藏红心（已收藏实心、未收藏空心）。
+  ///
+  /// 浏览类列表（歌单 / 榜单 / 专辑 / 作者 / 本地歌曲）打开，一眼能看出哪些
+  /// 已收藏，也能直接在行内收藏；关闭时退化为「悬停出现空心，已收藏才常驻
+  /// 实心」（见 [showFavoriteHeart]），下载管理等列表保持这种轻量表现。
+  final bool alwaysShowFavoriteHeart;
+
   /// 是否在时长左侧显示「已收藏」的常驻实心红心。
   ///
   /// 悬停时的收藏红心（空心 / 实心）不受它限制，所有列表都有；这一项只决定
-  /// 鼠标移开后已收藏的歌曲要不要继续显示红心。收藏的第三方歌单 / 专辑 /
-  /// 作者传 false，避免在那里提供取消收藏入口。
+  /// 鼠标移开后已收藏的歌曲要不要继续显示红心。
   final bool showFavoriteHeart;
 
   final VoidCallback? onTap;
@@ -109,6 +115,7 @@ class SongListItem extends ConsumerWidget {
     this.showMenuButton = true,
     this.showPlayedTag = false,
     this.showFavoriteHeart = true,
+    this.alwaysShowFavoriteHeart = false,
     this.onTap,
     this.onPlayTap,
     this.onMenuTap,
@@ -542,6 +549,7 @@ class SongListItem extends ConsumerWidget {
         : SongFavoriteHeart(
             song: song,
             showWhenFavorited: showFavoriteHeart,
+            alwaysShow: alwaysShowFavoriteHeart,
           );
     final vipTag = _buildVipTag(colors, compact: !narrow);
     final partsTag = _buildPartsTag(colors, compact: !narrow);

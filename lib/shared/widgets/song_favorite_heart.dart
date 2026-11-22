@@ -9,11 +9,12 @@ import 'song_row_hover.dart';
 
 /// 歌曲行「时长左侧」的收藏红心。
 ///
-/// * 鼠标悬停在这一行时一定出现：未收藏画空心红心，点一下直接收藏；
 /// * 已收藏画实心红心，点一下取消收藏（[FavoriteSongs.favoriteIdOf]
 ///   会按文件路径认出本地歌曲，取消时要用它返回的 id，而不是本行 id）；
-/// * [showWhenFavorited] 控制「鼠标没悬停时」要不要常驻显示已收藏的实心红心，
-///   收藏的第三方歌单 / 专辑 / 作者传 false，只保留悬停入口。
+/// * 未收藏画空心红心，点一下直接收藏；
+/// * [alwaysShow] 为 true 时不管有没有悬停都常驻显示（浏览类列表用：一眼能
+///   看出哪些已收藏，也能直接在行内收藏）；为 false 时只在悬停时出现空心，
+///   已收藏的实心是否常驻由 [showWhenFavorited] 决定。
 ///
 /// 收藏 / 取消收藏都直接改 provider，不弹任何提示。
 class SongFavoriteHeart extends ConsumerWidget {
@@ -21,10 +22,12 @@ class SongFavoriteHeart extends ConsumerWidget {
     super.key,
     required this.song,
     this.showWhenFavorited = true,
+    this.alwaysShow = false,
   });
 
   final Song song;
   final bool showWhenFavorited;
+  final bool alwaysShow;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -33,9 +36,8 @@ class SongFavoriteHeart extends ConsumerWidget {
       favoriteSongsProvider.select((favorites) => favorites.favoriteIdOf(song)),
     );
     final favorited = favoriteId != null;
-    // 未收藏只在 hover 时出现空心；已收藏默认常驻实心（或在指定列表里只随
-    // hover 出现）。
-    final visible = favorited ? (hovered || showWhenFavorited) : hovered;
+    final visible =
+        alwaysShow || (favorited ? (hovered || showWhenFavorited) : hovered);
     if (!visible) return const SizedBox.shrink();
 
     final notifier = ref.read(playlistsProvider.notifier);
@@ -56,7 +58,10 @@ class SongFavoriteHeart extends ConsumerWidget {
         child: Icon(
           favorited ? Icons.favorite : Icons.favorite_border,
           size: 14,
-          color: Colors.red,
+          // 常驻的空心调淡一些，避免整列都是抢眼的红色。
+          color: favorited
+              ? Colors.red
+              : Colors.red.withValues(alpha: hovered ? 1.0 : 0.6),
         ),
       ),
     );
