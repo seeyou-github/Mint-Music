@@ -2083,9 +2083,9 @@ class _LocalSongItem extends ConsumerWidget {
                     ],
                   ),
                 ),
-                // 收藏红心：放在时长左侧，与其它歌曲列表一致；常驻显示，
-                // 已收藏实心、未收藏空心，点一下即收藏 / 取消收藏。
-                if (!selectionMode) SongFavoriteHeart(song: song, alwaysShow: true),
+                // 收藏红心：放在时长左侧，与其它歌曲列表一致；悬停时出现空心，
+                // 点一下直接收藏，已收藏则实心。
+                if (!selectionMode) SongFavoriteHeart(song: song),
                 if (song.duration > 0)
                   Text(
                     song.displayDuration,

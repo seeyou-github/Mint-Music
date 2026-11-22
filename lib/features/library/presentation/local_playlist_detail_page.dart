@@ -1420,10 +1420,8 @@ class _LocalPlaylistDetailPageState
                       // 收藏的第三方歌单 / 专辑 / 作者绑定统一音源，顶部已有
                       // 可切换的音源按钮，列表里不再逐首标注。
                       showSource: playlist.showsSourceTag,
-                      // 收藏红心：本地歌单 / 收藏的歌单 / 榜单 / 专辑 / 作者
-                      // 统一常驻显示（已收藏实心，未收藏空心，点一下即收藏）。
+                      // 收藏红心：已收藏的实心红心常驻，未收藏的悬停时出现空心。
                       showFavoriteHeart: true,
-                      alwaysShowFavoriteHeart: true,
                       selectionMode: selecting,
                       selected: _selection.isSelected(song.id),
                       onSelectionToggle: (s) => _selection.toggle(s.id),

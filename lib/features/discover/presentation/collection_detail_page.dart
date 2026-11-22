@@ -942,8 +942,6 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
                 ),
                 isPlaying: currentSongId == song.id,
                 showPlayedTag: true,
-                // 专辑 / 作者详情：收藏红心常驻显示（已收藏实心、未收藏空心）。
-                alwaysShowFavoriteHeart: true,
                 onPlayTap: () async {
                   PlaybackContext.instance.set(
                     _isArtist

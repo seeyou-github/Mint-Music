@@ -25,11 +25,7 @@ Song _song(String id) => Song(
   source: 'wy',
 );
 
-Future<void> _pump(
-  WidgetTester tester,
-  Song song, {
-  required bool alwaysShow,
-}) async {
+Future<void> _pump(WidgetTester tester, Song song) async {
   final favorite = _song('fav');
   final repo = _FakePlaylistRepository([
     Playlist(
@@ -47,12 +43,7 @@ Future<void> _pump(
         home: Scaffold(
           body: SizedBox(
             width: 480,
-            child: SongListItem(
-              song: song,
-              index: 1,
-              maxIndex: 1,
-              alwaysShowFavoriteHeart: alwaysShow,
-            ),
+            child: SongListItem(song: song, index: 1, maxIndex: 1),
           ),
         ),
       ),
@@ -63,17 +54,15 @@ Future<void> _pump(
 }
 
 void main() {
-  testWidgets('常驻红心：已收藏实心、未收藏空心', (tester) async {
-    await _pump(tester, _song('fav'), alwaysShow: true);
+  testWidgets('已收藏的歌：实心红心常驻（不需要悬停）', (tester) async {
+    await _pump(tester, _song('fav'));
     expect(find.byIcon(Icons.favorite), findsOneWidget);
     expect(find.byIcon(Icons.favorite_border), findsNothing);
-
-    await _pump(tester, _song('other'), alwaysShow: true);
-    expect(find.byIcon(Icons.favorite_border), findsOneWidget);
   });
 
-  testWidgets('关闭常驻红心：没有悬停时不显示', (tester) async {
-    await _pump(tester, _song('other'), alwaysShow: false);
+  testWidgets('未收藏的歌：没有悬停时不显示空心', (tester) async {
+    await _pump(tester, _song('other'));
     expect(find.byIcon(Icons.favorite_border), findsNothing);
+    expect(find.byIcon(Icons.favorite), findsNothing);
   });
 }
