@@ -155,8 +155,8 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
       final filtered = songs
           .where((s) => s.title.trim().isNotEmpty)
           .toList(growable: false);
-      // 与本地歌曲按匹配级别排序（五字段全中最高 → 仅歌名最低），
-      // 级别越高越靠左，全部结果都保留。
+      // 与本地歌曲按匹配优先级排序（五字段全中第 1，其它垫底），
+      // 数字越小越靠左，全部结果都保留。
       final sorted = sortSongsByMatchLevel(
         filtered,
         LocalSongMatchFields.fromSong(widget.song),

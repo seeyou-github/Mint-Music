@@ -1,20 +1,25 @@
 /// 搜索结果与本地歌曲的字段匹配优先级 / 排序。
 ///
-/// 「编辑标签-在线搜索」与「搜索歌词弹框」共用：按下面的级别给每条结果
-/// 定级，**级别越高越靠前**（横向结果列表里越靠左）；同级别保持插件返回
-/// 的原顺序。只影响排序，不过滤、不隐藏任何结果。
+/// 「编辑标签-在线搜索」与「搜索歌词弹框」共用：给每条结果定一个
+/// 1~12 的优先级（1 最靠前），排序后最匹配的排在最左边；同级保持插件
+/// 返回的原顺序。只影响排序，不过滤、不隐藏任何结果。
 ///
-/// 级别按五遍过滤收窄（数字越大越优先，第 5 级最高）：
+/// 优先级（数字越小越靠前）：
 ///
-/// * 过滤第 1 遍：匹配歌名 → 命中的保存为 **1 级候选**；
-/// * 过滤第 2 遍：1 级候选里继续匹配歌手 → **2 级候选**；
-/// * 过滤第 3 遍：2 级候选里继续匹配时长 → **3 级候选**；
-/// * 过滤第 4 遍：3 级候选里继续匹配专辑 → **4 级候选**；
-/// * 过滤第 5 遍：4 级候选里继续匹配年份 → **5 级候选**。
+/// 1. 歌名精确 & 歌手精确 & 时长匹配 & 专辑精确 & 年份匹配；
+/// 2. 歌名精确 & 歌手精确 & 时长匹配 & 专辑精确（年份不匹配）；
+/// 3. 歌名精确 & 歌手精确 & 时长匹配 & 年份匹配（专辑不匹配）；
+/// 4. 歌名精确 & 歌手精确 & 时长匹配（专辑、年份都不匹配）；
+/// 5. 歌名精确 & 歌手包含 & 时长匹配；
+/// 6. 歌名包含 & 歌手精确 & 时长匹配；
+/// 7. 歌名包含 & 歌手包含 & 时长匹配；
+/// 8. 歌名精确 & 歌手精确（时长不匹配）；
+/// 9. 歌名 / 歌手为「包含」关系的其余组合（时长不匹配）；
+/// 12. 其它。
 ///
-/// 最终顺序（从左到右）：5 级 > 4 级 > 3 级 > 2 级 > 1 级（= 歌名包含歌名
-/// 且歌手包含歌手）> 歌名包含歌名 > 其它结果。同级别保持插件返回的
-/// 原顺序。
+/// 「精确」= 归一化后完全相等（忽略空白 / 标点 / 大小写，见
+/// [normalizeForMatch]）；「包含」= 双向包含，长字段含短字段即可，
+/// 「晴天」与「晴天Live」互相算包含。
 library;
 
 import '../../features/player/domain/models/song.dart';
@@ -66,7 +71,24 @@ class LocalSongMatchFields {
 /// 时长匹配的容差（秒）：不同音源对时长的取整方向不一样，±1 秒内算匹配。
 const int _durationToleranceSeconds = 1;
 
-bool _eq(String a, String b) => normalizeForMatch(a) == normalizeForMatch(b);
+/// 「其它」结果统一档位（排在最后）。
+const int _otherPriority = 12;
+
+/// 两个字段都**非空**且归一化后完全相等。
+///
+/// 专辑这类字段搜索结果经常为空：空 vs 空虽然「相等」，但没有任何信息量，
+/// 不能据此把一条无关结果提到第 1 / 2 档。
+bool _exactNonEmpty(String a, String b) {
+  final na = normalizeForMatch(a);
+  final nb = normalizeForMatch(b);
+  return na.isNotEmpty && nb.isNotEmpty && na == nb;
+}
+
+/// 双向包含：长字段包含短字段即算命中（任一侧为空都不算）。
+bool _containsEither(String a, String b) {
+  if (a.isEmpty || b.isEmpty) return false;
+  return a.contains(b) || b.contains(a);
+}
 
 bool _durationMatches(int candidate, int local) {
   return local > 0 &&
@@ -74,49 +96,54 @@ bool _durationMatches(int candidate, int local) {
       (candidate - local).abs() <= _durationToleranceSeconds;
 }
 
-/// 匹配定级：返回 (组, 级别)。
-///
-/// * 组 1 = 歌名**完全匹配**，按 歌手 → 时长 → 专辑 → 年份 逐遍收窄：
-///   级别 4 = 五字段全中；3 = 歌名+歌手+时长+专辑（年份✗）；
-///   2 = 歌名+歌手+时长（专辑✗）；1 = 歌名+歌手（时长✗）。
-/// * 组 0 = 歌名不完全匹配，按包含关系分档：
-///   档 2 = 歌名包含歌名且歌手包含歌手（新 1 级）；
-///   档 1 = 仅歌名包含歌名（含「歌名精确但歌手不匹配」的歌）。
-///
-/// 排序：组 1 在前（级别 4→1），组 0 在后（档 2→1）。
-(int, int) songMatchGroupAndLevel(Song candidate, LocalSongMatchFields local) {
-  final localTitle = normalizeForMatch(local.title);
-  final candidateTitle = normalizeForMatch(candidate.title);
-  final titleExact = localTitle.isNotEmpty && candidateTitle == localTitle;
-  final titleContains =
-      localTitle.isNotEmpty && candidateTitle.contains(localTitle);
-  final localArtist = normalizeForMatch(local.artist);
-  final candidateArtist = normalizeForMatch(candidate.artist);
-  final artistExact = localArtist.isNotEmpty && candidateArtist == localArtist;
-  final artistContains =
-      localArtist.isNotEmpty && candidateArtist.contains(localArtist);
-
-  // 歌名完全匹配：歌手 / 时长 / 专辑 / 年份 逐遍收窄。
-  if (titleExact) {
-    if (!artistExact) return (0, 2); // 歌名精确但歌手不匹配：按「歌名包含」垫底
-    if (!_durationMatches(candidate.duration, local.durationSeconds)) {
-      return (1, 2); // 2 级：歌名 + 歌手
-    }
-    if (!_eq(candidate.album, local.album)) return (1, 3); // 3 级：+ 时长
-    if (local.year > 0 && candidate.year == local.year) {
-      return (1, 5); // 5 级：+ 专辑 + 年份
-    }
-    return (1, 4); // 4 级：+ 专辑（年份✗）
-  }
-
-  // 歌名不完全相等：双包含 → 新 1 级；仅歌名包含 → 组 0 档 2；其它 → 档 1。
-  if (titleContains && artistContains) return (1, 1);
-  if (titleContains) return (0, 2);
-  return (0, 1);
+bool _yearMatches(int? candidateYear, int localYear) {
+  return localYear > 0 && candidateYear != null && candidateYear == localYear;
 }
 
-/// 按定级降序**稳定**排序（Dart 的 List.sort 不保证稳定，这里带上
-/// 原下标一起排，同级别保持插件返回的原顺序）。
+/// 匹配优先级：返回 1~12，数字越小越靠前（列表里越靠左）。
+///
+/// 规则见文件头注释；「包含」是双向的，所以「晴天」与「晴天Live」互相命中。
+int songMatchPriority(Song candidate, LocalSongMatchFields local) {
+  final localTitle = normalizeForMatch(local.title);
+  final candidateTitle = normalizeForMatch(candidate.title);
+  final localArtist = normalizeForMatch(local.artist);
+  final candidateArtist = normalizeForMatch(candidate.artist);
+
+  final titleExact = localTitle.isNotEmpty && candidateTitle == localTitle;
+  final artistExact = localArtist.isNotEmpty && candidateArtist == localArtist;
+  final titleContains = _containsEither(candidateTitle, localTitle);
+  final artistContains = _containsEither(candidateArtist, localArtist);
+
+  // 歌名既不相等也不互相包含：无论歌手多准都只能算「其它」。
+  if (!titleContains) return _otherPriority;
+
+  final durationOk = _durationMatches(
+    candidate.duration,
+    local.durationSeconds,
+  );
+
+  if (titleExact && artistExact) {
+    if (!durationOk) return 8;
+    final albumOk = _exactNonEmpty(candidate.album, local.album);
+    final yearOk = _yearMatches(candidate.year, local.year);
+    if (albumOk) return yearOk ? 1 : 2;
+    return yearOk ? 3 : 4;
+  }
+  if (titleExact && artistContains) {
+    return durationOk ? 5 : 9;
+  }
+  if (titleContains && artistExact) {
+    return durationOk ? 6 : 9;
+  }
+  if (titleContains && artistContains) {
+    return durationOk ? 7 : 9;
+  }
+  // 歌名命中但歌手既不精确也不包含。
+  return _otherPriority;
+}
+
+/// 按优先级升序**稳定**排序（Dart 的 List.sort 不保证稳定，这里带上
+/// 原下标一起排，同优先级保持插件返回的原顺序）。
 List<Song> sortSongsByMatchLevel(
   List<Song> results,
   LocalSongMatchFields local,
@@ -127,14 +154,12 @@ List<Song> sortSongsByMatchLevel(
           (
             index: i,
             song: results[i],
-            rank: songMatchGroupAndLevel(results[i], local),
+            priority: songMatchPriority(results[i], local),
           ),
       ]..sort((a, b) {
-        // 组 1（歌名完全匹配）在前、组 0 在后；组内级别 / 档位大的靠左。
-        final byGroup = b.rank.$1.compareTo(a.rank.$1);
-        if (byGroup != 0) return byGroup;
-        final byLevel = b.rank.$2.compareTo(a.rank.$2);
-        return byLevel != 0 ? byLevel : a.index.compareTo(b.index);
+        // 数字越小越靠左（第 1 优先级在最前）。
+        final byPriority = a.priority.compareTo(b.priority);
+        return byPriority != 0 ? byPriority : a.index.compareTo(b.index);
       });
   return [for (final entry in indexed) entry.song];
 }

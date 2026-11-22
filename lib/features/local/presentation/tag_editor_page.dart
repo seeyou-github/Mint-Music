@@ -1433,9 +1433,9 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
     );
   }
 
-  /// 按匹配级别（1~5，五字段全中最高、仅歌名最低）排到最前（横向列表的
-  /// 左侧），同级别保持原顺序——不隐藏任何结果，交给用户自己判断。
-  /// 定级规则见共享的 [songMatchLevel] / [sortSongsByMatchLevel]。
+  /// 按匹配优先级（1~12，五字段全中最高、其它最低）排到最前（横向列表的
+  /// 左侧），同优先级保持原顺序——不隐藏任何结果，交给用户自己判断。
+  /// 定级规则见共享的 [songMatchPriority] / [sortSongsByMatchLevel]。
   List<Song> _sortExactMatchesFirst(List<Song> results) {
     if (!_exactMatchActive) return results;
     return sortSongsByMatchLevel(results, _localMatchFields);
