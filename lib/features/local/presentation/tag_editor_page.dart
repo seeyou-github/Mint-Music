@@ -14,6 +14,7 @@ import '../../../core/theme/theme_provider.dart';
 import '../../../shared/services/cover_cache_service.dart';
 import '../../../shared/utils/song_match_score.dart';
 import '../../../shared/widgets/source_icon.dart';
+import '../../../shared/widgets/source_selector_row.dart';
 import '../../discover/application/search_providers.dart';
 import '../../download/domain/services/audio_tag_writer.dart';
 import '../../plugin/domain/plugin_types.dart';
@@ -1111,9 +1112,29 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
   /// 搜索框与音源按钮共用的高度。
   static const double _searchBarHeight = 44;
 
-  /// 搜索框右侧的音源切换按钮（与发现页搜索页的样式保持一致）。
+  /// Windows：平铺全部可选音源，点哪个就切到哪个并立刻重新搜索。
   ///
-  /// 按钮直接显示 [currentId] 这个音源的图标，用户一眼能看出当前在搜哪个音源。
+  /// 与「单按钮 + 菜单」相比少一次点击；音源多时这一行可横向滚动。
+  Widget _buildFlatSources(List<SourceInfo> sources, String currentId) {
+    if (sources.isEmpty) return const SizedBox(width: _searchBarHeight);
+    return SourceSelectorRow(
+      sources: sources,
+      selectedId: currentId,
+      size: _searchBarHeight,
+      onSelected: (id) {
+        if (id == currentId) return;
+        setState(() {
+          _searchSourceId = id;
+          _sourceChanged = true;
+        });
+        // 换音源后自动重新搜索一次（上次没结果也照样换源再搜）。
+        unawaited(_handleSearch());
+      },
+    );
+  }
+
+  /// 搜索框右侧的音源按钮（非 Windows）：直接显示 [currentId] 这个音源的
+  /// 图标，点开后再从菜单里选。
   Widget _buildSourceButton(
     ThemeColors colors,
     List<SourceInfo> sources,
@@ -1233,6 +1254,12 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
     List<SourceInfo> sources,
     String sourceId,
   ) {
+    // Windows：音源直接平铺，点一下即切源并重新搜索；其它平台仍用
+    // 「单按钮 + 弹出菜单」，避免手机窄屏被多个图标挤掉输入宽度。
+    final sourceSelector = Platform.isWindows
+        ? _buildFlatSources(sources, sourceId)
+        : _buildSourceButton(colors, sources, sourceId);
+
     if (_splitSearchFields) {
       return Column(
         children: [
@@ -1246,7 +1273,7 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
                 ),
               ),
               const SizedBox(width: AppSpacing.sm),
-              _buildSourceButton(colors, sources, sourceId),
+              sourceSelector,
             ],
           ),
           const SizedBox(height: AppSpacing.sm),
@@ -1279,7 +1306,7 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
         const SizedBox(width: AppSpacing.sm),
         _buildSearchButton(colors, sources),
         const SizedBox(width: AppSpacing.sm),
-        _buildSourceButton(colors, sources, sourceId),
+        sourceSelector,
       ],
     );
   }

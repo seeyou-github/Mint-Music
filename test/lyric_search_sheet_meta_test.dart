@@ -18,6 +18,7 @@ import 'package:mintmusic/features/player/presentation/widgets/lyric_search_shee
 import 'package:mintmusic/features/plugin/application/music_source_manager.dart';
 import 'package:mintmusic/features/plugin/application/plugin_providers.dart';
 import 'package:mintmusic/features/plugin/domain/plugin_types.dart';
+import 'package:mintmusic/shared/widgets/source_icon.dart';
 
 /// 假播放器 / 假音源：搜索结果带全字段（专辑 / 年份 / 时长）。
 class _MemoryAudioHandler implements MusicAudioHandler {
@@ -119,6 +120,22 @@ class _FakeSourceManager implements MusicSourceManager {
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+/// 记录每次搜索用的音源，用于验证「点平铺图标直接换源并重新搜索」。
+class _FakeSourceManagerRecording extends _FakeSourceManager {
+  final List<String> searchedSourceIds = [];
+
+  @override
+  Future<List<Song>> search(
+    String query, {
+    String sourceId = 'wy',
+    int page = 1,
+    int limit = 30,
+  }) {
+    searchedSourceIds.add(sourceId);
+    return super.search(query, sourceId: sourceId, page: page, limit: limit);
+  }
 }
 
 /// 搜索结果不带年份（只有专辑 id）：验证弹框会像编辑标签页那样补查年份。
@@ -362,4 +379,95 @@ void main() {
     // 两个不同专辑各查一次；同一专辑的重复候选不会重复请求。
     expect(sources.resolveCalls, 2);
   });
+
+  testWidgets(
+    'Windows：音源平铺成图标，点未选中的源直接切源并重新搜索',
+    (tester) async {
+      TestWidgetsFlutterBinding.ensureInitialized();
+      final audio = _MemoryAudioHandler();
+      final sources = _FakeSourceManagerRecording();
+      final controller = PlaybackController(
+        audio,
+        sources,
+        _NoIoAudioEffects(),
+      );
+      controller.getQualityForSource = (_) => '320k';
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+        await audio.dispose();
+      });
+
+      const sourceList = [
+        SourceInfo(id: 'wy@wy-test-1.9.0', name: '网易'),
+        SourceInfo(id: 'tx@tx-test-1.9.0', name: 'QQ'),
+        SourceInfo(id: 'kg@kg-test-1.9.0', name: '酷狗'),
+        SourceInfo(id: 'kw@kw-test-1.9.0', name: '酷我'),
+      ];
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            musicSourceManagerProvider.overrideWithValue(sources),
+            playbackControllerProvider.overrideWith((_) => controller),
+            searchSupportedSourcesProvider.overrideWithValue(sourceList),
+            themeColorsProvider.overrideWithValue(_colors()),
+          ],
+          child: L10n(
+            locale: AppLocale.zhCn,
+            child: MaterialApp(
+              home: Scaffold(
+                body: Center(
+                  child: Builder(
+                    builder: (context) {
+                      return TextButton(
+                        onPressed: () =>
+                            showLyricSearchSheet(context, song: _localSong()),
+                        child: const Text('open'),
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.runAsync(() async {
+        await tester.tap(find.text('open'));
+        await tester.pump();
+        await Future<void>.delayed(const Duration(milliseconds: 900));
+        await tester.pump();
+      });
+      await tester.pumpAndSettle(const Duration(milliseconds: 200));
+
+      // 四个音源全部平铺；原来的「切换音源」弹出菜单不再出现。
+      expect(find.byType(SourceIcon), findsNWidgets(4));
+      expect(find.byTooltip('切换音源'), findsNothing);
+      expect(sources.searchedSourceIds, ['wy@wy-test-1.9.0']);
+
+      // 点「酷我」：直接切到酷我并重新搜一次，不需要再点确认。
+      await tester.runAsync(() async {
+        await tester.tap(
+          find.byKey(const ValueKey('source_dot_kw@kw-test-1.9.0')),
+        );
+        await tester.pump();
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        await tester.pump();
+      });
+      await tester.pumpAndSettle(const Duration(milliseconds: 200));
+
+      expect(sources.searchedSourceIds, [
+        'wy@wy-test-1.9.0',
+        'kw@kw-test-1.9.0',
+      ]);
+
+      // 手动换过音源后，弹框 dispose 会用防抖 timer 保存「上次使用的音源」；
+      // 这里主动卸载并把时钟推过去，避免测试结束时留下 pending timer。
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(seconds: 1));
+    },
+    skip: !Platform.isWindows,
+  );
 }

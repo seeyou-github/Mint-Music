@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -11,6 +12,7 @@ import '../../../../core/theme/theme_provider.dart';
 import '../../../../shared/widgets/music_cover_image.dart';
 import '../../../../shared/utils/song_match_score.dart';
 import '../../../../shared/widgets/source_icon.dart';
+import '../../../../shared/widgets/source_selector_row.dart';
 import '../../../local/application/local_providers.dart';
 import '../../../plugin/application/music_source_manager.dart';
 import '../../../plugin/application/plugin_providers.dart';
@@ -465,11 +467,15 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
   /// 输入区高度：两个输入框和右侧的圆形按钮共用同一高度，右边缘才能对齐。
   static const double _barHeight = 42;
 
-  /// 搜索输入区：歌曲名 / 歌手名各占一行，右侧分别是音源切换与搜索按钮。
+  /// 搜索输入区：歌曲名 / 歌手名各占一行，右侧分别是音源与搜索按钮。
   ///
   /// 两个输入框并排放在一行时，弹层宽度下每个只剩一百多像素，长歌名会被截断；
   /// 改成「每行一个输入框 + 一个圆形按钮」后每个框都能占满整行宽度。
+  ///
+  /// Windows 上音源不用「单按钮 + 弹出菜单」，而是把各音源平铺在歌手行右侧，
+  /// 点一下直接切换并重新搜索（见 [_buildFlatSources]）。
   Widget _buildSearchArea(ThemeColors colors) {
+    final flatSources = Platform.isWindows;
     return Column(
       children: [
         Row(
@@ -483,7 +489,12 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
               ),
             ),
             const SizedBox(width: AppSpacing.sm),
-            _buildSourceButton(colors),
+            // 桌面端把搜索按钮放在歌曲行，音源图标平铺在下一行（和编辑标签
+            // 页的在线搜索一致）。
+            if (flatSources)
+              _buildSearchButton(colors)
+            else
+              _buildSourceButton(colors),
           ],
         ),
         const SizedBox(height: AppSpacing.sm),
@@ -498,7 +509,10 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
               ),
             ),
             const SizedBox(width: AppSpacing.sm),
-            _buildSearchButton(colors),
+            if (flatSources)
+              _buildFlatSources(colors)
+            else
+              _buildSearchButton(colors),
           ],
         ),
       ],
@@ -539,7 +553,29 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
     );
   }
 
-  /// 音源切换：圆形按钮，直接显示当前音源的图标（和搜索按钮同尺寸）。
+  /// Windows：音源图标平铺，点哪个就切到哪个并立刻重新搜索。
+  ///
+  /// 与「单选按钮 + 弹出菜单」相比少一次点击；音源多时这一行可横向滚动。
+  Widget _buildFlatSources(ThemeColors colors) {
+    final sources = ref.watch(searchSupportedSourcesProvider);
+    if (sources.isEmpty) return const SizedBox(width: _barHeight);
+    return SourceSelectorRow(
+      sources: sources,
+      selectedId: _sourceId,
+      size: _barHeight,
+      onSelected: (id) {
+        if (id == _sourceId) return;
+        setState(() {
+          _sourceId = id;
+          _sourceChanged = true;
+        });
+        unawaited(_search());
+      },
+    );
+  }
+
+  /// 音源切换（非 Windows）：圆形按钮，直接显示当前音源的图标，
+  /// 点开后再从菜单里选——手机宽度下放不下多个图标。
   Widget _buildSourceButton(ThemeColors colors) {
     final sources = ref.watch(searchSupportedSourcesProvider);
     if (sources.isEmpty) return const SizedBox(width: _barHeight);
@@ -607,7 +643,7 @@ class _LyricSearchSheetState extends ConsumerState<_LyricSearchSheet> {
     );
   }
 
-  /// 搜索按钮：和音源按钮同尺寸的圆形，便于两行输入框右边缘对齐。
+  /// 搜索按钮：和输入框同高的圆形（窄屏时与音源按钮同尺寸，右边缘对齐）。
   Widget _buildSearchButton(ThemeColors colors) {
     return GestureDetector(
       onTap: _searching ? null : () => unawaited(_search()),
