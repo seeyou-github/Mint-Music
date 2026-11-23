@@ -512,8 +512,11 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
             // Android：顶栏与分类栏之间的空白减半（顶栏自身的下内边距在
             // [_buildHeader] 里同步减半，两处加起来正好是原来的 50%）。
             // 歌单 / 榜单 / 电台三个分类共用这一层，所以同时生效。
+            // 桌面端同样按「减少 90%」压到 0.8。
             SizedBox(
-              height: Platform.isAndroid ? AppSpacing.sm / 2 : AppSpacing.sm,
+              height: Platform.isAndroid
+                  ? AppSpacing.sm / 2
+                  : AppSpacing.gapTight,
             ),
             Expanded(
               child: GestureDetector(
@@ -765,10 +768,12 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
       padding: EdgeInsets.only(
         left: ResponsiveLayout.horizontalPadding(context),
         right: ResponsiveLayout.horizontalPadding(context),
-        top: AppSpacing.md,
-        // Android：顶栏下沿到分类栏的空白减半（顶部状态栏留白不动）；
-        // 和 build 里同样减半的 SizedBox 加起来，整段间距正好是原来的 50%。
-        bottom: Platform.isAndroid ? AppSpacing.md / 2 : AppSpacing.md,
+        // 桌面端顶部留白按「减少 90%」压到 1.2；Android 有状态栏，仍用 md
+        // （下沿照旧减半）。
+        top: Platform.isAndroid ? AppSpacing.md : AppSpacing.pageTopTight,
+        bottom: Platform.isAndroid
+            ? AppSpacing.md / 2
+            : AppSpacing.pageTopTight,
       ),
       child: Row(
         children: [

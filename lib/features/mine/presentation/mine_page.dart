@@ -33,7 +33,8 @@ class MinePage extends ConsumerWidget {
         child: ListView(
           padding: EdgeInsets.fromLTRB(
             hPadding,
-            AppSpacing.md,
+            // 桌面端顶部留白按「减少 90%」压到 1.2；Android 有状态栏，保持 md。
+            Platform.isAndroid ? AppSpacing.md : AppSpacing.pageTopTight,
             hPadding,
             AppSpacing.miniPlayerHeight + AppSpacing.xxxl,
           ),
@@ -84,7 +85,12 @@ class MinePage extends ConsumerWidget {
                 ),
               ],
             ),
-            const SizedBox(height: AppSpacing.lg),
+            // 标题与第一组入口之间的间距：桌面端同样按「减少 90%」压到 0.8。
+            SizedBox(
+              height: Platform.isAndroid
+                  ? AppSpacing.lg
+                  : AppSpacing.gapTight,
+            ),
             // 每个入口单独一组（组与组之间留间距）
             _buildEntryGroup(context, colors, [
               _MineEntry(

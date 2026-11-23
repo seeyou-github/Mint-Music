@@ -10,6 +10,18 @@ class AppSpacing {
   static const double xxxl = 32.0;
   static const double huge = 48.0;
 
+  /// 桌面端一级页面（发现 / 收藏 / 本地 / 我的）顶部的垂直留白。
+  ///
+  /// 原来是 [md]（12）：窗口顶部到页面标题那一条空白太厚，按「减少 90%」
+  /// 压到 1.2。Android 顶部有状态栏，仍用 [md]。
+  static const double pageTopTight = 1.2;
+
+  /// 桌面端紧跟在顶部标题下面的行间距（原 [sm] 8，减少 90%）。
+  static const double gapTight = 0.8;
+
+  /// 侧栏 Logo 区上下的留白（原上下 16 / 24，减少 90%）。
+  static const double sidebarTopTight = 2.0;
+
   static const double miniPlayerHeight = 64.0;
   static const double bottomNavHeight = 56.0;
   static const double albumArtSmall = 48.0;

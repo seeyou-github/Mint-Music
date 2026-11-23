@@ -39,7 +39,9 @@ class LibraryPage extends ConsumerWidget {
         child: Column(
           children: [
             _buildHeader(context, colors, ref),
-            const SizedBox(height: AppSpacing.md),
+            SizedBox(
+              height: Platform.isAndroid ? AppSpacing.md : AppSpacing.gapTight,
+            ),
             Expanded(
               child: playlistsAsync.when(
                 data: (playlists) => playlists.isEmpty
@@ -68,9 +70,13 @@ class LibraryPage extends ConsumerWidget {
   /// 其中「新建歌单」紧挨在「导入」左边。
   Widget _buildHeader(BuildContext context, ThemeColors colors, WidgetRef ref) {
     final isTablet = ResponsiveLayout.isTablet(context);
+    // 桌面端顶部 / 下沿留白按「减少 90%」压到 1.2；Android 有状态栏，保持 md。
+    final verticalInset = Platform.isAndroid
+        ? AppSpacing.md
+        : AppSpacing.pageTopTight;
     final padding = EdgeInsets.symmetric(
       horizontal: ResponsiveLayout.horizontalPadding(context),
-      vertical: AppSpacing.md,
+      vertical: verticalInset,
     );
 
     if (Platform.isAndroid) {

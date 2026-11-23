@@ -7,6 +7,7 @@ import '../../core/constants/app_routes.dart';
 import '../../core/l10n/l10n.dart';
 import '../../core/router/app_router.dart';
 import '../../core/router/current_route_provider.dart';
+import '../../core/theme/app_spacing.dart';
 import '../../core/theme/theme_provider.dart';
 import '../../core/utils/responsive_layout.dart';
 import '../../features/player/presentation/sidebar_player.dart';
@@ -160,7 +161,14 @@ class AppSidebar extends ConsumerWidget {
             // Logo / App title
             if (isExpanded)
               Padding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+                // 顶部留白按「减少 90%」压到 2（原来是 16 / 24），页面标题
+                // 与窗口顶部之间不再空一大条。
+                padding: const EdgeInsets.fromLTRB(
+                  16,
+                  AppSpacing.sidebarTopTight,
+                  16,
+                  AppSpacing.sidebarTopTight,
+                ),
                 child: Row(
                   children: [
                     ClipRRect(
@@ -186,7 +194,11 @@ class AppSidebar extends ConsumerWidget {
               )
             else
               Padding(
-                padding: const EdgeInsets.only(top: 12, bottom: 24),
+                // 折叠态同样只留 2（原来是 12 / 24）。
+                padding: const EdgeInsets.only(
+                  top: AppSpacing.sidebarTopTight,
+                  bottom: AppSpacing.sidebarTopTight,
+                ),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(10),
                   child: Image.asset(

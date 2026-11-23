@@ -351,7 +351,11 @@ class _LocalPageState extends ConsumerState<LocalPage>
                         )
                       else ...[
                         _buildFolderBar(colors, songs, scanProgress),
-                        const SizedBox(height: AppSpacing.sm),
+                        SizedBox(
+                          height: Platform.isAndroid
+                              ? AppSpacing.sm
+                              : AppSpacing.gapTight,
+                        ),
                       ],
                       Expanded(
                         child: GestureDetector(
@@ -467,10 +471,14 @@ class _LocalPageState extends ConsumerState<LocalPage>
   Widget _buildHeader(ThemeColors colors, ScanProgress scanProgress) {
     final isTablet = ResponsiveLayout.isTablet(context);
     final compactHeader = Platform.isAndroid;
+    // 桌面端顶部 / 下沿留白按「减少 90%」压到 1.2；Android 有状态栏，保持 md。
+    final verticalInset = compactHeader
+        ? AppSpacing.md
+        : AppSpacing.pageTopTight;
     return Padding(
       padding: EdgeInsets.symmetric(
         horizontal: ResponsiveLayout.horizontalPadding(context),
-        vertical: AppSpacing.md,
+        vertical: verticalInset,
       ),
       child: Row(
         children: [
