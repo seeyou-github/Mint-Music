@@ -420,18 +420,13 @@ class _RadioEditPageState extends ConsumerState<RadioEditPage> {
     );
   }
 
-  /// 编辑页展示封面用：本地封面优先取 AppData 里的缓存副本。
+  /// 编辑页展示封面用：直接取 [RadioStation.displayCover]（缓存副本优先）。
   ///
-  /// 旧数据 / 同步来的电台，`coverUrl` 可能是另一台设备的原始路径，
-  /// 直接用它预览会显示不出来。
-  String _initialCoverSource() {
-    final station = widget.station;
-    final url = station?.coverUrl.trim() ?? '';
-    if (url.isEmpty) return '';
-    if (url.startsWith('http')) return url;
-    final cached = station?.coverPath?.trim() ?? '';
-    return cached.isNotEmpty ? cached : url;
-  }
+  /// 不能只看 `coverUrl`：旧数据 / 同步来的电台可能只落下了 `coverPath`
+  /// （`coverUrl` 是空的），或者 `coverUrl` 还指向另一台设备的原始路径。
+  /// 只看 `coverUrl` 会判成「没设封面」，于是这里显示默认电台封面，明明
+  /// 电台卡片上已经有自定义封面。
+  String _initialCoverSource() => widget.station?.displayCover.trim() ?? '';
 
   Future<void> _pickLocalCover() async {
     final file = await pickImageFile();
