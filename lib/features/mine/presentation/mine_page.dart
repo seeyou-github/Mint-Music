@@ -9,7 +9,6 @@ import '../../../core/l10n/l10n.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
-import '../../settings/application/settings_providers.dart';
 
 /// 「我的」一级页面。
 ///
@@ -24,8 +23,6 @@ class MinePage extends ConsumerWidget {
     final isTablet = ResponsiveLayout.isTablet(context);
     final hPadding = ResponsiveLayout.horizontalPadding(context);
 
-    final versionAsync = ref.watch(appVersionProvider);
-
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: SafeArea(
@@ -39,63 +36,40 @@ class MinePage extends ConsumerWidget {
             AppSpacing.miniPlayerHeight + AppSpacing.xxxl,
           ),
           children: [
-            Row(
-              // 版本号在右上角，与标题顶部对齐。
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Windows：不再显示「我的」标题和主色竖条（左侧导航已经标明
-                // 当前分类），只把版本号留在右上角。
-                if (Platform.isWindows)
-                  const Spacer()
-                else
+            // Windows：不再显示「我的」标题和主色竖条（左侧导航已经标明
+            // 当前分类）。版本号已移到「设置」页右上角，这里不再显示。
+            if (!Platform.isWindows) ...[
+              Row(
+                children: [
+                  // 主色竖条：与本地页 / 收藏页标题同款。
+                  Container(
+                    width: 4,
+                    height: 24,
+                    decoration: BoxDecoration(
+                      color: colors.primary,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  const SizedBox(width: AppSpacing.md),
                   Expanded(
-                    child: Row(
-                      children: [
-                        // 主色竖条：与本地页 / 收藏页标题同款。
-                        Container(
-                          width: 4,
-                          height: 24,
-                          decoration: BoxDecoration(
-                            color: colors.primary,
-                            borderRadius: BorderRadius.circular(2),
-                          ),
-                        ),
-                        const SizedBox(width: AppSpacing.md),
-                        Expanded(
-                          child: Text(
-                            context.tr('我的'),
-                            style: TextStyle(
-                              fontSize: isTablet ? 26 : 22,
-                              fontWeight: FontWeight.bold,
-                              color: colors.textPrimary,
-                            ),
-                          ),
-                        ),
-                      ],
+                    child: Text(
+                      context.tr('我的'),
+                      style: TextStyle(
+                        fontSize: isTablet ? 26 : 22,
+                        fontWeight: FontWeight.bold,
+                        color: colors.textPrimary,
+                      ),
                     ),
                   ),
-                // 应用版本号（Windows / Android 上是构建时间）放在标题栏右侧，
-                // 颜色跟随「设置 → 外观设置 → 字体颜色」。
-                versionAsync.when(
-                  data: (version) => Text(
-                    version,
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                      color: colors.textPrimary,
-                    ),
-                  ),
-                  loading: () => const SizedBox.shrink(),
-                  error: (_, __) => const SizedBox.shrink(),
-                ),
-              ],
-            ),
-            // 标题与第一组入口之间的间距：桌面端同样按「减少 90%」压到 0.8。
-            SizedBox(
-              height: Platform.isAndroid
-                  ? AppSpacing.lg
-                  : AppSpacing.gapTight,
-            ),
+                ],
+              ),
+              // 标题与第一组入口之间的间距：桌面端同样按「减少 90%」压到 0.8。
+              SizedBox(
+                height: Platform.isAndroid
+                    ? AppSpacing.lg
+                    : AppSpacing.gapTight,
+              ),
+            ],
             // 每个入口单独一组（组与组之间留间距）
             _buildEntryGroup(context, colors, [
               _MineEntry(

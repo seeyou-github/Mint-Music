@@ -515,6 +515,21 @@ class _SettingsPageState extends ConsumerState<SettingsPage>
               color: colors.textPrimary,
             ),
           ),
+          const Spacer(),
+          // 应用版本号（Windows / Android 上是构建时间）靠右，颜色跟随
+          // 「设置 → 外观设置 → 字体颜色」。
+          ref.watch(appVersionProvider).when(
+            data: (version) => Text(
+              version,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: colors.textPrimary,
+              ),
+            ),
+            loading: () => const SizedBox.shrink(),
+            error: (_, __) => const SizedBox.shrink(),
+          ),
         ],
       ),
     );
