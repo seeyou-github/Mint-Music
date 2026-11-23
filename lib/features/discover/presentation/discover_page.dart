@@ -512,11 +512,11 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
             // Android：顶栏与分类栏之间的空白减半（顶栏自身的下内边距在
             // [_buildHeader] 里同步减半，两处加起来正好是原来的 50%）。
             // 歌单 / 榜单 / 电台三个分类共用这一层，所以同时生效。
-            // 桌面端同样按「减少 90%」压到 0.8。
+            // 桌面端：顶栏下沿（4）+ 这里（8）= 12，两行不再贴在一起。
             SizedBox(
               height: Platform.isAndroid
                   ? AppSpacing.sm / 2
-                  : AppSpacing.gapTight,
+                  : AppSpacing.sm,
             ),
             Expanded(
               child: GestureDetector(
@@ -769,11 +769,10 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
         left: ResponsiveLayout.horizontalPadding(context),
         right: ResponsiveLayout.horizontalPadding(context),
         // 桌面端顶部留白按「减少 90%」压到 1.2；Android 有状态栏，仍用 md
-        // （下沿照旧减半）。
+        // （下沿照旧减半）。下沿留 4：与下面分类栏之间要留出可辨识的呼吸感
+        // （再加 SizedBox 的 8，两行之间共 12）。
         top: Platform.isAndroid ? AppSpacing.md : AppSpacing.pageTopTight,
-        bottom: Platform.isAndroid
-            ? AppSpacing.md / 2
-            : AppSpacing.pageTopTight,
+        bottom: Platform.isAndroid ? AppSpacing.md / 2 : AppSpacing.xs,
       ),
       child: Row(
         children: [
@@ -1018,10 +1017,10 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage>
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.lg,
-          vertical: AppSpacing.sm,
-        ),
+        // 高度与搜索框 / 音源圆钮一致（40），三颗胶囊并排时上下沿对齐。
+        height: _searchBarHeight,
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+        alignment: Alignment.center,
         decoration: isActive
             // 激活态与侧栏「发现」一致：底色把主题色调暗一档，文字用主题色。
             ? activeChipDecoration(

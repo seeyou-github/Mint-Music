@@ -66,7 +66,8 @@ class LibraryPage extends ConsumerWidget {
   ///
   /// Android：不显示「我的收藏」标题（底部导航已经标明当前是收藏分类），
   /// 新建歌单靠左、导入 / 同步靠右。
-  /// 桌面（Windows 等）：保留左侧「我的收藏」标题，操作按钮整组靠右，
+  /// Windows：同样不显示标题和主色竖条（左侧导航已经标明分类），按钮整组靠右。
+  /// 其它桌面平台：保留左侧「我的收藏」标题，操作按钮整组靠右，
   /// 其中「新建歌单」紧挨在「导入」左边。
   Widget _buildHeader(BuildContext context, ThemeColors colors, WidgetRef ref) {
     final isTablet = ResponsiveLayout.isTablet(context);
@@ -86,6 +87,24 @@ class LibraryPage extends ConsumerWidget {
           children: [
             _buildCreateButton(context, colors),
             const Spacer(),
+            _buildImportButton(context, colors, ref),
+            const SizedBox(width: AppSpacing.sm),
+            const PlaylistSyncButton(compact: true),
+          ],
+        ),
+      );
+    }
+
+    // Windows：顶部不再显示「我的收藏」标题和主色竖条（左侧导航已经标明当前
+    // 分类，标题纯属重复），只保留右侧操作按钮。
+    if (Platform.isWindows) {
+      return Padding(
+        padding: padding,
+        child: Row(
+          children: [
+            const Spacer(),
+            _buildCreateButton(context, colors),
+            const SizedBox(width: AppSpacing.sm),
             _buildImportButton(context, colors, ref),
             const SizedBox(width: AppSpacing.sm),
             const PlaylistSyncButton(compact: true),

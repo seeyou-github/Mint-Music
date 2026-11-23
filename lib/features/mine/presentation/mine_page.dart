@@ -43,32 +43,37 @@ class MinePage extends ConsumerWidget {
               // 版本号在右上角，与标题顶部对齐。
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(
-                  child: Row(
-                    children: [
-                      // 主色竖条：与本地页 / 收藏页标题同款。
-                      Container(
-                        width: 4,
-                        height: 24,
-                        decoration: BoxDecoration(
-                          color: colors.primary,
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                      ),
-                      const SizedBox(width: AppSpacing.md),
-                      Expanded(
-                        child: Text(
-                          context.tr('我的'),
-                          style: TextStyle(
-                            fontSize: isTablet ? 26 : 22,
-                            fontWeight: FontWeight.bold,
-                            color: colors.textPrimary,
+                // Windows：不再显示「我的」标题和主色竖条（左侧导航已经标明
+                // 当前分类），只把版本号留在右上角。
+                if (Platform.isWindows)
+                  const Spacer()
+                else
+                  Expanded(
+                    child: Row(
+                      children: [
+                        // 主色竖条：与本地页 / 收藏页标题同款。
+                        Container(
+                          width: 4,
+                          height: 24,
+                          decoration: BoxDecoration(
+                            color: colors.primary,
+                            borderRadius: BorderRadius.circular(2),
                           ),
                         ),
-                      ),
-                    ],
+                        const SizedBox(width: AppSpacing.md),
+                        Expanded(
+                          child: Text(
+                            context.tr('我的'),
+                            style: TextStyle(
+                              fontSize: isTablet ? 26 : 22,
+                              fontWeight: FontWeight.bold,
+                              color: colors.textPrimary,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
                 // 应用版本号（Windows / Android 上是构建时间）放在标题栏右侧，
                 // 颜色跟随「设置 → 外观设置 → 字体颜色」。
                 versionAsync.when(

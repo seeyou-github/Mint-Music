@@ -466,11 +466,14 @@ class _LocalPageState extends ConsumerState<LocalPage>
   ///
   /// 平台区分（提交 8c8ec43 的「隐藏标题、搜索框占满」只保留在 Android）：
   /// - Android：底部导航已标明「本地」，不显示标题，搜索框靠左铺满整行；
-  /// - Windows / 桌面：还原旧版——保留「本地音乐」标题，搜索框靠右、
-  ///   最大宽度 300（平板 420），不横跨整个窗口。
+  /// - Windows：同样不显示「本地音乐」标题与主色竖条（左侧导航已标明分类），
+  ///   搜索框靠右、最大宽度 300（平板 420），不横跨整个窗口；
+  /// - 其它桌面平台：保留标题，搜索框靠右。
   Widget _buildHeader(ThemeColors colors, ScanProgress scanProgress) {
     final isTablet = ResponsiveLayout.isTablet(context);
     final compactHeader = Platform.isAndroid;
+    // Windows 也不显示标题，搜索框的靠左 / 靠右与最大宽度仍按桌面规则走。
+    final hideTitle = compactHeader || Platform.isWindows;
     // 桌面端顶部 / 下沿留白按「减少 90%」压到 1.2；Android 有状态栏，保持 md。
     final verticalInset = compactHeader
         ? AppSpacing.md
@@ -482,7 +485,7 @@ class _LocalPageState extends ConsumerState<LocalPage>
       ),
       child: Row(
         children: [
-          if (!compactHeader) ...[
+          if (!hideTitle) ...[
             Container(
               width: 4,
               height: 24,
