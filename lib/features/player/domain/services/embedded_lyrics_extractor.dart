@@ -35,8 +35,10 @@ class EmbeddedLyricsExtractor {
           ext.endsWith('.mp4') ||
           ext.endsWith('.aac') ||
           ext.endsWith('.ogg') ||
-          ext.endsWith('.oga')) {
-        // 这些格式 readLyrics 已覆盖（USLT / TXXX / ©lyr / Vorbis），
+          ext.endsWith('.oga') ||
+          ext.endsWith('.webm') ||
+          ext.endsWith('.weba')) {
+        // 这些格式 readLyrics 已覆盖（USLT / TXXX / ©lyr / Vorbis / WebM Tags），
         // 没读到就是文件里确实没有歌词，不必再扫一遍。
         debugPrint('EmbeddedLyricsExtractor: no embedded lyrics found');
         return null;

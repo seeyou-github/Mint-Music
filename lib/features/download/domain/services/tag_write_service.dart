@@ -64,6 +64,26 @@ class TagWriteService {
     }
   }
 
+  /// 这些格式能不能把封面写进去（是否把封面写进音频文件**本身**的另一半）。
+  ///
+  /// 与 [supportsEmbeddedTags] 的区别：webm / weba 能写标签和歌词（EBML 的
+  /// Tags 元素），但 WebM 规范不支持附件，封面写不进去；aac / 桌面端的
+  /// ogg、wma 等更是两样都不行。
+  static bool supportsEmbeddedArtwork(String filePath) {
+    if (AudioTagWriter.supportsArtwork(filePath)) return true;
+    if (_nativeChannelAvailable == false) return false;
+    if (kIsWeb) return false;
+    final ext = _extOf(filePath);
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.android:
+        return _androidNativeExts.contains(ext);
+      case TargetPlatform.iOS:
+        return _iosNativeExts.contains(ext);
+      default:
+        return false;
+    }
+  }
+
   /// 标签写入结果：true 表示封面已成功写入（或本次不要求写封面）。
   ///
   /// 封面失败时下载列表会给出提示，但歌曲本身的下载状态仍然是成功。
@@ -96,13 +116,16 @@ class TagWriteService {
 
     final baseName = _baseNameWithoutExt(songPath);
     final dirName = file.parent.path;
+    // 这个格式能不能把封面写进文件（webm / weba 只能写标签和歌词）：
+    // 写不进去就不下载、也不留一张同名单图。
+    final canEmbedArtwork = supportsEmbeddedArtwork(songPath);
     String? coverPath;
     Uint8List? coverBytes;
     // 标签是否已成功写入文件（原生实现或纯 Dart 兜底）。
     bool embedded = false;
 
     try {
-      if (cover) {
+      if (cover && canEmbedArtwork) {
         // 候选地址：歌曲自带的封面 + 额外传入的地址（歌曲自带 / 高清封面），
         // 任一能下载成功即可。
         final candidates = <String>[];

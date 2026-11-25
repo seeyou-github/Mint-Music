@@ -12,7 +12,9 @@ import '../../../download/domain/services/audio_tag_writer.dart';
 /// * `.mp3` → ID3v2 的 `USLT`（无标签时新建 v2.3 标签）；
 /// * `.flac` → Vorbis comment 的 `LYRICS`；
 /// * `.m4a` / `.mp4` → `moov/udta/meta/ilst` 的 `©lyr`（委托
-///   [AudioTagWriter]，与标签编辑页共用同一套 MP4 写入逻辑）。
+///   [AudioTagWriter]，与标签编辑页共用同一套 MP4 写入逻辑）；
+/// * `.webm` / `.weba` → `Segment > Tags` 的 `LYRICS`（同样委托
+///   [AudioTagWriter]，只往文件尾追加，不动音频数据）。
 ///
 /// 其它容器（ogg / ape / wav / aac …）暂不支持，返回 false 由调用方提示。
 ///
@@ -41,6 +43,11 @@ class EmbeddedLyricsWriter {
       if (lower.endsWith('.m4a') || lower.endsWith('.mp4')) {
         // MP4 的 moov 重建（含 stco 偏移修正）只在 AudioTagWriter 里实现，
         // 这里直接复用，避免两套 MP4 写入逻辑各自跑偏。
+        return AudioTagWriter.write(filePath, lyrics: text);
+      }
+      if (lower.endsWith('.webm') || lower.endsWith('.weba')) {
+        // WebM 的歌词就是 `Tags > SimpleTag` 里的 LYRICS，同样走统一写入器
+        // （尾部追加 Tags + 原地修补 Segment 长度，不搬动音频数据）。
         return AudioTagWriter.write(filePath, lyrics: text);
       }
       debugPrint('[EmbeddedLyricsWriter] 不支持的格式: $filePath');

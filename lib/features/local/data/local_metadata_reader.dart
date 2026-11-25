@@ -4,6 +4,8 @@ import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 
+import '../../../shared/utils/webm_tags.dart';
+
 /// 本地音乐文件的元信息。
 class LocalAudioMetadata {
   final String? title;
@@ -58,7 +60,8 @@ class LocalAudioMetadata {
 /// * FLAC → STREAMINFO 时长 + Vorbis Comment + PICTURE 封面；
 /// * M4A/MP4 → `moov/udta/meta/ilst` 标签 + `mvhd` 时长；
 /// * WAV → `fmt `/`data` 块计算时长 + `LIST/INFO` 标签；
-/// * OGG → Vorbis Comment + 末页 granule 计算时长。
+/// * OGG → Vorbis Comment + 末页 granule 计算时长；
+/// * WebM / WebA → Info 的时长 + `Tags` 里的标题 / 歌手 / 专辑 / 歌词。
 class LocalMetadataReader {
   LocalMetadataReader._();
 
@@ -158,6 +161,8 @@ class LocalMetadataReader {
           '.flac' => await _readFlac(raf, length, lyricsOnly: true),
           '.m4a' || '.mp4' || '.aac' => await _readMp4(raf, length),
           '.ogg' || '.oga' => await _readOgg(raf, length),
+          // WebM / WebA 的歌词也是 Tags 里的 SimpleTag，和标签同一次读。
+          '.webm' || '.weba' => await _readWebm(raf, length),
           _ => const LocalAudioMetadata(),
         };
         final text = metadata.lyrics?.trim() ?? '';
@@ -1112,9 +1117,6 @@ class LocalMetadataReader {
 
   // ==================== WebM / WebA（EBML 容器） ====================
 
-  // EBML 元素 ID（Matroska 规范）。
-  static const int _ebmlIdSegment = 0x18538067;
-  static const int _ebmlIdInfo = 0x1549A966;
   static const int _ebmlIdTimecodeScale = 0x2AD7B1;
   static const int _ebmlIdDuration = 0x4489;
   static const int _ebmlIdTitle = 0x7BA9;
@@ -1123,13 +1125,17 @@ class LocalMetadataReader {
   /// 按顺序扫到 Duration 就收工。
   static const int _maxInfoLeaves = 16;
 
-  /// 读取 WebM / WebA 的时长与标题。
+  /// 读取 WebM / WebA 的标签 / 歌词 / 时长（Info 里的标题作为兜底）。
   ///
-  /// WebM 是 EBML 容器：顶层找 Segment → 跳过 SeekHead 等 → Info，在 Info
-  /// 里读 TimecodeScale（时间单位，默认 1ms）+ Duration（按 scale 计的时长）+
-  /// Title。文件可能几百 MB（一小时的视频），全部走「定位 + 少量读」，
-  /// 绝不整段读进来；Info 排在 Segment 开头附近，通常在文件开头几十 KB 内
-  /// 就能拿到，扫不到就放弃（返回空结果，界面用文件名兜底）。
+  /// WebM 是 EBML 容器：顶层找 Segment，再顺次读 Segment 的子元素——
+  /// `Info`（TimecodeScale + Duration + Title）与 `Tags`（TITLE / ARTIST /
+  /// ALBUM / LYRICS 等 SimpleTag，见 [WebmTags]）。标签一般在 Cluster 之前
+  /// （ffmpeg / mkvmerge / yt-dlp 写的位置），踩到 Cluster 就停；前段没有
+  /// 再扫文件尾（编辑标签页写入的标签追加在末尾）。
+  ///
+  /// 文件可能几百 MB（一小时的视频），全部走「定位 + 少量读」，绝不整段
+  /// 读进来；Info 排在 Segment 开头附近，通常在文件开头几十 KB 内就能拿到，
+  /// 扫不到就放弃（返回空结果，界面用文件名兜底）。
   static Future<LocalAudioMetadata> _readWebm(
     RandomAccessFile raf,
     int fileLength,
@@ -1137,134 +1143,123 @@ class LocalMetadataReader {
     var pos = 0;
     var guard = 0;
     while (pos < fileLength && guard++ < 32) {
-      final top = await _readEbmlHead(raf, pos);
+      final top = await WebmEbml.headAt(raf, pos);
       if (top == null) return const LocalAudioMetadata();
-      final next = top.unknownSize ? top.dataPos : top.dataPos + top.size;
-      if (top.id != _ebmlIdSegment) {
+      final next = top.unknownSize ? top.dataPos : top.end;
+      if (top.id != WebmEbml.idSegment) {
         // EBML header 等其它顶层元素：跳过。
         if (next <= pos) return const LocalAudioMetadata();
         pos = next;
         continue;
       }
 
-      // 进了 Segment：找 Info。SeekHead / Void 这类元数据元素可能排在
-      // Info 前面（YouTube 封装的 webm 就是 SeekHead 打头），跳过继续找；
-      // 撞到 Tracks / Cluster 还没见到 Info，说明这个 Segment 没有 Info。
-      final segmentEnd = top.unknownSize ? fileLength : top.dataPos + top.size;
+      // 进了 Segment：找 Info 与 Tags。
+      final segmentEnd = top.unknownSize ? fileLength : top.end;
+      int? durationMs;
+      String? infoTitle;
+      final tags = <(String, String)>[];
+
       var inner = top.dataPos;
       var innerGuard = 0;
-      while (inner < segmentEnd && innerGuard++ < 32) {
-        final child = await _readEbmlHead(raf, inner);
-        if (child == null) return const LocalAudioMetadata();
-        if (child.id != _ebmlIdInfo) {
-          if (child.id == 0x1654AE6B /* Tracks */ ||
-              child.id == 0x1F43B675 /* Cluster */ ) {
-            break;
-          }
-          final nextInner = child.unknownSize
-              ? segmentEnd
-              : child.dataPos + child.size;
-          if (nextInner <= inner) return const LocalAudioMetadata();
-          inner = nextInner;
-          continue;
+      while (inner < segmentEnd && innerGuard++ < 128) {
+        final child = await WebmEbml.headAt(raf, inner);
+        if (child == null) break;
+        // 撞到 Cluster 说明元数据区已经结束，尾部另扫。
+        if (child.id == WebmEbml.idCluster) break;
+        final childEnd = child.unknownSize ? segmentEnd : child.end;
+        if (childEnd <= inner) break;
+        if (child.id == WebmEbml.idInfo && !child.unknownSize) {
+          final info = await _readWebmInfo(raf, child.dataPos, childEnd);
+          durationMs = info.durationMs;
+          infoTitle = info.title;
+        } else if (child.id == WebmEbml.idTags && !child.unknownSize) {
+          tags.addAll(
+            await WebmTags.readElement(raf, child.dataPos, child.size),
+          );
         }
-        final infoEnd = child.unknownSize
-            ? segmentEnd
-            : child.dataPos + child.size;
-        var leaf = child.dataPos;
-        var leafGuard = 0;
-        int? durationMs;
-        String? title;
-        var scaleNs = 1000000; // TimecodeScale 默认值 1ms
-        while (leaf < infoEnd && leafGuard++ < _maxInfoLeaves) {
-          final item = await _readEbmlHead(raf, leaf);
-          if (item == null) break;
-          // 大小合法性交给各字段自己的读取函数校验（TimecodeScale / Duration
-          // 有固定字节数，Title 可到几 KB，统一卡 ≤8 会把 Title 挡掉）。
-          if (!item.unknownSize && item.size > 0) {
-            switch (item.id) {
-              case _ebmlIdTimecodeScale:
-                final value = await _readEbmlUint(raf, item.dataPos, item.size);
-                if (value != null && value > 0) scaleNs = value;
-              case _ebmlIdDuration:
-                final value = await _readEbmlFloat(
-                  raf,
-                  item.dataPos,
-                  item.size,
-                );
-                if (value != null) {
-                  durationMs = (value * scaleNs / 1000000).round();
-                }
-              case _ebmlIdTitle:
-                title = await _readEbmlUtf8(raf, item.dataPos, item.size);
-            }
-          }
-          final nextLeaf = item.unknownSize
-              ? infoEnd
-              : item.dataPos + item.size;
-          if (nextLeaf <= leaf) break;
-          leaf = nextLeaf;
-        }
-        return LocalAudioMetadata(
-          title: (title?.isNotEmpty ?? false) ? title : null,
-          durationSeconds: durationMs == null ? null : durationMs ~/ 1000,
-          durationMs: durationMs,
-        );
+        inner = childEnd;
       }
-      return const LocalAudioMetadata();
+
+      if (tags.isEmpty) {
+        final tail = await WebmTags.findAtTail(
+          raf,
+          segmentDataPos: top.dataPos,
+          end: segmentEnd,
+        );
+        if (tail != null) {
+          tags.addAll(await WebmTags.readElement(raf, tail.dataPos, tail.size));
+        }
+      }
+
+      final tagMap = WebmTags.toMap(tags);
+      return LocalAudioMetadata(
+        title: _firstNonEmptyText([tagMap['TITLE'], infoTitle]),
+        artist: _firstNonEmptyText([tagMap['ARTIST'], tagMap['ALBUM_ARTIST']]),
+        album: _firstNonEmptyText([tagMap['ALBUM']]),
+        year: _parseYear(
+          tagMap['DATE'] ?? tagMap['YEAR'] ?? tagMap['ORIGINALDATE'],
+        ),
+        durationSeconds: durationMs == null ? null : durationMs ~/ 1000,
+        durationMs: durationMs,
+        lyrics: _firstNonEmptyText([
+          tagMap['LYRICS'],
+          tagMap['LYRIC'],
+          tagMap['UNSYNCEDLYRICS'],
+        ]),
+        genre: _firstNonEmptyText([tagMap['GENRE']]),
+        comment: _firstNonEmptyText([
+          tagMap['COMMENT'],
+          tagMap['DESCRIPTION'],
+          tagMap['COMMENTS'],
+        ]),
+      );
     }
     return const LocalAudioMetadata();
   }
 
-  /// 读一个 EBML 元素头：返回 (ID, payload 大小, payload 起始位置, 是否未知大小)。
-  ///
-  /// ID 和 Size 用同一条可变长规则（见 [_vintLength]）：ID 的长度标志位是
-  /// ID 值的一部分，Size 的标志位不参与数值；Size 的所有数据位全 1 表示
-  /// 「大小未知」（流式封装的 Segment / Cluster 常见）。
-  static Future<({int id, int size, int dataPos, bool unknownSize})?>
-  _readEbmlHead(RandomAccessFile raf, int pos) async {
-    // ID 最长 4 字节、大小最长 8 字节；靠近文件尾可能读不满 12 字节，
-    // 只要够 ID + 大小头用就行（[_readAt] 返回实际读到的字节）。
-    final head = await _readAt(raf, pos, 12);
-    if (head == null || head.isEmpty) return null;
-    final idLength = _vintLength(head[0]);
-    if (idLength == null || head.length < idLength) return null;
-    var id = 0;
-    for (var i = 0; i < idLength; i++) {
-      id = (id << 8) | head[i];
+  /// 读 Info 元素：TimecodeScale + Duration → 毫秒时长，Title → 标题兜底。
+  static Future<({int? durationMs, String? title})> _readWebmInfo(
+    RandomAccessFile raf,
+    int start,
+    int end,
+  ) async {
+    int? durationMs;
+    String? title;
+    var scaleNs = 1000000; // TimecodeScale 默认值 1ms
+    var leaf = start;
+    var guard = 0;
+    while (leaf < end && guard++ < _maxInfoLeaves) {
+      final item = await WebmEbml.headAt(raf, leaf);
+      if (item == null || item.unknownSize) break;
+      final itemEnd = item.end;
+      if (itemEnd > end || itemEnd <= leaf) break;
+      // 大小合法性交给各字段自己的读取函数校验（TimecodeScale / Duration
+      // 有固定字节数，Title 可到几 KB，统一卡 ≤8 会把 Title 挡掉）。
+      if (item.size > 0) {
+        switch (item.id) {
+          case _ebmlIdTimecodeScale:
+            final value = await _readEbmlUint(raf, item.dataPos, item.size);
+            if (value != null && value > 0) scaleNs = value;
+          case _ebmlIdDuration:
+            final value = await _readEbmlFloat(raf, item.dataPos, item.size);
+            if (value != null) {
+              durationMs = (value * scaleNs / 1000000).round();
+            }
+          case _ebmlIdTitle:
+            title = await _readEbmlUtf8(raf, item.dataPos, item.size);
+        }
+      }
+      leaf = itemEnd;
     }
-    final offset = idLength;
-    if (offset >= head.length) return null;
-    final sizeLength = _vintLength(head[offset]);
-    if (sizeLength == null || head.length < offset + sizeLength) return null;
-    var size = head[offset] & ((1 << (8 - sizeLength)) - 1);
-    for (var i = 1; i < sizeLength; i++) {
-      size = (size << 8) | head[offset + i];
-    }
-    // 数据位共 7N 个（首字节的标志位 1 个 + 高位 0 填充的 N-1 个不算），
-    // 全 1 = 大小未知。
-    final unknown = size == (1 << (7 * sizeLength)) - 1;
-    return (
-      id: id,
-      size: unknown ? 0 : size,
-      dataPos: pos + idLength + sizeLength,
-      unknownSize: unknown,
-    );
+    return (durationMs: durationMs, title: title);
   }
 
-  /// EBML 可变长整数（ID 与 Size 通用）首字节 → 总字节数。
-  ///
-  /// 从最高位往下扫，第一个 1 的位置 p（0 起算）→ 总长 p + 1 字节：
-  /// 0x80~0xFF → 1 字节、0x40~0x7F → 2 字节 …… 0x01 → 8 字节。
-  /// ID 的长度标志位是 ID 值的一部分（0x1A45DFA3 首字节 0x1A → 4 字节）；
-  /// Size 的标志位不参与数值。首字节为 0（非法）返回 null。
-  static int? _vintLength(int first) {
-    if (first == 0) return null;
-    var length = 1;
-    for (var mask = 0x80; (first & mask) == 0 && length <= 8; mask >>= 1) {
-      length++;
+  /// 取第一个非空白的值（标签里空字符串等同没有）。
+  static String? _firstNonEmptyText(List<String?> values) {
+    for (final value in values) {
+      if (value != null && value.trim().isNotEmpty) return value;
     }
-    return length > 8 ? null : length;
+    return null;
   }
 
   static Future<int?> _readEbmlUint(
