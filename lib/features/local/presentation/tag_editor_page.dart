@@ -844,7 +844,7 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
     final song = _song;
     final path = song?.filePath;
     if (song == null || path == null || path.isEmpty) return;
-    // WebM / WebA 这类容器放不下封面（规范不支持附件）：直接说明，
+    // 少数容器（aac / wav / 桌面端的 ogg 等）放不下封面：直接说明，
     // 别让用户选完图片才失败。
     if (!AudioTagWriter.supportsArtwork(path)) {
       _toast(context.tr('该音频格式不支持写入封面'));
@@ -1855,9 +1855,9 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
       final coverUrl = _webCoverUrl;
       final path = workingSong.filePath ?? '';
 
-      // 网络封面要在写标签前先下载成图片，才能一起写进 APIC / PICTURE。
-      // WebM / WebA 放不下封面（规范不支持附件）：跳过下载，最后给一句
-      // 提示，别让用户以为封面写进文件了。
+      // 网络封面要在写标签前先下载成图片，才能一起写进 APIC / PICTURE
+      // （WebM / WebA 写进 Attachments 的图片附件）。这个格式放不下封面时
+      // 跳过下载，最后给一句提示，别让用户以为封面写进文件了。
       final canStoreArtwork = AudioTagWriter.supportsArtwork(path);
       final coverSkipped = coverUrl != null && !canStoreArtwork;
       Uint8List? artwork;

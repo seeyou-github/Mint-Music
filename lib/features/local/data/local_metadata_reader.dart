@@ -161,8 +161,9 @@ class LocalMetadataReader {
           '.flac' => await _readFlac(raf, length, lyricsOnly: true),
           '.m4a' || '.mp4' || '.aac' => await _readMp4(raf, length),
           '.ogg' || '.oga' => await _readOgg(raf, length),
-          // WebM / WebA 的歌词也是 Tags 里的 SimpleTag，和标签同一次读。
-          '.webm' || '.weba' => await _readWebm(raf, length),
+          // WebM / WebA 的歌词也是 Tags 里的 SimpleTag，和标签同一次读；
+          // 只要歌词，不读附件里的封面。
+          '.webm' || '.weba' => await _readWebm(raf, length, lyricsOnly: true),
           _ => const LocalAudioMetadata(),
         };
         final text = metadata.lyrics?.trim() ?? '';
@@ -1125,96 +1126,113 @@ class LocalMetadataReader {
   /// 按顺序扫到 Duration 就收工。
   static const int _maxInfoLeaves = 16;
 
-  /// 读取 WebM / WebA 的标签 / 歌词 / 时长（Info 里的标题作为兜底）。
+  /// 读取 WebM / WebA 的标签 / 歌词 / 封面 / 时长（Info 里的标题作为兜底）。
   ///
-  /// WebM 是 EBML 容器：顶层找 Segment，再顺次读 Segment 的子元素——
-  /// `Info`（TimecodeScale + Duration + Title）与 `Tags`（TITLE / ARTIST /
-  /// ALBUM / LYRICS 等 SimpleTag，见 [WebmTags]）。标签一般在 Cluster 之前
-  /// （ffmpeg / mkvmerge / yt-dlp 写的位置），踩到 Cluster 就停；前段没有
-  /// 再扫文件尾（编辑标签页写入的标签追加在末尾）。
+  /// WebM 是 EBML 容器：顶层找 Segment，元数据分两处——
+  /// * `Info`：TimecodeScale + Duration + Title；
+  /// * `Tags`：TITLE / ARTIST / ALBUM / DATE_RECORDED / GENRE / COMMENT /
+  ///   LYRICS（见 [WebmTags]），封面在 `Attachments` 里（图片附件）。
   ///
-  /// 文件可能几百 MB（一小时的视频），全部走「定位 + 少量读」，绝不整段
-  /// 读进来；Info 排在 Segment 开头附近，通常在文件开头几十 KB 内就能拿到，
-  /// 扫不到就放弃（返回空结果，界面用文件名兜底）。
+  /// 定位方式按可靠性递进：SeekHead 指的元数据区（mkvmerge / ffmpeg / 本程序
+  /// 写的位置）→ Segment 开头到第一个 Cluster 之间→ 文件尾（旧版本本程序追加
+  /// 在其后的标签）。完全没 SeekHead 的文件才走一遍顶层元素，避免每次扫描都
+  /// 去数 Cluster。
+  ///
+  /// 文件可能几百 MB（一小时的视频），全部走「定位 + 少量读」，绝不整段读进来。
   static Future<LocalAudioMetadata> _readWebm(
     RandomAccessFile raf,
-    int fileLength,
-  ) async {
-    var pos = 0;
-    var guard = 0;
-    while (pos < fileLength && guard++ < 32) {
-      final top = await WebmEbml.headAt(raf, pos);
-      if (top == null) return const LocalAudioMetadata();
-      final next = top.unknownSize ? top.dataPos : top.end;
-      if (top.id != WebmEbml.idSegment) {
-        // EBML header 等其它顶层元素：跳过。
-        if (next <= pos) return const LocalAudioMetadata();
-        pos = next;
-        continue;
-      }
+    int fileLength, {
+    bool lyricsOnly = false,
+  }) async {
+    final doc = await WebmDocument.open(raf, fileLength);
+    if (doc == null) return const LocalAudioMetadata();
+    final needDeep = doc.seekStarts.isEmpty;
 
-      // 进了 Segment：找 Info 与 Tags。
-      final segmentEnd = top.unknownSize ? fileLength : top.end;
-      int? durationMs;
-      String? infoTitle;
-      final tags = <(String, String)>[];
+    int? durationMs;
+    String? infoTitle;
+    final info = await doc.find(raf, WebmEbml.idInfo);
+    if (info != null) {
+      final parsed = await _readWebmInfo(raf, info.dataPos, info.end);
+      durationMs = parsed.durationMs;
+      infoTitle = parsed.title;
+    }
 
-      var inner = top.dataPos;
-      var innerGuard = 0;
-      while (inner < segmentEnd && innerGuard++ < 128) {
-        final child = await WebmEbml.headAt(raf, inner);
-        if (child == null) break;
-        // 撞到 Cluster 说明元数据区已经结束，尾部另扫。
-        if (child.id == WebmEbml.idCluster) break;
-        final childEnd = child.unknownSize ? segmentEnd : child.end;
-        if (childEnd <= inner) break;
-        if (child.id == WebmEbml.idInfo && !child.unknownSize) {
-          final info = await _readWebmInfo(raf, child.dataPos, childEnd);
-          durationMs = info.durationMs;
-          infoTitle = info.title;
-        } else if (child.id == WebmEbml.idTags && !child.unknownSize) {
-          tags.addAll(
-            await WebmTags.readElement(raf, child.dataPos, child.size),
-          );
-        }
-        inner = childEnd;
-      }
-
-      if (tags.isEmpty) {
-        final tail = await WebmTags.findAtTail(
-          raf,
-          segmentDataPos: top.dataPos,
-          end: segmentEnd,
+    final tags = <(String, String)>[];
+    final seen = <int>{};
+    Future<void> collectTags(List<WebmElementHead> elements) async {
+      for (final element in elements) {
+        if (!seen.add(element.dataPos)) continue;
+        tags.addAll(
+          await WebmTags.readElement(raf, element.dataPos, element.size),
         );
-        if (tail != null) {
-          tags.addAll(await WebmTags.readElement(raf, tail.dataPos, tail.size));
-        }
       }
+    }
 
-      final tagMap = WebmTags.toMap(tags);
-      return LocalAudioMetadata(
-        title: _firstNonEmptyText([tagMap['TITLE'], infoTitle]),
-        artist: _firstNonEmptyText([tagMap['ARTIST'], tagMap['ALBUM_ARTIST']]),
-        album: _firstNonEmptyText([tagMap['ALBUM']]),
-        year: _parseYear(
-          tagMap['DATE'] ?? tagMap['YEAR'] ?? tagMap['ORIGINALDATE'],
-        ),
-        durationSeconds: durationMs == null ? null : durationMs ~/ 1000,
-        durationMs: durationMs,
-        lyrics: _firstNonEmptyText([
-          tagMap['LYRICS'],
-          tagMap['LYRIC'],
-          tagMap['UNSYNCEDLYRICS'],
-        ]),
-        genre: _firstNonEmptyText([tagMap['GENRE']]),
-        comment: _firstNonEmptyText([
-          tagMap['COMMENT'],
-          tagMap['DESCRIPTION'],
-          tagMap['COMMENTS'],
-        ]),
+    await collectTags(await doc.findAll(raf, WebmEbml.idTags));
+    // 旧版本本程序把标签追加在文件尾、SeekHead 里没有它：扫尾部兜底。
+    final tail = await WebmTags.findAtTail(
+      raf,
+      segmentDataPos: doc.segmentDataPos,
+      end: doc.segmentEnd,
+    );
+    if (tail != null) await collectTags([tail]);
+    if (tags.isEmpty && needDeep) {
+      await collectTags(
+        await doc.findAll(raf, WebmEbml.idTags, deep: true),
       );
     }
-    return const LocalAudioMetadata();
+
+    Uint8List? artwork;
+    if (!lyricsOnly) {
+      for (final element in await doc.findAll(
+        raf,
+        WebmEbml.idAttachments,
+        deep: needDeep,
+      )) {
+        final refs = await WebmAttachments.read(
+          raf,
+          element.dataPos,
+          element.size,
+        );
+        for (final ref in refs) {
+          if (!ref.isImage) continue;
+          final bytes = await WebmEbml.readAt(raf, ref.dataPos, ref.dataSize);
+          if (bytes != null && bytes.isNotEmpty) {
+            artwork = bytes;
+            break;
+          }
+        }
+        if (artwork != null) break;
+      }
+    }
+
+    final tagMap = WebmTags.toMapLast(tags);
+    return LocalAudioMetadata(
+      title: _firstNonEmptyText([tagMap['TITLE'], infoTitle]),
+      artist: _firstNonEmptyText([tagMap['ARTIST'], tagMap['ALBUM_ARTIST']]),
+      album: _firstNonEmptyText([tagMap['ALBUM']]),
+      year: _parseYear(
+        tagMap['DATE_RECORDED'] ??
+            tagMap['DATE'] ??
+            tagMap['DATE_RELEASED'] ??
+            tagMap['YEAR'] ??
+            tagMap['ORIGINALDATE'],
+      ),
+      durationSeconds: durationMs == null ? null : durationMs ~/ 1000,
+      durationMs: durationMs,
+      artwork: artwork,
+      lyrics: _firstNonEmptyText([
+        tagMap['LYRICS'],
+        tagMap['LYRIC'],
+        tagMap['UNSYNCEDLYRICS'],
+      ]),
+      genre: _firstNonEmptyText([tagMap['GENRE']]),
+      comment: _firstNonEmptyText([
+        tagMap['COMMENT'],
+        tagMap['COMMENTS'],
+        tagMap['DESCRIPTION'],
+      ]),
+    );
   }
 
   /// 读 Info 元素：TimecodeScale + Duration → 毫秒时长，Title → 标题兜底。

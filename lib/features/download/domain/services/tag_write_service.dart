@@ -67,8 +67,8 @@ class TagWriteService {
   /// 这些格式能不能把封面写进去（是否把封面写进音频文件**本身**的另一半）。
   ///
   /// 与 [supportsEmbeddedTags] 的区别：webm / weba 能写标签和歌词（EBML 的
-  /// Tags 元素），但 WebM 规范不支持附件，封面写不进去；aac / 桌面端的
-  /// ogg、wma 等更是两样都不行。
+  /// Tags 元素），封面写成 **Attachments 里的图片附件**（ffmpeg / mpv 认这个）；
+  /// aac / 桌面端的 ogg、wma 等两样都不行。
   static bool supportsEmbeddedArtwork(String filePath) {
     if (AudioTagWriter.supportsArtwork(filePath)) return true;
     if (_nativeChannelAvailable == false) return false;
@@ -116,7 +116,7 @@ class TagWriteService {
 
     final baseName = _baseNameWithoutExt(songPath);
     final dirName = file.parent.path;
-    // 这个格式能不能把封面写进文件（webm / weba 只能写标签和歌词）：
+    // 这个格式能不能把封面写进文件（webm / weba 写进 Attachments 附件）：
     // 写不进去就不下载、也不留一张同名单图。
     final canEmbedArtwork = supportsEmbeddedArtwork(songPath);
     String? coverPath;
@@ -339,6 +339,19 @@ class TagWriteService {
       if (year != null) 'year': year,
       if (lyrics != null) 'lyrics': lyrics,
     };
+    // WebM / WebA 的原生实现（jaudiotagger）不支持，直接走纯 Dart，别让
+    // 原生那边返回 false 之后整条链当作「已写入」而跳过兜底。
+    if (_dartOnly(_extOf(filePath))) {
+      return _writeTagsFallback(
+        filePath,
+        title: title,
+        artist: artist,
+        album: album,
+        albumArtist: albumArtist,
+        year: year,
+        lyrics: lyrics,
+      );
+    }
     try {
       if (_nativeUsable) {
         debugPrint('[TagWriteService] _writeTags args: $args');
@@ -401,6 +414,18 @@ class TagWriteService {
     String? lyrics,
     Uint8List? artwork,
   }) async {
+    if (_dartOnly(_extOf(filePath))) {
+      return _writeTagsFallback(
+        filePath,
+        title: title,
+        artist: artist,
+        album: album,
+        albumArtist: albumArtist,
+        year: year,
+        lyrics: lyrics,
+        artwork: artwork,
+      );
+    }
     try {
       // 桌面端已经确认没有原生实现时直接走纯 Dart，不再逐首歌抛异常。
       if (_nativeUsable) {
@@ -494,8 +519,13 @@ class TagWriteService {
       '.m4a',
       '.ogg',
       '.wma',
+      '.webm',
+      '.weba',
     ].contains(ext);
   }
+
+  /// 这些格式只有纯 Dart 实现能写（原生 jaudiotagger 不支持 WebM）。
+  static bool _dartOnly(String ext) => ext == '.webm' || ext == '.weba';
 
   /// 取小写扩展名（含点）。路径里可能混用 '/' 和 '\'，两边都要找。
   static String _extOf(String filePath) {

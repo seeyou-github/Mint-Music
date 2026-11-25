@@ -7,14 +7,15 @@ import 'package:mintmusic/features/download/domain/services/audio_tag_writer.dar
 import 'package:mintmusic/features/local/data/local_metadata_reader.dart';
 import 'package:mintmusic/shared/utils/webm_tags.dart';
 
-/// 造一个最小的 WebM：EBML 头 + Segment{Info, Cluster}。
+/// 造一个最小的 WebM：EBML 头 + Segment{Info, [Tags], Cluster, [Cues]}。
 ///
-/// 只求结构合法（我们的解析器按元素头逐层走），Cluster 里是假音频字节。
+/// 只求结构合法（解析器按元素头逐层走），Cluster 里是假音频字节。
 Uint8List buildMinimalWebm({
   required String infoTitle,
   required double durationMs,
   int fakeAudioBytes = 4096,
   List<(String, String)> tags = const [],
+  bool withCues = false,
 }) {
   final timecodeScale = Uint8List.fromList([0x0F, 0x42, 0x40]); // 1000000 ns
   final duration = Uint8List(8);
@@ -24,7 +25,10 @@ Uint8List buildMinimalWebm({
     ..add(WebmEbml.element(const [0x2A, 0xD7, 0xB1], timecodeScale))
     ..add(WebmEbml.element(const [0x44, 0x89], duration))
     ..add(
-      WebmEbml.element(const [0x7B, 0xA9], Uint8List.fromList(utf8.encode(infoTitle))),
+      WebmEbml.element(
+        const [0x7B, 0xA9],
+        Uint8List.fromList(utf8.encode(infoTitle)),
+      ),
     );
 
   final clusterBytes = Uint8List(fakeAudioBytes);
@@ -35,12 +39,29 @@ Uint8List buildMinimalWebm({
   final segmentPayload = BytesBuilder(copy: false)
     ..add(WebmEbml.element(const [0x15, 0x49, 0xA9, 0x66], info.toBytes()));
   if (tags.isNotEmpty) {
-    // Tags 放在 Cluster 之前：模拟 ffmpeg / yt-dlp 写标签的位置。
+    // 旧标签放在 Cluster 之前：模拟 ffmpeg / yt-dlp 写标签的位置。
     segmentPayload.add(WebmTags.build(tags));
   }
+  // Cues 里的 Cluster 位置是「相对 Segment 数据区起点」的偏移。
+  final clusterRelativePos = segmentPayload.length;
   segmentPayload.add(
     WebmEbml.element(const [0x1F, 0x43, 0xB6, 0x75], clusterBytes),
   );
+  if (withCues) {
+    final cuePoint = WebmEbml.elementById(
+      WebmEbml.idCuePoint,
+      WebmEbml.elementById(
+        WebmEbml.idCueTrackPositions,
+        WebmEbml.elementById(
+          WebmEbml.idCueClusterPosition,
+          WebmEbml.uintBytes(clusterRelativePos),
+        ),
+      ),
+    );
+    segmentPayload.add(
+      WebmEbml.elementById(WebmEbml.idCues, cuePoint),
+    );
+  }
 
   final out = BytesBuilder(copy: false)
     ..add(
@@ -54,6 +75,19 @@ Uint8List buildMinimalWebm({
     );
   return out.toBytes();
 }
+
+/// 1x1 透明 PNG，当封面用。
+final Uint8List tinyPng = Uint8List.fromList(const [
+  0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, //
+  0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+  0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+  0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+  0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41,
+  0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
+  0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00,
+  0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
+  0x42, 0x60, 0x82,
+]);
 
 void main() {
   late Directory tempDir;
@@ -83,6 +117,29 @@ void main() {
       expect(parsed['TITLE'], '标题');
       expect(parsed['ARTIST'], '歌手');
       expect(parsed['LYRICS'], '[00:01.00]第一行');
+    });
+
+    test('build 产出规范的 Tags > Tag > Targets + SimpleTag', () {
+      final bytes = WebmTags.build([('TITLE', '标题')]);
+      final tagsHead = WebmEbml.headFromBytes(bytes, 0)!;
+      expect(tagsHead.id, WebmEbml.idTags);
+      // 第一层必须是 Tag（之前直接挂 SimpleTag，ffmpeg 会整段忽略）。
+      final tagHead = WebmEbml.headFromBytes(bytes, tagsHead.dataPos)!;
+      expect(tagHead.id, WebmEbml.idTag);
+      // Tag 里第一个子元素是 Targets，且带 TargetTypeValue。
+      final targetsHead = WebmEbml.headFromBytes(bytes, tagHead.dataPos)!;
+      expect(targetsHead.id, WebmEbml.idTargets);
+      final typeHead = WebmEbml.headFromBytes(bytes, targetsHead.dataPos)!;
+      expect(typeHead.id, WebmEbml.idTargetTypeValue);
+      expect(WebmEbml.uintFrom(bytes, typeHead.dataPos, typeHead.end), 50);
+    });
+
+    test('toMapLast 后写的值覆盖先写的', () {
+      final map = WebmTags.toMapLast(const [
+        ('TITLE', '专辑级标题'),
+        ('TITLE', '音轨级标题'),
+      ]);
+      expect(map['TITLE'], '音轨级标题');
     });
 
     test('Void 元素与旧标签等长', () {
@@ -125,7 +182,7 @@ void main() {
             ('TITLE', '标签标题'),
             ('ARTIST', '标签歌手'),
             ('ALBUM', '标签专辑'),
-            ('DATE', '2024-05-01'),
+            ('DATE_RECORDED', '2024-05-01'),
             ('GENRE', 'ASMR'),
             ('COMMENT', '备注'),
             ('LYRICS', '[00:01.00]你好'),
@@ -145,10 +202,9 @@ void main() {
   });
 
   group('WebM 写入', () {
-    test('尾部追加 Tags：音频字节不变、Segment 长度被修正、可读回', () async {
+    test('重建后标签排在 Cluster 之前、SeekHead 指向它、可读回', () async {
       final original = buildMinimalWebm(infoTitle: '原标题', durationMs: 5000);
       final file = newFile(original);
-      final originalBytes = file.readAsBytesSync();
 
       final ok = await AudioTagWriter.write(
         file.path,
@@ -163,8 +219,23 @@ void main() {
       expect(ok, isTrue);
 
       final written = file.readAsBytesSync();
-      // 原文件的每一个字节都还在原位（只追加 + 改长度字段）。
-      expect(written.length, greaterThan(originalBytes.length));
+      final tagsHead = _firstElement(written, WebmEbml.idTags);
+      final clusterHead = _firstElement(written, WebmEbml.idCluster);
+      expect(tagsHead, isNotNull, reason: '应该写入 Tags');
+      expect(clusterHead, isNotNull);
+      expect(
+        tagsHead!.dataPos < clusterHead!.dataPos,
+        isTrue,
+        reason: 'Tags 必须在第一个 Cluster 之前（ffmpeg / mpv 顺序读得到）',
+      );
+
+      // SeekHead 里有 Tags 条目，且指向的位置就是它。
+      final seekHead = _firstElement(written, WebmEbml.idSeekHead);
+      expect(seekHead, isNotNull);
+      expect(
+        _seekHeadEntries(written, seekHead!)[WebmEbml.idTags],
+        tagsHead.dataPos - tagsHead.headerSize - _segmentDataPos(written),
+      );
 
       final meta = await LocalMetadataReader.read(file.path);
       expect(meta.title, '新标题');
@@ -177,22 +248,38 @@ void main() {
       expect(meta.durationMs, 5000, reason: '时长不该被标签写入影响');
 
       // Cluster 里的假音频字节一个都没变。
-      final clusterStart = _indexOfCluster(written);
-      expect(clusterStart, isNonNegative);
-      final audio = written.sublist(clusterStart, clusterStart + 4096);
       expect(
-        audio,
-        originalBytes.sublist(
-          _indexOfCluster(originalBytes),
-          _indexOfCluster(originalBytes) + 4096,
+        written.sublist(clusterHead.dataPos, clusterHead.end),
+        original.sublist(
+          _firstElement(original, WebmEbml.idCluster)!.dataPos,
+          _firstElement(original, WebmEbml.idCluster)!.end,
         ),
       );
     });
 
-    test('重写不会让文件无限膨胀，也不产生两份同名标签', () async {
+    test('Cues 里的 Cluster 位置跟着新布局平移', () async {
       final file = newFile(
-        buildMinimalWebm(infoTitle: 't', durationMs: 1000),
+        buildMinimalWebm(infoTitle: 't', durationMs: 1000, withCues: true),
       );
+      expect(
+        await AudioTagWriter.write(file.path, title: '新标题', lyrics: '[00:01.00]词'),
+        isTrue,
+      );
+      final written = file.readAsBytesSync();
+      final cues = _firstElement(written, WebmEbml.idCues);
+      final cluster = _firstElement(written, WebmEbml.idCluster);
+      expect(cues, isNotNull);
+      expect(cluster, isNotNull);
+      final cuePos = _cueClusterPosition(written, cues!);
+      expect(
+        cuePos,
+        cluster!.dataPos - cluster.headerSize - _segmentDataPos(written),
+        reason: 'Cues 必须指向 Cluster 的新位置，否则播放器跳转会错位',
+      );
+    });
+
+    test('重写不会让文件无限膨胀，也不产生两份标签', () async {
+      final file = newFile(buildMinimalWebm(infoTitle: 't', durationMs: 1000));
       await AudioTagWriter.write(file.path, lyrics: '[00:01.00]aaaa');
       final afterFirst = file.lengthSync();
       await AudioTagWriter.write(file.path, lyrics: '[00:01.00]bbbb');
@@ -200,15 +287,15 @@ void main() {
       await AudioTagWriter.write(file.path, lyrics: '[00:01.00]cccc');
       final afterThird = file.lengthSync();
 
-      // 每次长度都差不多（旧标签在尾部被截掉重写）。
       expect((afterThird - afterFirst).abs(), lessThan(64));
       expect(afterSecond, isNot(equals(0)));
 
       final meta = await LocalMetadataReader.read(file.path);
       expect(meta.lyrics, '[00:01.00]cccc');
+      expect(_countElements(file.readAsBytesSync(), WebmEbml.idTags), 1);
     });
 
-    test('替换 Cluster 之前的旧标签，未管理字段保留', () async {
+    test('替换旧标签时未管理字段保留、同义年份键去重', () async {
       final file = newFile(
         buildMinimalWebm(
           infoTitle: 't',
@@ -216,89 +303,197 @@ void main() {
           tags: [
             ('TITLE', '旧标题'),
             ('CUSTOM_FIELD', '别动我'),
+            ('DATE', '1999'),
           ],
         ),
       );
-      final ok = await AudioTagWriter.write(file.path, title: '新标题');
+      final ok = await AudioTagWriter.write(file.path, title: '新标题', year: '2026');
       expect(ok, isTrue);
 
       final meta = await LocalMetadataReader.read(file.path);
       expect(meta.title, '新标题');
+      expect(meta.year, 2026);
 
-      final raw = file.readAsBytesSync();
-      final all = WebmTags.toMap(
-        WebmTags.parse(WebmTags.build([('TITLE', 'x')])),
-      );
-      expect(all, isNotEmpty); // 结构自检
-      // 未管理字段还在（旧标签被 Void 擦掉，新标签在尾部）。
-      expect(
-        WebmTags.toMap(_allTags(raw))['CUSTOM_FIELD'],
-        '别动我',
-      );
+      final tags = WebmTags.toMap(_allTags(file.readAsBytesSync()));
+      expect(tags['CUSTOM_FIELD'], '别动我');
+      expect(tags['DATE'], isNull, reason: 'DATE 被 DATE_RECORDED 取代');
+      expect(tags['DATE_RECORDED'], '2026');
     });
 
     test('没有标签要写时不动文件', () async {
-      final file = newFile(
-        buildMinimalWebm(infoTitle: 't', durationMs: 1000),
-      );
+      final file = newFile(buildMinimalWebm(infoTitle: 't', durationMs: 1000));
       final before = file.readAsBytesSync();
       final ok = await AudioTagWriter.write(file.path);
       expect(ok, isTrue);
       expect(file.readAsBytesSync(), before);
     });
 
-    test('webm 不支持内嵌封面，write 只写标签', () async {
+    test('webm 支持写入封面（Attachments 图片附件）', () async {
       expect(AudioTagWriter.supports('a.weba'), isTrue);
-      expect(AudioTagWriter.supportsArtwork('a.weba'), isFalse);
-      expect(AudioTagWriter.supportsArtwork('a.mp3'), isTrue);
-      expect(AudioTagWriter.supportsArtwork('a.flac'), isTrue);
+      expect(AudioTagWriter.supportsArtwork('a.weba'), isTrue);
+      expect(AudioTagWriter.supportsArtwork('a.webm'), isTrue);
 
-      final file = newFile(
-        buildMinimalWebm(infoTitle: 't', durationMs: 1000),
-      );
+      final file = newFile(buildMinimalWebm(infoTitle: 't', durationMs: 1000));
       final ok = await AudioTagWriter.write(
         file.path,
-        title: '有封面参数也照样写标签',
-        artwork: Uint8List.fromList(List<int>.filled(64, 0xFF)),
+        title: '带封面的歌',
+        artwork: tinyPng,
       );
       expect(ok, isTrue);
+
       final meta = await LocalMetadataReader.read(file.path);
-      expect(meta.title, '有封面参数也照样写标签');
-      expect(meta.artwork, isNull);
+      expect(meta.title, '带封面的歌');
+      expect(meta.artwork, tinyPng, reason: '封面应该能从 Attachments 读回来');
+
+      final raw = file.readAsBytesSync();
+      expect(_countElements(raw, WebmEbml.idAttachments), 1);
+
+      // 换封面：只保留一张图片附件。
+      final replaced = await AudioTagWriter.write(
+        file.path,
+        artwork: Uint8List.fromList(List<int>.filled(120, 0xAB)),
+      );
+      expect(replaced, isTrue);
+      final refs = _readAttachments(file.readAsBytesSync());
+      expect(refs.length, 1);
+      expect(refs.single.$1, 'cover.jpg');
+
+      // 删封面：附件整段消失。
+      expect(await AudioTagWriter.write(file.path, removeArtwork: true), isTrue);
+      expect(_countElements(file.readAsBytesSync(), WebmEbml.idAttachments), 0);
+      expect((await LocalMetadataReader.read(file.path)).artwork, isNull);
     });
   });
 }
 
-/// 找 Cluster 元素头的偏移（测试用：结构固定，直接按字节找 ID）。
-int _indexOfCluster(Uint8List data) {
-  for (var i = 0; i + 4 <= data.length; i++) {
-    if (data[i] == 0x1F &&
-        data[i + 1] == 0x43 &&
-        data[i + 2] == 0xB6 &&
-        data[i + 3] == 0x75) {
-      final head = WebmEbml.headFromBytes(data, i);
-      if (head != null) return head.dataPos;
-    }
-  }
-  return -1;
+// ==================== 测试用的小工具 ====================
+
+int _segmentDataPos(Uint8List data) {
+  final ebml = WebmEbml.headFromBytes(data, 0)!;
+  final segment = WebmEbml.headFromBytes(data, ebml.end)!;
+  return segment.dataPos;
 }
 
-/// 收集文件里所有 Tags 元素（前段 + 尾部）里的标签，只有测试在用。
+/// 按 ID 找第一个顶层元素（测试文件结构固定，顺序扫即可）。
+WebmElementHead? _firstElement(Uint8List data, int id) {
+  final segment = WebmEbml.headFromBytes(data, _segmentDataPos(data) - 5);
+  var pos = _segmentDataPos(data);
+  final end = segment == null ? data.length : segment.end;
+  while (pos + 2 <= end) {
+    final head = WebmEbml.headFromBytes(data, pos);
+    if (head == null) return null;
+    if (head.id == id) return head;
+    final next = head.unknownSize ? end : head.end;
+    if (next <= pos) return null;
+    pos = next;
+  }
+  return null;
+}
+
+int _countElements(Uint8List data, int id) {
+  var count = 0;
+  var pos = _segmentDataPos(data);
+  while (pos + 2 <= data.length) {
+    final head = WebmEbml.headFromBytes(data, pos);
+    if (head == null) break;
+    if (head.id == id) count++;
+    final next = head.unknownSize ? data.length : head.end;
+    if (next <= pos) break;
+    pos = next;
+  }
+  return count;
+}
+
+Map<int, int> _seekHeadEntries(Uint8List data, WebmElementHead seekHead) {
+  final out = <int, int>{};
+  var pos = seekHead.dataPos;
+  while (pos < seekHead.end) {
+    final seek = WebmEbml.headFromBytes(data, pos);
+    if (seek == null) break;
+    int? id;
+    int? value;
+    var itemPos = seek.dataPos;
+    while (itemPos < seek.end) {
+      final item = WebmEbml.headFromBytes(data, itemPos);
+      if (item == null) break;
+      if (item.id == WebmEbml.idSeekId) {
+        id = WebmEbml.uintFrom(data, item.dataPos, item.end);
+      } else if (item.id == WebmEbml.idSeekPosition) {
+        value = WebmEbml.uintFrom(data, item.dataPos, item.end);
+      }
+      itemPos = item.end;
+    }
+    if (id != null && value != null) out[id] = value;
+    pos = seek.end;
+  }
+  return out;
+}
+
+int _cueClusterPosition(Uint8List data, WebmElementHead cues) {
+  int? found;
+  void walk(int start, int end) {
+    var pos = start;
+    while (pos < end) {
+      final head = WebmEbml.headFromBytes(data, pos);
+      if (head == null) return;
+      if (head.id == WebmEbml.idCueClusterPosition) {
+        found ??= WebmEbml.uintFrom(data, head.dataPos, head.end);
+      } else if (head.id == WebmEbml.idCuePoint ||
+          head.id == WebmEbml.idCueTrackPositions) {
+        walk(head.dataPos, head.end);
+      }
+      pos = head.end;
+    }
+  }
+
+  walk(cues.dataPos, cues.end);
+  return found ?? -1;
+}
+
+List<(String, String)> _readAttachments(Uint8List data) {
+  final out = <(String, String)>[];
+  final attachments = _firstElement(data, WebmEbml.idAttachments);
+  if (attachments == null) return out;
+  var pos = attachments.dataPos;
+  while (pos < attachments.end) {
+    final file = WebmEbml.headFromBytes(data, pos);
+    if (file == null) break;
+    if (file.id == WebmEbml.idAttachedFile) {
+      var itemPos = file.dataPos;
+      String name = '';
+      while (itemPos < file.end) {
+        final item = WebmEbml.headFromBytes(data, itemPos);
+        if (item == null) break;
+        if (item.id == WebmEbml.idFileName) {
+          name = utf8.decode(
+            Uint8List.sublistView(data, item.dataPos, item.end),
+            allowMalformed: true,
+          );
+        }
+        itemPos = item.end;
+      }
+      out.add((name, ''));
+    }
+    pos = file.end;
+  }
+  return out;
+}
+
+/// 收集文件里所有 Tags 元素里的标签，只有测试在用。
 List<(String, String)> _allTags(Uint8List data) {
   final out = <(String, String)>[];
-  for (var i = 0; i + 4 <= data.length; i++) {
-    if (data[i] == 0x12 &&
-        data[i + 1] == 0x54 &&
-        data[i + 2] == 0xC3 &&
-        data[i + 3] == 0x67) {
-      final head = WebmEbml.headFromBytes(data, i);
-      if (head == null || head.unknownSize || head.end > data.length) continue;
+  var pos = _segmentDataPos(data);
+  while (pos + 4 <= data.length) {
+    final head = WebmEbml.headFromBytes(data, pos);
+    if (head == null) break;
+    if (head.id == WebmEbml.idTags && !head.unknownSize) {
       out.addAll(
-        WebmTags.parse(
-          Uint8List.sublistView(data, head.dataPos, head.end),
-        ),
+        WebmTags.parse(Uint8List.sublistView(data, head.dataPos, head.end)),
       );
     }
+    final next = head.unknownSize ? data.length : head.end;
+    if (next <= pos) break;
+    pos = next;
   }
   return out;
 }

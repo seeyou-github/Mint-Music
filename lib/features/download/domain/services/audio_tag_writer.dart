@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 
 import '../../../../shared/utils/webm_tags.dart';
+import '../../../../shared/utils/webm_writer.dart';
 
 /// 纯 Dart 实现的音频标签写入器。
 ///
@@ -17,8 +18,9 @@ import '../../../../shared/utils/webm_tags.dart';
 ///   与 PICTURE 元数据块；
 /// * M4A / MP4 → 重建 `moov/udta/meta/ilst`（©nam / ©ART / aART / ©alb /
 ///   ©day / ©gen / ©cmt / ©lyr / covr）；
-/// * WebM / WebA → 往文件末尾追加/替换 `Segment > Tags`（只写标签与歌词，
-///   WebM 规范不支持封面附件，见 [supportsArtwork]）。
+/// * WebM / WebA → 重建 `Segment`：`Tags`（Tag > Targets + SimpleTag）写标签
+///   与歌词，`Attachments`（图片附件）写封面，`SeekHead` 按新布局重写，
+///   Cluster 原样复制。
 ///
 /// 已存在的标签会被读取后再覆盖，未管理的帧 / atom（例如 TCON 流派、trkn
 /// 音轨号）会保留。
@@ -97,11 +99,8 @@ class AudioTagWriter {
         );
       }
       if (ext == '.webm' || ext == '.weba') {
-        // WebM 规范不支持附件：封面写不进去（见 [supportsArtwork]），
-        // 标签 / 歌词写进文件末尾的 Tags 元素。
-        if (artwork != null || removeArtwork) {
-          debugPrint('[AudioTagWriter] webm 不支持内嵌封面，忽略封面参数');
-        }
+        // WebM / WebA：标签与歌词写进 `Tags`，封面写成 `Attachments` 里的
+        // 图片附件（ffmpeg / mpv 就是从那里读封面的）。
         return await _writeWebm(
           filePath,
           title: title,
@@ -112,6 +111,8 @@ class AudioTagWriter {
           genre: genre,
           comment: comment,
           lyrics: lyrics,
+          artwork: artwork,
+          removeArtwork: removeArtwork,
           removeEmptyFields: removeEmptyFields,
         );
       }
@@ -122,8 +123,7 @@ class AudioTagWriter {
     return false;
   }
 
-  /// 这个文件能不能写标签（mp3 / flac / m4a / mp4，以及只能写标签与歌词的
-  /// webm / weba）。
+  /// 这个文件能不能写标签（mp3 / flac / m4a / mp4 / webm / weba）。
   static bool supports(String filePath) {
     final ext = _extOf(filePath);
     return ext == '.mp3' ||
@@ -136,14 +136,17 @@ class AudioTagWriter {
 
   /// 这个格式能不能把封面写进文件**本身**。
   ///
-  /// WebM 规范不支持附件（Attachments 只属于 Matroska 的 .mkv / .mka），
-  /// ffmpeg 也会直接拒绝，所以 webm / weba 只能写标签和歌词、封面写不进去。
+  /// WebM / WebA 的封面放在 `Attachments > AttachedFile`（图片附件）里，
+  /// ffmpeg / mpv / mkvmerge 都认；虽然 WebM 文档类型名义上没有附件，但
+  /// 标准 Matroska 有，主流播放器也都这么读。
   static bool supportsArtwork(String filePath) {
     final ext = _extOf(filePath);
     return ext == '.mp3' ||
         ext == '.flac' ||
         ext == '.m4a' ||
-        ext == '.mp4';
+        ext == '.mp4' ||
+        ext == '.webm' ||
+        ext == '.weba';
   }
 
   static String _extOf(String filePath) {
@@ -1092,23 +1095,18 @@ class AudioTagWriter {
 
   // ==================== WebM / WebA（EBML Tags） ====================
 
-  /// 写 WebM / WebA 的标签与歌词。
+  /// 写 WebM / WebA 的标签、歌词与封面。
   ///
-  /// WebM 没有 ID3 / Vorbis Comment，元数据只能放在 `Segment > Tags` 里
-  /// （TITLE / ARTIST / ALBUM / DATE / GENRE / COMMENT / LYRICS）。这里
-  /// **只往文件末尾追加一个 Tags 元素、原地把 Segment 的长度加上去**，
-  /// 音频数据（Cluster）一字节都不搬动，Cues / SeekHead 里的偏移全部保持
-  /// 有效：
+  /// WebM 没有 ID3 / Vorbis Comment：元数据是 `Segment > Tags > Tag > SimpleTag`
+  /// （TITLE / ARTIST / ALBUM / DATE_RECORDED / GENRE / COMMENT / LYRICS），
+  /// 封面是 `Segment > Attachments > AttachedFile` 里的一张图片附件（mpv
+  /// 属性页的 Cover / Attachments 就是它）。
   ///
-  /// 1. 已有旧标签（ffmpeg / yt-dlp 写在 Cluster 之前）：用**等长**的 Void
-  ///    元素原地擦掉，避免文件里出现两份同名标签；
-  /// 2. 旧标签正好在文件尾（上一次由这里写入的）：直接截掉再写，文件不会
-  ///    越写越大；
-  /// 3. 追加新 Tags，并把 Segment 长度字段改写为「原长度 + 追加量」。
-  ///
-  /// 局限（写入方式换来的）：这种「尾部标签」只有全量扫描的解析器能读到
-  /// （本项目自己、VLC、mkvtoolnix）；ffmpeg / mpv 只顺着 SeekHead 找，
-  /// 属性页里看不到标签，但**不影响播放**。
+  /// 早期实现只往文件尾追加 Tags，而且 SimpleTag 没包在 Tag 里——本程序自己
+  /// 全量扫描能读，ffmpeg / mpv 顺着 SeekHead 找元数据、严格按规范解析，结果
+  /// 属性页里什么都看不到。现在交给 [WebmRewriter] 重建文件：SeekHead /
+  /// Info / Tracks / Tags / Attachments 按规范排在 Cluster 之前，Cluster 原样
+  /// 复制，Cues 里的 Cluster 位置整体平移。整文件复制一次换规范输出。
   static Future<bool> _writeWebm(
     String filePath, {
     String? title,
@@ -1119,72 +1117,24 @@ class AudioTagWriter {
     String? genre,
     String? comment,
     String? lyrics,
+    Uint8List? artwork,
+    bool removeArtwork = false,
     bool removeEmptyFields = false,
   }) async {
     final file = File(filePath);
     if (!await file.exists()) return false;
-
-    RandomAccessFile? raf;
     try {
-      // 用 append 打开（可读可写、不截断）；FileMode.write 会直接清空文件。
-      // 这条路径要的就是「随机位置改写」，Dart 的 append 只是把初始位置放到
-      // 文件尾，setPosition 之后照常写指定位置。
-      raf = await file.open(mode: FileMode.append);
-      final fileLength = await raf.length();
-
-      // EBML 头（跳过）→ Segment
-      final ebml = await WebmEbml.headAt(raf, 0);
-      if (ebml == null ||
-          ebml.id != WebmEbml.idEbmlHeader ||
-          ebml.unknownSize) {
-        return false;
-      }
-      final segmentOffset = ebml.end;
-      final segment = await WebmEbml.headAt(raf, segmentOffset);
-      if (segment == null || segment.id != WebmEbml.idSegment) return false;
-
-      final segmentDataPos = segment.dataPos;
-      // Segment 的 ID 固定 4 字节，长度字段紧随其后。
-      final sizeFieldOffset = segmentOffset + 4;
-      final sizeFieldLength = segmentDataPos - sizeFieldOffset;
-      if (sizeFieldLength < 1 || sizeFieldLength > WebmEbml.maxVintLength) {
-        return false;
-      }
-      final segmentSize = segment.unknownSize
-          ? fileLength - segmentDataPos
-          : segment.size;
-      final segmentEnd = segmentDataPos + segmentSize;
-      // 追加的标签必须落在 Segment 内：只处理 Segment 正好铺到文件尾的文件。
-      if (segmentEnd != fileLength) {
-        debugPrint('[AudioTagWriter] webm 尾部还有其它数据，跳过写入: $filePath');
-        return false;
-      }
-
-      // 已有标签：读出来（未管理的字段要保留），并记下它占用的范围。
-      final existing = <(String, String)>[];
-      final old = await WebmTags.find(
-        raf,
-        segmentDataPos: segmentDataPos,
-        segmentEnd: segmentEnd,
-      );
-      int? oldOffset;
-      int? oldTotal;
-      if (old != null) {
-        oldOffset = old.dataPos - old.headerSize;
-        oldTotal = old.end - oldOffset;
-        existing.addAll(
-          await WebmTags.readElement(raf, old.dataPos, old.size),
-        );
-      }
+      final existing = await _readWebmForWrite(file);
+      if (existing == null) return false;
 
       final merged = _mergeWebmTags(
-        existing,
+        existing.tags,
         {
           'TITLE': title,
           'ARTIST': artist,
           'ALBUM': album,
           'ALBUM_ARTIST': albumArtist,
-          'DATE': year,
+          'DATE_RECORDED': year,
           'GENRE': genre,
           'COMMENT': comment,
           'LYRICS': lyrics,
@@ -1192,91 +1142,158 @@ class AudioTagWriter {
         removeEmptyFields: removeEmptyFields,
       );
 
-      // 本来没标签、这次也没有内容要写：不动文件。
-      if (merged.isEmpty && old == null) return true;
-      if (_sameWebmTags(existing, merged)) return true;
+      final tagsChanged = !_sameWebmTags(existing.tags, merged);
+      final artworkChanged = artwork != null || removeArtwork;
+      if (!tagsChanged && !artworkChanged) return true;
 
-      final tagsBytes = WebmTags.build(merged);
-      // 旧标签在文件尾时可以截掉重写，文件不会因为反复编辑而膨胀。
-      final replaceAtEnd =
-          oldOffset != null && oldTotal != null && oldOffset + oldTotal == fileLength;
-      final delta = replaceAtEnd ? tagsBytes.length - oldTotal : tagsBytes.length;
-      final newSegmentSize = segmentSize + delta;
-      if (newSegmentSize < 0) return false;
-      // 先把长度字段算好：算不出来（超出该字段能表示的范围）就整个放弃，
-      // 不要出现「标签写了、长度没改」的半截状态。
-      final sizeBytes = WebmEbml.encodeSize(newSegmentSize, sizeFieldLength);
-      if (sizeBytes == null) {
-        debugPrint('[AudioTagWriter] webm Segment 长度放不下，跳过写入: $filePath');
-        return false;
-      }
-
-      if (oldOffset != null && oldTotal != null) {
-        if (replaceAtEnd) {
-          await raf.truncate(oldOffset);
-        } else {
-          // 旧标签在中间：等长 Void 原地擦掉，后面所有字节位置不变。
-          final voidBytes = WebmTags.buildVoid(oldTotal);
-          if (voidBytes == null) return false;
-          await raf.setPosition(oldOffset);
-          await raf.writeFrom(voidBytes);
+      // 附件：换 / 删封面时去掉旧的图片附件，其它附件（如字体）原样保留。
+      Uint8List? attachmentsBytes;
+      if (existing.attachments.isNotEmpty || artwork != null) {
+        final files = <WebmAttachmentData>[];
+        for (final item in existing.attachments) {
+          if (artworkChanged && item.ref.isImage) continue;
+          files.add(
+            WebmAttachmentData(
+              name: item.ref.name,
+              mime: item.ref.mime,
+              description: item.ref.description,
+              data: item.bytes,
+            ),
+          );
+        }
+        if (artwork != null) {
+          final (name, mime) = WebmAttachments.coverNameAndMime(artwork);
+          files.add(
+            WebmAttachmentData(
+              name: name,
+              mime: mime,
+              description: 'Cover',
+              data: artwork,
+            ),
+          );
+        }
+        if (files.isNotEmpty) {
+          attachmentsBytes = WebmAttachments.build(files);
         }
       }
 
-      // 标签写在「旧标签原来的位置」（已被截掉）或文件尾。
-      final replaceStart = replaceAtEnd ? oldOffset : null;
-      await raf.setPosition(replaceStart ?? fileLength);
-      await raf.writeFrom(tagsBytes);
-      await raf.setPosition(sizeFieldOffset);
-      await raf.writeFrom(sizeBytes);
-      await raf.flush();
+      final temp = await WebmRewriter.rewrite(
+        filePath: filePath,
+        tagsBytes: merged.isEmpty ? null : WebmTags.build(merged),
+        attachmentsBytes: attachmentsBytes,
+      );
+      if (temp == null) return false;
+      await _replaceFile(temp, file);
       debugPrint(
         '[AudioTagWriter] webm 标签已写入: $filePath '
-        '(${merged.length} 项, +$delta 字节)',
+        '(${merged.length} 项, 封面 ${attachmentsBytes?.length ?? 0}B)',
       );
       return true;
     } catch (e) {
       debugPrint('[AudioTagWriter] webm 写入失败 ($filePath): $e');
       return false;
-    } finally {
-      await raf?.close();
     }
+  }
+
+  /// 读取写入前需要的现状：已有标签（含旧版本追加在文件尾的那份）与附件。
+  ///
+  /// 标签要一起读出来，才能保留本程序不管理的字段（例如 mkvmerge 写的
+  /// `COMPOSER`）；附件要读进内存，换 / 删封面后重建 Attachments 时用得上。
+  static Future<_WebmWriteState?> _readWebmForWrite(File file) async {
+    final raf = await file.open(mode: FileMode.read);
+    try {
+      final length = await raf.length();
+      final doc = await WebmDocument.open(raf, length);
+      if (doc == null) return null;
+
+      final tags = <(String, String)>[];
+      final seen = <int>{};
+      // deep: 标签可能被旧版本追加在 Cluster 之后，SeekHead 里没有它。
+      for (final element in await doc.findAll(
+        raf,
+        WebmEbml.idTags,
+        deep: true,
+      )) {
+        if (!seen.add(element.dataPos)) continue;
+        tags.addAll(await WebmTags.readElement(raf, element.dataPos, element.size));
+      }
+      final tail = await WebmTags.findAtTail(
+        raf,
+        segmentDataPos: doc.segmentDataPos,
+        end: doc.segmentEnd,
+      );
+      if (tail != null && seen.add(tail.dataPos)) {
+        tags.addAll(await WebmTags.readElement(raf, tail.dataPos, tail.size));
+      }
+
+      final attachments = <({WebmAttachmentRef ref, Uint8List bytes})>[];
+      for (final element in await doc.findAll(raf, WebmEbml.idAttachments)) {
+        for (final ref in await WebmAttachments.read(
+          raf,
+          element.dataPos,
+          element.size,
+        )) {
+          final bytes = await WebmEbml.readAt(raf, ref.dataPos, ref.dataSize);
+          if (bytes != null) {
+            attachments.add((ref: ref, bytes: bytes));
+          }
+        }
+      }
+      return _WebmWriteState(tags: tags, attachments: attachments);
+    } catch (e) {
+      debugPrint('[AudioTagWriter] webm 读取现状失败 (${file.path}): $e');
+      return null;
+    } finally {
+      await raf.close();
+    }
+  }
+
+  /// 同义标签名：写入时把这些旧键一并替换掉，避免文件里同时出现
+  /// `DATE` 与 `DATE_RECORDED`（ffmpeg 会把两个都吐出来）。
+  static const Map<String, List<String>> _webmAliases = {
+    'DATE_RECORDED': ['DATE', 'DATE_RECORDED', 'DATE_RELEASED', 'YEAR'],
+    'ALBUM_ARTIST': ['ALBUM_ARTIST', 'ALBUMARTIST'],
+    'COMMENT': ['COMMENT', 'COMMENTS', 'DESCRIPTION'],
+    'LYRICS': ['LYRICS', 'LYRIC', 'UNSYNCEDLYRICS'],
+  };
+
+  static String _webmCanonical(String key) {
+    final name = key.toUpperCase();
+    for (final entry in _webmAliases.entries) {
+      if (entry.key == name || entry.value.contains(name)) return entry.key;
+    }
+    return name;
   }
 
   /// 把本次要写的字段合并进已有标签。
   ///
-  /// 托管字段（TITLE / ARTIST / ...）统一重排到末尾，未管理字段按原顺序保留；
-  /// 值为 null = 不动（保留文件里已有的），空串 = 仅在 [removeEmptyFields]
-  /// 时删除（与 ID3 / FLAC 的语义保持一致）。
+  /// 未管理字段按原顺序保留；值为 null = 不动（保留文件里已有的），空串 =
+  /// 仅在 [removeEmptyFields] 时删除（与 ID3 / FLAC 的语义保持一致）。同义键
+  /// （例如 `DATE` / `YEAR`）在写入对应字段时一并清掉，避免重复。
   static List<(String, String)> _mergeWebmTags(
     List<(String, String)> existing,
     Map<String, String?> managed, {
     required bool removeEmptyFields,
   }) {
-    final existingMap = WebmTags.toMap(existing);
-    final managedKeys = managed.keys.map((key) => key.toUpperCase()).toSet();
+    // 真正会覆盖 / 删除的字段（空串且不清理时视为「不动」）。
+    final dropping = <String>{};
+    managed.forEach((key, value) {
+      if (value == null) return;
+      if (value.trim().isEmpty && !removeEmptyFields) return;
+      dropping.add(_webmCanonical(key));
+    });
+
     final out = <(String, String)>[];
     final seen = <String>{};
     for (final tag in existing) {
       final key = tag.$1.toUpperCase();
-      if (managedKeys.contains(key)) continue;
+      if (dropping.contains(_webmCanonical(key))) continue;
       if (!seen.add(key)) continue;
       out.add((key, tag.$2));
     }
     managed.forEach((key, value) {
-      final name = key.toUpperCase();
-      String? resolved = value;
-      if (resolved == null || resolved.trim().isEmpty) {
-        if (resolved == null || !removeEmptyFields) {
-          final kept = existingMap[name];
-          resolved = (kept != null && kept.trim().isNotEmpty) ? kept : null;
-        } else {
-          resolved = null;
-        }
-      }
-      if (resolved != null && resolved.trim().isNotEmpty) {
-        out.add((name, resolved));
-      }
+      if (value == null || value.trim().isEmpty) return;
+      out.add((key.toUpperCase(), value));
     });
     return out;
   }
@@ -1426,4 +1443,12 @@ class _Mp4Atom {
   int get dataStart => start + headerSize;
 
   int get end => start + size;
+}
+
+/// WebM 写入前的现状：已有标签（含未管理字段）与附件（含图片数据）。
+class _WebmWriteState {
+  final List<(String, String)> tags;
+  final List<({WebmAttachmentRef ref, Uint8List bytes})> attachments;
+
+  const _WebmWriteState({required this.tags, required this.attachments});
 }

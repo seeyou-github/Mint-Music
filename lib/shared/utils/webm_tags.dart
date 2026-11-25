@@ -41,17 +41,32 @@ class WebmEbml {
   static const int idEbmlHeader = 0x1A45DFA3;
   static const int idSegment = 0x18538067;
   static const int idSeekHead = 0x114D9B74;
+  static const int idSeek = 0x4DBB;
+  static const int idSeekId = 0x53AB;
+  static const int idSeekPosition = 0x53AC;
   static const int idInfo = 0x1549A966;
   static const int idTracks = 0x1654AE6B;
   static const int idCluster = 0x1F43B675;
   static const int idCues = 0x1C53BB6B;
+  static const int idCuePoint = 0xBB;
+  static const int idCueTrackPositions = 0xB7;
+  static const int idCueClusterPosition = 0xF1;
+  static const int idChapters = 0x1043A770;
   static const int idTags = 0x1254C367;
   static const int idTag = 0x7373;
   static const int idTargets = 0x63C0;
+  static const int idTargetTypeValue = 0x68CA;
   static const int idSimpleTag = 0x67C8;
   static const int idTagName = 0x45A3;
   static const int idTagString = 0x4487;
   static const int idVoid = 0xEC;
+  static const int idAttachments = 0x1941A469;
+  static const int idAttachedFile = 0x61A7;
+  static const int idFileName = 0x466E;
+  static const int idFileMimeType = 0x4660;
+  static const int idFileData = 0x465C;
+  static const int idFileDescription = 0x467E;
+  static const int idFileUid = 0x46AE;
 
   /// 支持的最大长度字段字节数。
   static const int maxVintLength = 8;
@@ -160,6 +175,49 @@ class WebmEbml {
     return out;
   }
 
+  /// 元素 ID 的字节形式（EBML 的 ID 本身带长度标志位，按有效位数直接展开）。
+  static Uint8List idBytes(int id) {
+    var length = 1;
+    while (length < 4 && (id >> (length * 8)) != 0) {
+      length++;
+    }
+    final out = Uint8List(length);
+    for (var i = length - 1; i >= 0; i--) {
+      out[i] = id & 0xFF;
+      id >>= 8;
+    }
+    return out;
+  }
+
+  /// 按 int ID 拼元素（[element] 的便捷包装）。
+  static Uint8List elementById(int id, Uint8List payload) =>
+      element(idBytes(id), payload);
+
+  /// 无符号整数字段（EBML 的 uint 是大端、长度可变，取最省字节）。
+  static Uint8List uintBytes(int value) {
+    if (value <= 0) return Uint8List(0);
+    var length = 1;
+    while (length < 8 && (value >> (length * 8)) != 0) {
+      length++;
+    }
+    final out = Uint8List(length);
+    var v = value;
+    for (var i = length - 1; i >= 0; i--) {
+      out[i] = v & 0xFF;
+      v >>= 8;
+    }
+    return out;
+  }
+
+  /// 读无符号整数字段。
+  static int uintFrom(Uint8List data, int start, int end) {
+    var value = 0;
+    for (var i = start; i < end && i < data.length; i++) {
+      value = (value << 8) | data[i];
+    }
+    return value;
+  }
+
   /// 定位读取最多 [size] 字节，返回**实际读到的**字节。
   static Future<Uint8List?> readAt(
     RandomAccessFile raf,
@@ -234,6 +292,18 @@ class WebmTags {
     return map;
   }
 
+  /// 同 [toMap]，但**同名的后者覆盖前者**。
+  ///
+  /// 读取时用这个：mkvmerge 会写多个 `Tag`（专辑级 50 / 音轨级 30），音轨级的
+  /// 更具体；本程序旧版本追加在文件尾的标签也比文件中间的更新。
+  static Map<String, String> toMapLast(List<(String, String)> tags) {
+    final map = <String, String>{};
+    for (final tag in tags) {
+      map[tag.$1.toUpperCase()] = tag.$2;
+    }
+    return map;
+  }
+
   /// 在 Segment 里找 Tags 元素：先在前段（Cluster 之前）找，找不到再扫文件尾部。
   ///
   /// 前段是 ffmpeg / mkvmerge / yt-dlp 这类工具写标签的位置（SeekHead 指得到）；
@@ -299,29 +369,48 @@ class WebmTags {
     return null;
   }
 
-  /// 把标签拼成一个完整的 Tags 元素（带 Targets 空元素，符合规范习惯）。
+  /// 把标签拼成一个完整的 Tags 元素。
+  ///
+  /// 结构必须符合 Matroska 规范：`Tags > Tag > (Targets + SimpleTag…)`。
+  /// 之前直接把 SimpleTag 挂在 Tags 下，本程序自己扫得出来，但 ffmpeg / mpv
+  /// 这类严格解析器会整段忽略（属性页里看不到标签），所以这里补上 Tag 与
+  /// Targets（TargetTypeValue = 50，即整张专辑 / 整条音轨一级）。
   static Uint8List build(List<(String, String)> tags) {
-    final payload = BytesBuilder(copy: false);
-    payload.add(WebmEbml.element(const [0x63, 0xC0], Uint8List(0)));
+    final simpleTags = BytesBuilder(copy: false);
     for (final tag in tags) {
       final name = tag.$1.trim().toUpperCase();
       if (name.isEmpty) continue;
       final simple = BytesBuilder(copy: false);
       simple.add(
-        WebmEbml.element(
-          const [0x45, 0xA3],
+        WebmEbml.elementById(
+          WebmEbml.idTagName,
           Uint8List.fromList(utf8.encode(name)),
         ),
       );
       simple.add(
-        WebmEbml.element(
-          const [0x44, 0x87],
+        WebmEbml.elementById(
+          WebmEbml.idTagString,
           Uint8List.fromList(utf8.encode(tag.$2)),
         ),
       );
-      payload.add(WebmEbml.element(const [0x67, 0xC8], simple.toBytes()));
+      simpleTags.add(
+        WebmEbml.elementById(WebmEbml.idSimpleTag, simple.toBytes()),
+      );
     }
-    return WebmEbml.element(const [0x12, 0x54, 0xC3, 0x67], payload.toBytes());
+    final targets = WebmEbml.elementById(
+      WebmEbml.idTargets,
+      WebmEbml.elementById(
+        WebmEbml.idTargetTypeValue,
+        Uint8List.fromList(const [50]),
+      ),
+    );
+    final tagPayload = BytesBuilder(copy: false)
+      ..add(targets)
+      ..add(simpleTags.toBytes());
+    return WebmEbml.elementById(
+      WebmEbml.idTags,
+      WebmEbml.elementById(WebmEbml.idTag, tagPayload.toBytes()),
+    );
   }
 
   /// 拼一个 Void 元素（用来原地「擦掉」旧标签，保持后续字节位置不变）。
@@ -404,6 +493,397 @@ class WebmTags {
       );
     } catch (_) {
       return '';
+    }
+  }
+}
+
+/// 一个待写入的附件（WebM 的封面就是 `Attachments > AttachedFile`）。
+class WebmAttachmentData {
+  final String name;
+  final String mime;
+  final String description;
+  final Uint8List data;
+
+  const WebmAttachmentData({
+    required this.name,
+    required this.mime,
+    this.description = '',
+    required this.data,
+  });
+
+  bool get isImage => WebmAttachments.isImage(name, mime);
+}
+
+/// 从文件里读到的附件（只记位置，图片本体按需再读）。
+class WebmAttachmentRef {
+  final String name;
+  final String mime;
+  final String description;
+  final int dataPos;
+  final int dataSize;
+
+  const WebmAttachmentRef({
+    required this.name,
+    required this.mime,
+    required this.description,
+    required this.dataPos,
+    required this.dataSize,
+  });
+
+  bool get isImage => WebmAttachments.isImage(name, mime);
+}
+
+/// WebM / Matroska 的附件（封面图）读写。
+///
+/// 规范的 WebM 文档类型里没有附件，但 Matroska 有，ffmpeg / mpv / mkvmerge
+/// 都按 `Attachments > AttachedFile` 读封面（mpv 属性页里的
+/// `Cover / Cover description / Attachments` 就是它）。写封面只能在容器里
+/// 放一个图片附件，不支持「随便塞进某段音频数据」。
+class WebmAttachments {
+  WebmAttachments._();
+
+  static const Set<String> _imageExts = {
+    '.jpg',
+    '.jpeg',
+    '.png',
+    '.webp',
+    '.bmp',
+    '.gif',
+  };
+
+  /// 判断某个附件是不是封面图（按 MIME，其次按文件名后缀）。
+  static bool isImage(String name, String mime) {
+    if (mime.toLowerCase().startsWith('image/')) return true;
+    final dot = name.lastIndexOf('.');
+    if (dot < 0) return false;
+    return _imageExts.contains(name.substring(dot).toLowerCase());
+  }
+
+  /// 读 Attachments 元素里的所有 AttachedFile。
+  static Future<List<WebmAttachmentRef>> read(
+    RandomAccessFile raf,
+    int dataPos,
+    int size,
+  ) async {
+    final out = <WebmAttachmentRef>[];
+    final end = dataPos + size;
+    var pos = dataPos;
+    var guard = 0;
+    while (pos < end && guard++ < 128) {
+      final file = await WebmEbml.headAt(raf, pos);
+      if (file == null) break;
+      if (file.id == WebmEbml.idAttachedFile && !file.unknownSize) {
+        final ref = await _readAttachedFile(raf, file.dataPos, file.end);
+        if (ref != null) out.add(ref);
+      }
+      final next = file.unknownSize ? end : file.end;
+      if (next <= pos) break;
+      pos = next;
+    }
+    return out;
+  }
+
+  static String _decodeText(Uint8List bytes) {
+    if (bytes.isEmpty) return '';
+    try {
+      return utf8.decode(bytes, allowMalformed: true);
+    } catch (_) {
+      return '';
+    }
+  }
+
+  static Future<WebmAttachmentRef?> _readAttachedFile(
+    RandomAccessFile raf,
+    int start,
+    int end,
+  ) async {
+    String name = '';
+    String mime = '';
+    String description = '';
+    int? dataPos;
+    int dataSize = 0;
+    var pos = start;
+    var guard = 0;
+    while (pos < end && guard++ < 16) {
+      final item = await WebmEbml.headAt(raf, pos);
+      if (item == null) break;
+      switch (item.id) {
+        case WebmEbml.idFileName:
+          final bytes = await WebmEbml.readAt(raf, item.dataPos, item.size);
+          if (bytes != null) name = _decodeText(bytes);
+        case WebmEbml.idFileMimeType:
+          final bytes = await WebmEbml.readAt(raf, item.dataPos, item.size);
+          if (bytes != null) mime = _decodeText(bytes);
+        case WebmEbml.idFileDescription:
+          final bytes = await WebmEbml.readAt(raf, item.dataPos, item.size);
+          if (bytes != null) description = _decodeText(bytes);
+        case WebmEbml.idFileData:
+          dataPos = item.dataPos;
+          dataSize = item.size;
+      }
+      final next = item.unknownSize ? end : item.end;
+      if (next <= pos) break;
+      pos = next;
+    }
+    if (dataPos == null || dataSize <= 0) return null;
+    return WebmAttachmentRef(
+      name: name,
+      mime: mime,
+      description: description,
+      dataPos: dataPos,
+      dataSize: dataSize,
+    );
+  }
+
+  /// 把若干附件拼成一个完整的 Attachments 元素。
+  static Uint8List build(List<WebmAttachmentData> files) {
+    final payload = BytesBuilder(copy: false);
+    var uid = 1;
+    for (final file in files) {
+      final item = BytesBuilder(copy: false);
+      if (file.description.isNotEmpty) {
+        item.add(
+          WebmEbml.elementById(
+            WebmEbml.idFileDescription,
+            Uint8List.fromList(utf8.encode(file.description)),
+          ),
+        );
+      }
+      item.add(
+        WebmEbml.elementById(
+          WebmEbml.idFileName,
+          Uint8List.fromList(utf8.encode(file.name)),
+        ),
+      );
+      item.add(
+        WebmEbml.elementById(
+          WebmEbml.idFileUid,
+          WebmEbml.uintBytes(uid++),
+        ),
+      );
+      item.add(
+        WebmEbml.elementById(
+          WebmEbml.idFileMimeType,
+          Uint8List.fromList(utf8.encode(file.mime)),
+        ),
+      );
+      item.add(WebmEbml.elementById(WebmEbml.idFileData, file.data));
+      payload.add(WebmEbml.elementById(WebmEbml.idAttachedFile, item.toBytes()));
+    }
+    return WebmEbml.elementById(WebmEbml.idAttachments, payload.toBytes());
+  }
+
+  /// 依据图片内容判断封面文件名与 MIME。
+  static (String, String) coverNameAndMime(Uint8List bytes) {
+    if (bytes.length >= 4 &&
+        bytes[0] == 0x89 &&
+        bytes[1] == 0x50 &&
+        bytes[2] == 0x4E &&
+        bytes[3] == 0x47) {
+      return ('cover.png', 'image/png');
+    }
+    if (bytes.length >= 12 &&
+        bytes[0] == 0xFF &&
+        bytes[1] == 0xD8 &&
+        bytes[2] == 0xFF) {
+      return ('cover.jpg', 'image/jpeg');
+    }
+    if (bytes.length >= 12 &&
+        bytes[0] == 0x52 &&
+        bytes[1] == 0x49 &&
+        bytes[2] == 0x46 &&
+        bytes[3] == 0x46) {
+      return ('cover.webp', 'image/webp');
+    }
+    if (bytes.length >= 2 && bytes[0] == 0x42 && bytes[1] == 0x4D) {
+      return ('cover.bmp', 'image/bmp');
+    }
+    return ('cover.jpg', 'image/jpeg');
+  }
+}
+
+/// WebM / Matroska 文件的只读索引。
+///
+/// 只读元素头（ID + 长度），不读数据区：先扫 Segment 开头到第一个 Cluster
+/// 之间的元数据区，顺手解析 SeekHead（`SeekID → 元素位置`）；真要找的元素
+/// 不在元数据区时，才按需走一遍顶层元素（`deep`）。
+class WebmDocument {
+  WebmDocument._({
+    required this.segmentOffset,
+    required this.segmentDataPos,
+    required this.segmentEnd,
+    required this.fileLength,
+    required this.segmentUnknownSize,
+    required this.headElements,
+    required this.seekStarts,
+  });
+
+  /// Segment 元素起始（ID 第一字节）。
+  final int segmentOffset;
+  final int segmentDataPos;
+  final int segmentEnd;
+  final int fileLength;
+  final bool segmentUnknownSize;
+
+  /// 元数据区（Segment 开头 → 第一个 Cluster）里的直接子元素。
+  final List<WebmElementHead> headElements;
+
+  /// SeekHead 里的 `元素 ID → 元素起始绝对位置`。
+  final Map<int, int> seekStarts;
+
+  /// 元数据区最多扫多少个元素（SeekHead / Info / Tracks / Cues 就几个）。
+  static const int _maxHeadScan = 64;
+
+  /// 全量遍历时最多看多少个顶层元素（防御损坏文件死循环）。
+  static const int _maxWalk = 200000;
+
+  static Future<WebmDocument?> open(
+    RandomAccessFile raf,
+    int fileLength,
+  ) async {
+    // 顶层一般是 EBML 头 + Segment；也容忍缺 EBML 头 / 中间夹别的元素的文件
+    // （老版本解析器就是这么扫的，别让这种文件突然读不出时长）。
+    WebmElementHead? segment;
+    var topPos = 0;
+    var topGuard = 0;
+    while (topPos < fileLength && topGuard++ < 8) {
+      final head = await WebmEbml.headAt(raf, topPos);
+      if (head == null) break;
+      if (head.id == WebmEbml.idSegment) {
+        segment = head;
+        break;
+      }
+      final next = head.unknownSize ? fileLength : head.end;
+      if (next <= topPos) break;
+      topPos = next;
+    }
+    if (segment == null) return null;
+    final segmentOffset = topPos;
+    final segmentEnd = segment.unknownSize
+        ? fileLength
+        : (segment.end <= fileLength ? segment.end : fileLength);
+    if (segmentEnd <= segment.dataPos) return null;
+
+    final head = <WebmElementHead>[];
+    final seek = <int, int>{};
+    var pos = segment.dataPos;
+    var guard = 0;
+    while (pos < segmentEnd && guard++ < _maxHeadScan) {
+      final child = await WebmEbml.headAt(raf, pos);
+      if (child == null) break;
+      if (child.id == WebmEbml.idCluster) break;
+      head.add(child);
+      if (child.id == WebmEbml.idSeekHead && !child.unknownSize) {
+        await _readSeekHead(raf, child, segment.dataPos, seek);
+      }
+      final next = child.unknownSize ? segmentEnd : child.end;
+      if (next <= pos) break;
+      pos = next;
+    }
+
+    return WebmDocument._(
+      segmentOffset: segmentOffset,
+      segmentDataPos: segment.dataPos,
+      segmentEnd: segmentEnd,
+      fileLength: fileLength,
+      segmentUnknownSize: segment.unknownSize,
+      headElements: head,
+      seekStarts: seek,
+    );
+  }
+
+  /// 按 ID 找元素（元数据区 + SeekHead 指向的位置）。
+  Future<List<WebmElementHead>> findAll(
+    RandomAccessFile raf,
+    int id, {
+    bool deep = false,
+  }) async {
+    final out = <WebmElementHead>[];
+    void add(WebmElementHead? head) {
+      if (head == null || head.id != id || head.unknownSize) return;
+      if (out.any((item) => item.dataPos == head.dataPos)) return;
+      out.add(head);
+    }
+
+    for (final head in headElements) {
+      add(head);
+    }
+    final seekStart = seekStarts[id];
+    if (seekStart != null) {
+      final head = await WebmEbml.headAt(raf, seekStart);
+      add(head);
+    }
+    if (deep) {
+      var pos = segmentDataPos;
+      var guard = 0;
+      while (pos < segmentEnd && guard++ < _maxWalk) {
+        final head = await WebmEbml.headAt(raf, pos);
+        if (head == null) break;
+        add(head);
+        final next = head.unknownSize ? segmentEnd : head.end;
+        if (next <= pos) break;
+        pos = next;
+      }
+    }
+    return out;
+  }
+
+  /// 按 ID 找第一个元素。
+  Future<WebmElementHead?> find(RandomAccessFile raf, int id) async {
+    final list = await findAll(raf, id);
+    return list.isEmpty ? null : list.first;
+  }
+
+  static Future<void> _readSeekHead(
+    RandomAccessFile raf,
+    WebmElementHead seekHead,
+    int segmentDataPos,
+    Map<int, int> out,
+  ) async {
+    var pos = seekHead.dataPos;
+    var guard = 0;
+    while (pos < seekHead.end && guard++ < 64) {
+      final seek = await WebmEbml.headAt(raf, pos);
+      if (seek == null) break;
+      if (seek.id == WebmEbml.idSeek && !seek.unknownSize) {
+        int? elementId;
+        int? elementPos;
+        var itemPos = seek.dataPos;
+        var itemGuard = 0;
+        while (itemPos < seek.end && itemGuard++ < 8) {
+          final item = await WebmEbml.headAt(raf, itemPos);
+          if (item == null) break;
+          if (item.id == WebmEbml.idSeekId ||
+              item.id == WebmEbml.idSeekPosition) {
+            final bytes = await WebmEbml.readAt(
+              raf,
+              item.dataPos,
+              item.size,
+            );
+            if (bytes != null) {
+              var value = 0;
+              for (final byte in bytes) {
+                value = (value << 8) | byte;
+              }
+              if (item.id == WebmEbml.idSeekId) {
+                elementId = value;
+              } else {
+                elementPos = value;
+              }
+            }
+          }
+          final next = item.unknownSize ? seek.end : item.end;
+          if (next <= itemPos) break;
+          itemPos = next;
+        }
+        if (elementId != null && elementPos != null) {
+          final absolute = segmentDataPos + elementPos;
+          out.putIfAbsent(elementId, () => absolute);
+        }
+      }
+      final next = seek.unknownSize ? seekHead.end : seek.end;
+      if (next <= pos) break;
+      pos = next;
     }
   }
 }

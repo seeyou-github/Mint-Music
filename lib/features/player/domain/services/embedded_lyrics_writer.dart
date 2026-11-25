@@ -14,7 +14,7 @@ import '../../../download/domain/services/audio_tag_writer.dart';
 /// * `.m4a` / `.mp4` → `moov/udta/meta/ilst` 的 `©lyr`（委托
 ///   [AudioTagWriter]，与标签编辑页共用同一套 MP4 写入逻辑）；
 /// * `.webm` / `.weba` → `Segment > Tags` 的 `LYRICS`（同样委托
-///   [AudioTagWriter]，只往文件尾追加，不动音频数据）。
+///   [AudioTagWriter] 重建容器，音频数据原样复制）。
 ///
 /// 其它容器（ogg / ape / wav / aac …）暂不支持，返回 false 由调用方提示。
 ///
