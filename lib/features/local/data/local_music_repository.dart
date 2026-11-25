@@ -350,6 +350,12 @@ class LocalMusicRepository {
   /// **只扫描「扫描目录设置」里已添加的目录**：一个目录都没设置时直接返回
   /// false，不做任何扫描。绝不回退成「扫描设备全部音乐」——Android 上刚拿到
   /// 存储权限就那样扫，会把整机（含外置存储）的音频一次性灌进曲库。
+  ///
+  /// Android 走 MediaStore 音频表，但 `.webm` 被系统归到视频库
+  /// （`video/webm`），音频表里查不到。所以查询完会再按扫描目录补捞一遍
+  /// `.webm` / `.weba`（见 [_collectWebmFilesOutsideMediaStore]），否则
+  /// 这些文件的标签 / 封面 / 歌词在 Android 上根本看不到入口。
+  ///
   /// 返回值表示「这次是否真的扫了」。
   Future<bool> scanAll({ScanProgressCallback? onProgress}) async {
     if (_isScanning) return false;
@@ -392,7 +398,15 @@ class LocalMusicRepository {
             .where((s) => s.isMusic == true || s.isMusic == null)
             .toList();
 
-        final total = musicSongs.length;
+        // MediaStore 把 `.webm` 归成视频（`video/webm`），Audio 表里查不到，
+        // 所以本地页看不到这些音频文件（`.weba` 是 `audio/webm`，不受影响）。
+        // 这里按已设置的扫描目录补捞一遍 `.webm` / `.weba`，只认这两个扩展名，
+        // 不会把普通视频拉进曲库；已经在 MediaStore 结果里的按路径去重。
+        final extraWebmFiles = await _collectWebmFilesOutsideMediaStore(
+          musicSongs.map((audio) => audio.data),
+        );
+
+        final total = musicSongs.length + extraWebmFiles.length;
         onScanProgress?.call(
           ScanProgress(processed: 0, total: total, running: true),
         );
@@ -460,6 +474,65 @@ class LocalMusicRepository {
             report();
           }
         });
+
+        // 第二遍：MediaStore 里没有的 `.webm` / `.weba`，按文件本身解析标签
+        // （和桌面端同一条路径，能拿到内嵌封面）。
+        final pendingExtras = <String>[];
+        final extraStamps = <String, int>{};
+        for (final filePath in extraWebmFiles) {
+          final id = _genId(filePath);
+          if (newSongsMap.containsKey(id)) {
+            processed++;
+            report();
+            continue;
+          }
+          final existing = _songsMap[id];
+          int? stamp;
+          try {
+            stamp = (await File(filePath).stat()).modified.millisecondsSinceEpoch;
+          } catch (_) {
+            stamp = null;
+          }
+          if (existing != null &&
+              stamp != null &&
+              existing.fileModified == stamp) {
+            newSongsMap[id] = existing;
+            processed++;
+            report();
+            continue;
+          }
+          pendingExtras.add(filePath);
+          if (stamp != null) extraStamps[filePath] = stamp;
+        }
+
+        if (pendingExtras.isNotEmpty) {
+          final coverCache = CoverCacheService();
+          await _forEachMetadataBatch(pendingExtras, (batch) async {
+            for (final entry in batch.entries) {
+              final filePath = entry.key;
+              final id = _genId(filePath);
+              final existing = _songsMap[id];
+              final fresh = _songFromDesktopFile(
+                filePath,
+                entry.value,
+                extraStamps[filePath],
+              );
+              final merged = existing != null
+                  ? _mergePreferFilled(existing, fresh)
+                  : fresh;
+              newSongsMap[id] = merged;
+              if (existing == null || !_sameIndexedSong(existing, merged)) {
+                _markSongDirty(id);
+              }
+              final artwork = entry.value.artwork;
+              if (artwork != null && artwork.isNotEmpty) {
+                unawaited(coverCache.putArtwork(id, artwork));
+              }
+              processed++;
+              report();
+            }
+          });
+        }
         report(force: true);
 
         for (final id in _songsMap.keys) {
@@ -632,6 +705,65 @@ class LocalMusicRepository {
       debugPrint('[LocalMusic] 扫描目录失败 $dir: $e');
     }
     result.sort();
+    return result;
+  }
+
+  /// 已设置的扫描目录里、但不在 MediaStore 音频结果中的 `.webm` / `.weba`。
+  ///
+  /// 只认这两个扩展名（不看其它音频扩展名，避免和 MediaStore 的结果重复、
+  /// 也避免漏掉系统没索引的文件）；[knownPaths] 是 MediaStore 已经给出的
+  /// 路径，按规范化后的路径去重（Android 上两边都可能给 `/` 或 `\\`）。
+  Future<List<String>> _collectWebmFilesOutsideMediaStore(
+    Iterable<String> knownPaths,
+  ) async {
+    // 只有 Android 需要：Android 走 MediaStore 音频表，`.webm` 被系统归到
+    // 视频库；iOS 上 WebM 根本放不了（AVPlayer 不支持），补扫出来也没用。
+    if (!Platform.isAndroid) return const [];
+    if (_scannedDirs.isEmpty) return const [];
+    final known = <String>{
+      for (final path in knownPaths)
+        if (path.isNotEmpty) path.replaceAll('\\', '/'),
+    };
+    final seen = <String>{};
+    final result = <String>[];
+    for (final dir in _scannedDirs) {
+      for (final path in await _listFilesWithExtensions(dir, _webmExtensions)) {
+        final normalized = path.replaceAll('\\', '/');
+        if (!seen.add(normalized)) continue;
+        if (known.contains(normalized)) continue;
+        result.add(path);
+      }
+    }
+    result.sort();
+    return result;
+  }
+
+  /// MediaStore 归到视频库里、需要按文件补扫的扩展名。
+  static const Set<String> _webmExtensions = {'.webm', '.weba'};
+
+  /// 递归列出目录下指定扩展名的文件（只看文件名，不读内容）。
+  Future<List<String>> _listFilesWithExtensions(
+    String dir,
+    Set<String> extensions,
+  ) async {
+    final result = <String>[];
+    try {
+      final directory = Directory(dir);
+      if (!await directory.exists()) return result;
+      await for (final entity in directory.list(
+        recursive: true,
+        followLinks: false,
+      )) {
+        if (entity is! File) continue;
+        final path = entity.path;
+        final dot = path.lastIndexOf('.');
+        if (dot < 0) continue;
+        if (!extensions.contains(path.substring(dot).toLowerCase())) continue;
+        result.add(path);
+      }
+    } catch (e) {
+      debugPrint('[LocalMusic] 补扫目录失败 $dir: $e');
+    }
     return result;
   }
 
