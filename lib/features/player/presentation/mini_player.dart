@@ -8,6 +8,7 @@ import 'package:go_router/go_router.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
+import '../../../shared/widgets/default_cover_image.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../../radio/application/radio_session.dart';
 import '../application/playback_controller.dart';
@@ -437,13 +438,22 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer>
   );
 
   Widget _buildCover(ThemeColors colors, Song song, double artSize) {
+    // 取图过程中保持音符占位；确认取不到封面（本地无内嵌封面 / 在线封面
+    // 加载失败）时换成内置默认封面，与播放详情页、侧栏保持一致。
+    final placeholder = Icon(
+      Icons.music_note,
+      size: 20,
+      color: colors.primary,
+    );
+    const noCover = DefaultCoverImage();
     // 优先使用 coverUrl（精准匹配后的在线封面），再回退到设备本地封面
     if (song.coverUrl != null && song.coverUrl!.isNotEmpty) {
       return MusicCoverImage(
         key: ValueKey('mp_cover_img_${song.id}'),
         url: song.coverUrl,
         fit: BoxFit.cover,
-        errorWidget: Icon(Icons.music_note, size: 20, color: colors.primary),
+        placeholder: placeholder,
+        errorWidget: noCover,
       );
     }
     if (song.mediaStoreId != null || song.isLocal) {
@@ -453,9 +463,10 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer>
         filePath: song.filePath,
         mediaStoreId: song.mediaStoreId,
         fit: BoxFit.cover,
-        errorWidget: Icon(Icons.music_note, size: 20, color: colors.primary),
+        placeholder: placeholder,
+        errorWidget: noCover,
       );
     }
-    return Icon(Icons.music_note, size: 20, color: colors.primary);
+    return noCover;
   }
 }

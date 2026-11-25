@@ -247,6 +247,23 @@ public class AudioService extends MediaBrowserServiceCompat {
         }
     }
 
+    /**
+     * patched by MintMusic: 加载内置默认封面，只解一次。
+     *
+     * <p>Flutter 资源在 APK 里的路径是 {@code flutter_assets/<pubspec 中的 key>}，
+     * 与歌词字体（DesktopLyricOverlayHandler）用的是同一条约定。资源缺失时返回
+     * {@code null}，调用方退回原来的「无封面」表现。
+     */
+    private Bitmap loadDefaultArtBitmap() {
+        if (defaultArtBitmap != null) return defaultArtBitmap;
+        try (java.io.InputStream stream = getAssets().open(DEFAULT_ART_ASSET)) {
+            defaultArtBitmap = BitmapFactory.decodeStream(stream);
+        } catch (Throwable error) {
+            android.util.Log.w("AudioService", "加载默认封面失败", error);
+        }
+        return defaultArtBitmap;
+    }
+
     private static int calculateInSampleSize(BitmapFactory.Options options, int reqWidth, int reqHeight) {
         final int height = options.outHeight;
         final int width = options.outWidth;
@@ -275,6 +292,13 @@ public class AudioService extends MediaBrowserServiceCompat {
     private int[] compactActionIndices;
     private MediaMetadataCompat mediaMetadata;
     private Bitmap artBitmap;
+    /**
+     * patched by MintMusic: 没有封面时的内置默认封面
+     * （Flutter 资源 {@code assets/images/default_cover.jpg}）。
+     */
+    private Bitmap defaultArtBitmap;
+    private static final String DEFAULT_ART_ASSET =
+            "flutter_assets/assets/images/default_cover.jpg";
     private String notificationChannelId;
     private LruCache<String, Bitmap> artBitmapCache;
     private boolean playing = false;
@@ -817,18 +841,22 @@ public class AudioService extends MediaBrowserServiceCompat {
         if (artCacheFilePath != null) {
             // Load local files and network images, cached in files
             artBitmap = loadArtBitmap(artCacheFilePath, null);
-            mediaMetadata = putArtToMetadata(mediaMetadata);
         } else {
             // Load content:// URIs
             String artUri = mediaMetadata.getString(MediaMetadataCompat.METADATA_KEY_DISPLAY_ICON_URI);
             if (artUri != null && artUri.startsWith("content:")) {
                 String loadThumbnailUri = mediaMetadata.getString("loadThumbnailUri");
                 artBitmap = loadArtBitmap(artUri, loadThumbnailUri);
-                mediaMetadata = putArtToMetadata(mediaMetadata);
             } else {
                 artBitmap = null;
             }
         }
+        // patched by MintMusic: 没有封面（本地无内嵌封面 / 在线封面下载失败 /
+        // 还在下载中）时用内置默认封面。否则自定义通知的 RemoteViews 不会写入
+        // 封面位图，系统会保留上一首的封面 —— 表现为「播到无封面的歌，通知栏和
+        // 锁屏还是上一首的封面」。
+        if (artBitmap == null) artBitmap = loadDefaultArtBitmap();
+        if (artBitmap != null) mediaMetadata = putArtToMetadata(mediaMetadata);
         this.mediaMetadata = mediaMetadata;
         mediaSession.setMetadata(mediaMetadata);
         handler.removeCallbacksAndMessages(null);

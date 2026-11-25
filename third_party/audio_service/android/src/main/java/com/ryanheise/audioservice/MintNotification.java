@@ -148,6 +148,10 @@ public final class MintNotification {
             final Bitmap cover = roundCover(context, art);
             if (cover != null) {
                 views.setImageViewBitmap(coverId, cover);
+            } else {
+                // 没有可用封面时显式清空：RemoteViews 是按动作增量应用的，
+                // 不写这一条的话 ImageView 会保留上一首的封面位图。
+                views.setImageViewBitmap(coverId, null);
             }
 
             // 播放 / 暂停图标跟着状态走。
