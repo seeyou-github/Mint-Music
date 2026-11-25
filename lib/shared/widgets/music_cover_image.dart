@@ -493,12 +493,15 @@ class _MusicCoverImageState extends State<MusicCoverImage> {
       }
     }
 
+    // 取图过程中用 placeholder（默认就是灰底音符占位），**不要**用
+    // errorWidget：errorWidget 是「确实取不到封面」的终态（如默认封面），
+    // 若在加载中显示它，每次切歌都会先闪一下默认封面再换成真封面。
     if (_loading && _bytes == null) {
-      return widget.errorWidget ?? _buildPlaceholder();
+      return widget.placeholder ?? widget.errorWidget ?? _buildPlaceholder();
     }
 
     if (_bytes == null) {
-      return widget.errorWidget ?? _buildPlaceholder();
+      return widget.errorWidget ?? widget.placeholder ?? _buildPlaceholder();
     }
 
     final image = Image.memory(

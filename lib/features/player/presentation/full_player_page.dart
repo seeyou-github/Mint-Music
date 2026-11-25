@@ -12,6 +12,7 @@ import '../../../core/platform/app_activity.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../core/utils/responsive_layout.dart';
+import '../../../shared/widgets/default_cover_image.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../../../shared/widgets/fallback_cover_image.dart';
 import '../../../shared/widgets/source_name_tag.dart';
@@ -869,21 +870,15 @@ class _PlayerCoverPage extends ConsumerWidget {
     MusicSourceManager sourceManager,
   ) {
     if (song == null) {
-      return Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [Color(0x4D6366F1), Color(0xFF1E1E2E)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-        ),
-        child: const Icon(Icons.music_note, size: 60, color: Colors.white24),
-      );
+      return _fallbackCover(song);
     }
     // 优先使用 coverUrl（精准匹配后的在线封面），再回退到设备本地封面。
     // 插件歌曲的 coverUrl 可能是空地址（歌单 / 榜单歌曲只有 id）或失效地址：
     // 列表有逐行 getPic 兜底能自愈，播放器这里用 FallbackCoverImage 补上同样
     // 的兜底。
+    //
+    // 两个兜底位分开：取图过程中显示 [_fallbackCover]（不显示封面，保持原
+    // 有表现），只有确认取不到封面时才显示内置默认封面 [DefaultCoverImage]。
     if (!song.isLocal) {
       return FallbackCoverImage(
         song: song,
@@ -893,7 +888,8 @@ class _PlayerCoverPage extends ConsumerWidget {
         cacheWidth: 1536,
         cacheHeight: 1536,
         filterQuality: FilterQuality.high,
-        errorWidget: _fallbackCover(song),
+        placeholder: _fallbackCover(song),
+        errorWidget: const DefaultCoverImage(),
       );
     }
     if (song.mediaStoreId != null || song.isLocal) {
@@ -906,12 +902,14 @@ class _PlayerCoverPage extends ConsumerWidget {
         cacheWidth: 1536,
         cacheHeight: 1536,
         filterQuality: FilterQuality.high,
-        errorWidget: _fallbackCover(song),
+        placeholder: _fallbackCover(song),
+        errorWidget: const DefaultCoverImage(),
       );
     }
     return _fallbackCover(song);
   }
 
+  /// 取封面过程中的占位（模糊渐变 + 音符）：不代表「没有封面」，只是还没取到。
   static Widget _fallbackCover(Song? song) {
     return Container(
       decoration: const BoxDecoration(

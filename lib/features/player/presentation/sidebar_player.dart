@@ -7,6 +7,7 @@ import '../../../core/constants/app_routes.dart';
 import '../../../core/router/app_router.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/theme_provider.dart';
+import '../../../shared/widgets/default_cover_image.dart';
 import '../../../shared/widgets/marquee_text.dart';
 import '../../../shared/widgets/music_cover_image.dart';
 import '../../../shared/widgets/fallback_cover_image.dart';
@@ -201,6 +202,11 @@ class SidebarPlayer extends ConsumerWidget {
     // 插件歌曲的 coverUrl 可能是空地址（歌单 / 榜单歌曲只有 id）或失效地址，
     // FallbackCoverImage 会在缺失 / 加载失败时自动 getPic 补地址
     // （与歌曲列表项一致的自愈策略）。
+    //
+    // 取图过程中用音符占位（与原先一致，不显示封面）；只有确认取不到封面
+    // 时才换成内置默认封面。
+    final placeholder = Icon(Icons.music_note, size: 32, color: colors.primary);
+    const noCover = DefaultCoverImage();
     if (!song.isLocal) {
       return FallbackCoverImage(
         key: ValueKey('sidebar_cover_img_${song.id}'),
@@ -208,7 +214,8 @@ class SidebarPlayer extends ConsumerWidget {
         url: song.coverUrl,
         sourceManager: ref.read(musicSourceManagerProvider),
         fit: BoxFit.cover,
-        errorWidget: Icon(Icons.music_note, size: 32, color: colors.primary),
+        placeholder: placeholder,
+        errorWidget: noCover,
       );
     }
     if (song.mediaStoreId != null || song.isLocal) {
@@ -218,10 +225,11 @@ class SidebarPlayer extends ConsumerWidget {
         filePath: song.filePath,
         mediaStoreId: song.mediaStoreId,
         fit: BoxFit.cover,
-        errorWidget: Icon(Icons.music_note, size: 32, color: colors.primary),
+        placeholder: placeholder,
+        errorWidget: noCover,
       );
     }
-    return Icon(Icons.music_note, size: 32, color: colors.primary);
+    return noCover;
   }
 
   /// 曲名：居中显示。Windows 用省略号截断，其它平台过长时滚动。
