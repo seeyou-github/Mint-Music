@@ -18,6 +18,10 @@ import '../../../shared/widgets/source_icon.dart';
 import '../../../shared/widgets/source_selector_row.dart';
 import '../../discover/application/search_providers.dart';
 import '../../download/domain/services/audio_tag_writer.dart';
+import '../../library/application/playlist_providers.dart';
+import '../../library/application/recently_played_providers.dart';
+import '../../player/application/playback_controller.dart';
+import '../../player/application/play_progress_providers.dart';
 import '../../plugin/domain/plugin_types.dart';
 import '../../settings/application/settings_providers.dart';
 import '../application/local_providers.dart';
@@ -31,6 +35,7 @@ import '../../../shared/widgets/music_cover_image.dart';
 import '../../player/application/root_overlay_tracker.dart';
 import '../data/local_metadata_reader.dart';
 import '../domain/services/local_song_from_file.dart';
+import '../domain/services/local_song_rename_service.dart';
 import 'match_widgets.dart';
 
 class TagEditorPage extends ConsumerStatefulWidget {
@@ -60,6 +65,18 @@ class TagEditorPage extends ConsumerStatefulWidget {
 class _TagEditorPageState extends ConsumerState<TagEditorPage>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
+
+  /// 文件名（不含扩展名）输入框：改的是磁盘上的真实文件名。
+  ///
+  /// 和下面的「歌曲名」不是一回事：歌曲名是文件内部的标签。
+  late TextEditingController _fileNameController;
+
+  /// 打开页面时的文件名主体（判断有没有改过）。
+  String _baseFileName = '';
+
+  /// 当前文件的扩展名（只显示、不允许改：解码要靠它）。
+  String _fileExtension = '';
+
   late TextEditingController _titleController;
   late TextEditingController _artistController;
   late TextEditingController _albumController;
@@ -178,6 +195,7 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
     RootOverlayTracker.instance.retain(RootOverlayTracker.tagEditor);
     unawaited(_lastUsedSourceFuture);
     _tabController = TabController(length: 2, vsync: this);
+    _fileNameController = TextEditingController();
     _titleController = TextEditingController();
     _artistController = TextEditingController();
     _albumController = TextEditingController();
@@ -295,6 +313,13 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
     setState(() {
       _song = song;
       _loadingSong = false;
+      // 文件名：只填主体，扩展名单独显示（保存时原样拼回去）。
+      final filePath = song.filePath ?? '';
+      _fileExtension = LocalSongRenameService.extensionOf(filePath);
+      _fileNameController.text = filePath.isEmpty
+          ? ''
+          : LocalSongRenameService.baseNameOf(filePath);
+      _baseFileName = _fileNameController.text;
       _titleController.text = song.title;
       _artistController.text = song.artist;
       // 老索引可能存着「未知专辑」占位：编辑框里按空处理，避免把占位文案
@@ -327,6 +352,7 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
 
   /// 把当前输入框内容记成「原始值」（用于判断有没有修改）。
   void _captureBaseline() {
+    _baseFileName = _fileNameController.text.trim();
     _baseTitle = _titleController.text;
     _baseArtist = _artistController.text;
     _baseAlbum = _albumController.text;
@@ -336,8 +362,10 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
     _baseLrc = _lrcController.text;
   }
 
-  /// 输入框内容是否跟打开时不一样（真的改过）。
-  bool get _hasChanges =>
+  /// 只有**标签字段**是否改过（不含文件名）。
+  ///
+  /// 保存时用它决定「要不要写音频文件」：只改了文件名不需要重写标签。
+  bool get _tagFieldsChanged =>
       _titleController.text != _baseTitle ||
       _artistController.text != _baseArtist ||
       _albumController.text != _baseAlbum ||
@@ -417,6 +445,7 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
     RootOverlayTracker.instance.release(RootOverlayTracker.tagEditor);
     _tabController.removeListener(_handleTabChanged);
     _tabController.dispose();
+    _fileNameController.dispose();
     _titleController.dispose();
     _artistController.dispose();
     _albumController.dispose();
@@ -588,6 +617,15 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
         children: [
           _buildCoverSection(colors),
           const SizedBox(height: AppSpacing.xl),
+          // 文件名放在最上面：它改的是磁盘上的真实文件，和下面是「歌里的标签」
+          // 不是一回事（标签写进文件内部，文件名是文件本身的名字）。
+          _buildField(
+            context.tr('文件名'),
+            _fileNameController,
+            colors,
+            Icons.insert_drive_file_outlined,
+            suffixText: _fileExtension.isEmpty ? null : _fileExtension,
+          ),
           _buildField(
             context.tr('歌曲名'),
             _titleController,
@@ -916,6 +954,8 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
     ThemeColors colors,
     IconData icon, {
     int maxLines = 1,
+    // 输入框右侧的固定后缀（文件名用它显示不能改的扩展名）。
+    String? suffixText,
   }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: AppSpacing.md),
@@ -937,6 +977,8 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
             style: TextStyle(fontSize: 15, color: colors.textPrimary),
             decoration: InputDecoration(
               prefixIcon: Icon(icon, size: 18, color: colors.textHint),
+              suffixText: suffixText,
+              suffixStyle: TextStyle(fontSize: 14, color: colors.textHint),
               filled: true,
               fillColor: colors.surface,
               border: OutlineInputBorder(
@@ -1771,9 +1813,47 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
       final lyric = _lrcController.text;
       final lyricChanged = lyric.trim() != _baseLrc.trim();
       final year = int.tryParse(yearText);
-      final changed = _hasChanges;
+      // 只比较标签字段：改名本身不触发「重写标签」。
+      final changed = _tagFieldsChanged;
+
+      // 0) 文件名改过就先改名。
+      //
+      // 本地歌曲的 id / 封面缓存 key 都是路径哈希，改名后 id 会变：索引、
+      // 封面缓存、最近播放、已听进度、收藏 / 自建歌单里那一行都要迁到新 id
+      // （renameSongFile 内部处理）。标签随后写进**新路径**，避免「写完标签
+      // 再改名」时路径对不上。
+      var workingSong = song;
+      var renamed = false;
+      final newBaseName = _fileNameController.text.trim();
+      // 清空 / 非法字符 / 同名文件这些情况由 renameSongFile 抛
+      // [LocalSongRenameException]，下面单独提示，不会动到任何文件。
+      if (newBaseName != _baseFileName) {
+        workingSong = await ref
+            .read(localMusicNotifierProvider.notifier)
+            .renameSongFile(song, newBaseName);
+        renamed = workingSong.id != song.id;
+        if (renamed) {
+          // 队列 / 当前歌里还是旧 id 的对象，一起换掉（不打断播放）。
+          ref
+              .read(playbackControllerProvider.notifier)
+              .replaceSong(song.id, workingSong);
+          // 最近播放、收藏 / 自建歌单的歌曲对象都来自数据库，重新读一遍。
+          ref.invalidate(recentlyPlayedProvider);
+          ref.invalidate(playlistsProvider);
+          // 「已听 N%」是按歌曲 id 存的内存表，数据库那一行已经迁到新 id，
+          // 这里让内存表按新 id 重读，否则列表里的进度标签会消失。
+          ref.invalidate(playedProgressProvider);
+          // 旧 id 的内存封面 / 新 id 的封面都要重新取。
+          MusicCoverImage.refresh(song.id);
+          MusicCoverImage.refresh(workingSong.id);
+          if (mounted) {
+            setState(() => _baseFileName = newBaseName);
+          }
+        }
+      }
+
       final coverUrl = _webCoverUrl;
-      final path = song.filePath ?? '';
+      final path = workingSong.filePath ?? '';
 
       // 网络封面要在写标签前先下载成图片，才能一起写进 APIC / PICTURE。
       // WebM / WebA 放不下封面（规范不支持附件）：跳过下载，最后给一句
@@ -1817,7 +1897,7 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
       // 文件），文件被外部工具改过、或者这次没能写进文件时，界面就会显示
       // 过期内容。只有「这次没写进文件」（aac / ogg 等不支持内嵌的格式 / 只读文件）
       // 才把这份留在内存里当本次会话的兜底 —— 它本来也不落盘。
-      var updated = song.copyWith(
+      var updated = workingSong.copyWith(
         title: title,
         artist: artist,
         album: album,
@@ -1833,8 +1913,8 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
 
       // 封面已经写进文件了：之后统一走本地封面缓存，不再依赖网络地址。
       if (fileWritten && artwork != null) {
-        await CoverCacheService().putArtwork(song.id, artwork);
-        MusicCoverImage.refresh(song.id);
+        await CoverCacheService().putArtwork(workingSong.id, artwork);
+        MusicCoverImage.refresh(workingSong.id);
         updated = updated.copyWith(hasCover: true, clearCover: true);
         _webCoverUrl = null;
         if (mounted) {
@@ -1867,20 +1947,26 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
       if (mounted) {
         final String message;
         Color? background;
-        if (fileWritten && coverSkipped) {
+        if (renamed && !changed && artwork == null && !fileWritten) {
+          // 只改了文件名：其它字段没动，也就没有写标签这一步。
+          message = context.tr('文件名已修改');
+        } else if (fileWritten && coverSkipped) {
           message = context.tr('标签已写入歌曲文件，该格式不支持内嵌封面，封面已跳过');
           background = Colors.orange;
-        } else if (!changed && artwork == null) {
+        } else if (!changed && !renamed && artwork == null) {
           message = context.tr('标签已保存');
         } else if (fileWritten) {
-          message = context.tr('标签已保存，并写入歌曲文件');
+          message = renamed
+              ? context.tr('文件名已修改，标签已写入歌曲文件')
+              : context.tr('标签已保存，并写入歌曲文件');
         } else if (path.isEmpty) {
           message = context.tr('标签已保存到曲库（找不到歌曲文件，未写入文件）');
           background = Colors.orange;
         } else {
-          message = fileSupported
+          final base = fileSupported
               ? context.tr('标签已保存到曲库，但写入歌曲文件失败')
               : context.tr('标签已保存到曲库，该音频格式暂不支持写入文件');
+          message = renamed ? context.tr('文件名已修改；$base') : base;
           background = Colors.orange;
         }
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1892,6 +1978,10 @@ class _TagEditorPageState extends ConsumerState<TagEditorPage>
         );
         context.pop();
       }
+    } on LocalSongRenameException catch (e) {
+      // 改文件名的失败原因（同名 / 被占用 / 非法字符）本身就是给人看的文案，
+      // 直接提示，别套「保存失败:」。
+      if (mounted) _toast(e.message);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

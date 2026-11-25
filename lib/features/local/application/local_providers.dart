@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:on_audio_query/on_audio_query.dart';
 import '../data/local_music_repository.dart';
 import '../data/local_quality_reader.dart';
+import '../domain/services/local_song_rename_service.dart';
 import '../../player/domain/models/song.dart';
 import '../../../shared/services/cover_cache_service.dart';
 
@@ -318,6 +319,25 @@ class LocalMusicNotifier extends StateNotifier<AsyncValue<List<Song>>> {
     } catch (e, st) {
       state = AsyncValue.error(e, st);
     }
+  }
+
+  /// 给本地歌曲改文件名（编辑标签页的「文件名」输入框）。
+  ///
+  /// 改的是磁盘上的真实文件名：id / 封面缓存 key 都是路径哈希，所以文件、
+  /// 索引、封面缓存、最近播放、已听进度、收藏 / 自建歌单里的那一行会一起迁
+  /// 移到新 id（见 [LocalSongRenameService]）。播放队列由调用方负责同步。
+  Future<Song> renameSongFile(Song song, String newBaseName) async {
+    final repo = _ref.read(localMusicRepositoryProvider);
+    final renamed = await LocalSongRenameService.rename(
+      song,
+      newBaseName,
+      repository: repo,
+    );
+    if (!identical(renamed, song)) {
+      // 列表里这一行要换成新对象（本地页 / 收藏 / 最近播放都按 id 找歌）。
+      state = AsyncValue.data(repo.getLocalSongs());
+    }
+    return renamed;
   }
 
   /// 删除本地歌曲。返回是否成功移除。

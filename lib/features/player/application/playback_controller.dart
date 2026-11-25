@@ -2345,6 +2345,35 @@ class PlaybackController extends StateNotifier<PlaybackState> {
     }
   }
 
+  /// 队列里的某首歌换了 id（本地文件改名）：就地替换，不打断播放。
+  ///
+  /// 本地歌曲的 id 是文件路径的哈希，改名后 id / filePath 都变了。队列里
+  /// 留着旧对象的话，播到它时会按旧路径找文件（找不到就当网络歌重新解析），
+  /// 正在播的那首也会在「下一首 / 重新播放」时丢文件。这里只换对象，不重新
+  /// 设置音源——文件句柄还在，播放不中断。
+  void replaceSong(String oldId, Song song) {
+    if (oldId == song.id) return;
+    final queue = state.queue;
+    var changed = false;
+    final newQueue = <Song>[];
+    for (final item in queue) {
+      if (item.id == oldId) {
+        newQueue.add(song);
+        changed = true;
+      } else {
+        newQueue.add(item);
+      }
+    }
+    if (!changed) return;
+    // 传 null 表示「当前歌不是这首」，copyWith 会保留原 currentSong。
+    final newCurrent = state.currentSong?.id == oldId ? song : null;
+    state = state.copyWith(queue: newQueue, currentSong: newCurrent);
+    // 正在播的就是这首：顺手刷新通知栏 / 锁屏的歌曲信息（含封面 key）。
+    if (newCurrent != null) {
+      _audioHandler.updateCurrentMediaItem(song);
+    }
+  }
+
   /// 从队列中移除所有指定 id 的歌曲（本地歌曲删除时同步播放队列）。
   ///
   /// 一次重排到位：正在播放的那首被删掉时直接切到它后面第一首还存活的歌

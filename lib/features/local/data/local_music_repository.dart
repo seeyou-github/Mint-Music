@@ -675,6 +675,30 @@ class LocalMusicRepository {
     await _saveIndex();
   }
 
+  /// 歌曲 id 变了（本地文件改名）：旧 id 从索引里删掉，新 id 插一行。
+  ///
+  /// 本地歌曲的 id 是文件路径的 md5，改名必然换 id。索引里必须同步换掉，
+  /// 否则列表里会留一条指向旧路径的「幽灵歌」，下次扫描才会消失。
+  /// 不在索引里（下载目录里的歌）时什么也不做。
+  Future<bool> renameSong(String oldId, Song renamed) async {
+    await init();
+    if (oldId == renamed.id) {
+      // 只有大小写等细节变化：直接覆盖同一行的内容。
+      if (!_songsMap.containsKey(oldId)) return false;
+      _songsMap[oldId] = renamed;
+      _markSongDirty(oldId);
+      await _saveIndex();
+      return true;
+    }
+    final existing = _songsMap.remove(oldId);
+    if (existing == null) return false;
+    _markSongDeleted(oldId);
+    _songsMap[renamed.id] = renamed;
+    _markSongDirty(renamed.id);
+    await _flushIndex();
+    return true;
+  }
+
   /// 从本地音乐库删除歌曲，并尽力删除磁盘上的音频文件。
   /// 磁盘文件删除失败（如权限不足）不影响索引移除，返回是否成功从索引移除。
   Future<bool> deleteSong(String id) async {

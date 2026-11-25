@@ -225,6 +225,37 @@ class CoverCacheService {
     });
   }
 
+  /// 歌曲 id 变了（本地文件改名）时，把封面缓存从旧 id 迁到新 id。
+  ///
+  /// 封面是按歌曲 id 存成 `<songId>.jpg` 的，改名后 id 会变（id 是文件路径
+  /// 的哈希），不迁移的话封面会凭空消失、得等下次重新提取。
+  Future<void> moveArtwork(String oldSongId, String newSongId) async {
+    if (oldSongId == newSongId || oldSongId.isEmpty || newSongId.isEmpty) {
+      return;
+    }
+    try {
+      final bytes = getFromMemCache(oldSongId);
+      if (bytes != null) {
+        _putMemCache(newSongId, bytes);
+        _memCache.remove(oldSongId);
+      }
+      final oldFile = File(await _diskPath(oldSongId));
+      if (!await oldFile.exists()) return;
+      final newFile = File(await _diskPath(newSongId));
+      try {
+        await newFile.parent.create(recursive: true);
+        await oldFile.rename(newFile.path);
+      } catch (_) {
+        // 跨卷 / 被占用时退化为「读出来再写一份」。
+        final data = await oldFile.readAsBytes();
+        await newFile.writeAsBytes(data, flush: false);
+        await oldFile.delete();
+      }
+    } catch (e) {
+      debugPrint('[CoverCache] 封面迁移失败 $oldSongId -> $newSongId: $e');
+    }
+  }
+
   /// 删除「已经不属于任何本地歌曲」的封面图片，返回删除数量。
   ///
   /// 本地歌曲被移出扫描目录、音频文件被删掉之后，对应的 `<歌曲id>.jpg` 不会
