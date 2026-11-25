@@ -101,7 +101,7 @@ void main() {
     // 时长来自逐帧统计（10 帧 × 1152 采样 ÷ 44100Hz ≈ 261ms），比按
     // 体积 / 首帧码率的估算（260ms）更准。
     expect((await LocalMetadataReader.read(file.path)).durationMs, 261);
-    expect(await LocalQualityReader.readLabel(file.path), '128K');
+    expect(await LocalQualityReader.readLabel(file.path), '128k');
   });
 
   test('MP3 内嵌标签不计入音频字节', () async {
@@ -111,7 +111,7 @@ void main() {
       ...List.filled(1000, 0),
       ...mp3Frames(10),
     ]);
-    expect(await LocalQualityReader.readLabel(file.path), '128K');
+    expect(await LocalQualityReader.readLabel(file.path), '128k');
   });
 
   test('M4A(AAC) 用 mdat 字节 / mvhd 时长算码率', () async {
@@ -120,7 +120,7 @@ void main() {
       mp4File(durationMs: 10000, audioBytes: 320000),
     );
     expect((await LocalMetadataReader.read(file.path)).durationMs, 10000);
-    expect(await LocalQualityReader.readLabel(file.path), '256K');
+    expect(await LocalQualityReader.readLabel(file.path), '256k');
   });
 
   test('M4A 里装 ALAC 无损时只显示等级', () async {
@@ -139,12 +139,12 @@ void main() {
     final file = await write('song.aac', adtsFile());
     expect((await LocalMetadataReader.read(file.path)).durationMs, 10240);
     // 441 帧 × 400 字节 = 176400 字节 / 10.24s ≈ 138kbps
-    expect(await LocalQualityReader.readLabel(file.path), '138K');
+    expect(await LocalQualityReader.readLabel(file.path), '138k');
   });
 
   test('WMA 读 ASF 头里声明的码率', () async {
     final file = await write('song.wma', wmaFile(192000));
-    expect(await LocalQualityReader.readLabel(file.path), '192K');
+    expect(await LocalQualityReader.readLabel(file.path), '192k');
   });
 
   test('FLAC 按位深分级，不显示码率', () async {
@@ -166,18 +166,18 @@ void main() {
     expect(await LocalQualityReader.readLabel(ape.path), 'HiRes');
   });
 
-  test('信息行按「格式-大小(MB)-时长(hh:mm:ss)-比特率(k)」展示', () {
+  test('信息行按「格式，大小(MB)，时长：hh:mm:ss，比特率:k」展示', () {
     const info = LocalTrackInfo(
       extension: 'mp3',
       sizeBytes: 3 * 1024 * 1024,
       durationMs: 185000,
       bitrateKbps: 128,
     );
-    expect(info.description, 'MP3-3.00MB-时长：00:03:05-比特率:128k');
+    expect(info.description, 'MP3，3.00MB，时长：00:03:05，比特率:128k');
 
     // 读不到时长 / 码率时用占位符，不隐藏整行。
     const unknown = LocalTrackInfo(extension: 'webm', sizeBytes: 0);
-    expect(unknown.description, 'WEBM-0.00MB-时长：--:--:---比特率:—');
+    expect(unknown.description, 'WEBM，0.00MB，时长：--:--:--，比特率:—');
   });
 
   test('readInfo 从文件读取格式 / 大小 / 时长 / 码率', () async {
@@ -185,13 +185,13 @@ void main() {
     final info = await LocalQualityReader.readInfo(mp3.path);
     expect(info, isNotNull);
     expect(info!.durationMs, 261);
-    expect(info.description, contains('MP3-'));
-    expect(info.description, contains('-比特率:128k'));
+    expect(info.description, startsWith('MP3，'));
+    expect(info.description, contains('，比特率:128k'));
 
     final flac = await write('song.flac', flacFile(24, 96000));
     final flacInfo = await LocalQualityReader.readInfo(flac.path);
     expect(flacInfo, isNotNull);
-    expect(flacInfo!.description, startsWith('FLAC-'));
+    expect(flacInfo!.description, startsWith('FLAC，'));
   });
 
   test('文件不存在时返回 null', () async {

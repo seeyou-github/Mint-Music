@@ -93,7 +93,7 @@ final scanProgressProvider = StateProvider<ScanProgress>((ref) {
   return const ScanProgress();
 });
 
-/// 本地歌曲的真实音质标签（如 `128K`、`320K`、`Flac24bit`）。
+/// 本地歌曲的真实音质标签（如 `128k`、`320k`、`Flac24bit`）。
 ///
 /// 播放页按文件实时读取：有损显示真实码率，无损及以上只显示等级；
 /// 读不出来时返回 null，界面退回原来的音质名称。
@@ -102,7 +102,8 @@ final localQualityLabelProvider = FutureProvider.autoDispose
       return LocalQualityReader.readLabel(filePath);
     });
 
-/// 本地歌曲「更多」菜单里的「信息」行（格式 - 大小 - 时长 - 比特率）。
+/// 本地歌曲「更多」菜单里的「信息」行
+/// （`MP3，8.52MB，时长：00:03:45，比特率:128k`）。
 final localTrackInfoProvider = FutureProvider.autoDispose
     .family<LocalTrackInfo?, String>((ref, filePath) {
       return LocalQualityReader.readInfo(filePath);

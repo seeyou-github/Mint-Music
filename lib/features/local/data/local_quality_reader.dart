@@ -4,9 +4,9 @@ import 'package:flutter/foundation.dart';
 
 import 'local_metadata_reader.dart';
 
-/// 本地歌曲的「信息」：音频格式 - 大小(MB) - 时长(hh:mm:ss) - 比特率(k)。
+/// 本地歌曲的「信息」：音频格式，大小(MB)，时长：hh:mm:ss，比特率:k。
 ///
-/// 例如 `MP3-8.52MB-时长：00:03:45-比特率:128k`。
+/// 例如 `MP3，8.52MB，时长：00:03:45，比特率:128k`。
 /// 读不出来的字段用 `—`（时长用 `--:--:--`）占位，不会让整行消失。
 class LocalTrackInfo {
   /// 不带点的扩展名（渲染时转大写，如 `mp3` → `MP3`）。
@@ -31,7 +31,7 @@ class LocalTrackInfo {
     final bitrate = bitrateKbps == null || bitrateKbps! <= 0
         ? '—'
         : '${bitrateKbps}k';
-    return '$format-${size}MB-时长：$duration-比特率:$bitrate';
+    return '$format，${size}MB，时长：$duration，比特率:$bitrate';
   }
 
   /// 固定 hh:mm:ss（超过 99 小时也照常进位，不截位）。
@@ -50,7 +50,7 @@ class LocalTrackInfo {
 ///
 /// 有损格式不解析帧头码率表：直接读文件属性——容器里记录的时长 + 音频
 /// 字节数（m4a/aac/ogg…），或 ASF 头里声明的码率（wma）——算平均码率，
-/// 如 `128K`、`221K`、`320K`。无损及以上不显示码率，只给等级
+/// 如 `128k`、`221k`、`320k`。无损及以上不显示码率，只给等级
 /// （`Flac` / `Flac24bit` / `HiRes`）。读不出来时返回 null，界面退回
 /// 原来的音质名称。
 class LocalQualityReader {
@@ -163,7 +163,8 @@ class LocalQualityReader {
 
   static String? _formatKbps(int? kbps) {
     if (kbps == null || kbps <= 0) return null;
-    return '${kbps}K';
+    // 与「信息」行的 `比特率:128k` 保持一致（小写 k）。
+    return '${kbps}k';
   }
 
   /// FLAC 按 STREAMINFO 里的位深 / 采样率分级：16bit → Flac，

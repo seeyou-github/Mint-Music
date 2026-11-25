@@ -693,7 +693,7 @@ class _SongActionSheetState extends ConsumerState<SongActionSheet> {
     final album = _albumName;
     final sourceRow = includeSource ? _buildSourceRow(colors) : null;
     final filePath = song.filePath;
-    // 本地歌曲补一行「格式 - 大小 - 时长 - 比特率」，放在专辑下方。
+    // 本地歌曲补一行「格式，大小(MB)，时长：hh:mm:ss，比特率:k」，放在专辑下方。
     final localInfo = song.isLocal && filePath != null && filePath.isNotEmpty
         ? ref.watch(localTrackInfoProvider(filePath)).valueOrNull?.description
         : null;
