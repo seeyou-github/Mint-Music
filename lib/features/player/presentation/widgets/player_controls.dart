@@ -210,15 +210,16 @@ class _PlayerProgressBarState extends ConsumerState<PlayerProgressBar> {
     final compact = widget.compact;
     // 进度条配色与侧栏播放器一致：轨道用分隔线色，已播放部分 / 滑块用主题色。
     final colors = ref.watch(themeColorsProvider);
-    // 本地文件只有一个「音源」，读真实码率显示，切换音质没有意义。
+    // 本地文件只有一个「音源」，显示「格式 - 大小 - 时长 - 比特率」，
+    // 切换音质没有意义；与歌曲「更多」菜单的「信息」行同一份数据。
     final song = widget.currentSong;
     final isLocal = song?.source == 'local';
     final filePath = isLocal ? song?.filePath : null;
-    final localLabel = (filePath != null && filePath.isNotEmpty)
-        ? ref.watch(localQualityLabelProvider(filePath)).valueOrNull
+    final localDescription = (filePath != null && filePath.isNotEmpty)
+        ? ref.watch(localTrackInfoProvider(filePath)).valueOrNull?.description
         : null;
     final qualityLabel =
-        localLabel ?? _playerQualityName(widget.currentQuality);
+        localDescription ?? _playerQualityName(widget.currentQuality);
     return Padding(
       padding: EdgeInsets.symmetric(
         horizontal: compact ? 8 : PlayerProgressBar.horizontalPadding,
@@ -351,24 +352,31 @@ class _PlayerProgressBarState extends ConsumerState<PlayerProgressBar> {
                 ),
                 const Spacer(),
                 if (widget.availableQualities.isNotEmpty)
-                  GestureDetector(
-                    // 本地歌曲：音质只是展示，点不开切换菜单。
-                    onTap: isLocal ? null : _showQualityPicker,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: colors.textPrimary.withValues(alpha: 0.08),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Text(
-                        qualityLabel,
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: colors.textSecondary,
-                          fontWeight: FontWeight.w500,
+                  // 本地歌曲的信息行较长，窄屏时允许收缩省略，不能把左右
+                  // 的播放进度 / 总时长挤出屏幕。
+                  Flexible(
+                    child: GestureDetector(
+                      // 本地歌曲：信息只是展示，点不开切换菜单。
+                      onTap: isLocal ? null : _showQualityPicker,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: colors.textPrimary.withValues(alpha: 0.08),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          qualityLabel,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: colors.textSecondary,
+                            fontWeight: FontWeight.w500,
+                          ),
                         ),
                       ),
                     ),

@@ -4,20 +4,46 @@ import 'package:flutter/foundation.dart';
 
 import 'local_metadata_reader.dart';
 
-/// 本地歌曲的「信息」：真实音质标签 + 文件扩展名。
+/// 本地歌曲的「信息」：音频格式 - 大小(MB) - 时长(hh:mm:ss) - 比特率(k)。
 ///
-/// 例如 `320K - Mp3`、`Flac24bit - Flac`。
+/// 例如 `MP3-8.52MB-时长：00:03:45-比特率:128k`。
+/// 读不出来的字段用 `—`（时长用 `--:--:--`）占位，不会让整行消失。
 class LocalTrackInfo {
-  final String? label;
+  /// 不带点的扩展名（渲染时转大写，如 `mp3` → `MP3`）。
   final String extension;
+  final int sizeBytes;
+  final int? durationMs;
+  final int? bitrateKbps;
 
-  const LocalTrackInfo({required this.label, required this.extension});
+  const LocalTrackInfo({
+    required this.extension,
+    required this.sizeBytes,
+    this.durationMs,
+    this.bitrateKbps,
+  });
 
-  String? get description {
-    final value = label;
-    if (value == null || value.isEmpty) return null;
-    return extension.isEmpty ? value : '$value - $extension';
+  String get description {
+    final format = extension.isEmpty ? '—' : extension.toUpperCase();
+    final size = (sizeBytes / (1024 * 1024)).toStringAsFixed(2);
+    final duration = durationMs == null || durationMs! <= 0
+        ? '--:--:--'
+        : _formatHms(durationMs!);
+    final bitrate = bitrateKbps == null || bitrateKbps! <= 0
+        ? '—'
+        : '${bitrateKbps}k';
+    return '$format-${size}MB-时长：$duration-比特率:$bitrate';
   }
+
+  /// 固定 hh:mm:ss（超过 99 小时也照常进位，不截位）。
+  static String _formatHms(int ms) {
+    final total = ms ~/ 1000;
+    final h = total ~/ 3600;
+    final m = (total % 3600) ~/ 60;
+    final s = total % 60;
+    return '${_two(h)}:${_two(m)}:${_two(s)}';
+  }
+
+  static String _two(int value) => value.toString().padLeft(2, '0');
 }
 
 /// 本地文件的真实音质标签（播放页展示用）。
@@ -39,65 +65,100 @@ class LocalQualityReader {
     '.dsf',
   };
 
-  static Future<String?> readLabel(String filePath) async =>
-      (await readInfo(filePath))?.label;
-
-  /// 读取「音质标签 + 扩展名」，歌曲「更多」菜单的「信息」行用。
-  static Future<LocalTrackInfo?> readInfo(String filePath) async {
+  /// 播放页进度条旁的短标签（无损给等级、有损给真实码率）。
+  static Future<String?> readLabel(String filePath) async {
     try {
       final ext = LocalMetadataReader.extensionOf(filePath);
       final file = File(filePath);
       if (!await file.exists()) return null;
-
-      String? label;
-      if (ext == '.flac') {
-        label = await _flacLabel(file);
-      } else if (_losslessExtensions.contains(ext)) {
-        label = 'HiRes';
-      } else if (ext == '.wma') {
-        label = await _wmaLabel(file);
-      } else {
-        final isMp4 = ext == '.m4a' || ext == '.mp4';
-        var audioBytes = 0;
-        if (isMp4) {
-          final info = await _mp4Info(file);
-          // M4A 里装 ALAC / FLAC 属于无损：只显示等级。
-          if (info.isLossless) {
-            label = 'HiRes';
-          } else {
-            audioBytes = info.audioBytes;
-          }
-        }
-        if (label == null) {
-          if (audioBytes <= 0) {
-            final length = await file.length();
-            audioBytes = ext == '.mp3'
-                ? await _mp3AudioBytes(file, length)
-                : length;
-          }
-          if (audioBytes <= 0) return null;
-
-          final metadata = await LocalMetadataReader.read(filePath);
-          final durationMs =
-              metadata.durationMs ?? (metadata.durationSeconds ?? 0) * 1000;
-          if (durationMs <= 0) return null;
-          // bits / ms = kbps
-          label = _formatKbps((audioBytes * 8 / durationMs).round());
-        }
-      }
-      if (label == null) return null;
-      return LocalTrackInfo(label: label, extension: _formatExtension(ext));
+      return (await _readFacts(file, ext)).label;
     } catch (e) {
       debugPrint('[LocalQuality] 读取音质失败 $filePath: $e');
       return null;
     }
   }
 
-  /// `.mp3` → `Mp3`，`.m4a` → `M4a`。
-  static String _formatExtension(String ext) {
-    final name = ext.startsWith('.') ? ext.substring(1) : ext;
-    if (name.isEmpty) return '';
-    return name[0].toUpperCase() + name.substring(1);
+  /// 歌曲「更多」菜单的「信息」行：格式 / 大小 / 时长 / 比特率。
+  static Future<LocalTrackInfo?> readInfo(String filePath) async {
+    try {
+      final ext = LocalMetadataReader.extensionOf(filePath);
+      final file = File(filePath);
+      if (!await file.exists()) return null;
+
+      final length = await file.length();
+      final metadata = await LocalMetadataReader.read(filePath);
+      final durationMs = _durationMsOf(metadata);
+      final facts = await _readFacts(file, ext, metadata: metadata);
+      // 无损格式没有可靠的编码码率字段（FLAC STREAMINFO 也不记），用
+      // 整文件大小算平均码率；MP3 / M4A / WMA 已经用更准的口径算好了。
+      final bitrate = facts.bitrateKbps ??
+          (durationMs == null ? null : (length * 8 / durationMs).round());
+      return LocalTrackInfo(
+        extension: ext.startsWith('.') ? ext.substring(1) : ext,
+        sizeBytes: length,
+        durationMs: durationMs,
+        bitrateKbps: bitrate,
+      );
+    } catch (e) {
+      debugPrint('[LocalQuality] 读取音质失败 $filePath: $e');
+      return null;
+    }
+  }
+
+  /// 音质等级（播放器进度条旁的短标签）+ 能直接读到的码率。
+  ///
+  /// 有损格式按「音频字节 / 时长」算平均码率（MP3 去掉 ID3 标签、M4A 只算
+  /// mdat），无损格式只给等级，码率留给 [readInfo] 按整文件估算。
+  static Future<({String? label, int? bitrateKbps})> _readFacts(
+    File file,
+    String ext, {
+    LocalAudioMetadata? metadata,
+  }) async {
+    final length = await file.length();
+    String? label;
+    int? bitrateKbps;
+    if (ext == '.flac') {
+      label = await _flacLabel(file);
+    } else if (_losslessExtensions.contains(ext)) {
+      label = 'HiRes';
+    } else if (ext == '.wma') {
+      bitrateKbps = await _wmaKbps(file);
+      label = _formatKbps(bitrateKbps);
+    } else {
+      final isMp4 = ext == '.m4a' || ext == '.mp4';
+      var audioBytes = 0;
+      if (isMp4) {
+        final info = await _mp4Info(file);
+        // M4A 里装 ALAC / FLAC 属于无损：只显示等级。
+        if (info.isLossless) {
+          label = 'HiRes';
+        } else {
+          audioBytes = info.audioBytes;
+        }
+      }
+      if (label == null) {
+        if (audioBytes <= 0) {
+          audioBytes = ext == '.mp3'
+              ? await _mp3AudioBytes(file, length)
+              : length;
+        }
+        if (audioBytes > 0) {
+          metadata ??= await LocalMetadataReader.read(file.path);
+          final durationMs = _durationMsOf(metadata);
+          if (durationMs != null) {
+            // bits / ms = kbps
+            bitrateKbps = (audioBytes * 8 / durationMs).round();
+            label = _formatKbps(bitrateKbps);
+          }
+        }
+      }
+    }
+    return (label: label, bitrateKbps: bitrateKbps);
+  }
+
+  static int? _durationMsOf(LocalAudioMetadata metadata) {
+    final ms = metadata.durationMs ?? (metadata.durationSeconds ?? 0) * 1000;
+    return ms > 0 ? ms : null;
   }
 
   static String? _formatKbps(int? kbps) {
@@ -209,7 +270,8 @@ class LocalQualityReader {
 
   /// WMA（ASF）在 File Properties 对象里直接声明了 MaxBitrate，
   /// 不需要再算时长。
-  static Future<String?> _wmaLabel(File file) async {
+  /// WMA（ASF）在 File Properties 对象里直接声明了 MaxBitrate。
+  static Future<int?> _wmaKbps(File file) async {
     final raf = await file.open(mode: FileMode.read);
     try {
       final head = await raf.read(8192);
@@ -221,7 +283,7 @@ class LocalQualityReader {
         if (_matches(head, pos, _asfFilePropsGuid)) {
           final bitrateOffset = pos + 24 + 76;
           if (bitrateOffset + 4 > head.length) return null;
-          return _formatKbps((_le32(head, bitrateOffset) / 1000).round());
+          return (_le32(head, bitrateOffset) / 1000).round();
         }
         if (size > head.length) break;
         pos += size;

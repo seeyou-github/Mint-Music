@@ -102,7 +102,7 @@ final localQualityLabelProvider = FutureProvider.autoDispose
       return LocalQualityReader.readLabel(filePath);
     });
 
-/// 本地歌曲「更多」菜单里的「信息」行（音质 + 扩展名，如 `320K - Mp3`）。
+/// 本地歌曲「更多」菜单里的「信息」行（格式 - 大小 - 时长 - 比特率）。
 final localTrackInfoProvider = FutureProvider.autoDispose
     .family<LocalTrackInfo?, String>((ref, filePath) {
       return LocalQualityReader.readInfo(filePath);

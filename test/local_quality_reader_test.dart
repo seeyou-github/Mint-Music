@@ -166,18 +166,32 @@ void main() {
     expect(await LocalQualityReader.readLabel(ape.path), 'HiRes');
   });
 
-  test('readInfo 给出「音质 - 扩展名」', () async {
-    final mp3 = await write('song.mp3', mp3Frames(10));
-    expect(
-      (await LocalQualityReader.readInfo(mp3.path))?.description,
-      '128K - Mp3',
+  test('信息行按「格式-大小(MB)-时长(hh:mm:ss)-比特率(k)」展示', () {
+    const info = LocalTrackInfo(
+      extension: 'mp3',
+      sizeBytes: 3 * 1024 * 1024,
+      durationMs: 185000,
+      bitrateKbps: 128,
     );
+    expect(info.description, 'MP3-3.00MB-时长：00:03:05-比特率:128k');
+
+    // 读不到时长 / 码率时用占位符，不隐藏整行。
+    const unknown = LocalTrackInfo(extension: 'webm', sizeBytes: 0);
+    expect(unknown.description, 'WEBM-0.00MB-时长：--:--:---比特率:—');
+  });
+
+  test('readInfo 从文件读取格式 / 大小 / 时长 / 码率', () async {
+    final mp3 = await write('song.mp3', mp3Frames(10));
+    final info = await LocalQualityReader.readInfo(mp3.path);
+    expect(info, isNotNull);
+    expect(info!.durationMs, 261);
+    expect(info.description, contains('MP3-'));
+    expect(info.description, contains('-比特率:128k'));
 
     final flac = await write('song.flac', flacFile(24, 96000));
-    expect(
-      (await LocalQualityReader.readInfo(flac.path))?.description,
-      'Flac24bit - Flac',
-    );
+    final flacInfo = await LocalQualityReader.readInfo(flac.path);
+    expect(flacInfo, isNotNull);
+    expect(flacInfo!.description, startsWith('FLAC-'));
   });
 
   test('文件不存在时返回 null', () async {
